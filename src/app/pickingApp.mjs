@@ -3569,7 +3569,7 @@ function buildInvoiceEvent(invoice, eventType, overrides = {}) {
     event_type: eventType,
     memo: overrides.memo || null,
     actor: "front",
-    source: "f_v1_inspection",
+    source: overrides.source || "f_v1_inspection",
     payload: {
       displayName: invoice.displayName || invoice.csDisplayName || "",
       itemCount: (invoice.items || []).length,
@@ -3662,6 +3662,14 @@ async function saveWorkflowInvoiceEvent(invoice, eventType, overrides = {}) {
   }
 }
 
+async function ensureShippingHoldOnAfterMemoSave(invoice, memoValue) {
+  if (!allowWorkflowEvents || !String(memoValue || "").trim() || isSystemShippingHoldOn(invoice)) return false;
+  return await saveWorkflowInvoiceEvent(invoice, "hold_created", {
+    memo: "shipping hold auto on by memo save",
+    source: "f_v1_memo_auto_hold",
+  });
+}
+
 async function savePickingRow(invoice, item, eventType = null, eventOverrides = {}) {
   if (!allowWrites) {
     toast("읽기전용입니다. URL에 write=1을 붙여야 저장할 수 있습니다.");
@@ -3719,6 +3727,7 @@ async function saveDrawerForInvoice(invoice, drawerMemo) {
     const { error } = await db.from("order_items").update({ o_shop_memo: drawerMemo }).eq("ord_no", invoice.orderGroupNo).eq("item_no", item.sellpiaItemNo);
     if (error) throw error;
   }
+  await ensureShippingHoldOnAfterMemoSave(invoice, drawerMemo);
 }
 
 async function setShortageQty(orderGroupNo, sellpiaItemNo, nextValue) {
@@ -3746,6 +3755,7 @@ async function setShortageQty(orderGroupNo, sellpiaItemNo, nextValue) {
     await savePickingRow(invoice, item, eventType, { quantity: next, memo: nextText || null });
     const { error } = await db.from("order_items").update({ o_shop_memo2: nextText }).eq("ord_no", invoice.orderGroupNo).eq("item_no", item.sellpiaItemNo);
     if (error) throw error;
+    await ensureShippingHoldOnAfterMemoSave(invoice, nextText);
     renderWorkflowSurfacesIfVisible();
     toast("관리메모2 저장");
   } catch (error) {
@@ -4811,6 +4821,7 @@ async function saveSelectedShortageMemo(shortageKey = state.selectedShortageKey)
   }
   const { error } = await db.from("order_items").update({ o_shop_memo: drawerMemo, o_shop_memo2: memo }).eq("ord_no", row.invoice.orderGroupNo).eq("item_no", row.item.sellpiaItemNo);
   if (error) throw error;
+  await ensureShippingHoldOnAfterMemoSave(row.invoice, `${drawerMemo}\n${memo}`);
   state.selectedShortageKey = shortageKey;
   renderWorkflowSurfaces();
   toast("미송 메모 저장 완료");
