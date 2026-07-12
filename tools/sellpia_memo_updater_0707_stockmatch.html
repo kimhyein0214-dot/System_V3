@@ -360,15 +360,34 @@
       return 'UNKNOWN';
     }
 
-    function holdSyncAction(currentSellpiaHold, systemShippingHold) {
+    function normalizeScrapedShippingHoldStatus(value) {
+      const text = normal(value).toUpperCase();
+      if (text === 'ON') return 'ON';
+      if (text === 'OFF') return 'OFF';
+      if (text === 'UNKNOWN') return 'UNKNOWN';
+      return '';
+    }
+
+    function scrapedShippingHoldFromOrderRows(rows) {
+      const values = (rows || []).map(row => normalizeScrapedShippingHoldStatus(row?.sellpia_shipping_hold_status)).filter(Boolean);
+      const rawValues = (rows || []).map(row => normal(row?.sellpia_shipping_hold_raw)).filter(Boolean);
+      const scrapedAtValues = (rows || []).map(row => normal(row?.sellpia_shipping_hold_scraped_at || row?.scraped_at)).filter(Boolean).sort();
+      if (values.includes('ON')) return { status: 'ON', raw: rawValues.join(' | '), scrapedAt: scrapedAtValues.pop() || '' };
+      if (values.length && values.every(value => value === 'OFF')) return { status: 'OFF', raw: rawValues.join(' | '), scrapedAt: scrapedAtValues.pop() || '' };
+      if (values.length) return { status: 'UNKNOWN', raw: rawValues.join(' | '), scrapedAt: scrapedAtValues.pop() || '' };
+      return { status: '', raw: rawValues.join(' | '), scrapedAt: scrapedAtValues.pop() || '' };
+    }
+
+    function holdSyncAction(currentSellpiaHold, systemShippingHold, task) {
       if (systemShippingHold !== 'ON' && systemShippingHold !== 'OFF') return 'UNKNOWN';
       if (currentSellpiaHold !== 'ON' && currentSellpiaHold !== 'OFF') return 'UNKNOWN';
       if (currentSellpiaHold === systemShippingHold) return 'NONE';
+      if (systemShippingHold === 'OFF' && !task?.holdOffAllowed) return 'UNKNOWN';
       return systemShippingHold;
     }
 
     function holdSyncReason(task, syncAction) {
-      if (syncAction === 'UNKNOWN') return task?.shippingHoldSyncReason || 'system_shipping_hold_unknown';
+      if (syncAction === 'UNKNOWN') return task?.holdOffBlockReason || task?.shippingHoldSyncReason || 'system_shipping_hold_unknown';
       if (syncAction === 'NONE') return 'system_and_sellpia_hold_match';
       return task?.shippingHoldSyncReason || 'system_shipping_hold_current_diff';
     }
@@ -923,9 +942,17 @@
         });
         const last = sorted[sorted.length - 1];
         if (!last) continue;
+        const lastType = normal(last.event_type);
+        const lastSource = normal(last.source);
+        const isReleased = lastType === 'hold_released';
+        const source = isReleased ? 'event_hold_released' : (lastSource === 'f_v1_memo_auto_hold' ? 'memo_auto_hold' : 'event_hold_created');
         holdMap.set(ord, {
           known: true,
-          value: normal(last.event_type) === 'hold_created' ? 'ON' : 'OFF',
+          value: lastType === 'hold_created' ? 'ON' : 'OFF',
+          source,
+          eventSource: lastSource,
+          holdOffAllowed: isReleased,
+          syncReason: isReleased ? 'event_hold_released' : source,
           lastAt: last.event_at || last.created_at || '',
           count: sorted.length
         });
@@ -972,6 +999,7 @@
       const orderRows = Array.isArray(orderRowsInput) ? orderRowsInput : (orderRowsInput ? [orderRowsInput] : []);
       const orderItemRows = Array.isArray(orderItemRowsInput) ? orderItemRowsInput : (orderItemRowsInput ? [orderItemRowsInput] : []);
       const firstOrderRow = orderRows[0] || {};
+      const scrapedShippingHold = scrapedShippingHoldFromOrderRows(orderRows);
       const task = {
         invNo: normal(invNo || firstOrderRow?.inv_no),
         ordNo: normal(ordNo || firstOrderRow?.ord_no),
@@ -986,7 +1014,13 @@
         hold: false,
         systemShippingHold: workflowShippingHold?.known ? workflowShippingHold.value : '',
         systemShippingHoldKnown: !!workflowShippingHold?.known,
-        shippingHoldSyncReason: workflowShippingHold?.known ? 'explicit_workflow_hold_event' : '',
+        systemShippingHoldSource: workflowShippingHold?.source || '',
+        sellpiaShippingHoldScraped: scrapedShippingHold.status || '',
+        sellpiaShippingHoldRaw: scrapedShippingHold.raw || '',
+        sellpiaShippingHoldScrapedAt: scrapedShippingHold.scrapedAt || '',
+        holdOffAllowed: !!workflowShippingHold?.holdOffAllowed,
+        holdOffBlockReason: '',
+        shippingHoldSyncReason: workflowShippingHold?.syncReason || '',
         clear: false,
         writeMemo1: false,
         writeMemo2: false,
@@ -997,6 +1031,12 @@
         workflowDone: !!workflowDone?.done,
         dbMatchStatus: ''
       };
+      if (!task.systemShippingHoldKnown && scrapedShippingHold.status === 'ON') {
+        task.systemShippingHold = 'ON';
+        task.systemShippingHoldKnown = true;
+        task.systemShippingHoldSource = 'scrape_on';
+        task.shippingHoldSyncReason = 'sellpia_shipping_hold_scraped_on';
+      }
       const hasShortageMatch = !!(shortageRows || []).length;
       const hasPickingMatch = !!(pickingRows || []).length;
       const hasOrderMatch = orderRows.some(row => !!normal(row?.ord_no));
@@ -1054,11 +1094,19 @@
       const shouldClearMemo1ForAllRepicked = allShortageItemsRepicked;
       if (!task.systemShippingHoldKnown && hasHoldSignal) {
         task.systemShippingHold = 'UNKNOWN';
+        task.systemShippingHoldSource = 'memo_or_legacy_signal';
         task.shippingHoldSyncReason = 'shipping_hold_on_needed_or_legacy_signal';
+        task.holdOffBlockReason = 'hold_off_blocked_without_hold_released';
+      } else if (!task.systemShippingHoldKnown && task.sellpiaShippingHoldScraped === 'OFF') {
+        task.systemShippingHold = 'UNKNOWN';
+        task.systemShippingHoldSource = 'scrape_off';
+        task.shippingHoldSyncReason = 'sellpia_shipping_hold_scraped_off_not_release';
+        task.holdOffBlockReason = 'scrape_off_not_explicit_hold_released';
       } else if (!task.systemShippingHoldKnown) {
-        task.systemShippingHold = 'OFF';
-        task.systemShippingHoldKnown = true;
-        task.shippingHoldSyncReason = 'default_off_no_hold_signal';
+        task.systemShippingHold = 'UNKNOWN';
+        task.systemShippingHoldSource = 'no_explicit_hold_signal';
+        task.shippingHoldSyncReason = 'no_hold_signal_not_off_authority';
+        task.holdOffBlockReason = 'default_off_disabled_without_hold_released';
       }
 
       if (workflowDone?.done) {
@@ -1115,10 +1163,10 @@
           const [shortageByInv, pickingByInv, orderByInv, shortageByOrd, pickingByOrd, orderByOrd] = await Promise.all([
             safeDbRequestIn('shortage', 'inv_no', [target], 'inv_no,ord_no,item_no,p_code,sellpia_p_code,status,memo2_val,drawer_no,updated_at'),
             safeDbRequestIn('picking', 'inv_no', [target], 'inv_no,ord_no,item_no,p_code,sellpia_p_code,hold,drawer_no'),
-            safeDbRequestIn('orders', 'inv_no', [target], 'ord_no,inv_no,order_memo,o_memo,scraped_at'),
+            safeDbRequestIn('orders', 'inv_no', [target], 'ord_no,inv_no,order_memo,o_memo,scraped_at,sellpia_shipping_hold_status,sellpia_shipping_hold_raw,sellpia_shipping_hold_scraped_at'),
             safeDbRequestIn('shortage', 'ord_no', [target], 'inv_no,ord_no,item_no,p_code,sellpia_p_code,status,memo2_val,drawer_no,updated_at'),
             safeDbRequestIn('picking', 'ord_no', [target], 'inv_no,ord_no,item_no,p_code,sellpia_p_code,hold,drawer_no'),
-            safeDbRequestIn('orders', 'ord_no', [target], 'ord_no,inv_no,order_memo,o_memo,scraped_at')
+            safeDbRequestIn('orders', 'ord_no', [target], 'ord_no,inv_no,order_memo,o_memo,scraped_at,sellpia_shipping_hold_status,sellpia_shipping_hold_raw,sellpia_shipping_hold_scraped_at')
           ]);
           const dbSeed = [...(shortageByInv || []), ...(pickingByInv || []), ...(orderByInv || []), ...(shortageByOrd || []), ...(pickingByOrd || []), ...(orderByOrd || [])];
           const ordNoFromDb = normal((dbSeed.find(row => normal(row.ord_no)) || {}).ord_no);
@@ -1130,9 +1178,9 @@
           const [shortageRows, pickingRows, orderRows, orderItemRows, workflowRows, workflowItemRows] = await Promise.all([
             dbRequestIn('shortage', 'ord_no', [ordNoFromDb], 'inv_no,ord_no,item_no,p_code,sellpia_p_code,status,memo2_val,drawer_no,updated_at'),
             dbRequestIn('picking', 'ord_no', [ordNoFromDb], 'inv_no,ord_no,item_no,p_code,sellpia_p_code,hold,drawer_no'),
-            dbRequestIn('orders', 'ord_no', [ordNoFromDb], 'ord_no,inv_no,order_memo,o_memo,scraped_at'),
+            dbRequestIn('orders', 'ord_no', [ordNoFromDb], 'ord_no,inv_no,order_memo,o_memo,scraped_at,sellpia_shipping_hold_status,sellpia_shipping_hold_raw,sellpia_shipping_hold_scraped_at'),
             dbRequestIn('order_items', 'ord_no', [ordNoFromDb], 'ord_no,item_no,sellpia_order_item_no,p_code,o_shop_memo,o_shop_memo2,order_memo'),
-            safeDbRequestIn('workflow_invoice_events', 'order_group_no', [ordNoFromDb], 'order_group_no,event_type,event_at,created_at,id,memo'),
+            safeDbRequestIn('workflow_invoice_events', 'order_group_no', [ordNoFromDb], 'order_group_no,event_type,event_at,created_at,id,memo,source'),
             safeDbRequestIn('workflow_item_events', 'order_group_no', [ordNoFromDb], 'order_group_no,event_type,event_at,created_at,id,sellpia_item_no,sellpia_product_code')
           ]);
           const workflowRowsAfterScrape = workflowEventsAfterOrderScrape(workflowRows, orderRows);
@@ -1151,9 +1199,9 @@
         const [shortageRows, pickingRows, orderRows, orderItemRows, workflowRows, workflowItemRows] = await Promise.all([
           dbRequestIn('shortage', 'ord_no', [ordNo], 'inv_no,ord_no,item_no,p_code,sellpia_p_code,status,memo2_val,drawer_no,updated_at'),
           dbRequestIn('picking', 'ord_no', [ordNo], 'inv_no,ord_no,item_no,p_code,sellpia_p_code,hold,drawer_no'),
-          dbRequestIn('orders', 'ord_no', [ordNo], 'ord_no,inv_no,order_memo,o_memo,scraped_at'),
+          dbRequestIn('orders', 'ord_no', [ordNo], 'ord_no,inv_no,order_memo,o_memo,scraped_at,sellpia_shipping_hold_status,sellpia_shipping_hold_raw,sellpia_shipping_hold_scraped_at'),
           dbRequestIn('order_items', 'ord_no', [ordNo], 'ord_no,item_no,sellpia_order_item_no,p_code,o_shop_memo,o_shop_memo2,order_memo'),
-          safeDbRequestIn('workflow_invoice_events', 'order_group_no', [ordNo], 'order_group_no,event_type,event_at,created_at,id,memo'),
+          safeDbRequestIn('workflow_invoice_events', 'order_group_no', [ordNo], 'order_group_no,event_type,event_at,created_at,id,memo,source'),
           safeDbRequestIn('workflow_item_events', 'order_group_no', [ordNo], 'order_group_no,event_type,event_at,created_at,id,sellpia_item_no,sellpia_product_code')
         ]);
         const workflowRowsAfterScrape = workflowEventsAfterOrderScrape(workflowRows, orderRows);
@@ -1203,9 +1251,9 @@
       const [shortageRows, pickingRows, orderRows, orderItemRows, workflowRows, workflowItemRows] = await Promise.all([
         dbRequestIn('shortage', 'ord_no', ordNos, 'inv_no,ord_no,item_no,p_code,sellpia_p_code,status,memo2_val,drawer_no,updated_at'),
         dbRequestIn('picking', 'ord_no', ordNos, 'inv_no,ord_no,item_no,p_code,sellpia_p_code,hold,drawer_no'),
-        dbRequestIn('orders', 'ord_no', ordNos, 'ord_no,inv_no,order_memo,o_memo,scraped_at'),
+        dbRequestIn('orders', 'ord_no', ordNos, 'ord_no,inv_no,order_memo,o_memo,scraped_at,sellpia_shipping_hold_status,sellpia_shipping_hold_raw,sellpia_shipping_hold_scraped_at'),
         dbRequestIn('order_items', 'ord_no', ordNos, 'ord_no,item_no,sellpia_order_item_no,p_code,o_shop_memo,o_shop_memo2,order_memo'),
-        safeDbRequestIn('workflow_invoice_events', 'order_group_no', ordNos, 'order_group_no,event_type,event_at,created_at,id,memo'),
+        safeDbRequestIn('workflow_invoice_events', 'order_group_no', ordNos, 'order_group_no,event_type,event_at,created_at,id,memo,source'),
         safeDbRequestIn('workflow_item_events', 'order_group_no', ordNos, 'order_group_no,event_type,event_at,created_at,id,sellpia_item_no,sellpia_product_code')
       ]);
       const shortageMap = byOrd(shortageRows);
@@ -1252,6 +1300,17 @@
 
     function needsChange(cur, planned) {
       return normal(cur) !== normal(planned);
+    }
+
+    function applyHoldCsvMeta(result, task) {
+      if (!result || !task) return result;
+      result.systemShippingHoldSource = task.systemShippingHoldSource || result.systemShippingHoldSource || '';
+      result.systemShippingHoldKnown = task.systemShippingHoldKnown ? 'Y' : 'N';
+      result.sellpiaShippingHoldScraped = task.sellpiaShippingHoldScraped || '';
+      result.sellpiaShippingHoldScrapedAt = task.sellpiaShippingHoldScrapedAt || '';
+      result.holdOffAllowed = task.holdOffAllowed ? 'Y' : 'N';
+      result.holdOffBlockReason = task.holdOffBlockReason || '';
+      return result;
     }
 
     function addResult(result) {
@@ -1535,8 +1594,10 @@
     }
 
     async function inspectTask(task, options) {
+      const addTaskResult = result => addResult(applyHoldCsvMeta(result, task));
+      const addTaskPerfResult = (result, perf) => addResult(withPerf(applyHoldCsvMeta(result, task), perf));
       if (task.skip) {
-        addResult({
+        addTaskResult({
           invNo: task.invNo || '',
           ordNo: task.ordNo || '',
           itemNo: '',
@@ -1560,7 +1621,7 @@
       }
       const rows = rowsForTask(task);
       if (!rows.length) {
-        addResult({
+        addTaskResult({
           invNo: task.invNo || '',
           ordNo: task.ordNo || '',
           itemNo: '',
@@ -1594,7 +1655,8 @@
           const current = gridCurrentValues(row);
           const plannedOrderMemo = plannedOrderMemoForGridRow(task, row, i, current.orderMemo);
           const policy = buildRowPolicyMeta(task, row, i, { currentOrderMemo: current.orderMemo, plannedOrderMemo });
-          addResult(withPerf({
+          const fastSyncAction = holdSyncAction(current.hold, systemShippingHoldForTask(task), task);
+          addTaskPerfResult({
             invNo: task.invNo || rowInvNo(row),
             ordNo: task.ordNo || rowOrdNo(row),
             itemNo: rowItemNo(row, i),
@@ -1609,8 +1671,8 @@
             plannedHold: task.writeHold ? systemShippingHoldForTask(task) : '',
             currentSellpiaHold: current.hold,
             systemShippingHold: systemShippingHoldForTask(task),
-            syncAction: holdSyncAction(current.hold, systemShippingHoldForTask(task)),
-            syncReason: holdSyncReason(task, holdSyncAction(current.hold, systemShippingHoldForTask(task))),
+            syncAction: fastSyncAction,
+            syncReason: holdSyncReason(task, fastSyncAction),
             needsChange: 'N',
             status: 'GRID_FAST_SKIP',
             reason: (task.reason || '') + ' / grid visible values already clear',
@@ -1626,7 +1688,7 @@
             orderMemoTarget: policy.orderMemoTarget,
             actionSummary: 'grid already clear; detail skipped',
             log: 'GRID_FAST_SKIP: ' + (task.invNo || rowInvNo(row)) + ' / grid visible values already clear / 팝업 확인 생략'
-          }, rowPerf));
+          }, rowPerf);
           continue;
         }
         const openStart = perfNow();
@@ -1640,7 +1702,7 @@
           const plannedMemo2WithoutRoot = task.clear ? '' : memo2ForGridRow(task, row, i);
           const plannedOrderMemoWithoutRoot = plannedOrderMemoForGridRow(task, row, i, '');
           const policy = buildRowPolicyMeta(task, row, i, { plannedOrderMemo: plannedOrderMemoWithoutRoot });
-          addResult(withPerf({
+          addTaskPerfResult({
             invNo: task.invNo || rowInvNo(row),
             ordNo: task.ordNo || rowOrdNo(row),
             itemNo: rowItemNo(row, i),
@@ -1672,7 +1734,7 @@
             orderMemoTarget: policy.orderMemoTarget,
             actionSummary: 'detail open failed',
             log: 'DETAIL_FAIL: ' + (task.invNo || rowInvNo(row)) + ' / detail open failed'
-          }, rowPerf));
+          }, rowPerf);
           continue;
         }
 
@@ -1688,7 +1750,7 @@
           const plannedOrderMemo = plannedOrderMemoForGridRow(task, row, i, current.orderMemo);
           const systemShippingHold = systemShippingHoldForTask(task);
           const currentSellpiaHold = current.hold ? 'ON' : 'OFF';
-          const syncAction = holdSyncAction(currentSellpiaHold, systemShippingHold);
+          const syncAction = holdSyncAction(currentSellpiaHold, systemShippingHold, task);
           const syncReason = holdSyncReason(task, syncAction);
           const plannedHold = task.writeHold ? systemShippingHold === 'ON' : !!current.hold;
           const policy = buildRowPolicyMeta(task, row, i, { currentOrderMemo: current.orderMemo, plannedOrderMemo });
@@ -1790,7 +1852,7 @@
           rowPerf.closeFallback = closeInfo && closeInfo.fallback ? 'Y' : 'N';
           rowPerf.closeRoot = closeInfo && closeInfo.rootKind;
           rowPerf.closeBtn = closeInfo && closeInfo.button ? 'Y' : 'N';
-          if (pendingResult) addResult(withPerf(pendingResult, rowPerf));
+          if (pendingResult) addTaskPerfResult(pendingResult, rowPerf);
         }
       }
     }
@@ -1959,11 +2021,11 @@
     }
 
     function downloadCsv() {
-      const headers = ['송장번호','주문번호','주문품목No','현재 관리메모','실행예정 관리메모','현재 관리메모2','실행예정 관리메모2','현재 주문메모','실행예정 주문메모','현재 배송보류','실행예정 배송보류','currentSellpiaHold','systemShippingHold','syncAction','syncReason','실행변경필요','상태','사유','DB매칭상태','clear/OFF사유','차단전 변경요약','live_write_allowed','current_state_warning','item_key_match_method','sellpia_item_no_original','sellpia_item_no_match_key','order_memo_source','memo2_target','order_memo_target','perf_open_ms','perf_read_ms','perf_write_ms','perf_close_ms','perf_total_ms','perf_open_fallback','perf_open_root','perf_open_ready','perf_close_fallback','perf_close_root','perf_close_btn'];
+      const headers = ['송장번호','주문번호','주문품목No','현재 관리메모','실행예정 관리메모','현재 관리메모2','실행예정 관리메모2','현재 주문메모','실행예정 주문메모','현재 배송보류','실행예정 배송보류','currentSellpiaHold','systemShippingHold','systemShippingHoldSource','systemShippingHoldKnown','sellpiaShippingHoldScraped','sellpiaShippingHoldScrapedAt','holdOffAllowed','holdOffBlockReason','syncAction','syncReason','실행변경필요','상태','사유','DB매칭상태','clear/OFF사유','차단전 변경요약','live_write_allowed','current_state_warning','item_key_match_method','sellpia_item_no_original','sellpia_item_no_match_key','order_memo_source','memo2_target','order_memo_target','perf_open_ms','perf_read_ms','perf_write_ms','perf_close_ms','perf_total_ms','perf_open_fallback','perf_open_root','perf_open_ready','perf_close_fallback','perf_close_root','perf_close_btn'];
       const lines = [headers.map(csvValue).join(',')];
       for (const r of results) {
         const row = csvDisplayRow(r);
-        lines.push([row.invNo,row.ordNo,row.itemNo,row.currentMemo1,row.plannedMemo1,row.currentMemo2,row.plannedMemo2,row.currentOrderMemo,row.plannedOrderMemo,row.currentHold,row.plannedHold,row.currentSellpiaHold,row.systemShippingHold,row.syncAction,row.syncReason,row.needsChange,row.status,row.reason,row.dbMatchStatus,row.clearOffReason,row.csvBlockedPlan,row.liveWriteAllowed,row.currentStateWarning,row.itemKeyMatchMethod,row.sellpiaItemNoOriginal,row.sellpiaItemNoMatchKey,row.orderMemoSource,row.memo2Target,row.orderMemoTarget,row.perfOpenMs,row.perfReadMs,row.perfWriteMs,row.perfCloseMs,row.perfTotalMs,row.perfOpenFallback,row.perfOpenRoot,row.perfOpenReady,row.perfCloseFallback,row.perfCloseRoot,row.perfCloseBtn].map(csvValue).join(','));
+        lines.push([row.invNo,row.ordNo,row.itemNo,row.currentMemo1,row.plannedMemo1,row.currentMemo2,row.plannedMemo2,row.currentOrderMemo,row.plannedOrderMemo,row.currentHold,row.plannedHold,row.currentSellpiaHold,row.systemShippingHold,row.systemShippingHoldSource,row.systemShippingHoldKnown,row.sellpiaShippingHoldScraped,row.sellpiaShippingHoldScrapedAt,row.holdOffAllowed,row.holdOffBlockReason,row.syncAction,row.syncReason,row.needsChange,row.status,row.reason,row.dbMatchStatus,row.clearOffReason,row.csvBlockedPlan,row.liveWriteAllowed,row.currentStateWarning,row.itemKeyMatchMethod,row.sellpiaItemNoOriginal,row.sellpiaItemNoMatchKey,row.orderMemoSource,row.memo2Target,row.orderMemoTarget,row.perfOpenMs,row.perfReadMs,row.perfWriteMs,row.perfCloseMs,row.perfTotalMs,row.perfOpenFallback,row.perfOpenRoot,row.perfOpenReady,row.perfCloseFallback,row.perfCloseRoot,row.perfCloseBtn].map(csvValue).join(','));
       }
       const blob = new Blob(['\ufeff' + lines.join('\n')], { type: 'text/csv;charset=utf-8' });
       const url = URL.createObjectURL(blob);
@@ -1985,11 +2047,11 @@
         alert('차단/실패/경고 행이 없습니다.');
         return;
       }
-      const headers = ['issue_reason','송장번호','주문번호','주문품목No','상태','live_write_allowed','current_state_warning','실행변경필요','사유','차단전 변경요약','현재 배송보류','실행예정 배송보류','currentSellpiaHold','systemShippingHold','syncAction','syncReason','현재 관리메모','실행예정 관리메모','현재 관리메모2','실행예정 관리메모2','현재 주문메모','실행예정 주문메모','DB매칭상태','clear/OFF사유','item_key_match_method','sellpia_item_no_original','sellpia_item_no_match_key'];
+      const headers = ['issue_reason','송장번호','주문번호','주문품목No','상태','live_write_allowed','current_state_warning','실행변경필요','사유','차단전 변경요약','현재 배송보류','실행예정 배송보류','currentSellpiaHold','systemShippingHold','systemShippingHoldSource','systemShippingHoldKnown','sellpiaShippingHoldScraped','sellpiaShippingHoldScrapedAt','holdOffAllowed','holdOffBlockReason','syncAction','syncReason','현재 관리메모','실행예정 관리메모','현재 관리메모2','실행예정 관리메모2','현재 주문메모','실행예정 주문메모','DB매칭상태','clear/OFF사유','item_key_match_method','sellpia_item_no_original','sellpia_item_no_match_key'];
       const lines = [headers.map(csvValue).join(',')];
       for (const r of issueRows) {
         const row = csvDisplayRow(r);
-        lines.push([issueReasonForRow(r),row.invNo,row.ordNo,row.itemNo,row.status,row.liveWriteAllowed,row.currentStateWarning,row.needsChange,row.reason,row.csvBlockedPlan,row.currentHold,row.plannedHold,row.currentSellpiaHold,row.systemShippingHold,row.syncAction,row.syncReason,row.currentMemo1,row.plannedMemo1,row.currentMemo2,row.plannedMemo2,row.currentOrderMemo,row.plannedOrderMemo,row.dbMatchStatus,row.clearOffReason,row.itemKeyMatchMethod,row.sellpiaItemNoOriginal,row.sellpiaItemNoMatchKey].map(csvValue).join(','));
+        lines.push([issueReasonForRow(r),row.invNo,row.ordNo,row.itemNo,row.status,row.liveWriteAllowed,row.currentStateWarning,row.needsChange,row.reason,row.csvBlockedPlan,row.currentHold,row.plannedHold,row.currentSellpiaHold,row.systemShippingHold,row.systemShippingHoldSource,row.systemShippingHoldKnown,row.sellpiaShippingHoldScraped,row.sellpiaShippingHoldScrapedAt,row.holdOffAllowed,row.holdOffBlockReason,row.syncAction,row.syncReason,row.currentMemo1,row.plannedMemo1,row.currentMemo2,row.plannedMemo2,row.currentOrderMemo,row.plannedOrderMemo,row.dbMatchStatus,row.clearOffReason,row.itemKeyMatchMethod,row.sellpiaItemNoOriginal,row.sellpiaItemNoMatchKey].map(csvValue).join(','));
       }
       const blob = new Blob(['\ufeff' + lines.join('\n')], { type: 'text/csv;charset=utf-8' });
       const url = URL.createObjectURL(blob);
