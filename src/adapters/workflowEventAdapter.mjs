@@ -279,7 +279,36 @@ function buildLegacyShippingHoldSignals({ pickingRows = [] } = {}) {
     .filter((row) => row.order_group_no);
 }
 
-function annotateShippingHoldState({ viewModel, workflowState, shippingHoldSignals = [] } = {}) {
+function normalizeScrapedShippingHoldStatus(value) {
+  const status = firstText(value).toUpperCase();
+  return status === "ON" || status === "OFF" || status === "UNKNOWN" ? status : "";
+}
+
+function buildScrapedShippingHoldBaselines({ orders = [] } = {}) {
+  const baselines = new Map();
+  for (const order of orders || []) {
+    const groupNo = orderGroupNo(order);
+    if (!groupNo) continue;
+    const status = normalizeScrapedShippingHoldStatus(order.sellpia_shipping_hold_status);
+    if (!status) continue;
+
+    const current = baselines.get(groupNo);
+    const next = {
+      order_group_no: groupNo,
+      invoice_no: invoiceNo(order),
+      status,
+      raw: firstText(order.sellpia_shipping_hold_raw),
+      scraped_at: firstText(order.sellpia_shipping_hold_scraped_at, order.scraped_at),
+    };
+
+    if (!current || current.status !== "ON") {
+      baselines.set(groupNo, current?.status === "ON" ? current : next);
+    }
+  }
+  return baselines;
+}
+
+function annotateShippingHoldState({ viewModel, workflowState, shippingHoldSignals = [], scrapedShippingHoldBaselines = new Map() } = {}) {
   const signalsByGroup = new Map();
   for (const signal of shippingHoldSignals) {
     const groupNo = orderGroupNo(signal);
@@ -296,11 +325,24 @@ function annotateShippingHoldState({ viewModel, workflowState, shippingHoldSigna
     }
 
     const signals = signalsByGroup.get(invoice.orderGroupNo) || [];
+    const scrapeBaseline = scrapedShippingHoldBaselines.get(invoice.orderGroupNo);
     invoiceState.shippingHoldSignals = signals;
-    if (!invoiceState.systemShippingHoldKnown && signals.length) {
+    invoiceState.scrapedShippingHold = scrapeBaseline || null;
+    if (!invoiceState.systemShippingHoldKnown && scrapeBaseline?.status === "ON") {
+      invoiceState.systemShippingHoldKnown = true;
+      invoiceState.systemShippingHold = true;
+      invoiceState.systemShippingHoldStatus = "ON";
+      invoiceState.systemShippingHoldSource = "scrape_on";
+      invoiceState.systemShippingHoldReason = "sellpia_shipping_hold_scraped_on";
+      invoiceState.hold = true;
+      invoiceState.shippingHoldNeedsOn = false;
+      invoiceState.shippingHoldUnknown = false;
+    } else if (!invoiceState.systemShippingHoldKnown && signals.length) {
       invoiceState.shippingHoldNeedsOn = true;
       invoiceState.shippingHoldUnknown = true;
       invoiceState.systemShippingHoldStatus = "NEEDS_ON";
+      invoiceState.systemShippingHoldSource = "memo_or_legacy_signal";
+      invoiceState.systemShippingHoldReason = "shipping_hold_on_needed";
       invoiceState.hold = false;
       invoiceState.systemShippingHold = false;
     } else if (invoiceState.systemShippingHoldKnown) {
@@ -308,9 +350,29 @@ function annotateShippingHoldState({ viewModel, workflowState, shippingHoldSigna
       invoiceState.shippingHoldNeedsOn = false;
       invoiceState.shippingHoldUnknown = false;
       invoiceState.hold = invoiceState.systemShippingHold;
+    } else if (scrapeBaseline?.status === "OFF") {
+      invoiceState.systemShippingHoldKnown = false;
+      invoiceState.systemShippingHoldStatus = "SCRAPE_OFF";
+      invoiceState.systemShippingHoldSource = "scrape_off";
+      invoiceState.systemShippingHoldReason = "sellpia_shipping_hold_scraped_off_not_release";
+      invoiceState.hold = false;
+      invoiceState.systemShippingHold = false;
+      invoiceState.shippingHoldNeedsOn = false;
+      invoiceState.shippingHoldUnknown = false;
+    } else if (scrapeBaseline?.status === "UNKNOWN") {
+      invoiceState.systemShippingHoldKnown = false;
+      invoiceState.systemShippingHoldStatus = "SCRAPE_UNKNOWN";
+      invoiceState.systemShippingHoldSource = "scrape_unknown";
+      invoiceState.systemShippingHoldReason = "sellpia_shipping_hold_scraped_unknown";
+      invoiceState.hold = false;
+      invoiceState.systemShippingHold = false;
+      invoiceState.shippingHoldNeedsOn = false;
+      invoiceState.shippingHoldUnknown = true;
     } else {
       invoiceState.systemShippingHoldKnown = true;
       invoiceState.systemShippingHoldStatus = "OFF";
+      invoiceState.systemShippingHoldSource = "default_off";
+      invoiceState.systemShippingHoldReason = "no_hold_signal";
       invoiceState.hold = false;
       invoiceState.systemShippingHold = false;
     }
@@ -322,6 +384,7 @@ export function buildWorkflowQueues({ orders = [], orderItems = [], pickingRows 
   const mergedItemEvents = [...syntheticEvents.itemEvents, ...itemEvents];
   const mergedInvoiceEvents = [...syntheticEvents.invoiceEvents, ...invoiceEvents];
   const shippingHoldSignals = [...(syntheticEvents.shippingHoldSignals || []), ...buildLegacyShippingHoldSignals({ pickingRows })];
+  const scrapedShippingHoldBaselines = buildScrapedShippingHoldBaselines({ orders });
   const viewModel = buildPickingViewModel({
     orders,
     orderItems,
@@ -329,13 +392,14 @@ export function buildWorkflowQueues({ orders = [], orderItems = [], pickingRows 
     shortageRows,
   });
   const workflowState = buildWorkflowState({ itemEvents: mergedItemEvents, invoiceEvents: mergedInvoiceEvents });
-  annotateShippingHoldState({ viewModel, workflowState, shippingHoldSignals });
+  annotateShippingHoldState({ viewModel, workflowState, shippingHoldSignals, scrapedShippingHoldBaselines });
 
   return {
     viewModel,
     workflowState,
     syntheticEvents,
     shippingHoldSignals,
+    scrapedShippingHoldBaselines,
     shortageItems: openShortageItems(viewModel, workflowState),
     inspectionInvoices: repickedInvoicesForInspection(viewModel, workflowState),
     inspectionCompletedInvoices: completedInvoicesForInspection(viewModel, workflowState),

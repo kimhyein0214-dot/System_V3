@@ -131,6 +131,8 @@ export function reduceInvoiceEvents(events = []) {
     systemShippingHold: false,
     systemShippingHoldKnown: false,
     systemShippingHoldStatus: "OFF",
+    systemShippingHoldSource: "",
+    systemShippingHoldReason: "",
     shippingHoldNeedsOn: false,
     shippingHoldUnknown: false,
     shippingHoldSignals: [],
@@ -153,6 +155,8 @@ export function reduceInvoiceEvents(events = []) {
         state.systemShippingHold = true;
         state.systemShippingHoldKnown = true;
         state.systemShippingHoldStatus = "ON";
+        state.systemShippingHoldSource = "event_hold_created";
+        state.systemShippingHoldReason = "explicit_hold_created";
         state.shippingHoldNeedsOn = false;
         state.shippingHoldUnknown = false;
         break;
@@ -161,6 +165,8 @@ export function reduceInvoiceEvents(events = []) {
         state.systemShippingHold = false;
         state.systemShippingHoldKnown = true;
         state.systemShippingHoldStatus = "OFF";
+        state.systemShippingHoldSource = "event_hold_released";
+        state.systemShippingHoldReason = "explicit_hold_released";
         state.shippingHoldNeedsOn = false;
         state.shippingHoldUnknown = false;
         break;
