@@ -1,0 +1,2171 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Sellpia Stockmatch Memo Updater 0709-관리메모2수정</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { background:#141414; color:#f0f0f0; font-family:Arial,'Noto Sans KR',sans-serif; min-height:100vh; display:flex; align-items:center; justify-content:center; padding:24px; }
+  .card { width:680px; max-width:100%; background:#1e1e1e; border-radius:12px; padding:28px; box-shadow:0 20px 60px rgba(0,0,0,.55); }
+  h1 { font-size:19px; margin-bottom:6px; }
+  .sub { color:#9ca3af; font-size:12px; margin-bottom:18px; }
+  .note { background:#101820; border:1px solid #2f4f6f; border-radius:8px; padding:12px 14px; color:#b9d6f2; font-size:12px; line-height:1.7; margin-bottom:18px; }
+  .btn { display:inline-block; padding:12px 18px; border-radius:8px; background:#2563eb; color:#fff; text-decoration:none; font-weight:800; }
+  pre { margin-top:14px; max-height:180px; overflow:auto; background:#0d0d0d; color:#9cdcfe; border-radius:8px; padding:12px; white-space:pre-wrap; word-break:break-all; font-size:11px; }
+  button { margin-top:10px; padding:8px 14px; border-radius:7px; border:1px solid #444; background:#2a2a2a; color:#ddd; cursor:pointer; }
+</style>
+</head>
+<body>
+<div class="card">
+  <h1>Sellpia Stockmatch Memo Updater 0709-관리메모2수정</h1>
+  <div class="sub">재고매칭(order_stockmatch.html) 전용 / TEST MODE 기본 ON</div>
+  <div class="note">
+    <b>TEST MODE (NO WRITE)</b><br>
+    셀피아 화면에서는 검색, 대상 행 찾기, 상세 열기, 현재값 읽기만 수행합니다.<br>
+    관리메모/관리메모2/주문메모 저장, 배송보류 설정/해제, DB PATCH는 테스트모드에서 실행하지 않습니다.<br>
+    결과 CSV에는 현재 셀피아 값, 시스템 예정값, 변경 필요 여부, 매칭 실패/상세없음 예외, 상태 사유가 들어갑니다.
+  </div>
+  <a id="bookmarklet-link" class="btn" href="#">sellpia_stockmatch_memo_0709_memo2</a>
+  <pre id="code-display">loading...</pre>
+  <button id="copy-btn">코드 복사</button>
+</div>
+
+<script id="bookmarklet-source" type="text/plain">
+(function(){
+  (async function StockmatchMemoUpdater0709Memo2Fix(){
+    const CONFIG = {
+      supabaseUrl: 'https://vgxocngpykhlkosiaeew.supabase.co',
+      supabaseKey: 'sb_publishable_XVnKGJo66GZiYTq5Ivu8dA_SjBVvX0g',
+      batchSize: 80,
+      taskBatchSize: 50,
+      popupDelay: 900,
+      saveDelay: 900,
+      confirmDelay: 800
+    };
+    const SB_URL = CONFIG.supabaseUrl;
+    const SB_KEY = CONFIG.supabaseKey;
+    const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
+    const normal = value => String(value == null ? '' : value).replace(/\s+/g, ' ').trim();
+    const targetToken = value => {
+      const text = normal(value);
+      const match = text.match(/\d{6,}/);
+      return match ? match[0] : text;
+    };
+    const today = () => new Date().toISOString().slice(0, 10);
+    const $ = id => document.getElementById(id);
+    const results = [];
+    let stopped = false;
+    let lastBuildMeta = null;
+    let lastDryRunSummary = null;
+    let csvMode = 'test';
+
+    if (!/order_stockmatch\.html/i.test(location.pathname)) {
+      alert('재고매칭 탭(order_stockmatch.html)에서 실행해주세요.');
+      return;
+    }
+    if (!window.grid || !window.grid.getData) {
+      alert('재고매칭 grid 객체를 찾지 못했습니다.');
+      return;
+    }
+    if (document.getElementById('smu0707-overlay')) {
+      alert('이미 실행 중입니다.');
+      return;
+    }
+
+    async function dbRequest(path, options = {}) {
+      const res = await fetch(SB_URL + '/rest/v1/' + path, {
+        method: options.method || 'GET',
+        headers: {
+          apikey: SB_KEY,
+          Authorization: 'Bearer ' + SB_KEY,
+          'Content-Type': 'application/json',
+          Range: '0-9999',
+          ...(options.headers || {})
+        },
+        body: options.body === undefined ? undefined : JSON.stringify(options.body)
+      });
+      if (!res.ok) throw new Error('DB read failed [' + path + ']: ' + await res.text());
+      if (res.status === 204) return null;
+      const text = await res.text();
+      return text ? JSON.parse(text) : null;
+    }
+
+    async function dbRequestIn(table, column, values, select) {
+      const ids = [...new Set((values || []).map(normal).filter(Boolean))];
+      const out = [];
+      for (let i = 0; i < ids.length; i += CONFIG.batchSize) {
+        const batch = ids.slice(i, i + CONFIG.batchSize).map(encodeURIComponent).join(',');
+        const rows = await dbRequest(table + '?' + column + '=in.(' + batch + ')&select=' + encodeURIComponent(select));
+        out.push(...(rows || []));
+      }
+      return out;
+    }
+
+    async function safeDbRequestIn(table, column, values, select) {
+      try {
+        return await dbRequestIn(table, column, values, select);
+      } catch (err) {
+        console.warn('[SMU0707] optional DB read failed:', table, err);
+        if (lastBuildMeta) {
+          lastBuildMeta.optionalDbWarnings = lastBuildMeta.optionalDbWarnings || [];
+          lastBuildMeta.optionalDbWarnings.push(table + ': ' + (err && err.message ? err.message : err));
+        }
+        return [];
+      }
+    }
+
+    function readPageDateInput(id) {
+      const el = document.getElementById(id);
+      const value = el && normal(el.value);
+      return /^\d{4}-\d{2}-\d{2}$/.test(value) ? value : '';
+    }
+
+    function defaultStartDate() {
+      return readPageDateInput('search_date_s') || today();
+    }
+
+    function defaultEndDate() {
+      const start = defaultStartDate();
+      const end = readPageDateInput('search_date_e') || start;
+      return end < start ? start : end;
+    }
+
+    function addDays(date, days) {
+      const m = String(date || '').match(/^(\d{4})-(\d{2})-(\d{2})$/);
+      if (!m) throw new Error('Invalid date: ' + date);
+      const d = new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3]) + days);
+      const yyyy = d.getFullYear();
+      const mm = String(d.getMonth() + 1).padStart(2, '0');
+      const dd = String(d.getDate()).padStart(2, '0');
+      return yyyy + '-' + mm + '-' + dd;
+    }
+
+    function compactDate(date) {
+      return String(date || '').replace(/-/g, '');
+    }
+
+    function dateRange(startDate, endDate) {
+      const start = startDate || today();
+      const end = endDate || start;
+      if (end < start) throw new Error('End date is earlier than start date.');
+      return { d0: compactDate(start), d1: compactDate(addDays(end, 1)), label: start + '~' + end };
+    }
+
+    function gridItems() {
+      const data = window.grid.getData();
+      const len = data.getLength();
+      const rows = [];
+      for (let i = 0; i < len; i++) rows.push({ idx: i, item: data.getItem(i) || {} });
+      return rows;
+    }
+
+    async function ensureAllGridRowsLoaded() {
+      const before = gridItems().length;
+      const pagerEls = [...document.querySelectorAll('.slick-pager a,.slick-pager button,.slick-pager span')];
+      const allBtn = pagerEls.find(el => {
+        const text = normal(el.innerText || el.textContent);
+        return text === '모두' || /^all$/i.test(text);
+      });
+      if (allBtn && !allBtn.classList.contains('ui-state-disabled')) {
+        allBtn.click();
+        await sleep(1000);
+      }
+      const after = gridItems().length;
+      return { before, after, clickedAll: !!allBtn && after >= before };
+    }
+
+    function rowOrdNo(row) {
+      return normal(row.c_ord_no || row.ord_no || row.order_no);
+    }
+
+    function rowInvNo(row) {
+      return normal(row.c_delinum || row.inv_no || row.dnum);
+    }
+
+    function rowItemNo(row, index) {
+      return normal(row.sellpia_order_item_no || row.c_order_item_no || row.c_ord_item_no || row.c_item_no || row.item_no || row.c_prv_item_no || (index + 1));
+    }
+
+    function rowItemNoStrict(row) {
+      return normal(row.sellpia_order_item_no || row.c_order_item_no || row.c_ord_item_no || row.c_item_no || row.item_no);
+    }
+
+    function rowsForTask(task) {
+      return gridItems().filter(({ item }) => {
+        const ord = rowOrdNo(item);
+        const inv = rowInvNo(item);
+        return (task.ordNo && ord === task.ordNo) || (task.invNo && inv === task.invNo);
+      });
+    }
+
+    const DETAIL_FIELD_SELECTOR = '#dt_shop_memo,[name="dt_shop_memo"],#dt_shop_memo2,[name="dt_shop_memo2"],#dt_ord_memo,#dt_order_memo,[name="dt_ord_memo"]';
+
+    function isVisible(el) {
+      return !!(el && (el.offsetParent || el.getClientRects().length));
+    }
+
+    function visibleDialogs() {
+      return [...document.querySelectorAll('.ui-dialog')].filter(isVisible);
+    }
+
+    function detailReadyRoot(root) {
+      if (!root) return null;
+      const field = root.querySelector(DETAIL_FIELD_SELECTOR);
+      return isVisible(field) ? root : null;
+    }
+
+    function rootKind(root) {
+      if (!root) return 'none';
+      if (root === document) return 'document';
+      if (root.classList && root.classList.contains('ui-dialog')) return 'ui-dialog';
+      if (root.matches && root.matches('.modal')) return 'modal';
+      if (root.matches && root.matches('[role="dialog"]')) return 'role-dialog';
+      return (root.tagName || 'node').toLowerCase();
+    }
+
+    function currentDetailRoot() {
+      for (const root of visibleDialogs()) {
+        const ready = detailReadyRoot(root);
+        if (ready) return ready;
+      }
+      const field = document.querySelector(DETAIL_FIELD_SELECTOR);
+      if (!isVisible(field)) return null;
+      const dialog = field.closest('.ui-dialog,.modal,[role="dialog"]');
+      if (dialog && isVisible(dialog)) return dialog;
+      return field.closest('form,table') || document;
+    }
+
+    function openDialogRoot() {
+      return currentDetailRoot();
+    }
+
+    async function waitForDetailReady(maxMs) {
+      const deadline = perfNow() + (maxMs || CONFIG.popupDelay || 900);
+      while (perfNow() < deadline) {
+        const root = currentDetailRoot();
+        if (root) return root;
+        await sleep(80);
+      }
+      return currentDetailRoot();
+    }
+
+    function detailStillOpen(root) {
+      if (!root) return !!currentDetailRoot();
+      if (root !== document && !document.documentElement.contains(root)) return false;
+      if (root !== document && !isVisible(root)) return false;
+      return !!detailReadyRoot(root);
+    }
+
+    async function waitForDetailClosed(root, maxMs) {
+      const deadline = perfNow() + (maxMs || 1200);
+      while (perfNow() < deadline) {
+        if (!detailStillOpen(root)) return true;
+        await sleep(80);
+      }
+      return !detailStillOpen(root);
+    }
+
+    function detailCloseButton(root) {
+      const local = root && root !== document && root.querySelector && root.querySelector('.ui-dialog-titlebar-close');
+      if (isVisible(local)) return local;
+      for (const dlg of visibleDialogs()) {
+        if (!detailReadyRoot(dlg)) continue;
+        const btn = dlg.querySelector('.ui-dialog-titlebar-close');
+        if (isVisible(btn)) return btn;
+      }
+      for (const btn of [...document.querySelectorAll('.ui-dialog-titlebar-close')]) {
+        if (isVisible(btn)) return btn;
+      }
+      return null;
+    }
+
+    async function openDetail(rowIdx) {
+      window.grid.scrollRowIntoView(rowIdx);
+      await sleep(180);
+      window.grid.setActiveCell(rowIdx, 0);
+      if (window.grid.onDblClick && window.jQuery) {
+        window.grid.onDblClick.notify({ row: rowIdx, cell: 0 }, new jQuery.Event('dblclick'), window.grid);
+      }
+      let root = await waitForDetailReady(Math.max(CONFIG.popupDelay || 900, 1200));
+      if (root) return { root, fallback: false, rootKind: rootKind(root), ready: true };
+      await sleep(300);
+      root = await waitForDetailReady(1800);
+      return { root, fallback: true, rootKind: rootKind(root), ready: !!root };
+    }
+
+    async function closeDetail() {
+      const dlg = openDialogRoot();
+      if (!dlg) return { fallback: false, rootKind: 'none', button: false };
+      const btn = detailCloseButton(dlg);
+      if (btn) btn.click();
+      const closed = await waitForDetailClosed(dlg, 1200);
+      if (closed) return { fallback: false, rootKind: rootKind(dlg), button: !!btn };
+      await sleep(300);
+      return { fallback: true, rootKind: rootKind(dlg), button: !!btn };
+    }
+
+    function fieldValue(root, selectors) {
+      for (const selector of selectors) {
+        const el = root && root.querySelector(selector);
+        if (!el) continue;
+        if ('value' in el) return normal(el.value);
+        return normal(el.textContent);
+      }
+      return '';
+    }
+
+    function holdCheckbox(root) {
+      if (!root) return null;
+      const direct = root.querySelector('#dt_deli_delay,[name="dt_deli_delay"],#o_deli_delay,[name="o_deli_delay"],#deli_delay,[name="deli_delay"],input[type="checkbox"][id*="deli"][id*="delay"],input[type="checkbox"][name*="deli"][name*="delay"]');
+      if (direct) return direct;
+      const badLabel = /송장번호|선매칭|부분배송불가|해제일|주문메모|관리메모/;
+      const siblingText = (el, dir) => {
+        let node = dir === 'next' ? el.nextSibling : el.previousSibling;
+        let out = '';
+        for (let i = 0; node && i < 3; i++) {
+          if (node.nodeType === 1 && node.matches && node.matches('input,button,select,textarea')) break;
+          out += ' ' + normal(node.textContent || '');
+          node = dir === 'next' ? node.nextSibling : node.previousSibling;
+        }
+        return normal(out);
+      };
+      for (const cb of [...root.querySelectorAll('input[type="checkbox"]')]) {
+        const label = normal((cb.closest('label') || {}).textContent || '');
+        if (/배송보류/.test(label) && !badLabel.test(label.replace(/배송보류/g, ''))) return cb;
+        const next = siblingText(cb, 'next');
+        if (/배송보류/.test(next) && !badLabel.test(next.replace(/배송보류/g, ''))) return cb;
+      }
+      let best = null;
+      let bestScore = 0;
+      for (const cb of [...root.querySelectorAll('input[type="checkbox"]')]) {
+        const cell = normal((cb.closest('td,th,label') || {}).textContent || '');
+        if (!/배송보류/.test(cell) || badLabel.test(cell.replace(/배송보류/g, ''))) continue;
+        const score = cell.length <= 20 ? 100 : 60;
+        if (score > bestScore) {
+          best = cb;
+          bestScore = score;
+        }
+      }
+      return bestScore >= 60 ? best : null;
+    }
+
+    function plannedHoldBool(rowResult) {
+      return rowResult && rowResult.plannedHold === 'ON';
+    }
+
+    function systemShippingHoldForTask(task) {
+      if (!task) return 'UNKNOWN';
+      if (task.systemShippingHold === 'ON' || task.systemShippingHold === 'OFF') return task.systemShippingHold;
+      return 'UNKNOWN';
+    }
+
+    function holdSyncAction(currentSellpiaHold, systemShippingHold) {
+      if (systemShippingHold !== 'ON' && systemShippingHold !== 'OFF') return 'UNKNOWN';
+      if (currentSellpiaHold !== 'ON' && currentSellpiaHold !== 'OFF') return 'UNKNOWN';
+      if (currentSellpiaHold === systemShippingHold) return 'NONE';
+      return systemShippingHold;
+    }
+
+    function holdSyncReason(task, syncAction) {
+      if (syncAction === 'UNKNOWN') return task?.shippingHoldSyncReason || 'system_shipping_hold_unknown';
+      if (syncAction === 'NONE') return 'system_and_sellpia_hold_match';
+      return task?.shippingHoldSyncReason || 'system_shipping_hold_current_diff';
+    }
+
+    function workflowEventTime(row) {
+      return new Date(row?.event_at || row?.created_at || 0).getTime() || 0;
+    }
+
+    function workflowLocalDateKey(value) {
+      if (!value) return '';
+      const date = new Date(value);
+      if (!Number.isFinite(date.getTime())) return '';
+      const local = new Date(date.getTime() - date.getTimezoneOffset() * 60000);
+      return local.toISOString().slice(0, 10);
+    }
+
+    function orderScrapeCutoffByOrdNo(orderRows) {
+      const rowsByOrd = new Map();
+      for (const row of orderRows || []) {
+        const ord = normal(row?.ord_no || row?.order_group_no);
+        if (!ord) continue;
+        if (!rowsByOrd.has(ord)) rowsByOrd.set(ord, []);
+        rowsByOrd.get(ord).push(row);
+      }
+
+      const cutoffs = new Map();
+      for (const [ord, rows] of rowsByOrd.entries()) {
+        const latestDate = [...new Set(rows.map(row => workflowLocalDateKey(row?.scraped_at)).filter(Boolean))].sort().pop();
+        const latestRows = latestDate ? rows.filter(row => workflowLocalDateKey(row?.scraped_at) === latestDate) : rows;
+        const times = latestRows.map(row => new Date(row?.scraped_at || 0).getTime()).filter(Number.isFinite);
+        if (times.length) cutoffs.set(ord, Math.min(...times));
+      }
+      return cutoffs;
+    }
+
+    function workflowEventsAfterOrderScrape(rows, orderRows) {
+      const cutoffs = orderScrapeCutoffByOrdNo(orderRows);
+      if (!cutoffs.size) return rows || [];
+      return (rows || []).filter(row => {
+        const ord = normal(row?.order_group_no || row?.ord_no);
+        const cutoff = cutoffs.get(ord);
+        if (!cutoff) return true;
+        return workflowEventTime(row) >= cutoff;
+      });
+    }
+
+    function memo2ApplyAllCheckbox(root) {
+      if (!root) return null;
+      const direct = root.querySelector('#o_shop_memo2_mode_all,[name="o_shop_memo2_mode_all"]');
+      if (direct) return direct;
+      const el = root.querySelector('#dt_shop_memo2,[name="dt_shop_memo2"]');
+      const row = el && el.closest('tr');
+      return row ? row.querySelector('input[type="checkbox"]') : null;
+    }
+
+    function samePopupItemNo(left, right) {
+      const a = normal(left);
+      const b = normal(right);
+      if (!a || !b) return false;
+      if (a === b) return true;
+      return a.replace(/[^\w]/g, '') === b.replace(/[^\w]/g, '');
+    }
+
+    function popupItemNo(root) {
+      const direct = fieldValue(root, [
+        '#dt_order_item_no',
+        '[name="dt_order_item_no"]',
+        '#dt_ord_item_no',
+        '[name="dt_ord_item_no"]',
+        '#dt_item_no',
+        '[name="dt_item_no"]'
+      ]);
+      if (direct) return direct;
+      for (const label of [...root.querySelectorAll('th,td,label,span')]) {
+        const text = elementText(label);
+        if (text.length > 60 || !/주문품목\s*(No|번호)|품목\s*No/.test(text)) continue;
+        const inlineValue = normal(text.replace(/주문품목\s*(No|번호)|품목\s*No|[:：]/g, ''));
+        if (inlineValue) return inlineValue;
+        const row = label.closest('tr');
+        const input = row && row.querySelector('input:not([type="checkbox"]),textarea,select');
+        if (input && normal(input.value)) return normal(input.value);
+        const next = label.nextElementSibling;
+        const nextText = elementText(next);
+        if (nextText && nextText.length <= 60) return nextText;
+      }
+      return '';
+    }
+
+    function assertPopupItemMatches(root, rowResult) {
+      const expected = normal(rowResult.itemNoForVerify);
+      if (!expected) throw new Error('저장 전 주문품목No를 확인할 수 없습니다.');
+      const actual = popupItemNo(root);
+      if (!actual) throw new Error('상세 팝업에서 주문품목No를 찾지 못했습니다.');
+      if (!samePopupItemNo(actual, expected)) {
+        throw new Error('상세 팝업 주문품목No 불일치: expected=' + expected + ', actual=' + actual);
+      }
+    }
+
+    function elementText(el) {
+      return normal((el && (el.innerText || el.textContent || el.value)) || '');
+    }
+
+    function confirmButtons() {
+      const dialogSelector = '.ui-dialog,.jqibox,.jqi,.jqistate,.sweet-alert,.swal2-container,.jconfirm,.bootbox,.modal,[role="dialog"],[id^="jqi"]';
+      const candidates = [...document.querySelectorAll('button,input[type="button"],input[type="submit"],a,[role="button"],.ui-button')].filter(btn => {
+        if (!btn.offsetParent && !btn.getClientRects().length) return false;
+        const text = elementText(btn).replace(/\s+/g, '').trim();
+        return text === '예' || text === '확인' || text === 'OK' || text === 'Ok' || text === 'ok';
+      });
+      if (!candidates.length) return [];
+      const dialogButton = candidates.find(item => !!item.closest(dialogSelector));
+      return dialogButton ? [dialogButton, ...candidates.filter(item => item !== dialogButton)] : candidates;
+    }
+
+    async function clickConfirmDialogsFast(label, maxMs) {
+      const deadline = perfNow() + (maxMs || 1800);
+      let clicked = 0;
+      while (perfNow() < deadline) {
+        const buttons = confirmButtons();
+        if (buttons.length) {
+          try {
+            buttons[0].click();
+            clicked++;
+          } catch (_) {
+            break;
+          }
+          await sleep(150);
+          if (!confirmButtons().length) break;
+        }
+        await sleep(80);
+      }
+      return clicked;
+    }
+
+    async function clickConfirmDialogs(label, maxCount) {
+      let clicked = 0;
+      for (let i = 0; i < (maxCount || 6); i++) {
+        await sleep(250);
+        const candidates = confirmButtons();
+        if (!candidates.length) break;
+        try {
+          candidates[0].click();
+          clicked++;
+        } catch (_) {
+          break;
+        }
+        await sleep(CONFIG.confirmDelay || 800);
+      }
+      return clicked;
+    }
+
+    function setInputValue(el, value) {
+      if (!el) return;
+      if (window.jQuery) {
+        try {
+          window.jQuery(el).val(value).trigger('input').trigger('change');
+          return;
+        } catch (_) {}
+      }
+      el.value = value;
+      el.dispatchEvent(new Event('input', { bubbles: true }));
+      el.dispatchEvent(new Event('change', { bubbles: true }));
+    }
+
+    function readCurrentValues(root, row) {
+      const cb = holdCheckbox(root);
+      return {
+        memo1: fieldValue(root, ['#dt_shop_memo', '[name="dt_shop_memo"]']) || normal(row.c_shop_memo || row.o_shop_memo || row.shop_memo),
+        memo2: fieldValue(root, ['#dt_shop_memo2', '[name="dt_shop_memo2"]']) || normal(row.c_shop_memo2 || row.o_shop_memo2 || row.shop_memo2),
+        orderMemo: fieldValue(root, ['#dt_ord_memo', '#dt_order_memo', '[name="dt_ord_memo"]']) || normal(row.c_ord_memo || row.order_memo || row.o_memo),
+        hold: cb ? !!cb.checked : /배송보류/.test(normal(row.c_bflag_status_h || row.c_result || row.o_status))
+      };
+    }
+
+    function gridValuesForKeys(row, keys) {
+      const values = [];
+      for (const key of keys) {
+        if (Object.prototype.hasOwnProperty.call(row, key)) values.push(normal(row[key]));
+      }
+      return {
+        hasKey: values.length > 0,
+        value: values.find(value => !!value) || '',
+        allBlank: values.length > 0 && values.every(value => !value),
+        values
+      };
+    }
+
+    function gridCurrentValues(row) {
+      const memo1 = gridValuesForKeys(row, ['c_shop_memo', 'o_shop_memo', 'shop_memo', 'dt_shop_memo']);
+      const memo2 = gridValuesForKeys(row, ['c_shop_memo2', 'o_shop_memo2', 'shop_memo2', 'dt_shop_memo2']);
+      const orderMemo = gridValuesForKeys(row, ['c_ord_memo', 'c_order_memo', 'o_memo', 'order_memo', 'ord_memo']);
+      const hold = gridValuesForKeys(row, ['c_bflag_status_h', 'c_deli_delay', 'o_deli_delay', 'deli_delay', 'dt_deli_delay', 'delivery_hold', 'hold']);
+      const holdOn = hold.values.some(value => {
+        const text = normal(value);
+        if (!text) return false;
+        if (/배송보류/.test(text) && !/해제|아님|없음|미보류/.test(text)) return true;
+        return /^(1|Y|YES|ON|TRUE|CHECKED)$/i.test(text);
+      });
+      const holdUnknown = hold.values.some(value => {
+        const text = normal(value);
+        if (!text || holdOn) return false;
+        if (/^(0|N|NO|OFF|FALSE|UNCHECKED)$/i.test(text)) return false;
+        if (/^(해제|미보류|없음|일반|정상)$/.test(text)) return false;
+        return true;
+      });
+      return {
+        memo1: memo1.value,
+        memo2: memo2.value,
+        orderMemo: orderMemo.value,
+        hold: hold.hasKey && !holdUnknown ? (holdOn ? 'ON' : 'OFF') : '',
+        memo1Known: memo1.hasKey,
+        memo2Known: memo2.hasKey,
+        orderMemoKnown: orderMemo.hasKey,
+        holdKnown: hold.hasKey && !holdUnknown
+      };
+    }
+
+    function gridAlreadyClear(row) {
+      const current = gridCurrentValues(row);
+      return current.memo1Known &&
+        current.memo2Known &&
+        current.orderMemoKnown &&
+        current.holdKnown &&
+        !normal(current.memo1) &&
+        !normal(current.memo2) &&
+        !normal(current.orderMemo) &&
+        current.hold === 'OFF';
+    }
+
+    function canGridFastSkip(task, row) {
+      return !!(task &&
+        task.clear === true &&
+        /검품완료/.test(normal(task.reason)) &&
+        gridAlreadyClear(row));
+    }
+
+    function isNextShipStatus(status) {
+      return normal(status) === '발송대기';
+    }
+
+    function isSellerOrderMemo(value) {
+      return /^판매처/.test(normal(value));
+    }
+
+    function normalizeItemKeyForMatch(value) {
+      return normal(value).replace(/^\d+_/, '');
+    }
+
+    function itemIdentityValues(row) {
+      return [row.item_no, row.sellpia_order_item_no, row.sellpia_item_no, row.order_item_no]
+        .map(normal)
+        .filter(Boolean);
+    }
+
+    function buildItemKeyIndex(rows, ordNo) {
+      const exact = new Map();
+      const normalized = new Map();
+      const addNormalized = (norm, full) => {
+        if (!norm) return;
+        const key = ordNo ? ordNo + '::' + norm : norm;
+        if (!normalized.has(key)) normalized.set(key, new Set());
+        normalized.get(key).add(full);
+      };
+      for (const row of rows || []) {
+        for (const full of itemIdentityValues(row)) {
+          exact.set(full, row);
+          if (ordNo) exact.set(ordNo + '::' + full, row);
+          addNormalized(normalizeItemKeyForMatch(full), full);
+        }
+      }
+      return { exact, normalized };
+    }
+
+    function addItemAlias(target, row, ordNo, value, overwrite) {
+      const val = normal(value);
+      if (!val) return;
+      for (const full of itemIdentityValues(row)) {
+        const norm = normalizeItemKeyForMatch(full);
+        [full, norm, ordNo && ordNo + '::' + full, ordNo && ordNo + '::' + norm].filter(Boolean).forEach(key => {
+          if (overwrite || !target.has(key)) target.set(key, val);
+        });
+      }
+    }
+
+    function addItemAliasToSet(target, row, ordNo) {
+      for (const full of itemIdentityValues(row)) {
+        const norm = normalizeItemKeyForMatch(full);
+        [full, norm, ordNo && ordNo + '::' + full, ordNo && ordNo + '::' + norm].filter(Boolean).forEach(key => target.add(key));
+      }
+    }
+
+    function hasItemAlias(target, row, ordNo) {
+      return itemIdentityValues(row).some(full => {
+        const norm = normalizeItemKeyForMatch(full);
+        return [full, norm, ordNo && ordNo + '::' + full, ordNo && ordNo + '::' + norm].filter(Boolean).some(key => target.has(key));
+      });
+    }
+
+    function gridItemMatchInfo(task, row, index) {
+      const original = rowItemNo(row, index);
+      const strict = rowItemNoStrict(row);
+      const candidates = [strict, original, normal(row.c_prv_item_no)].filter(Boolean);
+      const indexMap = task.itemKeyIndex || { exact: new Map(), normalized: new Map() };
+      for (const candidate of candidates) {
+        const scoped = task.ordNo ? task.ordNo + '::' + candidate : candidate;
+        if (indexMap.exact.has(scoped) || indexMap.exact.has(candidate)) {
+          return {
+            original,
+            matchKey: candidate,
+            method: scoped === candidate ? 'exact' : 'exact_order_scoped',
+            failed: false,
+          };
+        }
+      }
+      for (const candidate of candidates) {
+        const matchKey = normalizeItemKeyForMatch(candidate);
+        const scoped = task.ordNo ? task.ordNo + '::' + matchKey : matchKey;
+        const fulls = indexMap.normalized.get(scoped) || indexMap.normalized.get(matchKey);
+        if (fulls && fulls.size === 1) {
+          return {
+            original,
+            matchKey,
+            method: 'prefix_stripped_unique',
+            failed: false,
+          };
+        }
+        if (fulls && fulls.size > 1) {
+          return {
+            original,
+            matchKey,
+            method: 'failed',
+            failed: true,
+            warning: 'item_key_prefix_collision',
+          };
+        }
+      }
+      return {
+        original,
+        matchKey: normalizeItemKeyForMatch(original),
+        method: 'failed',
+        failed: true,
+        warning: 'item_key_match_failed',
+      };
+    }
+
+    function gridItemAliasKeys(task, row, index) {
+      const match = gridItemMatchInfo(task, row, index);
+      const rawKeys = [
+        match.original,
+        match.matchKey,
+        rowItemNo(row, index),
+        normal(row.c_prv_item_no),
+        task.ordNo && task.ordNo + '::' + match.original,
+        task.ordNo && task.ordNo + '::' + match.matchKey,
+        task.ordNo && task.ordNo + '::' + rowItemNo(row, index),
+        task.ordNo && task.ordNo + '::' + normal(row.c_prv_item_no)
+      ].filter(Boolean);
+      return [...new Set(rawKeys)];
+    }
+
+    function addMemo2Alias(map, row, ordNo, value, overwrite) {
+      addItemAlias(map, row, ordNo, value, overwrite);
+    }
+
+    function itemAliasKeys(row, ordNo) {
+      const keys = [];
+      [row.item_no, row.sellpia_order_item_no, row.sellpia_item_no, row.p_code, row.sellpia_p_code, row.sellpia_product_code].forEach(key => {
+        const k = normal(key);
+        if (!k) return;
+        keys.push(k);
+        if (ordNo) keys.push(ordNo + '::' + k);
+      });
+      return keys;
+    }
+
+    function addItemClearAlias(set, row, ordNo) {
+      addItemAliasToSet(set, row, ordNo);
+    }
+
+    function hasItemClearAlias(set, row, ordNo) {
+      return hasItemAlias(set, row, ordNo);
+    }
+
+    function addOrderMemoAlias(map, sourceMap, row, ordNo, value, source) {
+      const val = normal(value);
+      if (!val) return;
+      addItemAlias(map, row, ordNo, val, true);
+      addItemAlias(sourceMap, row, ordNo, source || 'item_level', true);
+    }
+
+    function memo2ForGridRow(task, row, index) {
+      if (memo2ClearForGridRow(task, row, index)) return '';
+      for (const key of gridItemAliasKeys(task, row, index)) {
+        if (task.memo2Map.has(key)) return task.memo2Map.get(key);
+      }
+      return '';
+    }
+
+    function memo2ClearForGridRow(task, row, index) {
+      if (!task || !task.memo2ClearMap) return false;
+      const keys = gridItemAliasKeys(task, row, index);
+      if (keys.some(key => task.memo2ConflictMap?.has(key))) return false;
+      return keys.some(key => task.memo2ClearMap.has(key));
+    }
+
+    function orderMemoForGridRow(task, row, index) {
+      for (const key of gridItemAliasKeys(task, row, index)) {
+        if (task.orderMemoMap && task.orderMemoMap.has(key)) return task.orderMemoMap.get(key);
+      }
+      return '';
+    }
+
+    function orderMemoSourceForGridRow(task, row, index) {
+      for (const key of gridItemAliasKeys(task, row, index)) {
+        if (task.orderMemoSourceMap && task.orderMemoSourceMap.has(key)) return task.orderMemoSourceMap.get(key);
+      }
+      return normal(task.orderMemo) ? 'invoice_level_reference' : 'none';
+    }
+
+    function plannedOrderMemoForGridRow(task, row, index, currentOrderMemo) {
+      if (task.clear) return '';
+      const itemTarget = orderMemoForGridRow(task, row, index);
+      if (task.writeOrderMemo && normal(itemTarget)) return itemTarget;
+      return currentOrderMemo;
+    }
+
+    function currentWarningsForGridRow(task, row, index, planned) {
+      const match = gridItemMatchInfo(task, row, index);
+      const keys = gridItemAliasKeys(task, row, index);
+      const warnings = [];
+      const memo2Target = memo2ForGridRow(task, row, index);
+      const orderMemoSource = orderMemoSourceForGridRow(task, row, index);
+      const currentOrderMemo = normal(planned?.currentOrderMemo);
+      const plannedOrderMemo = normal(planned?.plannedOrderMemo);
+      const orderMemoTarget = normal(planned?.orderMemoTarget);
+      if (match.failed) warnings.push(match.warning || 'item_key_match_failed');
+      if (task.systemShippingHold === 'UNKNOWN') warnings.push('shipping_hold_unknown');
+      if (keys.some(key => task.memo2ConflictMap?.has(key))) warnings.push('memo2_event_conflict');
+      if (task.clear && memo2Target) warnings.push('completed_but_memo2_exists');
+      if (task.clear && memo2Target) warnings.push('inspection_completed_with_shortage_open');
+      if (!task.dbMatchStatus || task.dbMatchStatus === 'DB 매칭 없음') warnings.push('missing_current_source');
+      if (!task.clear && orderMemoTarget && !plannedOrderMemo) warnings.push('pre_inspection_order_memo_clear');
+      if (!task.clear && currentOrderMemo && !plannedOrderMemo && !orderMemoTarget && (orderMemoSource === 'invoice_level_reference' || orderMemoSource === 'none')) {
+        warnings.push('order_memo_clear_without_item_target');
+        if (orderMemoSource === 'invoice_level_reference') warnings.push('invoice_level_order_memo_clear');
+      }
+      return [...new Set(warnings)];
+    }
+
+    function decideLiveWriteAllowed(warnings) {
+      const list = new Set(warnings || []);
+      const hardBlock = [
+        'item_key_match_failed',
+        'item_key_prefix_collision',
+        'memo2_event_conflict',
+        'completed_but_memo2_exists',
+        'inspection_completed_with_shortage_open',
+        'missing_current_source',
+        'pre_inspection_order_memo_clear',
+        'order_memo_clear_without_item_target',
+        'invoice_level_order_memo_clear'
+      ];
+      if (hardBlock.some(type => list.has(type))) return 'N';
+      if (list.has('order_memo_fallback_invoice_level') || list.has('memo1_conflict') || list.has('completed_then_reopened') || list.has('shipping_hold_unknown')) return 'REVIEW';
+      return 'Y';
+    }
+
+    function buildRowPolicyMeta(task, row, index, planned = {}) {
+      const match = gridItemMatchInfo(task, row, index);
+      const memo2Target = memo2ForGridRow(task, row, index);
+      const orderMemoTarget = orderMemoForGridRow(task, row, index);
+      const orderMemoSource = orderMemoSourceForGridRow(task, row, index);
+      const warnings = currentWarningsForGridRow(task, row, index, {
+        ...planned,
+        orderMemoTarget
+      });
+      const liveWriteAllowed = decideLiveWriteAllowed(warnings);
+      return {
+        liveWriteAllowed,
+        currentStateWarning: warnings.join(' / '),
+        itemKeyMatchMethod: match.method,
+        sellpiaItemNoOriginal: match.original,
+        sellpiaItemNoMatchKey: match.matchKey,
+        orderMemoSource,
+        memo2Target,
+        orderMemoTarget
+      };
+    }
+
+    function workflowDoneByOrdNo(rows) {
+      const map = new Map();
+      for (const row of rows || []) {
+        const ord = normal(row.order_group_no);
+        if (!ord) continue;
+        if (!map.has(ord)) map.set(ord, []);
+        map.get(ord).push(row);
+      }
+
+      const doneMap = new Map();
+      for (const [ord, events] of map.entries()) {
+        const sorted = [...events].sort((a, b) => {
+          const at = new Date(a.event_at || a.created_at || 0).getTime() || 0;
+          const bt = new Date(b.event_at || b.created_at || 0).getTime() || 0;
+          if (at !== bt) return at - bt;
+          return (Number(a.id || 0) || 0) - (Number(b.id || 0) || 0);
+        });
+
+        let inspected = false;
+        let cancelled = false;
+        let lastAt = '';
+        for (const ev of sorted) {
+          const type = normal(ev.event_type);
+          lastAt = ev.event_at || ev.created_at || lastAt;
+          if (type === 'inspection_completed') {
+            inspected = true;
+            cancelled = false;
+          } else if (type === 'inspection_reopened') {
+            inspected = false;
+          } else if (type === 'cancelled') {
+            cancelled = true;
+            inspected = false;
+          }
+        }
+
+        doneMap.set(ord, {
+          done: inspected && !cancelled,
+          lastAt,
+          count: sorted.length
+        });
+      }
+      return doneMap;
+    }
+
+    function workflowShippingHoldByOrdNo(rows) {
+      const grouped = new Map();
+      for (const row of rows || []) {
+        const ord = normal(row.order_group_no || row.ord_no);
+        if (!ord) continue;
+        const type = normal(row.event_type);
+        if (type !== 'hold_created' && type !== 'hold_released') continue;
+        if (!grouped.has(ord)) grouped.set(ord, []);
+        grouped.get(ord).push(row);
+      }
+
+      const holdMap = new Map();
+      for (const [ord, list] of grouped) {
+        const sorted = [...list].sort((a, b) => {
+          const at = new Date(a.event_at || a.created_at || 0).getTime() || 0;
+          const bt = new Date(b.event_at || b.created_at || 0).getTime() || 0;
+          if (at !== bt) return at - bt;
+          return (Number(a.id || 0) || 0) - (Number(b.id || 0) || 0);
+        });
+        const last = sorted[sorted.length - 1];
+        if (!last) continue;
+        holdMap.set(ord, {
+          known: true,
+          value: normal(last.event_type) === 'hold_created' ? 'ON' : 'OFF',
+          lastAt: last.event_at || last.created_at || '',
+          count: sorted.length
+        });
+      }
+      return holdMap;
+    }
+
+    function workflowItemDoneByOrdNo(rows) {
+      const grouped = new Map();
+      for (const row of rows || []) {
+        const ord = normal(row.order_group_no || row.ord_no);
+        const itemKey = normal(row.sellpia_item_no || row.item_no || row.sellpia_order_item_no || row.sellpia_product_code || row.p_code);
+        if (!ord) continue;
+        if (!itemKey) continue;
+        const key = ord + '::' + itemKey;
+        if (!grouped.has(key)) {
+          grouped.set(key, { ord, rows: [] });
+        }
+        grouped.get(key).rows.push(row);
+      }
+
+      const doneMap = new Map();
+      for (const entry of grouped.values()) {
+        const sorted = [...entry.rows].sort((a, b) => {
+          const at = new Date(a.event_at || a.created_at || 0).getTime() || 0;
+          const bt = new Date(b.event_at || b.created_at || 0).getTime() || 0;
+          if (at !== bt) return at - bt;
+          return (Number(a.id || 0) || 0) - (Number(b.id || 0) || 0);
+        });
+        const last = sorted[sorted.length - 1];
+        if (!last || normal(last.event_type) !== 'shortage_repick_completed') continue;
+        if (!doneMap.has(entry.ord)) {
+          doneMap.set(entry.ord, { rows: [], lastAt: '', count: 0 });
+        }
+        const target = doneMap.get(entry.ord);
+        target.rows.push(last);
+        target.count++;
+        target.lastAt = last.event_at || last.created_at || target.lastAt;
+      }
+      return doneMap;
+    }
+
+    function buildTask(invNo, ordNo, shortageRows, pickingRows, orderRowsInput, orderItemRowsInput, workflowDone, workflowItemDone, workflowShippingHold) {
+      const orderRows = Array.isArray(orderRowsInput) ? orderRowsInput : (orderRowsInput ? [orderRowsInput] : []);
+      const orderItemRows = Array.isArray(orderItemRowsInput) ? orderItemRowsInput : (orderItemRowsInput ? [orderItemRowsInput] : []);
+      const firstOrderRow = orderRows[0] || {};
+      const task = {
+        invNo: normal(invNo || firstOrderRow?.inv_no),
+        ordNo: normal(ordNo || firstOrderRow?.ord_no),
+        memo1: '',
+        memo2Map: new Map(),
+        memo2ClearMap: new Set(),
+        memo2ConflictMap: new Set(),
+        orderMemo: normal(firstOrderRow?.order_memo || firstOrderRow?.o_memo),
+        orderMemoMap: new Map(),
+        orderMemoSourceMap: new Map(),
+        itemKeyIndex: buildItemKeyIndex(orderItemRows, normal(ordNo || firstOrderRow?.ord_no)),
+        hold: false,
+        systemShippingHold: workflowShippingHold?.known ? workflowShippingHold.value : '',
+        systemShippingHoldKnown: !!workflowShippingHold?.known,
+        shippingHoldSyncReason: workflowShippingHold?.known ? 'explicit_workflow_hold_event' : '',
+        clear: false,
+        writeMemo1: false,
+        writeMemo2: false,
+        writeOrderMemo: false,
+        writeHold: false,
+        skip: false,
+        reason: '',
+        workflowDone: !!workflowDone?.done,
+        dbMatchStatus: ''
+      };
+      const hasShortageMatch = !!(shortageRows || []).length;
+      const hasPickingMatch = !!(pickingRows || []).length;
+      const hasOrderMatch = orderRows.some(row => !!normal(row?.ord_no));
+      const hasOrderItemsMemo1 = orderItemRows.some(row => !!normal(row?.o_shop_memo));
+      const hasOrderItemsMemo2 = orderItemRows.some(row => !!normal(row?.o_shop_memo2));
+      const workflowItemDoneRows = (workflowItemDone && workflowItemDone.rows) || [];
+      const hasDbMatch = hasShortageMatch || hasPickingMatch || hasOrderMatch || hasOrderItemsMemo1 || hasOrderItemsMemo2;
+      task.dbMatchStatus = [
+        hasShortageMatch ? 'shortage' : '',
+        hasPickingMatch ? 'picking' : '',
+        hasOrderMatch ? 'orders' : '',
+        hasOrderItemsMemo1 ? 'order_items_memo1' : '',
+        hasOrderItemsMemo2 ? 'order_items_memo2' : '',
+        workflowItemDoneRows.length ? 'workflow_item_done' : '',
+        workflowDone?.done ? 'workflow_done' : ''
+      ].filter(Boolean).join('+') || 'DB 매칭 없음';
+
+      for (const row of pickingRows || []) {
+        if (!task.memo1 && normal(row.drawer_no) && normal(row.drawer_no) !== 'EMPTY') task.memo1 = normal(row.drawer_no);
+      }
+
+      const activeRows = [];
+      const nextShipRows = [];
+      for (const row of shortageRows || []) {
+        const status = normal(row.status);
+        const drawer = normal(row.drawer_no);
+        if (!task.memo1 && drawer && drawer !== 'EMPTY') task.memo1 = drawer;
+        if (isNextShipStatus(status)) nextShipRows.push(row);
+        else if (drawer || status === '보류' || status === '배송대기' || status === '서랍입력') activeRows.push(row);
+      }
+
+      for (const row of workflowItemDoneRows) addItemClearAlias(task.memo2ClearMap, row, task.ordNo);
+      for (const row of orderItemRows) {
+        if (!task.memo1 && normal(row.o_shop_memo)) task.memo1 = normal(row.o_shop_memo);
+        addMemo2Alias(task.memo2Map, row, task.ordNo, row.o_shop_memo2, true);
+        if (normal(row.o_shop_memo2) && hasItemClearAlias(task.memo2ClearMap, row, task.ordNo)) {
+          addItemAliasToSet(task.memo2ConflictMap, row, task.ordNo);
+        }
+        addOrderMemoAlias(task.orderMemoMap, task.orderMemoSourceMap, row, task.ordNo, row.order_memo, 'item_level');
+      }
+
+      if (nextShipRows.length && !activeRows.length) {
+        task.memo1 = task.memo1 || '!!';
+      }
+
+      const hasMemo1Value = !!normal(task.memo1);
+      const hasMemo2Value = task.memo2Map.size > 0;
+      const hasMemo2Clear = task.memo2ClearMap.size > 0;
+      const allShortageItemsRepicked = hasShortageMatch && (shortageRows || []).every(row => hasItemClearAlias(task.memo2ClearMap, row, task.ordNo));
+      const hasSystemMatch = hasShortageMatch || hasPickingMatch || hasOrderMatch || orderItemRows.length > 0;
+      const hasOrderMemoValue = hasSystemMatch && task.orderMemoMap.size > 0;
+      const memo1HoldSignal = hasMemo1Value;
+      const hasLegacyPickingHold = (pickingRows || []).some(row => !!row.hold);
+      const hasHoldSignal = activeRows.length > 0 || hasLegacyPickingHold || memo1HoldSignal || hasMemo2Value;
+      const shouldClearMemo1ForAllRepicked = allShortageItemsRepicked;
+      if (!task.systemShippingHoldKnown && hasHoldSignal) {
+        task.systemShippingHold = 'UNKNOWN';
+        task.shippingHoldSyncReason = 'shipping_hold_on_needed_or_legacy_signal';
+      } else if (!task.systemShippingHoldKnown) {
+        task.systemShippingHold = 'OFF';
+        task.systemShippingHoldKnown = true;
+        task.shippingHoldSyncReason = 'default_off_no_hold_signal';
+      }
+
+      if (workflowDone?.done) {
+        task.clear = true;
+        task.memo1 = '';
+        task.orderMemo = '';
+        task.writeMemo1 = true;
+        task.writeMemo2 = true;
+        task.writeOrderMemo = true;
+        task.writeHold = task.systemShippingHoldKnown;
+        task.hold = task.systemShippingHold === 'ON';
+        task.reason = '검품완료(workflow): 관리메모/관리메모2/주문메모 삭제';
+        return task;
+      }
+
+      if (shouldClearMemo1ForAllRepicked) task.memo1 = '';
+      task.writeMemo1 = hasMemo1Value || shouldClearMemo1ForAllRepicked;
+      task.writeMemo2 = hasMemo2Value || hasMemo2Clear;
+      task.writeOrderMemo = hasOrderMemoValue;
+      task.writeHold = task.systemShippingHoldKnown;
+
+      task.hold = task.systemShippingHold === 'ON';
+
+      if (hasMemo2Clear && !(task.writeMemo1 || hasMemo2Value || task.writeOrderMemo || task.writeHold)) {
+        task.reason = '미송피킹완료(workflow_item): 관리메모2 clear';
+      } else if (task.writeMemo1 || task.writeMemo2 || task.writeOrderMemo || task.writeHold) {
+        task.reason = shouldClearMemo1ForAllRepicked
+          ? '송장 전체 미송피킹완료(workflow_item): 관리메모1 clear + 관리메모2 clear'
+          : hasMemo2Clear
+          ? '미송피킹완료(workflow_item) 포함: 관리메모2 clear + 잔여 메모 대상 반영'
+          : '잔여 메모 대상: 서랍번호 또는 주문메모 반영';
+      } else {
+        task.reason = '시스템 반영값 없음: 현재 셀피아 값 CSV 확인만, LIVE write 제외';
+      }
+      return task;
+    }
+
+    async function buildTasks(invFilter, startDate, endDate) {
+      const byOrd = rows => {
+        const map = new Map();
+        for (const row of rows || []) {
+          const key = normal(row.ord_no);
+          if (!map.has(key)) map.set(key, []);
+          map.get(key).push(row);
+        }
+        return map;
+      };
+
+      if (invFilter) {
+        const target = targetToken(invFilter);
+        const hit = gridItems().find(({ item }) => rowInvNo(item) === target || rowOrdNo(item) === target);
+        if (!hit) {
+          lastBuildMeta = { mode: 'single', gridRows: gridItems().length, uniqueOrdNos: 0, missingOrdRows: 0, multiInvOrdNos: [], dbMissingOrdNos: [] };
+          const [shortageByInv, pickingByInv, orderByInv, shortageByOrd, pickingByOrd, orderByOrd] = await Promise.all([
+            safeDbRequestIn('shortage', 'inv_no', [target], 'inv_no,ord_no,item_no,p_code,sellpia_p_code,status,memo2_val,drawer_no,updated_at'),
+            safeDbRequestIn('picking', 'inv_no', [target], 'inv_no,ord_no,item_no,p_code,sellpia_p_code,hold,drawer_no'),
+            safeDbRequestIn('orders', 'inv_no', [target], 'ord_no,inv_no,order_memo,o_memo,scraped_at'),
+            safeDbRequestIn('shortage', 'ord_no', [target], 'inv_no,ord_no,item_no,p_code,sellpia_p_code,status,memo2_val,drawer_no,updated_at'),
+            safeDbRequestIn('picking', 'ord_no', [target], 'inv_no,ord_no,item_no,p_code,sellpia_p_code,hold,drawer_no'),
+            safeDbRequestIn('orders', 'ord_no', [target], 'ord_no,inv_no,order_memo,o_memo,scraped_at')
+          ]);
+          const dbSeed = [...(shortageByInv || []), ...(pickingByInv || []), ...(orderByInv || []), ...(shortageByOrd || []), ...(pickingByOrd || []), ...(orderByOrd || [])];
+          const ordNoFromDb = normal((dbSeed.find(row => normal(row.ord_no)) || {}).ord_no);
+          if (!ordNoFromDb) {
+            return [{ invNo: target, ordNo: '', skip: true, reason: '셀피아 그리드에서 송장/주문번호 매칭 실패', memo2Map: new Map() }];
+          }
+          const invNoFromDb = normal((dbSeed.find(row => normal(row.inv_no)) || {}).inv_no) || target;
+          lastBuildMeta.uniqueOrdNos = 1;
+          const [shortageRows, pickingRows, orderRows, orderItemRows, workflowRows, workflowItemRows] = await Promise.all([
+            dbRequestIn('shortage', 'ord_no', [ordNoFromDb], 'inv_no,ord_no,item_no,p_code,sellpia_p_code,status,memo2_val,drawer_no,updated_at'),
+            dbRequestIn('picking', 'ord_no', [ordNoFromDb], 'inv_no,ord_no,item_no,p_code,sellpia_p_code,hold,drawer_no'),
+            dbRequestIn('orders', 'ord_no', [ordNoFromDb], 'ord_no,inv_no,order_memo,o_memo,scraped_at'),
+            dbRequestIn('order_items', 'ord_no', [ordNoFromDb], 'ord_no,item_no,sellpia_order_item_no,p_code,o_shop_memo,o_shop_memo2,order_memo'),
+            safeDbRequestIn('workflow_invoice_events', 'order_group_no', [ordNoFromDb], 'order_group_no,event_type,event_at,created_at,id,memo'),
+            safeDbRequestIn('workflow_item_events', 'order_group_no', [ordNoFromDb], 'order_group_no,event_type,event_at,created_at,id,sellpia_item_no,sellpia_product_code')
+          ]);
+          const workflowRowsAfterScrape = workflowEventsAfterOrderScrape(workflowRows, orderRows);
+          const workflowItemRowsAfterScrape = workflowEventsAfterOrderScrape(workflowItemRows, orderRows);
+          const workflowDoneMap = workflowDoneByOrdNo(workflowRowsAfterScrape);
+          const workflowShippingHoldMap = workflowShippingHoldByOrdNo(workflowRowsAfterScrape);
+          const workflowItemDoneMap = workflowItemDoneByOrdNo(workflowItemRowsAfterScrape);
+          lastBuildMeta.pickingMatchedOrders = [...new Set((pickingRows || []).map(row => normal(row.ord_no)).filter(Boolean))].length;
+          lastBuildMeta.pickingHoldRows = (pickingRows || []).filter(row => !!row.hold).length;
+          lastBuildMeta.pickingDrawerRows = (pickingRows || []).filter(row => normal(row.drawer_no) && normal(row.drawer_no) !== 'EMPTY').length;
+          return [buildTask(invNoFromDb, ordNoFromDb, shortageRows, pickingRows, orderRows || [], orderItemRows || [], workflowDoneMap.get(ordNoFromDb), workflowItemDoneMap.get(ordNoFromDb), workflowShippingHoldMap.get(ordNoFromDb))];
+        }
+        const ordNo = rowOrdNo(hit.item);
+        const invNo = rowInvNo(hit.item) || target;
+        lastBuildMeta = { mode: 'single', gridRows: gridItems().length, uniqueOrdNos: ordNo ? 1 : 0, missingOrdRows: ordNo ? 0 : 1, multiInvOrdNos: [], dbMissingOrdNos: [] };
+        const [shortageRows, pickingRows, orderRows, orderItemRows, workflowRows, workflowItemRows] = await Promise.all([
+          dbRequestIn('shortage', 'ord_no', [ordNo], 'inv_no,ord_no,item_no,p_code,sellpia_p_code,status,memo2_val,drawer_no,updated_at'),
+          dbRequestIn('picking', 'ord_no', [ordNo], 'inv_no,ord_no,item_no,p_code,sellpia_p_code,hold,drawer_no'),
+          dbRequestIn('orders', 'ord_no', [ordNo], 'ord_no,inv_no,order_memo,o_memo,scraped_at'),
+          dbRequestIn('order_items', 'ord_no', [ordNo], 'ord_no,item_no,sellpia_order_item_no,p_code,o_shop_memo,o_shop_memo2,order_memo'),
+          safeDbRequestIn('workflow_invoice_events', 'order_group_no', [ordNo], 'order_group_no,event_type,event_at,created_at,id,memo'),
+          safeDbRequestIn('workflow_item_events', 'order_group_no', [ordNo], 'order_group_no,event_type,event_at,created_at,id,sellpia_item_no,sellpia_product_code')
+        ]);
+        const workflowRowsAfterScrape = workflowEventsAfterOrderScrape(workflowRows, orderRows);
+        const workflowItemRowsAfterScrape = workflowEventsAfterOrderScrape(workflowItemRows, orderRows);
+        const workflowDoneMap = workflowDoneByOrdNo(workflowRowsAfterScrape);
+        const workflowShippingHoldMap = workflowShippingHoldByOrdNo(workflowRowsAfterScrape);
+        const workflowItemDoneMap = workflowItemDoneByOrdNo(workflowItemRowsAfterScrape);
+        lastBuildMeta.pickingMatchedOrders = [...new Set((pickingRows || []).map(row => normal(row.ord_no)).filter(Boolean))].length;
+        lastBuildMeta.pickingHoldRows = (pickingRows || []).filter(row => !!row.hold).length;
+        lastBuildMeta.pickingDrawerRows = (pickingRows || []).filter(row => normal(row.drawer_no) && normal(row.drawer_no) !== 'EMPTY').length;
+        return [buildTask(invNo, ordNo, shortageRows, pickingRows, orderRows || [], orderItemRows || [], workflowDoneMap.get(ordNo), workflowItemDoneMap.get(ordNo), workflowShippingHoldMap.get(ordNo))];
+      }
+
+      const loadMeta = await ensureAllGridRowsLoaded();
+      const gridRows = gridItems();
+      const gridOrdMap = new Map();
+      const invsByOrd = new Map();
+      let missingOrdRows = 0;
+      for (const { item } of gridRows) {
+        const ordNo = rowOrdNo(item);
+        const invNo = rowInvNo(item);
+        if (!ordNo) {
+          missingOrdRows++;
+          continue;
+        }
+        if (!invsByOrd.has(ordNo)) invsByOrd.set(ordNo, new Set());
+        if (invNo) invsByOrd.get(ordNo).add(invNo);
+        if (gridOrdMap.has(ordNo)) continue;
+        gridOrdMap.set(ordNo, { invNo, ordNo });
+      }
+      const ordNos = [...gridOrdMap.keys()];
+      const multiInvOrdNos = [...invsByOrd.entries()].filter(([, invs]) => invs.size > 1).map(([ordNo]) => ordNo);
+      if (!ordNos.length) {
+        lastBuildMeta = { mode: 'grid', gridRows: gridRows.length, uniqueOrdNos: 0, missingOrdRows, multiInvOrdNos, dbMissingOrdNos: [] };
+        return [];
+      }
+      lastBuildMeta = {
+        mode: 'grid',
+        gridRowsBeforeAll: loadMeta.before,
+        clickedAllRows: loadMeta.clickedAll,
+        gridRows: gridRows.length,
+        uniqueOrdNos: ordNos.length,
+        missingOrdRows,
+        multiInvOrdNos,
+        dbMissingOrdNos: []
+      };
+      const [shortageRows, pickingRows, orderRows, orderItemRows, workflowRows, workflowItemRows] = await Promise.all([
+        dbRequestIn('shortage', 'ord_no', ordNos, 'inv_no,ord_no,item_no,p_code,sellpia_p_code,status,memo2_val,drawer_no,updated_at'),
+        dbRequestIn('picking', 'ord_no', ordNos, 'inv_no,ord_no,item_no,p_code,sellpia_p_code,hold,drawer_no'),
+        dbRequestIn('orders', 'ord_no', ordNos, 'ord_no,inv_no,order_memo,o_memo,scraped_at'),
+        dbRequestIn('order_items', 'ord_no', ordNos, 'ord_no,item_no,sellpia_order_item_no,p_code,o_shop_memo,o_shop_memo2,order_memo'),
+        safeDbRequestIn('workflow_invoice_events', 'order_group_no', ordNos, 'order_group_no,event_type,event_at,created_at,id,memo'),
+        safeDbRequestIn('workflow_item_events', 'order_group_no', ordNos, 'order_group_no,event_type,event_at,created_at,id,sellpia_item_no,sellpia_product_code')
+      ]);
+      const shortageMap = byOrd(shortageRows);
+      const pickingMap = byOrd(pickingRows);
+      const orderItemMap = byOrd(orderItemRows);
+      const orderRowsMap = byOrd(orderRows);
+      const orderMap = new Map((orderRows || []).map(row => [normal(row.ord_no), row]));
+      const workflowRowsAfterScrape = workflowEventsAfterOrderScrape(workflowRows, orderRows);
+      const workflowItemRowsAfterScrape = workflowEventsAfterOrderScrape(workflowItemRows, orderRows);
+      const workflowDoneMap = workflowDoneByOrdNo(workflowRowsAfterScrape);
+      const workflowShippingHoldMap = workflowShippingHoldByOrdNo(workflowRowsAfterScrape);
+      const workflowItemDoneMap = workflowItemDoneByOrdNo(workflowItemRowsAfterScrape);
+      const dbMissingOrdNos = ordNos.filter(ordNo => !(shortageMap.get(ordNo) || []).length && !(pickingMap.get(ordNo) || []).length && !orderMap.has(ordNo) && !(orderItemMap.get(ordNo) || []).length);
+      const pickingMatchedOrders = [...new Set((pickingRows || []).map(row => normal(row.ord_no)).filter(Boolean))].length;
+      const pickingHoldRows = (pickingRows || []).filter(row => !!row.hold).length;
+      const pickingDrawerRows = (pickingRows || []).filter(row => normal(row.drawer_no) && normal(row.drawer_no) !== 'EMPTY').length;
+      const optionalDbWarnings = lastBuildMeta.optionalDbWarnings || [];
+      lastBuildMeta = {
+        mode: 'grid',
+        gridRowsBeforeAll: loadMeta.before,
+        clickedAllRows: loadMeta.clickedAll,
+        gridRows: gridRows.length,
+        uniqueOrdNos: ordNos.length,
+        missingOrdRows,
+        multiInvOrdNos,
+        dbMissingOrdNos,
+        pickingMatchedOrders,
+        pickingHoldRows,
+        pickingDrawerRows,
+        optionalDbWarnings
+      };
+      return ordNos.map(ordNo => buildTask(
+        normal(gridOrdMap.get(ordNo)?.invNo || (shortageMap.get(ordNo) || [])[0]?.inv_no || orderMap.get(ordNo)?.inv_no),
+        ordNo,
+        shortageMap.get(ordNo) || [],
+        pickingMap.get(ordNo) || [],
+        orderRowsMap.get(ordNo) || [],
+        orderItemMap.get(ordNo) || [],
+        workflowDoneMap.get(ordNo),
+        workflowItemDoneMap.get(ordNo),
+        workflowShippingHoldMap.get(ordNo)
+      ));
+    }
+
+    function needsChange(cur, planned) {
+      return normal(cur) !== normal(planned);
+    }
+
+    function addResult(result) {
+      results.push(result);
+      const log = $('smu0707-log');
+      log.textContent += result.log + '\n';
+      log.scrollTop = log.scrollHeight;
+      $('smu0707-download').disabled = !results.length;
+      const issueBtn = $('smu0707-issue-download');
+      if (issueBtn) issueBtn.disabled = !results.some(isIssueResult);
+    }
+
+    function perfNow() {
+      return (window.performance && window.performance.now) ? window.performance.now() : Date.now();
+    }
+
+    function perfMs(start) {
+      return Math.round(perfNow() - start);
+    }
+
+    function newPerf() {
+      return {
+        totalStart: perfNow(),
+        openMs: null,
+        readMs: null,
+        writeMs: null,
+        closeMs: null,
+        openFallback: null,
+        openRoot: null,
+        openReady: null,
+        closeFallback: null,
+        closeRoot: null,
+        closeBtn: null
+      };
+    }
+
+    function perfText(perf) {
+      if (!perf) return '';
+      const parts = [];
+      if (perf.openMs != null) parts.push('open=' + perf.openMs + 'ms');
+      if (perf.readMs != null) parts.push('read=' + perf.readMs + 'ms');
+      if (perf.writeMs != null) parts.push('write=' + perf.writeMs + 'ms');
+      if (perf.closeMs != null) parts.push('close=' + perf.closeMs + 'ms');
+      parts.push('total=' + perfMs(perf.totalStart) + 'ms');
+      if (perf.openFallback != null) parts.push('openFallback=' + perf.openFallback);
+      if (perf.openRoot != null) parts.push('openRoot=' + perf.openRoot);
+      if (perf.openReady != null) parts.push('openReady=' + perf.openReady);
+      if (perf.closeFallback != null) parts.push('closeFallback=' + perf.closeFallback);
+      if (perf.closeRoot != null) parts.push('closeRoot=' + perf.closeRoot);
+      if (perf.closeBtn != null) parts.push('closeBtn=' + perf.closeBtn);
+      return 'PERF ' + parts.join(', ');
+    }
+
+    function withPerf(result, perf) {
+      const text = perfText(perf);
+      if (!perf) return result;
+      return {
+        ...result,
+        perfOpenMs: perf.openMs != null ? perf.openMs : '',
+        perfReadMs: perf.readMs != null ? perf.readMs : '',
+        perfWriteMs: perf.writeMs != null ? perf.writeMs : '',
+        perfCloseMs: perf.closeMs != null ? perf.closeMs : '',
+        perfTotalMs: perfMs(perf.totalStart),
+        perfOpenFallback: perf.openFallback != null ? perf.openFallback : '',
+        perfOpenRoot: perf.openRoot != null ? perf.openRoot : '',
+        perfOpenReady: perf.openReady != null ? perf.openReady : '',
+        perfCloseFallback: perf.closeFallback != null ? perf.closeFallback : '',
+        perfCloseRoot: perf.closeRoot != null ? perf.closeRoot : '',
+        perfCloseBtn: perf.closeBtn != null ? perf.closeBtn : '',
+        log: text ? result.log + ' / ' + text : result.log
+      };
+    }
+
+    function sampleList(values) {
+      const list = (values || []).slice(0, 5);
+      return list.join(', ') + ((values || []).length > list.length ? ' ...' : '');
+    }
+
+    function taskBatchLabel(task) {
+      const inv = normal(task && task.invNo);
+      const ord = normal(task && task.ordNo);
+      if (inv && ord) return inv + ' / ' + ord;
+      return inv || ord || '-';
+    }
+
+    function sortTasksForBatch(tasks) {
+      return (tasks || []).map((task, index) => ({ task, index })).sort((left, right) => {
+        const invCompare = normal(left.task.invNo).localeCompare(normal(right.task.invNo));
+        if (invCompare) return invCompare;
+        const ordCompare = normal(left.task.ordNo).localeCompare(normal(right.task.ordNo));
+        if (ordCompare) return ordCompare;
+        return left.index - right.index;
+      }).map(entry => entry.task);
+    }
+
+    function selectTaskBatch(tasks, batchSize, batchNo) {
+      const sorted = sortTasksForBatch(tasks);
+      const total = sorted.length;
+      const batchTotal = Math.ceil(total / batchSize);
+      const start = (batchNo - 1) * batchSize;
+      const end = Math.min(start + batchSize, total);
+      const selected = sorted.slice(start, end);
+      return {
+        tasks: selected,
+        meta: {
+          batchEnabled: true,
+          batchSize,
+          batchNo,
+          batchTotal,
+          batchTotalTargets: total,
+          batchStart: start + 1,
+          batchEnd: end,
+          batchSelectedTargets: Math.max(0, end - start),
+          batchFirstTarget: taskBatchLabel(selected[0]),
+          batchLastTarget: taskBatchLabel(selected[selected.length - 1])
+        }
+      };
+    }
+
+    function promptTaskBatch(tasks, batchSize) {
+      const total = (tasks || []).length;
+      const batchTotal = Math.ceil(total / batchSize);
+      const input = prompt('총 ' + total + '개 대상, ' + batchSize + '개 단위, 총 ' + batchTotal + '배치입니다. 실행할 배치 번호를 입력하세요.');
+      if (input == null || !normal(input)) return null;
+      const batchNo = Number(normal(input));
+      if (!Number.isInteger(batchNo) || batchNo < 1 || batchNo > batchTotal) {
+        alert('배치 번호는 1부터 ' + batchTotal + ' 사이의 숫자로 입력해주세요.');
+        return null;
+      }
+      const selected = selectTaskBatch(tasks, batchSize, batchNo);
+      const meta = selected.meta;
+      const ok = confirm('배치 ' + meta.batchNo + '/' + meta.batchTotal + ' 실행 확인\n' +
+        '대상 index: ' + meta.batchStart + '-' + meta.batchEnd + ' / ' + meta.batchTotalTargets + '\n' +
+        '선택 대상 수: ' + meta.batchSelectedTargets + '\n' +
+        '첫 대상: ' + meta.batchFirstTarget + '\n' +
+        '마지막 대상: ' + meta.batchLastTarget + '\n\n' +
+        '이 배치만 실행할까요?');
+      return ok ? selected : null;
+    }
+
+    function buildMetaLines(tasks) {
+      const meta = lastBuildMeta || {};
+      const lines = [
+        'Grid rows=' + (meta.gridRows ?? '?') + ', unique order targets=' + (meta.uniqueOrdNos ?? tasks.length) + ', tasks=' + tasks.length,
+        'Grid all-load: before=' + (meta.gridRowsBeforeAll ?? meta.gridRows ?? '?') + ', after=' + (meta.gridRows ?? '?') + ', clickedAll=' + (meta.clickedAllRows ? 'Y' : 'N'),
+        'Target basis: grid rows can differ from unique order targets when one order has multiple rows/items.',
+        'Picking matches=' + (meta.pickingMatchedOrders ?? 0) + ', picking hold rows=' + (meta.pickingHoldRows ?? 0) + ', picking drawer rows=' + (meta.pickingDrawerRows ?? 0)
+      ];
+      if (meta.missingOrdRows) lines.push('WARN: grid rows with empty order number=' + meta.missingOrdRows);
+      if ((meta.multiInvOrdNos || []).length) lines.push('WARN: orders with multiple invoices=' + meta.multiInvOrdNos.length + ' [' + sampleList(meta.multiInvOrdNos) + ']');
+      if ((meta.dbMissingOrdNos || []).length) lines.push('WARN: no DB shortage/picking/orders match=' + meta.dbMissingOrdNos.length + ' [' + sampleList(meta.dbMissingOrdNos) + ']');
+      if ((meta.optionalDbWarnings || []).length) lines.push('WARN optional DB read: ' + meta.optionalDbWarnings.join(' / '));
+      if (meta.batchEnabled) {
+        lines.push('Batch split: batch ' + meta.batchNo + '/' + meta.batchTotal + ', size=' + meta.batchSize + ', selected=' + meta.batchSelectedTargets + ', target index=' + meta.batchStart + '-' + meta.batchEnd + ' of ' + meta.batchTotalTargets);
+        lines.push('Batch targets: first=' + meta.batchFirstTarget + ', last=' + meta.batchLastTarget);
+      }
+      return lines;
+    }
+
+    function summarizeResults() {
+      const statusCounts = {};
+      const liveCounts = {};
+      let unknown = 0;
+      let issueCount = 0;
+      let clearOff = 0;
+      let clearOffLiveY = 0;
+      let memo1Clear = 0;
+      let memo2Clear = 0;
+      let orderMemoClear = 0;
+      let holdSyncOff = 0;
+      let holdSyncOffLiveY = 0;
+      for (const r of results) {
+        statusCounts[r.status || ''] = (statusCounts[r.status || ''] || 0) + 1;
+        liveCounts[r.liveWriteAllowed || ''] = (liveCounts[r.liveWriteAllowed || ''] || 0) + 1;
+        if (r.needsChange === 'UNKNOWN') unknown++;
+        if (isIssueResult(r)) issueCount++;
+        if (r.needsChange === 'SNAPSHOT') continue;
+        const rowMemo1Clear = normal(r.currentMemo1) && !normal(r.plannedMemo1);
+        const rowMemo2Clear = normal(r.currentMemo2) && !normal(r.plannedMemo2);
+        const rowOrderMemoClear = normal(r.currentOrderMemo) && !normal(r.plannedOrderMemo);
+        const rowHoldSyncOff = r.syncAction === 'OFF';
+        if (rowMemo1Clear) memo1Clear++;
+        if (rowMemo2Clear) memo2Clear++;
+        if (rowOrderMemoClear) orderMemoClear++;
+        if (rowHoldSyncOff) holdSyncOff++;
+        if (r.liveWriteAllowed === 'Y' && (rowMemo1Clear || rowMemo2Clear || rowOrderMemoClear || rowHoldSyncOff)) clearOffLiveY++;
+        if (r.liveWriteAllowed === 'Y' && rowHoldSyncOff) holdSyncOffLiveY++;
+      }
+      clearOff = memo1Clear + memo2Clear + orderMemoClear + holdSyncOff;
+      const blocking = !!(statusCounts.SKIP || statusCounts.DETAIL_FAIL || statusCounts.MATCH_FAIL || statusCounts.WRITE_FAIL || statusCounts.PARTIAL_FAIL || unknown);
+      const lines = [
+        'Summary: ' + Object.keys(statusCounts).sort().map(key => key + '=' + statusCounts[key]).join(', '),
+        'live_write_allowed: ' + Object.keys(liveCounts).sort().map(key => (key || 'blank') + '=' + liveCounts[key]).join(', '),
+        'Issue rows (blocked/fail/warning/unknown)=' + issueCount,
+        'Memo clear / hold sync actions=' + clearOff + ' (memo1Clear=' + memo1Clear + ', memo2Clear=' + memo2Clear + ', orderMemoClear=' + orderMemoClear + ', holdSyncOff=' + holdSyncOff + ')',
+        'LIVE Y memo clear / hold sync actions=' + clearOffLiveY + ' (holdSyncOff=' + holdSyncOffLiveY + ')'
+      ];
+      if (blocking) lines.push('LIVE WRITE BLOCKED/PARTIAL: SKIP/DETAIL_FAIL/MATCH_FAIL/WRITE_FAIL/PARTIAL_FAIL/UNKNOWN exists.');
+      if (clearOff >= 10) lines.push('WARN: memo clear / hold sync actions are high. Review CSV before LIVE WRITE.');
+      return { blocking, clearOff, lines };
+    }
+
+    function failReason(message, task) {
+      return message + (task && task.reason ? ' / planned: ' + task.reason : '');
+    }
+
+    async function setPopupValues(root, rowResult, testMode) {
+      if (testMode) {
+        return { ...rowResult, log: 'TEST: ' + rowResult.invNo + ' / ' + rowResult.actionSummary };
+      }
+      if (rowResult.liveWriteAllowed !== 'Y') {
+        return {
+          ...rowResult,
+          status: rowResult.liveWriteAllowed === 'REVIEW' ? 'REVIEW_SKIP' : 'LIVE_BLOCKED',
+          needsChange: rowResult.needsChange || 'N',
+          reason: (rowResult.reason || '') + ' / live_write_allowed=' + (rowResult.liveWriteAllowed || 'N') + ' / ' + (rowResult.currentStateWarning || ''),
+          log: 'LIVE SKIP: ' + rowResult.invNo + ' / live_write_allowed=' + (rowResult.liveWriteAllowed || 'N')
+        };
+      }
+      let itemMatchError = '';
+      if (rowResult.writeMemo2 || rowResult.writeOrderMemo) {
+        try {
+          assertPopupItemMatches(root, rowResult);
+        } catch (err) {
+          itemMatchError = (err && err.message) || String(err);
+          rowResult.writeMemo2 = false;
+          rowResult.writeOrderMemo = false;
+        }
+      }
+      if (itemMatchError && !rowResult.writeMemo1 && !rowResult.writeHold) throw new Error(itemMatchError);
+      if (rowResult.writeMemo1) {
+        const el = root.querySelector('#dt_shop_memo,[name="dt_shop_memo"]');
+        setInputValue(el, rowResult.plannedMemo1);
+      }
+      if (rowResult.writeMemo2) {
+        const applyAll = memo2ApplyAllCheckbox(root);
+        if (applyAll && applyAll.checked) {
+          applyAll.click();
+          await sleep(120);
+        }
+        if (applyAll && applyAll.checked) throw new Error('관리메모2 전체적용 체크박스를 OFF로 변경하지 못했습니다.');
+        const el = root.querySelector('#dt_shop_memo2,[name="dt_shop_memo2"]');
+        if (!el) throw new Error('관리메모2 입력 필드를 찾지 못했습니다.');
+        setInputValue(el, rowResult.plannedMemo2);
+        if (normal(el.value) !== normal(rowResult.plannedMemo2)) throw new Error('관리메모2 입력값 검증 실패');
+      }
+      if (rowResult.writeOrderMemo) {
+        const el = root.querySelector('#dt_ord_memo,#dt_order_memo,[name="dt_ord_memo"]');
+        if (!el) throw new Error('주문메모 입력 필드를 찾지 못했습니다.');
+        setInputValue(el, rowResult.plannedOrderMemo);
+        if (normal(el.value) !== normal(rowResult.plannedOrderMemo)) throw new Error('주문메모 입력값 검증 실패');
+      }
+      if (rowResult.writeHold) {
+        const cb = holdCheckbox(root);
+        if (!cb) throw new Error('배송보류 체크박스를 찾지 못했습니다.');
+        const wantHold = plannedHoldBool(rowResult);
+        if (!!cb.checked !== wantHold) cb.click();
+        await sleep(120);
+        if (!!cb.checked !== wantHold) throw new Error('배송보류 상태 변경 실패: expected=' + (wantHold ? 'ON' : 'OFF') + ', actual=' + (cb.checked ? 'ON' : 'OFF'));
+      }
+      if (typeof window.updateOrder !== 'function') throw new Error('updateOrder 함수를 찾지 못했습니다.');
+      const originalConfirm = window.confirm;
+      window.confirm = () => true;
+      try {
+        window.updateOrder();
+      } finally {
+        window.confirm = originalConfirm;
+      }
+      let clicked = await clickConfirmDialogsFast('save', 2200);
+      if (!clicked) {
+        await sleep(Math.min(CONFIG.saveDelay || 900, 500));
+        clicked = await clickConfirmDialogs('save', 2);
+      }
+      await sleep(clicked ? 150 : Math.min(CONFIG.saveDelay || 900, 500));
+      return {
+        ...rowResult,
+        status: itemMatchError ? 'PARTIAL_FAIL' : rowResult.status,
+        reason: itemMatchError ? ('상품단위 저장 차단: ' + itemMatchError + (rowResult.reason ? ' / planned: ' + rowResult.reason : '')) : rowResult.reason,
+        log: 'LIVE: ' + rowResult.invNo + ' / 저장 호출 완료' + (itemMatchError ? ' / 상품단위 저장 차단: ' + itemMatchError : '')
+      };
+    }
+
+    async function inspectTask(task, options) {
+      if (task.skip) {
+        addResult({
+          invNo: task.invNo || '',
+          ordNo: task.ordNo || '',
+          itemNo: '',
+        currentMemo1: '',
+        plannedMemo1: '',
+        currentMemo2: '',
+        plannedMemo2: '',
+        currentOrderMemo: '',
+        plannedOrderMemo: '',
+        currentHold: '',
+        plannedHold: '',
+        needsChange: 'N',
+        status: 'SKIP',
+        reason: task.reason,
+        dbMatchStatus: task.dbMatchStatus || '',
+        clearOffReason: '',
+        actionSummary: 'skip',
+        log: 'SKIP: ' + (task.invNo || task.ordNo || '-') + ' / ' + task.reason
+      });
+        return;
+      }
+      const rows = rowsForTask(task);
+      if (!rows.length) {
+        addResult({
+          invNo: task.invNo || '',
+          ordNo: task.ordNo || '',
+          itemNo: '',
+          currentMemo1: '',
+          plannedMemo1: task.memo1,
+          currentMemo2: '',
+          plannedMemo2: task.memo2Map.size ? JSON.stringify(Object.fromEntries(task.memo2Map)) : '',
+          currentOrderMemo: '',
+          plannedOrderMemo: '',
+          currentHold: '',
+          plannedHold: task.writeHold ? systemShippingHoldForTask(task) : '',
+          currentSellpiaHold: '',
+          systemShippingHold: systemShippingHoldForTask(task),
+          syncAction: 'UNKNOWN',
+          syncReason: holdSyncReason(task, 'UNKNOWN'),
+          needsChange: 'UNKNOWN',
+          status: 'MATCH_FAIL',
+          reason: failReason('Sellpia grid row not found for this invoice/order in the currently loaded stockmatch list.', task),
+          dbMatchStatus: task.dbMatchStatus || '',
+          clearOffReason: '',
+          actionSummary: 'grid row not found',
+          log: 'MATCH_FAIL: ' + (task.invNo || task.ordNo || '-') + ' / grid row not found'
+        });
+        return;
+      }
+
+      for (let i = 0; i < rows.length; i++) {
+        const row = rows[i].item;
+        const rowPerf = newPerf();
+        if (canGridFastSkip(task, row)) {
+          const current = gridCurrentValues(row);
+          const plannedOrderMemo = plannedOrderMemoForGridRow(task, row, i, current.orderMemo);
+          const policy = buildRowPolicyMeta(task, row, i, { currentOrderMemo: current.orderMemo, plannedOrderMemo });
+          addResult(withPerf({
+            invNo: task.invNo || rowInvNo(row),
+            ordNo: task.ordNo || rowOrdNo(row),
+            itemNo: rowItemNo(row, i),
+            itemNoForVerify: rowItemNoStrict(row) || rowItemNo(row, i),
+            currentMemo1: current.memo1,
+            plannedMemo1: '',
+            currentMemo2: current.memo2,
+            plannedMemo2: '',
+            currentOrderMemo: current.orderMemo,
+            plannedOrderMemo,
+            currentHold: current.hold,
+            plannedHold: task.writeHold ? systemShippingHoldForTask(task) : '',
+            currentSellpiaHold: current.hold,
+            systemShippingHold: systemShippingHoldForTask(task),
+            syncAction: holdSyncAction(current.hold, systemShippingHoldForTask(task)),
+            syncReason: holdSyncReason(task, holdSyncAction(current.hold, systemShippingHoldForTask(task))),
+            needsChange: 'N',
+            status: 'GRID_FAST_SKIP',
+            reason: (task.reason || '') + ' / grid visible values already clear',
+            dbMatchStatus: task.dbMatchStatus || '',
+            clearOffReason: '',
+            liveWriteAllowed: policy.liveWriteAllowed,
+            currentStateWarning: policy.currentStateWarning,
+            itemKeyMatchMethod: policy.itemKeyMatchMethod,
+            sellpiaItemNoOriginal: policy.sellpiaItemNoOriginal,
+            sellpiaItemNoMatchKey: policy.sellpiaItemNoMatchKey,
+            orderMemoSource: policy.orderMemoSource,
+            memo2Target: policy.memo2Target,
+            orderMemoTarget: policy.orderMemoTarget,
+            actionSummary: 'grid already clear; detail skipped',
+            log: 'GRID_FAST_SKIP: ' + (task.invNo || rowInvNo(row)) + ' / grid visible values already clear / 팝업 확인 생략'
+          }, rowPerf));
+          continue;
+        }
+        const openStart = perfNow();
+        const openInfo = await openDetail(rows[i].idx);
+        const root = openInfo && openInfo.root;
+        rowPerf.openMs = perfMs(openStart);
+        rowPerf.openFallback = openInfo && openInfo.fallback ? 'Y' : 'N';
+        rowPerf.openRoot = openInfo && openInfo.rootKind;
+        rowPerf.openReady = openInfo && openInfo.ready ? 'Y' : 'N';
+        if (!root) {
+          const plannedMemo2WithoutRoot = task.clear ? '' : memo2ForGridRow(task, row, i);
+          const plannedOrderMemoWithoutRoot = plannedOrderMemoForGridRow(task, row, i, '');
+          const policy = buildRowPolicyMeta(task, row, i, { plannedOrderMemo: plannedOrderMemoWithoutRoot });
+          addResult(withPerf({
+            invNo: task.invNo || rowInvNo(row),
+            ordNo: task.ordNo || rowOrdNo(row),
+            itemNo: rowItemNo(row, i),
+            itemNoForVerify: rowItemNoStrict(row) || rowItemNo(row, i),
+            currentMemo1: '',
+            plannedMemo1: task.clear ? '' : task.memo1,
+            currentMemo2: '',
+            plannedMemo2: plannedMemo2WithoutRoot,
+            currentOrderMemo: '',
+            plannedOrderMemo: plannedOrderMemoWithoutRoot,
+            currentHold: '',
+            plannedHold: task.writeHold ? systemShippingHoldForTask(task) : '',
+            currentSellpiaHold: '',
+            systemShippingHold: systemShippingHoldForTask(task),
+            syncAction: 'UNKNOWN',
+            syncReason: holdSyncReason(task, 'UNKNOWN'),
+            needsChange: 'UNKNOWN',
+            status: 'DETAIL_FAIL',
+            reason: failReason('Sellpia detail popup did not open for the matched row.', task),
+            dbMatchStatus: task.dbMatchStatus || '',
+            clearOffReason: '',
+            liveWriteAllowed: 'N',
+            currentStateWarning: [policy.currentStateWarning, 'detail_open_failed'].filter(Boolean).join(' / '),
+            itemKeyMatchMethod: policy.itemKeyMatchMethod,
+            sellpiaItemNoOriginal: policy.sellpiaItemNoOriginal,
+            sellpiaItemNoMatchKey: policy.sellpiaItemNoMatchKey,
+            orderMemoSource: policy.orderMemoSource,
+            memo2Target: policy.memo2Target,
+            orderMemoTarget: policy.orderMemoTarget,
+            actionSummary: 'detail open failed',
+            log: 'DETAIL_FAIL: ' + (task.invNo || rowInvNo(row)) + ' / detail open failed'
+          }, rowPerf));
+          continue;
+        }
+
+        let rowResult = null;
+        let pendingResult = null;
+        try {
+          const readStart = perfNow();
+          const current = readCurrentValues(root, row);
+          rowPerf.readMs = perfMs(readStart);
+          const plannedMemo1 = task.clear ? '' : (task.writeMemo1 ? task.memo1 : current.memo1);
+          const orderMemoTarget = orderMemoForGridRow(task, row, i);
+          const canWriteOrderMemo = task.writeOrderMemo && !!normal(orderMemoTarget);
+          const plannedOrderMemo = plannedOrderMemoForGridRow(task, row, i, current.orderMemo);
+          const systemShippingHold = systemShippingHoldForTask(task);
+          const currentSellpiaHold = current.hold ? 'ON' : 'OFF';
+          const syncAction = holdSyncAction(currentSellpiaHold, systemShippingHold);
+          const syncReason = holdSyncReason(task, syncAction);
+          const plannedHold = task.writeHold ? systemShippingHold === 'ON' : !!current.hold;
+          const policy = buildRowPolicyMeta(task, row, i, { currentOrderMemo: current.orderMemo, plannedOrderMemo });
+          const memo1Changed = task.writeMemo1 && needsChange(current.memo1, plannedMemo1);
+          const orderMemoChanged = task.writeOrderMemo && (task.clear || canWriteOrderMemo) && needsChange(current.orderMemo, plannedOrderMemo);
+          const holdChanged = task.writeHold && !!current.hold !== plannedHold;
+        const rowMemo2Clear = memo2ClearForGridRow(task, row, i);
+          const curMemo2 = current.memo2;
+        const rowPlannedMemo2 = memo2ForGridRow(task, row, i);
+        const writeMemo2 = task.writeMemo2 && (task.clear || rowMemo2Clear || !!normal(rowPlannedMemo2));
+        const plannedMemo2 = task.clear ? '' : (writeMemo2 ? rowPlannedMemo2 : curMemo2);
+        const memo2Changed = writeMemo2 && needsChange(curMemo2, plannedMemo2);
+        const actionParts = [];
+          if (memo1Changed) actionParts.push('관리메모 ' + (plannedMemo1 || '(clear)'));
+        if (memo2Changed) actionParts.push('관리메모2 ' + (plannedMemo2 || '(clear)'));
+          if (orderMemoChanged) actionParts.push('주문메모 ' + (plannedOrderMemo || '(clear)'));
+          if (holdChanged) actionParts.push('배송보류 ' + (plannedHold ? 'ON' : 'OFF'));
+        const clearOffParts = [];
+          if (normal(current.memo1) && !normal(plannedMemo1)) clearOffParts.push('관리메모 clear');
+        if (normal(curMemo2) && !normal(plannedMemo2)) clearOffParts.push('관리메모2 clear');
+          if (normal(current.orderMemo) && !normal(plannedOrderMemo)) clearOffParts.push('주문메모 clear');
+          if (syncAction === 'OFF') clearOffParts.push('배송보류 OFF 동기화');
+          rowResult = {
+          invNo: task.invNo || rowInvNo(row),
+          ordNo: task.ordNo || rowOrdNo(row),
+          itemNo: rowItemNo(row, i),
+          itemNoForVerify: rowItemNoStrict(row) || rowItemNo(row, i),
+            currentMemo1: current.memo1,
+            plannedMemo1,
+          currentMemo2: curMemo2,
+          plannedMemo2,
+            currentOrderMemo: current.orderMemo,
+            plannedOrderMemo,
+            currentHold: current.hold ? 'ON' : 'OFF',
+            plannedHold: plannedHold ? 'ON' : 'OFF',
+          currentSellpiaHold,
+          systemShippingHold,
+          syncAction,
+          syncReason,
+          needsChange: actionParts.length ? 'Y' : 'N',
+          status: 'OK',
+          reason: task.reason,
+          dbMatchStatus: task.dbMatchStatus || '',
+          clearOffReason: clearOffParts.join(' / '),
+          liveWriteAllowed: policy.liveWriteAllowed,
+          currentStateWarning: policy.currentStateWarning,
+          itemKeyMatchMethod: policy.itemKeyMatchMethod,
+          sellpiaItemNoOriginal: policy.sellpiaItemNoOriginal,
+          sellpiaItemNoMatchKey: policy.sellpiaItemNoMatchKey,
+          orderMemoSource: policy.orderMemoSource,
+          memo2Target: policy.memo2Target,
+          orderMemoTarget: policy.orderMemoTarget,
+          actionSummary: actionParts.length ? actionParts.join(' / ') : '변경 없음',
+            writeMemo1: memo1Changed,
+          writeMemo2: memo2Changed,
+            writeOrderMemo: orderMemoChanged,
+            writeHold: holdChanged
+        };
+        if (rowResult.writeOrderMemo && normal(rowResult.currentOrderMemo) && !normal(rowResult.plannedOrderMemo) && !task.clear) {
+          const extraWarning = 'order_memo_clear_without_item_target';
+          rowResult.liveWriteAllowed = 'N';
+          rowResult.currentStateWarning = [rowResult.currentStateWarning, extraWarning].filter(Boolean).join(' / ');
+        }
+        if (options.testMode) {
+          pendingResult = { ...rowResult, log: 'TEST: ' + rowResult.invNo + ' / ' + rowResult.actionSummary };
+        } else {
+          if (!actionParts.length) {
+            pendingResult = { ...rowResult, log: 'LIVE SKIP: ' + rowResult.invNo + ' / 변경 없음' };
+            continue;
+          }
+          if (rowResult.liveWriteAllowed !== 'Y') {
+            pendingResult = {
+              ...rowResult,
+              status: rowResult.liveWriteAllowed === 'REVIEW' ? 'REVIEW_SKIP' : 'LIVE_BLOCKED',
+              needsChange: 'N',
+              log: 'LIVE SKIP: ' + rowResult.invNo + ' / live_write_allowed=' + rowResult.liveWriteAllowed
+            };
+            continue;
+          }
+          const writeStart = perfNow();
+          try {
+              pendingResult = await setPopupValues(root, rowResult, false);
+              rowPerf.writeMs = perfMs(writeStart);
+          } catch (err) {
+            rowPerf.writeMs = perfMs(writeStart);
+            pendingResult = {
+              ...rowResult,
+              status: 'WRITE_FAIL',
+              needsChange: 'UNKNOWN',
+              reason: failReason((err && err.message) || String(err), task),
+              log: 'WRITE_FAIL: ' + rowResult.invNo + ' / ' + ((err && err.message) || String(err))
+            };
+          }
+        }
+        } finally {
+          const closeStart = perfNow();
+          const closeInfo = await closeDetail();
+          rowPerf.closeMs = perfMs(closeStart);
+          rowPerf.closeFallback = closeInfo && closeInfo.fallback ? 'Y' : 'N';
+          rowPerf.closeRoot = closeInfo && closeInfo.rootKind;
+          rowPerf.closeBtn = closeInfo && closeInfo.button ? 'Y' : 'N';
+          if (pendingResult) addResult(withPerf(pendingResult, rowPerf));
+        }
+      }
+    }
+
+
+    async function snapshotTask(task) {
+      const rows = rowsForTask(task);
+      if (!rows.length) {
+        addResult({
+          invNo: task.invNo || '',
+          ordNo: task.ordNo || '',
+          itemNo: '',
+          currentMemo1: '',
+          plannedMemo1: '',
+          currentMemo2: '',
+          plannedMemo2: '',
+          currentOrderMemo: '',
+          plannedOrderMemo: '',
+          currentHold: '',
+          plannedHold: '',
+          needsChange: 'SNAPSHOT',
+          status: 'MATCH_FAIL',
+          reason: 'snapshot: grid row not found',
+          dbMatchStatus: task.dbMatchStatus || '',
+          clearOffReason: '',
+          actionSummary: 'snapshot grid row not found',
+          log: 'SNAPSHOT MATCH_FAIL: ' + (task.invNo || task.ordNo || '-')
+        });
+        return;
+      }
+
+      for (let i = 0; i < rows.length; i++) {
+        const row = rows[i].item;
+        const openInfo = await openDetail(rows[i].idx);
+        const root = openInfo && openInfo.root;
+        if (!root) {
+          addResult({
+            invNo: task.invNo || rowInvNo(row),
+            ordNo: task.ordNo || rowOrdNo(row),
+            itemNo: rowItemNo(row, i),
+            currentMemo1: '',
+            plannedMemo1: '',
+            currentMemo2: '',
+            plannedMemo2: '',
+            currentOrderMemo: '',
+            plannedOrderMemo: '',
+            currentHold: '',
+            plannedHold: '',
+            needsChange: 'SNAPSHOT',
+            status: 'DETAIL_FAIL',
+            reason: 'snapshot: detail popup did not open',
+            dbMatchStatus: task.dbMatchStatus || '',
+            clearOffReason: '',
+            actionSummary: 'snapshot detail open failed',
+            log: 'SNAPSHOT DETAIL_FAIL: ' + (task.invNo || rowInvNo(row))
+          });
+          continue;
+        }
+        try {
+          const current = readCurrentValues(root, row);
+        addResult({
+          invNo: task.invNo || rowInvNo(row),
+          ordNo: task.ordNo || rowOrdNo(row),
+          itemNo: rowItemNo(row, i),
+            currentMemo1: current.memo1,
+          plannedMemo1: '',
+            currentMemo2: current.memo2,
+          plannedMemo2: '',
+            currentOrderMemo: current.orderMemo,
+          plannedOrderMemo: '',
+            currentHold: current.hold ? 'ON' : 'OFF',
+          plannedHold: '',
+          needsChange: 'SNAPSHOT',
+          status: 'SNAPSHOT',
+          reason: task.reason || '',
+          dbMatchStatus: task.dbMatchStatus || '',
+          clearOffReason: '',
+          actionSummary: 'current snapshot',
+          log: 'SNAPSHOT: ' + (task.invNo || rowInvNo(row)) + ' / ' + (task.ordNo || rowOrdNo(row))
+        });
+        } finally {
+          await closeDetail();
+        }
+      }
+    }
+
+
+    async function snapshotCurrentValues(invFilter, startDate, endDate) {
+      results.length = 0;
+      stopped = false;
+      csvMode = 'snapshot';
+      $('smu0707-log').textContent = '';
+      $('smu0707-download').disabled = true;
+      $('smu0707-issue-download').disabled = true;
+      $('smu0707-stop').style.display = 'block';
+      const range = invFilter ? 'single target' : dateRange(startDate, endDate).label;
+      $('smu0707-status').textContent = 'Building current-value snapshot targets...\nRange: ' + range;
+      const tasks = await buildTasks(invFilter, startDate, endDate);
+      const metaLines = buildMetaLines(tasks);
+      $('smu0707-log').textContent += metaLines.join('\n') + '\n';
+      $('smu0707-status').textContent = 'Current snapshot reading ' + tasks.length + ' target(s)...\nRange: ' + range + '\n' + metaLines.join('\n') + '\nNO WRITE / NO updateOrder / NO hold click / NO save';
+      for (let i = 0; i < tasks.length; i++) {
+        if (stopped) break;
+        const task = tasks[i];
+        $('smu0707-status').textContent = '[' + (i + 1) + '/' + tasks.length + '] current snapshot ' + (task.invNo || task.ordNo || '-') + '\n' + task.reason;
+        await snapshotTask(task);
+        await sleep(120);
+      }
+      const summary = summarizeResults();
+      $('smu0707-log').textContent += summary.lines.join('\n') + '\n';
+      $('smu0707-status').textContent = 'CURRENT SNAPSHOT DONE\nResult rows: ' + results.length + '\n' + summary.lines.join('\n');
+      $('smu0707-stop').style.display = 'none';
+      $('smu0707-stop').disabled = false;
+      $('smu0707-stop').textContent = 'Stop';
+    }
+    function csvValue(value) {
+      const s = String(value == null ? '' : value);
+      return '"' + s.replace(/"/g, '""') + '"';
+    }
+
+    function isIssueResult(result) {
+      const r = result || {};
+      if (r.needsChange === 'SNAPSHOT') return false;
+      if (r.needsChange === 'UNKNOWN') return true;
+      if (r.status && r.status !== 'OK') return true;
+      if (r.liveWriteAllowed && r.liveWriteAllowed !== 'Y') return true;
+      if (normal(r.currentStateWarning)) return true;
+      return false;
+    }
+
+    function csvDisplayRow(result) {
+      const r = result || {};
+      const blocked = r.needsChange !== 'SNAPSHOT' && r.liveWriteAllowed && r.liveWriteAllowed !== 'Y';
+      const blockedStatus = r.liveWriteAllowed === 'REVIEW' ? 'REVIEW_SKIP' : 'LIVE_BLOCKED';
+      if (!blocked) return { ...r, csvBlockedPlan: '' };
+      const blockedPlan = r.actionSummary && r.actionSummary !== '변경 없음'
+        ? r.actionSummary
+        : [
+          r.currentMemo1 !== r.plannedMemo1 ? '관리메모 ' + (r.plannedMemo1 || '(clear)') : '',
+          r.currentMemo2 !== r.plannedMemo2 ? '관리메모2 ' + (r.plannedMemo2 || '(clear)') : '',
+          r.currentOrderMemo !== r.plannedOrderMemo ? '주문메모 ' + (r.plannedOrderMemo || '(clear)') : '',
+          r.currentHold !== r.plannedHold ? '배송보류 ' + (r.plannedHold || '') : ''
+        ].filter(Boolean).join(' / ');
+      return {
+        ...r,
+        plannedMemo1: r.currentMemo1,
+        plannedMemo2: r.currentMemo2,
+        plannedOrderMemo: r.currentOrderMemo,
+        plannedHold: r.currentHold,
+        needsChange: 'N',
+        status: r.status === 'OK' ? blockedStatus : r.status,
+        reason: r.reason ? '차단됨(실행안함): ' + r.reason : '차단됨(실행안함)',
+        clearOffReason: r.clearOffReason ? '차단됨(실행안함): ' + r.clearOffReason : '',
+        csvBlockedPlan: blockedPlan ? '차단전 예정: ' + blockedPlan : '차단됨(실행안함)'
+      };
+    }
+
+    function issueReasonForRow(result) {
+      const r = result || {};
+      const reasons = [];
+      if (r.status && r.status !== 'OK') reasons.push('status=' + r.status);
+      if (r.liveWriteAllowed && r.liveWriteAllowed !== 'Y') reasons.push('live_write_allowed=' + r.liveWriteAllowed);
+      if (r.needsChange === 'UNKNOWN') reasons.push('실행변경필요=UNKNOWN');
+      if (normal(r.currentStateWarning)) reasons.push(r.currentStateWarning);
+      return reasons.join(' / ') || 'issue';
+    }
+
+    function downloadCsv() {
+      const headers = ['송장번호','주문번호','주문품목No','현재 관리메모','실행예정 관리메모','현재 관리메모2','실행예정 관리메모2','현재 주문메모','실행예정 주문메모','현재 배송보류','실행예정 배송보류','currentSellpiaHold','systemShippingHold','syncAction','syncReason','실행변경필요','상태','사유','DB매칭상태','clear/OFF사유','차단전 변경요약','live_write_allowed','current_state_warning','item_key_match_method','sellpia_item_no_original','sellpia_item_no_match_key','order_memo_source','memo2_target','order_memo_target','perf_open_ms','perf_read_ms','perf_write_ms','perf_close_ms','perf_total_ms','perf_open_fallback','perf_open_root','perf_open_ready','perf_close_fallback','perf_close_root','perf_close_btn'];
+      const lines = [headers.map(csvValue).join(',')];
+      for (const r of results) {
+        const row = csvDisplayRow(r);
+        lines.push([row.invNo,row.ordNo,row.itemNo,row.currentMemo1,row.plannedMemo1,row.currentMemo2,row.plannedMemo2,row.currentOrderMemo,row.plannedOrderMemo,row.currentHold,row.plannedHold,row.currentSellpiaHold,row.systemShippingHold,row.syncAction,row.syncReason,row.needsChange,row.status,row.reason,row.dbMatchStatus,row.clearOffReason,row.csvBlockedPlan,row.liveWriteAllowed,row.currentStateWarning,row.itemKeyMatchMethod,row.sellpiaItemNoOriginal,row.sellpiaItemNoMatchKey,row.orderMemoSource,row.memo2Target,row.orderMemoTarget,row.perfOpenMs,row.perfReadMs,row.perfWriteMs,row.perfCloseMs,row.perfTotalMs,row.perfOpenFallback,row.perfOpenRoot,row.perfOpenReady,row.perfCloseFallback,row.perfCloseRoot,row.perfCloseBtn].map(csvValue).join(','));
+      }
+      const blob = new Blob(['\ufeff' + lines.join('\n')], { type: 'text/csv;charset=utf-8' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      const meta = lastBuildMeta || {};
+      const countSuffix = '_rows' + (meta.gridRows ?? 'x') + '_targets' + (meta.uniqueOrdNos ?? 'x');
+      const modeName = csvMode || 'test';
+      a.download = 'sellpia_stockmatch_memo_' + modeName + countSuffix + '_' + new Date().toISOString().slice(0, 19).replace(/[-:T]/g, '') + '.csv';
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+    }
+
+    function downloadIssueCsv() {
+      const issueRows = results.filter(isIssueResult);
+      if (!issueRows.length) {
+        alert('차단/실패/경고 행이 없습니다.');
+        return;
+      }
+      const headers = ['issue_reason','송장번호','주문번호','주문품목No','상태','live_write_allowed','current_state_warning','실행변경필요','사유','차단전 변경요약','현재 배송보류','실행예정 배송보류','currentSellpiaHold','systemShippingHold','syncAction','syncReason','현재 관리메모','실행예정 관리메모','현재 관리메모2','실행예정 관리메모2','현재 주문메모','실행예정 주문메모','DB매칭상태','clear/OFF사유','item_key_match_method','sellpia_item_no_original','sellpia_item_no_match_key'];
+      const lines = [headers.map(csvValue).join(',')];
+      for (const r of issueRows) {
+        const row = csvDisplayRow(r);
+        lines.push([issueReasonForRow(r),row.invNo,row.ordNo,row.itemNo,row.status,row.liveWriteAllowed,row.currentStateWarning,row.needsChange,row.reason,row.csvBlockedPlan,row.currentHold,row.plannedHold,row.currentSellpiaHold,row.systemShippingHold,row.syncAction,row.syncReason,row.currentMemo1,row.plannedMemo1,row.currentMemo2,row.plannedMemo2,row.currentOrderMemo,row.plannedOrderMemo,row.dbMatchStatus,row.clearOffReason,row.itemKeyMatchMethod,row.sellpiaItemNoOriginal,row.sellpiaItemNoMatchKey].map(csvValue).join(','));
+      }
+      const blob = new Blob(['\ufeff' + lines.join('\n')], { type: 'text/csv;charset=utf-8' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      const meta = lastBuildMeta || {};
+      const countSuffix = '_rows' + (meta.gridRows ?? 'x') + '_targets' + (meta.uniqueOrdNos ?? 'x');
+      const modeName = csvMode || 'test';
+      a.download = 'sellpia_stockmatch_memo_issues_' + modeName + countSuffix + '_' + new Date().toISOString().slice(0, 19).replace(/[-:T]/g, '') + '.csv';
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+    }
+
+    function makeOverlay() {
+      const overlay = document.createElement('div');
+      overlay.id = 'smu0707-overlay';
+      overlay.style.cssText = 'position:fixed;right:16px;top:80px;left:auto;bottom:auto;max-width:94vw;max-height:calc(100vh - 96px);overflow:auto;background:transparent;z-index:999999;font-family:Arial,sans-serif;';
+      overlay.innerHTML =
+        '<div style="width:560px;max-width:94vw;background:#111827;color:#fff;border:1px solid #334155;border-radius:12px;padding:22px;box-shadow:0 24px 80px rgba(0,0,0,.45)">' +
+        '<div style="font-size:18px;font-weight:900;margin-bottom:4px">Stockmatch Memo Updater 0709-관리메모2수정</div>' +
+        '<div style="font-size:12px;color:#93c5fd;margin-bottom:14px">TEST MODE (NO WRITE) is ON by default</div>' +
+        '<label style="font-size:12px;color:#cbd5e1">Invoice / order number (optional)</label>' +
+        '<input id="smu0707-inv" style="width:100%;height:38px;margin:5px 0 10px;padding:0 10px;border-radius:8px;border:1px solid #475569;background:#0f172a;color:#fff" placeholder="Blank = use date range">' +
+        '<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:12px">' +
+        '<div><label style="font-size:12px;color:#cbd5e1">Start date</label><input id="smu0707-date-start" type="date" value="' + defaultStartDate() + '" style="width:100%;height:38px;margin-top:5px;padding:0 10px;border-radius:8px;border:1px solid #475569;background:#0f172a;color:#fff"></div>' +
+        '<div><label style="font-size:12px;color:#cbd5e1">End date</label><input id="smu0707-date-end" type="date" value="' + defaultEndDate() + '" style="width:100%;height:38px;margin-top:5px;padding:0 10px;border-radius:8px;border:1px solid #475569;background:#0f172a;color:#fff"></div>' +
+        '</div>' +
+        '<div style="display:flex;gap:12px;flex-wrap:wrap;margin-bottom:12px;font-size:13px;color:#cbd5e1">' +
+        '<label><input id="smu0707-test" type="checkbox" checked> TEST MODE (NO WRITE)</label>' +
+        '<label><input id="smu0707-memo1" type="checkbox" checked> memo1</label>' +
+        '<label><input id="smu0707-memo2" type="checkbox" checked> memo2</label>' +
+        '<label><input id="smu0707-order-memo" type="checkbox" checked> order memo</label>' +
+        '<label><input id="smu0707-hold" type="checkbox" checked> delivery hold</label>' +
+        '<label><input id="smu0707-split-batch" type="checkbox"> split 50 invoices</label>' +
+        '</div>' +
+        '<div style="display:flex;gap:8px;margin-bottom:12px">' +
+        '<button id="smu0707-start" style="flex:1;height:40px;border:0;border-radius:8px;background:#2563eb;color:#fff;font-weight:900;cursor:pointer">Start read test</button>' +
+        '<button id="smu0707-snapshot" style="height:40px;border:1px solid #475569;border-radius:8px;background:#164e63;color:#e0f2fe;font-weight:800;cursor:pointer">Current CSV</button>' +
+        '<button id="smu0707-download" disabled style="height:40px;border:1px solid #475569;border-radius:8px;background:#0f172a;color:#cbd5e1;font-weight:800;cursor:pointer">Download CSV</button>' +
+        '<button id="smu0707-issue-download" disabled style="height:40px;border:1px solid #7f1d1d;border-radius:8px;background:#450a0a;color:#fecaca;font-weight:900;cursor:pointer">Blocked/Fail CSV</button>' +
+        '</div>' +
+        '<div id="smu0707-status" style="min-height:38px;white-space:pre-line;color:#d1d5db;font-size:13px;margin-bottom:8px"></div>' +
+        '<pre id="smu0707-log" style="height:210px;overflow:auto;background:#020617;color:#a7f3d0;border-radius:8px;padding:10px;font-size:11px;white-space:pre-wrap"></pre>' +
+        '<div style="display:flex;gap:8px;margin-top:12px">' +
+        '<button id="smu0707-stop" style="display:none;flex:1;height:36px;border:0;border-radius:8px;background:#b91c1c;color:#fff;font-weight:800;cursor:pointer">Stop</button>' +
+        '<button id="smu0707-close" style="flex:1;height:36px;border:1px solid #475569;border-radius:8px;background:transparent;color:#cbd5e1;cursor:pointer">Close</button>' +
+        '</div>' +
+        '</div>';
+      document.body.appendChild(overlay);
+      $('smu0707-close').onclick = () => overlay.remove();
+      $('smu0707-stop').onclick = () => { stopped = true; $('smu0707-stop').disabled = true; $('smu0707-stop').textContent = 'Stopping'; };
+      $('smu0707-download').onclick = downloadCsv;
+      $('smu0707-issue-download').onclick = downloadIssueCsv;
+      $('smu0707-start').onclick = run;
+      $('smu0707-snapshot').onclick = async () => {
+        const inv = normal($('smu0707-inv').value);
+        const startDate = $('smu0707-date-start').value;
+        const endDate = $('smu0707-date-end').value;
+        if (!inv && (!startDate || !endDate)) {
+          alert('Enter an invoice/order number or a date range.');
+          return;
+        }
+        try {
+          await snapshotCurrentValues(inv, startDate, endDate);
+        } catch (err) {
+          $('smu0707-status').textContent = 'SNAPSHOT ERROR: ' + (err && err.message ? err.message : err);
+          $('smu0707-log').textContent += ((err && err.stack) || (err && err.message) || err) + '\n';
+        } finally {
+          $('smu0707-stop').style.display = 'none';
+          $('smu0707-stop').disabled = false;
+          $('smu0707-stop').textContent = 'Stop';
+        }
+      };
+    }
+
+    async function run() {
+      results.length = 0;
+      stopped = false;
+      const runStart = perfNow();
+      $('smu0707-log').textContent = '';
+      csvMode = 'test';
+      $('smu0707-download').disabled = true;
+      $('smu0707-issue-download').disabled = true;
+      $('smu0707-stop').style.display = 'block';
+      const options = {
+        inv: normal($('smu0707-inv').value),
+        startDate: $('smu0707-date-start').value,
+        endDate: $('smu0707-date-end').value,
+        testMode: $('smu0707-test').checked,
+        doMemo1: $('smu0707-memo1').checked,
+        doMemo2: $('smu0707-memo2').checked,
+        doOrderMemo: $('smu0707-order-memo').checked,
+        doHold: $('smu0707-hold').checked,
+        splitBatch: $('smu0707-split-batch').checked
+      };
+      if (!options.inv && (!options.startDate || !options.endDate)) {
+        alert('Enter an invoice/order number or a date range.');
+        return;
+      }
+      if (!options.testMode && !confirm('LIVE WRITE mode. This will save to Sellpia. Continue?')) return;
+      try {
+      csvMode = options.testMode ? 'test' : 'live';
+        const range = options.inv ? 'single target' : dateRange(options.startDate, options.endDate).label;
+        $('smu0707-status').textContent = 'Building planned updates from DB/F.v1...\nRange: ' + range;
+        const buildStart = perfNow();
+        let tasks = await buildTasks(options.inv, options.startDate, options.endDate);
+        const buildMs = perfMs(buildStart);
+        if (!options.inv && options.splitBatch) {
+          if (!tasks.length) {
+            alert('배치 분리 대상이 없습니다.');
+            return;
+          }
+          const selectedBatch = promptTaskBatch(tasks, CONFIG.taskBatchSize);
+          if (!selectedBatch) return;
+          tasks = selectedBatch.tasks;
+          lastBuildMeta = { ...(lastBuildMeta || {}), ...selectedBatch.meta };
+          $('smu0707-log').textContent += 'Batch split selected: before=' + selectedBatch.meta.batchTotalTargets + ', after=' + selectedBatch.meta.batchSelectedTargets + ', batch=' + selectedBatch.meta.batchNo + '/' + selectedBatch.meta.batchTotal + ', target index=' + selectedBatch.meta.batchStart + '-' + selectedBatch.meta.batchEnd + ', first=' + selectedBatch.meta.batchFirstTarget + ', last=' + selectedBatch.meta.batchLastTarget + '\n';
+          if (!tasks.length) {
+            alert('선택한 배치에 실행 대상이 없습니다.');
+            return;
+          }
+        }
+        const metaLines = buildMetaLines(tasks);
+        $('smu0707-log').textContent += metaLines.join('\n') + '\n' + 'PERF buildTasks=' + buildMs + 'ms\n';
+        $('smu0707-status').textContent = 'Read-testing ' + tasks.length + ' target(s)...\nRange: ' + range + '\n' + metaLines.join('\n') + '\nTEST MODE=' + (options.testMode ? 'ON (NO WRITE / NO updateOrder / NO click / NO save)' : 'OFF (LIVE WRITE)');
+        for (let i = 0; i < tasks.length; i++) {
+          if (stopped) break;
+          const task = tasks[i];
+          if (!options.doMemo1) task.writeMemo1 = false;
+          if (!options.doMemo2) task.writeMemo2 = false;
+          if (!options.doOrderMemo) task.writeOrderMemo = false;
+          if (!options.doHold) task.writeHold = false;
+          const batchLine = lastBuildMeta && lastBuildMeta.batchEnabled
+            ? 'Batch ' + lastBuildMeta.batchNo + '/' + lastBuildMeta.batchTotal + ', global target ' + (lastBuildMeta.batchStart + i) + '/' + lastBuildMeta.batchTotalTargets + '\n'
+            : '';
+          $('smu0707-status').textContent = '[' + (i + 1) + '/' + tasks.length + '] ' + (task.invNo || task.ordNo || '-') + '\n' + batchLine + task.reason;
+          await inspectTask(task, options);
+          await sleep(120);
+        }
+        const summary = summarizeResults();
+        if (options.testMode) lastDryRunSummary = summary;
+        $('smu0707-log').textContent += summary.lines.join('\n') + '\n' + 'PERF runTotal=' + perfMs(runStart) + 'ms\n';
+        const doneTitle = options.testMode
+          ? 'TEST MODE DONE: no Sellpia or DB changes\nNO updateOrder / NO click / NO save\n'
+          : (summary.blocking ? 'LIVE WRITE PARTIAL/FAILED\n' : 'LIVE WRITE DONE\n');
+        const doneBatchLine = lastBuildMeta && lastBuildMeta.batchEnabled
+          ? 'Batch ' + lastBuildMeta.batchNo + '/' + lastBuildMeta.batchTotal + ', target index=' + lastBuildMeta.batchStart + '-' + lastBuildMeta.batchEnd + ' of ' + lastBuildMeta.batchTotalTargets + '\n'
+          : '';
+        $('smu0707-status').textContent = doneTitle + doneBatchLine + 'Result rows: ' + results.length + '\n' + summary.lines.join('\n');
+      } catch (err) {
+        $('smu0707-status').textContent = 'Error: ' + err.message;
+        $('smu0707-log').textContent += (err.stack || err.message) + '\n';
+      } finally {
+        $('smu0707-stop').style.display = 'none';
+      }
+    }
+
+    makeOverlay();
+  })().catch(function(err){
+    console.error('[Stockmatch Memo Updater 0709-관리메모2수정]', err);
+    alert('Stockmatch Memo Updater error: ' + (err && err.message ? err.message : err));
+  });
+})();
+</script>
+
+<script>
+const SRC = document.getElementById('bookmarklet-source').textContent.trim();
+document.getElementById('code-display').textContent = SRC;
+document.getElementById('bookmarklet-link').href = 'javascript:' + encodeURIComponent(SRC);
+document.getElementById('copy-btn').addEventListener('click', async function() {
+  await navigator.clipboard.writeText(SRC);
+  this.textContent = '복사 완료';
+  setTimeout(() => { this.textContent = '코드 복사'; }, 1500);
+});
+</script>
+</body>
+</html>
