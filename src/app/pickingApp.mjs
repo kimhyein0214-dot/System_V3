@@ -3836,12 +3836,12 @@ async function saveDrawerForInvoice(invoice, drawerMemo) {
     return;
   }
   for (const item of invoice.items || []) {
+    await updateOrderItemMemoFields(invoice.orderGroupNo, item.sellpiaItemNo, { o_shop_memo: drawerMemo });
+  }
+  for (const item of invoice.items || []) {
     patchLocalPickingState(invoice, item, { drawerMemo });
     await savePickingRow(invoice, item, null, { drawerMemo });
-    item.sellpiaMemo1 = drawerMemo;
-    if (item.raw) item.raw.o_shop_memo = drawerMemo;
-    const { error } = await db.from("order_items").update({ o_shop_memo: drawerMemo }).eq("ord_no", invoice.orderGroupNo).eq("item_no", item.sellpiaItemNo);
-    if (error) throw error;
+    patchLocalItemManagementMemos(invoice.orderGroupNo, item.sellpiaItemNo, { memo1: drawerMemo });
   }
   await ensureShippingHoldOnAfterMemoSave(invoice, drawerMemo);
 }
@@ -3869,8 +3869,8 @@ async function setShortageQty(orderGroupNo, sellpiaItemNo, nextValue) {
   schedulePickingSurfaces();
   try {
     await savePickingRow(invoice, item, eventType, { quantity: next, memo: nextText || null });
-    const { error } = await db.from("order_items").update({ o_shop_memo2: nextText }).eq("ord_no", invoice.orderGroupNo).eq("item_no", item.sellpiaItemNo);
-    if (error) throw error;
+    await updateOrderItemMemoFields(invoice.orderGroupNo, item.sellpiaItemNo, { o_shop_memo2: nextText });
+    patchLocalItemManagementMemos(invoice.orderGroupNo, item.sellpiaItemNo, { memo2: nextText });
     await ensureShippingHoldOnAfterMemoSave(invoice, nextText);
     renderWorkflowSurfacesIfVisible();
     toast("관리메모2 저장");
@@ -4119,6 +4119,77 @@ function patchLocalSellpiaOrderMemo(invoice, item, value) {
       if (row.raw) row.raw.order_memo = value || "";
     }
   }
+}
+
+function allWorkflowInvoices() {
+  return [
+    ...(state.viewModel?.invoices || []),
+    ...(state.workflowQueues?.viewModel?.invoices || []),
+    ...(state.workflowQueues?.inspectionInvoices || []),
+    ...(state.workflowQueues?.shortageItems || []).map((row) => row.invoice).filter(Boolean),
+    ...(state.workflowQueues?.inspectionCompletedInvoices || []),
+  ];
+}
+
+function patchLocalItemManagementMemos(orderGroupNo, sellpiaItemNo, { memo1, memo2 } = {}) {
+  const groupNo = String(orderGroupNo || "");
+  const itemNo = String(sellpiaItemNo || "");
+  const seen = new Set();
+  for (const inv of allWorkflowInvoices()) {
+    if (!inv || String(inv.orderGroupNo || "") !== groupNo) continue;
+    for (const row of inv.items || []) {
+      if (String(row.sellpiaItemNo || "") !== itemNo) continue;
+      const key = `${groupNo}::${itemNo}::${seen.size}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      if (memo1 !== undefined) {
+        row.sellpiaMemo1 = memo1;
+        if (row.raw) row.raw.o_shop_memo = memo1;
+        if (row.pickingState) row.pickingState.drawerMemo = memo1;
+      }
+      if (memo2 !== undefined) {
+        row.sellpiaMemo2 = memo2;
+        if (row.raw) {
+          row.raw.o_shop_memo2 = memo2;
+          row.raw.shop_memo2 = memo2;
+          row.raw.memo2 = memo2;
+        }
+        if (row.pickingState) row.pickingState.shortageMemo2 = memo2;
+      }
+    }
+  }
+  for (const shortageRow of state.workflowQueues?.shortageItems || []) {
+    if (String(shortageRow.invoice?.orderGroupNo || "") !== groupNo) continue;
+    if (String(shortageRow.item?.sellpiaItemNo || "") !== itemNo) continue;
+    if (memo1 !== undefined) {
+      shortageRow.item.sellpiaMemo1 = memo1;
+      if (shortageRow.item.raw) shortageRow.item.raw.o_shop_memo = memo1;
+      if (shortageRow.state) shortageRow.state.drawerMemo = memo1;
+    }
+    if (memo2 !== undefined) {
+      shortageRow.item.sellpiaMemo2 = memo2;
+      if (shortageRow.item.raw) {
+        shortageRow.item.raw.o_shop_memo2 = memo2;
+        shortageRow.item.raw.shop_memo2 = memo2;
+        shortageRow.item.raw.memo2 = memo2;
+      }
+      if (shortageRow.state) shortageRow.state.memo = memo2;
+    }
+  }
+}
+
+async function updateOrderItemMemoFields(orderGroupNo, sellpiaItemNo, patch) {
+  const { data, error } = await db
+    .from("order_items")
+    .update(patch)
+    .eq("ord_no", orderGroupNo)
+    .eq("item_no", sellpiaItemNo)
+    .select("ord_no,item_no");
+  if (error) throw error;
+  if (!data || !data.length) {
+    throw new Error(`order_items 대상 행 없음 (${orderGroupNo} / ${sellpiaItemNo})`);
+  }
+  return data;
 }
 
 function buildPlannedPrintCsvRows() {
@@ -4945,14 +5016,8 @@ async function completeSelectedShortagePicking(shortageKey = state.selectedShort
     drawerMemo: row.state?.drawerMemo || row.item.pickingState?.drawerMemo || row.invoice.sellpiaMemo1 || null,
   });
   if (!ok) return;
-  row.item.sellpiaMemo2 = "";
-  if (row.item.raw) {
-    row.item.raw.o_shop_memo2 = "";
-    row.item.raw.shop_memo2 = "";
-    row.item.raw.memo2 = "";
-  }
-  const { error } = await db.from("order_items").update({ o_shop_memo2: "" }).eq("ord_no", row.invoice.orderGroupNo).eq("item_no", row.item.sellpiaItemNo);
-  if (error) throw error;
+  await updateOrderItemMemoFields(row.invoice.orderGroupNo, row.item.sellpiaItemNo, { o_shop_memo2: "" });
+  patchLocalItemManagementMemos(row.invoice.orderGroupNo, row.item.sellpiaItemNo, { memo2: "" });
 
   state.selectedInspectionGroup = row.invoice.orderGroupNo;
   state.selectedShortageKey = "";
@@ -5026,22 +5091,14 @@ async function saveSelectedShortageMemo(shortageKey = state.selectedShortageKey)
   const drawerMemo = els.shortageDetail?.querySelector("[data-shortage-field='drawerMemo']")?.value?.trim() || "";
   const memo = els.shortageDetail?.querySelector("[data-shortage-field='memo']")?.value?.trim() || "";
   const qty = Number(row.state?.shortageQty || 0) || 1;
+  await updateOrderItemMemoFields(row.invoice.orderGroupNo, row.item.sellpiaItemNo, { o_shop_memo: drawerMemo, o_shop_memo2: memo });
   const ok = await saveWorkflowItemEvent(row.invoice, row.item, "shortage_qty_changed", {
     quantity: qty,
     memo,
     drawerMemo,
   });
   if (!ok) return;
-  row.item.sellpiaMemo1 = drawerMemo;
-  row.item.sellpiaMemo2 = memo;
-  if (row.item.raw) row.item.raw.o_shop_memo = drawerMemo;
-  if (row.item.raw) {
-    row.item.raw.o_shop_memo2 = memo;
-    row.item.raw.shop_memo2 = memo;
-    row.item.raw.memo2 = memo;
-  }
-  const { error } = await db.from("order_items").update({ o_shop_memo: drawerMemo, o_shop_memo2: memo }).eq("ord_no", row.invoice.orderGroupNo).eq("item_no", row.item.sellpiaItemNo);
-  if (error) throw error;
+  patchLocalItemManagementMemos(row.invoice.orderGroupNo, row.item.sellpiaItemNo, { memo1: drawerMemo, memo2: memo });
   await ensureShippingHoldOnAfterMemoSave(row.invoice, `${drawerMemo}\n${memo}`);
   state.selectedShortageKey = shortageKey;
   renderWorkflowSurfaces();
