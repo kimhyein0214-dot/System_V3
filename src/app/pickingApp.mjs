@@ -5705,10 +5705,10 @@ function onGlobalKeydown(event) {
     else moveSelection(delta);
     return;
   }
-  if (event.code === "Space" && !isTypingTarget(event.target)) {
+  if (event.code === "Space" && !isTypingTarget(event.target) && !event.repeat) {
     event.preventDefault();
     if (state.activeTab === "shortage") completeSelectedShortagePicking().catch(showError);
-    else if (state.activeTab === "inspection") return;
+    else if (state.activeTab === "inspection") toggleSelectedInspectionHold().catch(showError);
     else toggleSelectedItem().catch(showError);
   }
 }
