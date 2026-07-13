@@ -850,6 +850,21 @@ function sortInspectionInvoices(invoices) {
   });
 }
 
+function compareShortageRowsByReceiptDate(a, b) {
+  const aDate = String(a?.invoice?.receiptDate || "9999-12-31").slice(0, 10);
+  const bDate = String(b?.invoice?.receiptDate || "9999-12-31").slice(0, 10);
+  return (
+    aDate.localeCompare(bDate) ||
+    visibleInvoiceSequenceNo(a.invoice, 999999) - visibleInvoiceSequenceNo(b.invoice, 999999) ||
+    compareInvoiceItemsBySellpiaRow(a.item, b.item) ||
+    String(a?.invoice?.orderGroupNo || "").localeCompare(String(b?.invoice?.orderGroupNo || ""), "ko", { numeric: true })
+  );
+}
+
+function sortShortageRowsByReceiptDate(rows = []) {
+  return [...rows].sort(compareShortageRowsByReceiptDate);
+}
+
 function sortPickingRows(rows) {
   if (!state.workSortMode) return rows;
   return [...rows].sort((a, b) => {
@@ -2408,7 +2423,7 @@ function shortageRowMatchesSearch(row) {
 }
 
 function shortageRowsForCurrentFilter() {
-  const openRows = state.workflowQueues?.shortageItems || [];
+  const openRows = sortShortageRowsByReceiptDate(state.workflowQueues?.shortageItems || []);
   let rows = openRows;
   if (state.shortageFilter === "completed") {
     rows = repickedShortageRows().sort((a, b) => workflowEventTime(b.state) - workflowEventTime(a.state));
