@@ -308,7 +308,7 @@ function buildScrapedShippingHoldBaselines({ orders = [] } = {}) {
   return baselines;
 }
 
-function annotateShippingHoldState({ viewModel, workflowState, shippingHoldSignals = [], scrapedShippingHoldBaselines = new Map() } = {}) {
+export function annotateShippingHoldState({ viewModel, workflowState, shippingHoldSignals = [], scrapedShippingHoldBaselines = new Map() } = {}) {
   const signalsByGroup = new Map();
   for (const signal of shippingHoldSignals) {
     const groupNo = orderGroupNo(signal);

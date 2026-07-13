@@ -1,4 +1,4 @@
-import { loadWorkflowQueues } from "../adapters/workflowEventAdapter.mjs?v=20260703-workflow-drawer1";
+import { annotateShippingHoldState, loadWorkflowQueues } from "../adapters/workflowEventAdapter.mjs?v=20260713-hold-render1";
 import { buildPickingViewModel } from "../workflows/picking/buildPickingViewModel.mjs?v=20260706-memo2-text1";
 import {
   buildWorkflowState,
@@ -3610,6 +3610,12 @@ function rebuildWorkflowQueuesFromLocalEvents() {
   const workflowState = buildWorkflowState({
     itemEvents: [...(state.workflowQueues.syntheticEvents?.itemEvents || []), ...(state.workflowQueues.itemEvents || [])],
     invoiceEvents: [...(state.workflowQueues.syntheticEvents?.invoiceEvents || []), ...(state.workflowQueues.invoiceEvents || [])],
+  });
+  annotateShippingHoldState({
+    viewModel,
+    workflowState,
+    shippingHoldSignals: state.workflowQueues.shippingHoldSignals || [],
+    scrapedShippingHoldBaselines: state.workflowQueues.scrapedShippingHoldBaselines || new Map(),
   });
   state.workflowQueues.workflowState = workflowState;
   state.workflowQueues.shortageItems = openShortageItems(viewModel, workflowState);
