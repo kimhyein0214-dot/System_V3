@@ -292,6 +292,28 @@ function normalizeScrapedShippingHoldStatus(value) {
   return status === "ON" || status === "OFF" || status === "UNKNOWN" ? status : "";
 }
 
+function normalizeSystemShippingHoldCurrentStatus(value) {
+  const status = firstText(value).toUpperCase();
+  return status === "ON" || status === "OFF" || status === "UNKNOWN" ? status : "";
+}
+
+function buildSystemShippingHoldCurrents({ orders = [] } = {}) {
+  const currents = new Map();
+  for (const order of orders || []) {
+    const groupNo = orderGroupNo(order);
+    if (!groupNo) continue;
+    const storedStatus = normalizeSystemShippingHoldCurrentStatus(order.system_shipping_hold_status);
+    currents.set(groupNo, {
+      order_group_no: groupNo,
+      invoice_no: invoiceNo(order),
+      status: storedStatus || "UNKNOWN",
+      source: firstText(order.system_shipping_hold_source) || (storedStatus ? "system_current" : "system_current_missing"),
+      updated_at: firstText(order.system_shipping_hold_updated_at),
+    });
+  }
+  return currents;
+}
+
 function buildScrapedShippingHoldBaselines({ orders = [] } = {}) {
   const baselines = new Map();
   for (const order of orders || []) {
@@ -316,7 +338,7 @@ function buildScrapedShippingHoldBaselines({ orders = [] } = {}) {
   return baselines;
 }
 
-export function annotateShippingHoldState({ viewModel, workflowState, shippingHoldSignals = [], scrapedShippingHoldBaselines = new Map() } = {}) {
+export function annotateShippingHoldState({ viewModel, workflowState, shippingHoldSignals = [], scrapedShippingHoldBaselines = new Map(), systemShippingHoldCurrents = new Map() } = {}) {
   const signalsByGroup = new Map();
   for (const signal of shippingHoldSignals) {
     const groupNo = orderGroupNo(signal);
@@ -334,56 +356,21 @@ export function annotateShippingHoldState({ viewModel, workflowState, shippingHo
 
     const signals = signalsByGroup.get(invoice.orderGroupNo) || [];
     const scrapeBaseline = scrapedShippingHoldBaselines.get(invoice.orderGroupNo);
+    const systemCurrent = systemShippingHoldCurrents.get(invoice.orderGroupNo) || null;
+    const status = systemCurrent?.status || "UNKNOWN";
+    const known = status === "ON" || status === "OFF";
     invoiceState.shippingHoldSignals = signals;
     invoiceState.scrapedShippingHold = scrapeBaseline || null;
-    if (!invoiceState.systemShippingHoldKnown && scrapeBaseline?.status === "ON") {
-      invoiceState.systemShippingHoldKnown = true;
-      invoiceState.systemShippingHold = true;
-      invoiceState.systemShippingHoldStatus = "ON";
-      invoiceState.systemShippingHoldSource = "scrape_on";
-      invoiceState.systemShippingHoldReason = "sellpia_shipping_hold_scraped_on";
-      invoiceState.hold = true;
-      invoiceState.shippingHoldNeedsOn = false;
-      invoiceState.shippingHoldUnknown = false;
-    } else if (!invoiceState.systemShippingHoldKnown && signals.length) {
-      invoiceState.shippingHoldNeedsOn = true;
-      invoiceState.shippingHoldUnknown = true;
-      invoiceState.systemShippingHoldStatus = "NEEDS_ON";
-      invoiceState.systemShippingHoldSource = "memo_or_legacy_signal";
-      invoiceState.systemShippingHoldReason = "shipping_hold_on_needed";
-      invoiceState.hold = false;
-      invoiceState.systemShippingHold = false;
-    } else if (invoiceState.systemShippingHoldKnown) {
-      invoiceState.systemShippingHoldStatus = invoiceState.systemShippingHold ? "ON" : "OFF";
-      invoiceState.shippingHoldNeedsOn = false;
-      invoiceState.shippingHoldUnknown = false;
-      invoiceState.hold = invoiceState.systemShippingHold;
-    } else if (scrapeBaseline?.status === "OFF") {
-      invoiceState.systemShippingHoldKnown = true;
-      invoiceState.systemShippingHoldStatus = "OFF";
-      invoiceState.systemShippingHoldSource = "scrape_off_clean";
-      invoiceState.systemShippingHoldReason = "sellpia_shipping_hold_scraped_off_clean";
-      invoiceState.hold = false;
-      invoiceState.systemShippingHold = false;
-      invoiceState.shippingHoldNeedsOn = false;
-      invoiceState.shippingHoldUnknown = false;
-    } else if (scrapeBaseline?.status === "UNKNOWN") {
-      invoiceState.systemShippingHoldKnown = true;
-      invoiceState.systemShippingHoldStatus = "OFF";
-      invoiceState.systemShippingHoldSource = "default_clean_off";
-      invoiceState.systemShippingHoldReason = "scrape_unknown_without_hold_signal";
-      invoiceState.hold = false;
-      invoiceState.systemShippingHold = false;
-      invoiceState.shippingHoldNeedsOn = false;
-      invoiceState.shippingHoldUnknown = false;
-    } else {
-      invoiceState.systemShippingHoldKnown = true;
-      invoiceState.systemShippingHoldStatus = "OFF";
-      invoiceState.systemShippingHoldSource = "default_clean_off";
-      invoiceState.systemShippingHoldReason = "no_hold_signal";
-      invoiceState.hold = false;
-      invoiceState.systemShippingHold = false;
-    }
+    invoiceState.systemShippingHoldCurrent = systemCurrent;
+    invoiceState.systemShippingHoldKnown = known;
+    invoiceState.systemShippingHold = status === "ON";
+    invoiceState.systemShippingHoldStatus = status;
+    invoiceState.systemShippingHoldSource = systemCurrent?.source || "system_current_missing";
+    invoiceState.systemShippingHoldReason = systemCurrent ? "orders_system_shipping_hold_status" : "system_shipping_hold_status_null";
+    invoiceState.systemShippingHoldUpdatedAt = systemCurrent?.updated_at || "";
+    invoiceState.hold = status === "ON";
+    invoiceState.shippingHoldNeedsOn = false;
+    invoiceState.shippingHoldUnknown = !known;
   }
 }
 
@@ -393,6 +380,7 @@ export function buildWorkflowQueues({ orders = [], orderItems = [], pickingRows 
   const mergedInvoiceEvents = [...syntheticEvents.invoiceEvents, ...invoiceEvents];
   const shippingHoldSignals = [...(syntheticEvents.shippingHoldSignals || []), ...buildLegacyShippingHoldSignals({ pickingRows })];
   const scrapedShippingHoldBaselines = buildScrapedShippingHoldBaselines({ orders });
+  const systemShippingHoldCurrents = buildSystemShippingHoldCurrents({ orders });
   const viewModel = buildPickingViewModel({
     orders,
     orderItems,
@@ -400,7 +388,7 @@ export function buildWorkflowQueues({ orders = [], orderItems = [], pickingRows 
     shortageRows,
   });
   const workflowState = buildWorkflowState({ itemEvents: mergedItemEvents, invoiceEvents: mergedInvoiceEvents });
-  annotateShippingHoldState({ viewModel, workflowState, shippingHoldSignals, scrapedShippingHoldBaselines });
+  annotateShippingHoldState({ viewModel, workflowState, shippingHoldSignals, scrapedShippingHoldBaselines, systemShippingHoldCurrents });
 
   return {
     viewModel,
@@ -408,6 +396,7 @@ export function buildWorkflowQueues({ orders = [], orderItems = [], pickingRows 
     syntheticEvents,
     shippingHoldSignals,
     scrapedShippingHoldBaselines,
+    systemShippingHoldCurrents,
     shortageItems: openShortageItems(viewModel, workflowState),
     inspectionInvoices: repickedInvoicesForInspection(viewModel, workflowState),
     inspectionCompletedInvoices: completedInvoicesForInspection(viewModel, workflowState),
