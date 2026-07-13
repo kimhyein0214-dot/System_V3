@@ -3695,9 +3695,56 @@ async function saveWorkflowInvoiceEvent(invoice, eventType, overrides = {}) {
   }
 }
 
+async function saveSystemShippingHoldCurrent(invoice, status, source) {
+  if (!allowWorkflowEvents) {
+    toast("이벤트 저장이 비활성화되어 있습니다. URL에 write=1&events=1을 붙여야 저장할 수 있습니다.");
+    return false;
+  }
+  const orderGroupNo = String(invoice?.orderGroupNo || "").trim();
+  if (!orderGroupNo) {
+    toast("배송보류 저장 대상을 찾지 못했습니다.");
+    return false;
+  }
+  const normalizedStatus = String(status || "").trim().toUpperCase();
+  if (normalizedStatus !== "ON" && normalizedStatus !== "OFF" && normalizedStatus !== "UNKNOWN") {
+    throw new Error(`지원하지 않는 배송보류 상태: ${status}`);
+  }
+  const updatedAt = new Date().toISOString();
+  const { data, error } = await db
+    .from("orders")
+    .update({
+      system_shipping_hold_status: normalizedStatus,
+      system_shipping_hold_source: source || "",
+      system_shipping_hold_updated_at: updatedAt,
+    })
+    .eq("ord_no", orderGroupNo)
+    .select("ord_no");
+  if (error) {
+    toast(`배송보류 current 저장 실패: ${error.message}`);
+    throw error;
+  }
+  if (!data || !data.length) {
+    const error = new Error(`orders에서 주문 ${orderGroupNo}을 찾지 못했습니다.`);
+    toast("배송보류 current 저장 대상을 찾지 못했습니다.");
+    throw error;
+  }
+  return { status: normalizedStatus, source, updatedAt };
+}
+
+async function saveShippingHoldCurrentThenEvent(invoice, status, source, eventType, eventOverrides = {}) {
+  const current = await saveSystemShippingHoldCurrent(invoice, status, source);
+  if (!current) return false;
+  const event = await saveWorkflowInvoiceEvent(invoice, eventType, eventOverrides);
+  if (!event) {
+    toast("배송보류 current는 저장됐지만 이벤트 로그 저장에 실패했습니다.");
+    return false;
+  }
+  return event;
+}
+
 async function ensureShippingHoldOnAfterMemoSave(invoice, memoValue) {
   if (!allowWorkflowEvents || !String(memoValue || "").trim() || isSystemShippingHoldOn(invoice)) return false;
-  return await saveWorkflowInvoiceEvent(invoice, "hold_created", {
+  return await saveShippingHoldCurrentThenEvent(invoice, "ON", "memo_auto_hold", "hold_created", {
     memo: "shipping hold auto on by memo save",
     source: "f_v1_memo_auto_hold",
   });
@@ -5100,7 +5147,13 @@ async function toggleSelectedInspectionHold(orderGroupNo = state.selectedInspect
   const invoiceState = workflowInvoiceState(invoice);
   const holdOn = Boolean(invoiceState?.systemShippingHold);
   const eventType = holdOn ? "hold_released" : "hold_created";
-  const ok = await saveWorkflowInvoiceEvent(invoice, eventType, { memo: holdOn ? "shipping hold released" : "shipping hold on" });
+  const ok = await saveShippingHoldCurrentThenEvent(
+    invoice,
+    holdOn ? "OFF" : "ON",
+    holdOn ? "inspection_hold_off" : "inspection_hold_on",
+    eventType,
+    { memo: holdOn ? "shipping hold released" : "shipping hold on" }
+  );
   if (!ok) return;
   state.selectedInspectionGroup = invoice.orderGroupNo;
   renderWorkflowSurfaces();
