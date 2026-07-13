@@ -368,6 +368,14 @@
       return '';
     }
 
+    function isDrawerOnlyMemo(value) {
+      const firstLine = normal(value).split(/\r?\n/)[0] || '';
+      if (!firstLine) return false;
+      const chars = Array.from(firstLine.replace(/\s+/g, ''));
+      if (chars.length < 3) return false;
+      return /^\d{1,8}$/.test(chars.slice(2).join(''));
+    }
+
     function scrapedShippingHoldFromOrderRows(rows) {
       const values = (rows || []).map(row => normalizeScrapedShippingHoldStatus(row?.sellpia_shipping_hold_status)).filter(Boolean);
       const rawValues = (rows || []).map(row => normal(row?.sellpia_shipping_hold_raw)).filter(Boolean);
@@ -1088,7 +1096,7 @@
       const allShortageItemsRepicked = hasShortageMatch && (shortageRows || []).every(row => hasItemClearAlias(task.memo2ClearMap, row, task.ordNo));
       const hasSystemMatch = hasShortageMatch || hasPickingMatch || hasOrderMatch || orderItemRows.length > 0;
       const hasOrderMemoValue = hasSystemMatch && task.orderMemoMap.size > 0;
-      const memo1HoldSignal = hasMemo1Value;
+      const memo1HoldSignal = hasMemo1Value && !isDrawerOnlyMemo(task.memo1);
       const hasLegacyPickingHold = (pickingRows || []).some(row => !!row.hold);
       const hasHoldSignal = activeRows.length > 0 || hasLegacyPickingHold || memo1HoldSignal || hasMemo2Value;
       const shouldClearMemo1ForAllRepicked = allShortageItemsRepicked;
@@ -1098,15 +1106,17 @@
         task.shippingHoldSyncReason = 'shipping_hold_on_needed_or_legacy_signal';
         task.holdOffBlockReason = 'hold_off_blocked_without_hold_released';
       } else if (!task.systemShippingHoldKnown && task.sellpiaShippingHoldScraped === 'OFF') {
-        task.systemShippingHold = 'UNKNOWN';
-        task.systemShippingHoldSource = 'scrape_off';
-        task.shippingHoldSyncReason = 'sellpia_shipping_hold_scraped_off_not_release';
-        task.holdOffBlockReason = 'scrape_off_not_explicit_hold_released';
+        task.systemShippingHold = 'OFF';
+        task.systemShippingHoldKnown = true;
+        task.systemShippingHoldSource = 'scrape_off_clean';
+        task.shippingHoldSyncReason = 'sellpia_shipping_hold_scraped_off_clean';
+        task.holdOffBlockReason = 'off_write_blocked_without_hold_released';
       } else if (!task.systemShippingHoldKnown) {
-        task.systemShippingHold = 'UNKNOWN';
-        task.systemShippingHoldSource = 'no_explicit_hold_signal';
-        task.shippingHoldSyncReason = 'no_hold_signal_not_off_authority';
-        task.holdOffBlockReason = 'default_off_disabled_without_hold_released';
+        task.systemShippingHold = 'OFF';
+        task.systemShippingHoldKnown = true;
+        task.systemShippingHoldSource = 'default_clean_off';
+        task.shippingHoldSyncReason = 'default_clean_off_no_hold_signal';
+        task.holdOffBlockReason = 'off_write_blocked_without_hold_released';
       }
 
       if (workflowDone?.done) {

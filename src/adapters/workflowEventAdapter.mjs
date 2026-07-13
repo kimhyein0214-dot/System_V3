@@ -189,6 +189,14 @@ function isRepickDoneMemo(memo) {
   );
 }
 
+function isDrawerOnlyMemo(memo) {
+  const firstLine = text(memo).split(/\r?\n/)[0] || "";
+  if (!firstLine) return false;
+  const chars = Array.from(firstLine.replace(/\s+/g, ""));
+  if (chars.length < 3) return false;
+  return /^\d{1,8}$/.test(chars.slice(2).join(""));
+}
+
 function syntheticEventAt(row = {}) {
   return firstText(row.updated_at, row.created_at, row.event_at, row.receipt_date) || "1970-01-01T00:00:00Z";
 }
@@ -204,7 +212,7 @@ export function buildSyntheticMemoEvents({ orders = [], orderItems = [] } = {}) 
     if (!groupNo) continue;
     ordersByGroup.set(groupNo, order);
     const memo1 = invoiceMemo1(order);
-    if (!memo1) continue;
+    if (!memo1 || isDrawerOnlyMemo(memo1)) continue;
 
     shippingHoldSignals.push({
       order_group_no: groupNo,
@@ -223,7 +231,7 @@ export function buildSyntheticMemoEvents({ orders = [], orderItems = [] } = {}) 
     const order = ordersByGroup.get(groupNo) || {};
     const memo1 = invoiceMemo1(order) || invoiceMemo1(item);
     const memo2 = itemMemo2(item);
-    if (memo1 && !ordersByGroup.has(`${groupNo}::memo1-item`)) {
+    if (memo1 && !isDrawerOnlyMemo(memo1) && !ordersByGroup.has(`${groupNo}::memo1-item`)) {
       ordersByGroup.set(`${groupNo}::memo1-item`, item);
       shippingHoldSignals.push({
         order_group_no: groupNo,
@@ -351,27 +359,27 @@ export function annotateShippingHoldState({ viewModel, workflowState, shippingHo
       invoiceState.shippingHoldUnknown = false;
       invoiceState.hold = invoiceState.systemShippingHold;
     } else if (scrapeBaseline?.status === "OFF") {
-      invoiceState.systemShippingHoldKnown = false;
-      invoiceState.systemShippingHoldStatus = "SCRAPE_OFF";
-      invoiceState.systemShippingHoldSource = "scrape_off";
-      invoiceState.systemShippingHoldReason = "sellpia_shipping_hold_scraped_off_not_release";
+      invoiceState.systemShippingHoldKnown = true;
+      invoiceState.systemShippingHoldStatus = "OFF";
+      invoiceState.systemShippingHoldSource = "scrape_off_clean";
+      invoiceState.systemShippingHoldReason = "sellpia_shipping_hold_scraped_off_clean";
       invoiceState.hold = false;
       invoiceState.systemShippingHold = false;
       invoiceState.shippingHoldNeedsOn = false;
       invoiceState.shippingHoldUnknown = false;
     } else if (scrapeBaseline?.status === "UNKNOWN") {
-      invoiceState.systemShippingHoldKnown = false;
-      invoiceState.systemShippingHoldStatus = "SCRAPE_UNKNOWN";
-      invoiceState.systemShippingHoldSource = "scrape_unknown";
-      invoiceState.systemShippingHoldReason = "sellpia_shipping_hold_scraped_unknown";
+      invoiceState.systemShippingHoldKnown = true;
+      invoiceState.systemShippingHoldStatus = "OFF";
+      invoiceState.systemShippingHoldSource = "default_clean_off";
+      invoiceState.systemShippingHoldReason = "scrape_unknown_without_hold_signal";
       invoiceState.hold = false;
       invoiceState.systemShippingHold = false;
       invoiceState.shippingHoldNeedsOn = false;
-      invoiceState.shippingHoldUnknown = true;
+      invoiceState.shippingHoldUnknown = false;
     } else {
       invoiceState.systemShippingHoldKnown = true;
       invoiceState.systemShippingHoldStatus = "OFF";
-      invoiceState.systemShippingHoldSource = "default_off";
+      invoiceState.systemShippingHoldSource = "default_clean_off";
       invoiceState.systemShippingHoldReason = "no_hold_signal";
       invoiceState.hold = false;
       invoiceState.systemShippingHold = false;
