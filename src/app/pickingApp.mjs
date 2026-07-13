@@ -3607,6 +3607,7 @@ function buildInvoiceEvent(invoice, eventType, overrides = {}) {
 function rebuildWorkflowQueuesFromLocalEvents() {
   if (!state.workflowQueues) return;
   const viewModel = state.workflowQueues.viewModel || state.viewModel;
+  const systemShippingHoldCurrents = state.workflowQueues.systemShippingHoldCurrents || new Map();
   const workflowState = buildWorkflowState({
     itemEvents: [...(state.workflowQueues.syntheticEvents?.itemEvents || []), ...(state.workflowQueues.itemEvents || [])],
     invoiceEvents: [...(state.workflowQueues.syntheticEvents?.invoiceEvents || []), ...(state.workflowQueues.invoiceEvents || [])],
@@ -3616,11 +3617,44 @@ function rebuildWorkflowQueuesFromLocalEvents() {
     workflowState,
     shippingHoldSignals: state.workflowQueues.shippingHoldSignals || [],
     scrapedShippingHoldBaselines: state.workflowQueues.scrapedShippingHoldBaselines || new Map(),
+    systemShippingHoldCurrents,
   });
   state.workflowQueues.workflowState = workflowState;
   state.workflowQueues.shortageItems = openShortageItems(viewModel, workflowState);
   state.workflowQueues.inspectionInvoices = repickedInvoicesForInspection(viewModel, workflowState);
   state.workflowQueues.inspectionCompletedInvoices = completedInvoicesForInspection(viewModel, workflowState);
+}
+
+function applyLocalSystemShippingHoldCurrent(invoice, current) {
+  if (!state.workflowQueues || !invoice || !current) return;
+  const groupNo = String(invoice.orderGroupNo || "").trim();
+  if (!groupNo) return;
+  const next = {
+    order_group_no: groupNo,
+    invoice_no: invoice.invoiceNo || "",
+    status: current.status,
+    source: current.source || "system_current",
+    updated_at: current.updatedAt || current.updated_at || "",
+  };
+  if (!(state.workflowQueues.systemShippingHoldCurrents instanceof Map)) {
+    state.workflowQueues.systemShippingHoldCurrents = new Map();
+  }
+  state.workflowQueues.systemShippingHoldCurrents.set(groupNo, next);
+  for (const candidate of [
+    invoice,
+    ...(state.workflowQueues.viewModel?.invoices || []),
+    ...(state.workflowQueues.inspectionInvoices || []),
+    ...(state.workflowQueues.inspectionCompletedInvoices || []),
+  ]) {
+    if (candidate?.orderGroupNo !== groupNo) continue;
+    candidate.raw = {
+      ...(candidate.raw || {}),
+      system_shipping_hold_status: next.status,
+      system_shipping_hold_source: next.source,
+      system_shipping_hold_updated_at: next.updated_at,
+    };
+  }
+  rebuildWorkflowQueuesFromLocalEvents();
 }
 
 function applyWorkflowItemEvent(row) {
@@ -3728,7 +3762,9 @@ async function saveSystemShippingHoldCurrent(invoice, status, source) {
     toast("배송보류 current 저장 대상을 찾지 못했습니다.");
     throw error;
   }
-  return { status: normalizedStatus, source, updatedAt };
+  const current = { status: normalizedStatus, source, updatedAt };
+  applyLocalSystemShippingHoldCurrent(invoice, current);
+  return current;
 }
 
 async function saveShippingHoldCurrentThenEvent(invoice, status, source, eventType, eventOverrides = {}) {
