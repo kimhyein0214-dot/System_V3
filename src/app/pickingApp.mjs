@@ -2808,6 +2808,11 @@ function daysSinceDateKey(key) {
   return Math.max(0, Math.floor((today.getTime() - start.getTime()) / 86400000));
 }
 
+function isValidDateKey(key) {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(String(key || ""))) return false;
+  return !Number.isNaN(new Date(`${key}T00:00:00`).getTime());
+}
+
 function csMethodText(invoice, item) {
   return firstRawText(
     invoice?.raw,
@@ -2827,6 +2832,10 @@ function isCsMakeshopMethod(row) {
   return sellerBadgeMeta(row.invoice.seller)?.className === "seller-makeshop";
 }
 
+function csDayKeyForTemplate(templateKey) {
+  return CS_DAYS.find((day) => CS_DAY_TEMPLATE[day.key] === templateKey)?.key || "";
+}
+
 function classifyCsRowsByDay(rows) {
   const groups = Object.fromEntries(CS_DAYS.filter((day) => day.key !== "all").map((day) => [day.key, []]));
   const invoiceRows = new Map();
@@ -2841,21 +2850,24 @@ function classifyCsRowsByDay(rows) {
     const hasHoldRow = sameInvoiceRows.some((item) => item.csReason === "hold");
     const allReady = sameInvoiceRows.length > 0 && !hasHoldRow && sameInvoiceRows.every((item) => Number(item.currentShortageQty || 0) === 0);
     const elapsed = Number(row.elapsedDays || 0);
-    const push = (dayKey) => groups[dayKey]?.push({ ...row, csDayKey: dayKey });
+    const pushTemplate = (templateKey) => {
+      const dayKey = csDayKeyForTemplate(templateKey);
+      if (dayKey) groups[dayKey]?.push({ ...row, csDayKey: dayKey });
+    };
     if (allReady) {
-      push("내일출고");
+      pushTemplate("d0");
       return;
     }
     if (isGoldItem(row.item)) {
-      push(elapsed >= 5 ? "14K 5일차" : "14K 1일차");
+      pushTemplate(elapsed >= 5 ? "14k_5" : "14k_1");
       return;
     }
-    if (elapsed >= 10) push("10일차");
+    if (elapsed >= 10) pushTemplate("d10");
     else if (elapsed >= 5) {
-      push("5일차 부분출고");
-      push("5일차 취소출고");
-    } else if (elapsed >= 3) push(isCsMakeshopMethod(row) ? "3일차 메이크샵" : "3일차 플랫폼");
-    else push("1일차");
+      pushTemplate("d5_hi");
+      pushTemplate("d5_lo");
+    } else if (elapsed >= 3) pushTemplate(isCsMakeshopMethod(row) ? "d3_ms" : "d3_pf");
+    else pushTemplate("d1");
   });
   return groups;
 }
@@ -4076,11 +4088,45 @@ function alimtalkOption(item) {
   return itemSellerOptionName(item) || item.optionName || "";
 }
 
+function alimtalkShippingHoldState(invoice) {
+  const invoiceState = workflowInvoiceState(invoice);
+  const known = invoiceState?.systemShippingHoldKnown === true;
+  const on = invoiceState?.systemShippingHold === true;
+  return {
+    on,
+    known,
+    label: on ? "ON" : known ? "OFF" : "UNKNOWN",
+    source: invoiceState?.systemShippingHoldSource || "",
+  };
+}
+
+function alimtalkInvoiceShortageMetrics(invoice) {
+  const items = invoiceItemsInSellpiaRowOrder(invoice);
+  let shortageQtyTotal = 0;
+  let hasOpenShortage = false;
+  for (const item of items) {
+    const itemState = workflowItemState(invoice, item);
+    const qty = workflowAwareShortageQty(itemState, item);
+    shortageQtyTotal += Number(qty || 0);
+    if (itemHasOpenWorkflowShortage(invoice, item) || qty > 0) hasOpenShortage = true;
+  }
+  return { hasOpenShortage, shortageQtyTotal };
+}
+
+function alimtalkReadyState(invoice) {
+  const stats = invoiceStats(invoice);
+  const readyByPicking = invoiceReadyFromPicking(invoice) && stats.total > 0 && stats.picked === stats.total && stats.shortage === 0 && stats.hold === 0;
+  return {
+    allReady: readyByPicking,
+    readyReason: readyByPicking ? "invoiceReadyFromPicking_picked_all_no_shortage" : "not_ready",
+  };
+}
+
 function alimtalkDelayedItemsForInvoice(invoice) {
   return invoiceItemsInSellpiaRowOrder(invoice).filter((item) => {
     const itemState = workflowItemState(invoice, item);
     if (itemState?.inspected || itemState?.cancelled || itemState?.shortageRepicked) return false;
-    return itemHasOpenWorkflowShortage(invoice, item) || isHold(item);
+    return itemHasOpenWorkflowShortage(invoice, item) || workflowAwareShortageQty(itemState, item) > 0;
   });
 }
 
@@ -4094,14 +4140,34 @@ function alimtalkDebugColumns(row) {
   const invoiceState = workflowInvoiceState(row.invoice);
   const seller = sellerBadgeMeta(row.invoice.seller)?.label || row.invoice.seller || "";
   const delayedItems = alimtalkDelayedItemsForInvoice(row.invoice);
-  const shortageItems = delayedItems.length ? delayedItems : row.csReason === "hold" && row.item ? [row.item] : [];
-  return [seller, dateKey(row.invoice.receiptDate), invoiceState?.inspected ? "ON" : "OFF", shortageItems.map(alimtalkProductLine).join("\n")];
+  return [
+    seller,
+    dateKey(row.invoice.receiptDate),
+    invoiceState?.inspected ? "ON" : "OFF",
+    delayedItems.map(alimtalkProductLine).join("\n"),
+    row.alimtalkBucket || row.csDayKey || "",
+    row.alimtalkBucketReason || "",
+    row.receiptDate || dateKey(row.invoice.receiptDate),
+    row.delayBaseDate || "",
+    row.delayBaseDateSource || "receiptDate",
+    row.elapsedDays,
+    row.systemShippingHold || "",
+    row.systemShippingHoldKnown ? "Y" : "N",
+    row.systemShippingHoldSource || "",
+    row.hasOpenShortage ? "Y" : "N",
+    row.shortageQtyTotal ?? "",
+    row.allReady ? "Y" : "N",
+    row.readyReason || "",
+  ];
 }
 
 function alimtalkBaseRow(row, item, extra = {}) {
   const invoice = row.invoice;
   const itemState = item ? workflowItemState(invoice, item) : null;
   const date = dateKey(invoice.receiptDate);
+  const shippingHold = alimtalkShippingHoldState(invoice);
+  const shortageMetrics = alimtalkInvoiceShortageMetrics(invoice);
+  const readyState = alimtalkReadyState(invoice);
   return {
     key: item ? csRowKey(invoice, item) : row.key,
     invoice,
@@ -4112,6 +4178,16 @@ function alimtalkBaseRow(row, item, extra = {}) {
     shortageDate: date,
     elapsedDays: daysSinceDateKey(date),
     csMethod: item ? csMethodText(invoice, item) : "",
+    receiptDate: date,
+    delayBaseDate: date,
+    delayBaseDateSource: "receiptDate",
+    systemShippingHold: shippingHold.label,
+    systemShippingHoldKnown: shippingHold.known,
+    systemShippingHoldSource: shippingHold.source,
+    hasOpenShortage: shortageMetrics.hasOpenShortage,
+    shortageQtyTotal: shortageMetrics.shortageQtyTotal,
+    allReady: readyState.allReady,
+    readyReason: readyState.readyReason,
     ...extra,
   };
 }
@@ -4121,25 +4197,24 @@ function buildAlimtalkRowsFromCsInvoices(csRows) {
   for (const row of csRows || []) {
     const invoice = row.invoice;
     const invoiceState = workflowInvoiceState(invoice);
+    const shippingHold = alimtalkShippingHoldState(invoice);
+    if (!shippingHold.on || !shippingHold.known || invoiceState?.cancelled) continue;
+    const shortageMetrics = alimtalkInvoiceShortageMetrics(invoice);
+    const readyState = alimtalkReadyState(invoice);
     const delayedItems = alimtalkDelayedItemsForInvoice(invoice);
-    if (delayedItems.length) {
+    if (shortageMetrics.hasOpenShortage || shortageMetrics.shortageQtyTotal > 0) {
       delayedItems.forEach((item) => {
         const itemState = workflowItemState(invoice, item);
         rows.push(
           alimtalkBaseRow(row, item, {
             currentShortageQty: workflowAwareShortageQty(itemState, item),
-            csReason: isHold(item) || invoiceState?.hold || invoiceState?.csPending ? "hold" : "shortage",
+            csReason: "shortage",
           }),
         );
       });
       continue;
     }
-    if (invoiceState?.hold || invoiceState?.csPending) {
-      const item = invoiceItemsInSellpiaRowOrder(invoice)[0] || null;
-      if (item) rows.push(alimtalkBaseRow(row, item, { key: `${row.key}::hold`, csReason: "hold", currentShortageQty: 0, shortageQty: 0 }));
-      continue;
-    }
-    if (invoiceReadyFromPicking(invoice)) {
+    if (readyState.allReady) {
       const item = invoiceItemsInSellpiaRowOrder(invoice)[0] || null;
       rows.push(alimtalkBaseRow(row, item, { key: row.key, csReason: "ready", currentShortageQty: 0, shortageQty: 0 }));
     }
@@ -4148,12 +4223,54 @@ function buildAlimtalkRowsFromCsInvoices(csRows) {
 }
 
 function classifyAlimtalkRowsByDay(rows) {
-  return classifyCsRowsByDay(rows);
+  const groups = Object.fromEntries(CS_DAYS.filter((day) => day.key !== "all").map((day) => [day.key, []]));
+  rows.forEach((row) => {
+    const elapsed = Number(row.elapsedDays || 0);
+    const pushTemplate = (templateKey, reason) => {
+      const dayKey = csDayKeyForTemplate(templateKey);
+      if (dayKey) groups[dayKey]?.push({ ...row, csDayKey: dayKey, alimtalkBucket: dayKey, alimtalkBucketReason: reason });
+    };
+    if (row.csReason === "ready") {
+      pushTemplate("d0", "shipping_hold_on_ready_no_shortage");
+      return;
+    }
+    if (!row.hasOpenShortage && !(Number(row.shortageQtyTotal || 0) > 0)) return;
+    if (!isValidDateKey(row.delayBaseDate)) return;
+    if (isGoldItem(row.item)) {
+      pushTemplate(elapsed >= 5 ? "14k_5" : "14k_1", elapsed >= 5 ? "shipping_hold_on_gold_elapsed_5_plus" : "shipping_hold_on_gold_elapsed_under_5");
+      return;
+    }
+    if (elapsed >= 10) pushTemplate("d10", "shipping_hold_on_shortage_elapsed_10_plus");
+    else if (elapsed >= 5) {
+      pushTemplate("d5_hi", "shipping_hold_on_shortage_elapsed_5_plus");
+      pushTemplate("d5_lo", "shipping_hold_on_shortage_elapsed_5_plus");
+    } else if (elapsed >= 3) pushTemplate(isCsMakeshopMethod(row) ? "d3_ms" : "d3_pf", "shipping_hold_on_shortage_elapsed_3_plus");
+    else if (elapsed === 1) pushTemplate("d1", "shipping_hold_on_shortage_elapsed_1");
+  });
+  return groups;
 }
 
 function alimtalkRowsForDay(dayKey, rows) {
   const debugSpacer = ["", "", ""];
-  const debugHeader = ["판매처", "접수일", "검품완료여부", "미송상품"];
+  const debugHeader = [
+    "판매처",
+    "접수일",
+    "검품완료여부",
+    "미송상품",
+    "alimtalkBucket",
+    "alimtalkBucketReason",
+    "receiptDate",
+    "delayBaseDate",
+    "delayBaseDateSource",
+    "elapsedDays",
+    "systemShippingHold",
+    "systemShippingHoldKnown",
+    "systemShippingHoldSource",
+    "hasOpenShortage",
+    "shortageQtyTotal",
+    "allReady",
+    "readyReason",
+  ];
   const header = (dayKey === "내일출고" ? ["전화번호", "#{NAME}"] : ["전화번호", "#{NAME}", "#{PRODUCT}", "#{OPTION}"]).concat(debugSpacer, debugHeader);
   const body = rows.map((row) =>
     dayKey === "내일출고"
