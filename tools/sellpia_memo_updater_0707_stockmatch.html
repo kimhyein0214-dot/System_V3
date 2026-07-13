@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>System V3 업데이터 0712수정</title>
+<title>0714_배송보류ON/OFF패치 실사용 (업데이터)</title>
 <style>
   * { box-sizing: border-box; margin: 0; padding: 0; }
   body { background:#141414; color:#f0f0f0; font-family:Arial,'Noto Sans KR',sans-serif; min-height:100vh; display:flex; align-items:center; justify-content:center; padding:24px; }
@@ -18,7 +18,7 @@
 </head>
 <body>
 <div class="card">
-  <h1>System V3 업데이터 0712수정</h1>
+  <h1>0714_배송보류ON/OFF패치 실사용 (업데이터)</h1>
   <div class="sub">재고매칭(order_stockmatch.html) 전용 / TEST MODE 기본 ON</div>
   <div class="note">
     <b>TEST MODE (NO WRITE)</b><br>
@@ -26,7 +26,7 @@
     관리메모/관리메모2/주문메모 저장, 배송보류 설정/해제, DB PATCH는 테스트모드에서 실행하지 않습니다.<br>
     결과 CSV에는 현재 셀피아 값, 시스템 예정값, 변경 필요 여부, 매칭 실패/상세없음 예외, 상태 사유가 들어갑니다.
   </div>
-  <a id="bookmarklet-link" class="btn" href="#">System V3 업데이터 0712수정</a>
+  <a id="bookmarklet-link" class="btn" href="#">0714_배송보류ON/OFF패치 실사용 (업데이터)</a>
   <pre id="code-display">loading...</pre>
   <button id="copy-btn">코드 복사</button>
 </div>
@@ -2047,7 +2047,7 @@
       overlay.style.cssText = 'position:fixed;right:16px;top:80px;left:auto;bottom:auto;max-width:94vw;max-height:calc(100vh - 96px);overflow:auto;background:transparent;z-index:999999;font-family:Arial,sans-serif;';
       overlay.innerHTML =
         '<div style="width:560px;max-width:94vw;background:#111827;color:#fff;border:1px solid #334155;border-radius:12px;padding:22px;box-shadow:0 24px 80px rgba(0,0,0,.45)">' +
-        '<div style="font-size:18px;font-weight:900;margin-bottom:4px">Stockmatch Memo Updater 0709-관리메모2수정</div>' +
+        '<div style="font-size:18px;font-weight:900;margin-bottom:4px">0714_배송보류ON/OFF패치 실사용 (업데이터)</div>' +
         '<div style="font-size:12px;color:#93c5fd;margin-bottom:14px">TEST MODE (NO WRITE) is ON by default</div>' +
         '<label style="font-size:12px;color:#cbd5e1">Invoice / order number (optional)</label>' +
         '<input id="smu0707-inv" style="width:100%;height:38px;margin:5px 0 10px;padding:0 10px;border-radius:8px;border:1px solid #475569;background:#0f172a;color:#fff" placeholder="Blank = use date range">' +
@@ -2187,8 +2187,8 @@
 
     makeOverlay();
   })().catch(function(err){
-    console.error('[Stockmatch Memo Updater 0709-관리메모2수정]', err);
-    alert('Stockmatch Memo Updater error: ' + (err && err.message ? err.message : err));
+    console.error('[0714_배송보류ON/OFF패치 실사용 (업데이터)]', err);
+    alert('0714_배송보류ON/OFF패치 실사용 (업데이터) error: ' + (err && err.message ? err.message : err));
   });
 })();
 </script>
