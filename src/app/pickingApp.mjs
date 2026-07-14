@@ -5011,14 +5011,45 @@ async function completeSelectedShortagePicking(shortageKey = state.selectedShort
     return;
   }
 
-  const ok = await saveWorkflowItemEvent(row.invoice, row.item, "shortage_repick_completed", {
-    quantity: 0,
-    memo: "shortage repicked",
-    drawerMemo: row.state?.drawerMemo || row.item.pickingState?.drawerMemo || row.invoice.sellpiaMemo1 || null,
-  });
-  if (!ok) return;
-  await updateOrderItemMemoFields(row.invoice.orderGroupNo, row.item.sellpiaItemNo, { o_shop_memo2: "" });
-  patchLocalItemManagementMemos(row.invoice.orderGroupNo, row.item.sellpiaItemNo, { memo2: "" });
+  const itemState = workflowItemState(row.invoice, row.item) || row.state;
+  if (itemState?.shortageRepicked || itemState?.inspected || itemState?.cancelled) {
+    toast("이미 미송피킹 완료 상태입니다.");
+    return;
+  }
+
+  const operationKey = `shortage-complete::${workflowItemKey(row.invoice, row.item)}`;
+  if (state.saving.has(operationKey)) return;
+  state.saving.add(operationKey);
+
+  const previousMemo2 = itemManagementMemo2(row.item);
+  let memo2Cleared = false;
+  try {
+    await updateOrderItemMemoFields(row.invoice.orderGroupNo, row.item.sellpiaItemNo, { o_shop_memo2: "" });
+    memo2Cleared = true;
+
+    const ok = await saveWorkflowItemEvent(row.invoice, row.item, "shortage_repick_completed", {
+      quantity: 0,
+      memo: "shortage repicked",
+      drawerMemo: row.state?.drawerMemo || row.item.pickingState?.drawerMemo || row.invoice.sellpiaMemo1 || null,
+    });
+    if (!ok) {
+      await updateOrderItemMemoFields(row.invoice.orderGroupNo, row.item.sellpiaItemNo, { o_shop_memo2: previousMemo2 });
+      return;
+    }
+
+    patchLocalItemManagementMemos(row.invoice.orderGroupNo, row.item.sellpiaItemNo, { memo2: "" });
+  } catch (error) {
+    if (memo2Cleared) {
+      try {
+        await updateOrderItemMemoFields(row.invoice.orderGroupNo, row.item.sellpiaItemNo, { o_shop_memo2: previousMemo2 });
+      } catch (rollbackError) {
+        console.warn("shortage repick memo2 rollback failed", rollbackError);
+      }
+    }
+    throw error;
+  } finally {
+    state.saving.delete(operationKey);
+  }
 
   state.selectedInspectionGroup = row.invoice.orderGroupNo;
   state.selectedShortageKey = "";

@@ -5,6 +5,7 @@ import {
   buildWorkflowState,
   completedInvoicesForInspection,
   defaultInvoiceState,
+  itemEventKey,
   openShortageItems,
   repickedInvoicesForInspection,
 } from "../workflows/workflowEvents.mjs";
@@ -201,10 +202,11 @@ function syntheticEventAt(row = {}) {
   return firstText(row.updated_at, row.created_at, row.event_at, row.receipt_date) || "1970-01-01T00:00:00Z";
 }
 
-export function buildSyntheticMemoEvents({ orders = [], orderItems = [] } = {}) {
+export function buildSyntheticMemoEvents({ orders = [], orderItems = [], itemEventHistory = [] } = {}) {
   const ordersByGroup = new Map();
   const syntheticItemEvents = [];
   const shippingHoldSignals = [];
+  const itemHistoryKeys = new Set(itemEventHistory.map(itemEventKey).filter((key) => key && key !== "::"));
   let syntheticId = -1;
 
   for (const order of orders) {
@@ -251,6 +253,7 @@ export function buildSyntheticMemoEvents({ orders = [], orderItems = [] } = {}) 
       });
     }
     if (!memo2) continue;
+    if (itemHistoryKeys.has(`${groupNo}::${sellpiaItemNo}`)) continue;
 
     const repickDone = isRepickDoneMemo(memo2);
     syntheticItemEvents.push({
@@ -374,8 +377,16 @@ export function annotateShippingHoldState({ viewModel, workflowState, shippingHo
   }
 }
 
-export function buildWorkflowQueues({ orders = [], orderItems = [], pickingRows = [], shortageRows = [], itemEvents = [], invoiceEvents = [] } = {}) {
-  const syntheticEvents = buildSyntheticMemoEvents({ orders, orderItems });
+export function buildWorkflowQueues({
+  orders = [],
+  orderItems = [],
+  pickingRows = [],
+  shortageRows = [],
+  itemEvents = [],
+  invoiceEvents = [],
+  itemEventHistory = itemEvents,
+} = {}) {
+  const syntheticEvents = buildSyntheticMemoEvents({ orders, orderItems, itemEventHistory });
   const mergedItemEvents = [...syntheticEvents.itemEvents, ...itemEvents];
   const mergedInvoiceEvents = [...syntheticEvents.invoiceEvents, ...invoiceEvents];
   const shippingHoldSignals = [...(syntheticEvents.shippingHoldSignals || []), ...buildLegacyShippingHoldSignals({ pickingRows })];
@@ -446,6 +457,14 @@ export async function loadWorkflowQueues(db, { pageSize = 1000 } = {}) {
     invoiceEvents,
     pickingRows,
     shortageRows,
-    ...buildWorkflowQueues({ orders, orderItems, pickingRows, shortageRows, itemEvents, invoiceEvents }),
+    ...buildWorkflowQueues({
+      orders,
+      orderItems,
+      pickingRows,
+      shortageRows,
+      itemEvents,
+      invoiceEvents,
+      itemEventHistory: events.itemEvents,
+    }),
   };
 }
