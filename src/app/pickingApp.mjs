@@ -141,6 +141,7 @@ const state = {
     orderGroupNo: "",
     value: "",
     note: "",
+    input: null,
   },
   orderListModal: {
     open: false,
@@ -5353,6 +5354,7 @@ function ensureDrawerKeypad() {
     </div>
     <div class="drawer-keypad-actions">
       <button type="button" data-keypad-action="close">닫기</button>
+      <button type="button" data-keypad-action="native">직접 입력</button>
       <button type="button" class="primary" data-keypad-action="done">확인</button>
     </div>
   </div>`;
@@ -5368,6 +5370,8 @@ function renderDrawerKeypad() {
 
 function openDrawerKeypad(input) {
   if (!input) return;
+  if (state.drawerKeypad.input === input && !document.getElementById("drawer-keypad-overlay")?.hidden) return;
+  state.drawerKeypad.input = input;
   state.drawerKeypad.orderGroupNo = input.dataset.orderGroup || "";
   const parsed = splitDrawerMemo(input.value);
   state.drawerKeypad.value = parsed.digits;
@@ -5383,6 +5387,7 @@ function closeDrawerKeypad() {
   state.drawerKeypad.orderGroupNo = "";
   state.drawerKeypad.value = "";
   state.drawerKeypad.note = "";
+  state.drawerKeypad.input = null;
 }
 
 async function commitDrawerKeypad() {
@@ -5405,6 +5410,61 @@ async function commitDrawerKeypad() {
   toast("서랍번호 저장");
 }
 
+function restoreDrawerNativeInput(input) {
+  if (!input) return;
+  input.readOnly = true;
+  input.setAttribute("readonly", "");
+  input.setAttribute("inputmode", "none");
+  delete input.dataset.drawerNativeInput;
+  delete input.dataset.drawerNativeOriginalValue;
+}
+
+function focusDrawerNativeInput(input) {
+  try {
+    input.focus({ preventScroll: true });
+  } catch {
+    input.focus();
+  }
+  const end = input.value.length;
+  if (typeof input.setSelectionRange === "function") input.setSelectionRange(end, end);
+}
+
+function startDrawerNativeInput() {
+  const input = state.drawerKeypad.input;
+  if (!input) return;
+  const invoice = (state.viewModel?.invoices || []).find((row) => row.orderGroupNo === state.drawerKeypad.orderGroupNo);
+  if (invoice) input.value = composeDrawerMemo(invoice, state.drawerKeypad.value, state.drawerKeypad.note);
+  input.dataset.drawerNativeOriginalValue = input.value;
+  input.dataset.drawerNativeInput = "1";
+  closeDrawerKeypad();
+  input.readOnly = false;
+  input.removeAttribute("readonly");
+  input.setAttribute("inputmode", "text");
+
+  const onKeydown = (event) => {
+    if (event.key === "Enter" && !event.shiftKey) {
+      event.preventDefault();
+      input.blur();
+    }
+    if (event.key === "Escape") {
+      event.preventDefault();
+      input.value = input.dataset.drawerNativeOriginalValue || "";
+      restoreDrawerNativeInput(input);
+      input.blur();
+    }
+  };
+  input.addEventListener("keydown", onKeydown);
+  input.addEventListener(
+    "blur",
+    () => {
+      input.removeEventListener("keydown", onKeydown);
+      setTimeout(() => restoreDrawerNativeInput(input), 0);
+    },
+    { once: true },
+  );
+  focusDrawerNativeInput(input);
+}
+
 async function onDrawerKeypadClick(event) {
   if (event.target.id === "drawer-keypad-overlay") {
     closeDrawerKeypad();
@@ -5420,6 +5480,10 @@ async function onDrawerKeypadClick(event) {
   if (action === "clear") state.drawerKeypad.value = "";
   if (action === "delete") state.drawerKeypad.value = state.drawerKeypad.value.slice(0, -1);
   if (action === "close") closeDrawerKeypad();
+  if (action === "native") {
+    startDrawerNativeInput();
+    return;
+  }
   if (action === "done") await commitDrawerKeypad();
   renderDrawerKeypad();
 }
@@ -5427,6 +5491,7 @@ async function onDrawerKeypadClick(event) {
 function onDrawerKeypadOpen(event) {
   const input = event.target.closest(".drawer-input[data-action='drawer']");
   if (!input) return;
+  if (input.dataset.drawerNativeInput === "1") return;
   event.preventDefault();
   input.blur();
   openDrawerKeypad(input);
@@ -6065,9 +6130,7 @@ function bindEvents() {
     if (event.key === "Enter") jumpToInvoiceNo(els.jumpInvoiceInput.value);
   });
   els.orderList.addEventListener("click", (event) => onOrderListClick(event).catch(showError));
-  els.orderList.addEventListener("pointerdown", onDrawerKeypadOpen);
   els.orderList.addEventListener("click", onDrawerKeypadOpen);
-  els.orderList.addEventListener("focusin", onDrawerKeypadOpen);
   els.orderList.addEventListener("click", (event) => {
     if (event.target.closest("[data-action]")) return;
     const card = event.target.closest("[data-slot-key]");
