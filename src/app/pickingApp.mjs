@@ -1,4 +1,4 @@
-import { annotateShippingHoldState, loadWorkflowQueues } from "../adapters/workflowEventAdapter.mjs?v=20260713-hold-render1";
+import { annotateShippingHoldState, loadWorkflowQueues } from "../adapters/workflowEventAdapter.mjs?v=20260714-shortage-baseline1";
 import { buildPickingViewModel } from "../workflows/picking/buildPickingViewModel.mjs?v=20260706-memo2-text1";
 import {
   buildWorkflowState,
@@ -3610,7 +3610,11 @@ function rebuildWorkflowQueuesFromLocalEvents() {
   const viewModel = state.workflowQueues.viewModel || state.viewModel;
   const systemShippingHoldCurrents = state.workflowQueues.systemShippingHoldCurrents || new Map();
   const workflowState = buildWorkflowState({
-    itemEvents: [...(state.workflowQueues.syntheticEvents?.itemEvents || []), ...(state.workflowQueues.itemEvents || [])],
+    itemEvents: [
+      ...(state.workflowQueues.shortageBaselineEvents || []),
+      ...(state.workflowQueues.syntheticEvents?.itemEvents || []),
+      ...(state.workflowQueues.itemEvents || []),
+    ],
     invoiceEvents: [...(state.workflowQueues.syntheticEvents?.invoiceEvents || []), ...(state.workflowQueues.invoiceEvents || [])],
   });
   annotateShippingHoldState({

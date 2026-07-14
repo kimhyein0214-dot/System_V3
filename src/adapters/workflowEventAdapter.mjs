@@ -202,6 +202,55 @@ function syntheticEventAt(row = {}) {
   return firstText(row.updated_at, row.created_at, row.event_at, row.receipt_date) || "1970-01-01T00:00:00Z";
 }
 
+function shortageBaselineEventAt(cutoffTime) {
+  const cutoff = Number(cutoffTime || 0);
+  if (!Number.isFinite(cutoff) || cutoff <= 0) return "1970-01-01T00:00:00Z";
+  return new Date(Math.max(0, cutoff - 1)).toISOString();
+}
+
+export function buildShortageMemoBaselineEvents({ orders = [], orderItems = [], itemEventHistory = [], cutoffTime = 0 } = {}) {
+  const ordersByGroup = new Map();
+  const itemHistoryKeys = new Set(itemEventHistory.map(itemEventKey).filter((key) => key && key !== "::"));
+  const baselineEvents = [];
+  const eventAt = shortageBaselineEventAt(cutoffTime);
+  let baselineId = -1000000;
+
+  for (const order of orders) {
+    const groupNo = orderGroupNo(order);
+    if (groupNo) ordersByGroup.set(groupNo, order);
+  }
+
+  for (const item of orderItems) {
+    const groupNo = orderGroupNo(item);
+    const sellpiaItemNo = itemNo(item);
+    const memo2 = itemMemo2(item);
+    if (!groupNo || !sellpiaItemNo || !memo2) continue;
+
+    const hasActualHistory = itemHistoryKeys.has(`${groupNo}::${sellpiaItemNo}`);
+    // Old completion markers are only a legacy fallback when no real history exists.
+    if (isRepickDoneMemo(memo2) && !hasActualHistory) continue;
+
+    const order = ordersByGroup.get(groupNo) || {};
+    baselineEvents.push({
+      id: baselineId++,
+      receipt_date: receiptDate(item) || receiptDate(order) || null,
+      order_group_no: groupNo,
+      invoice_no: invoiceNo(item) || invoiceNo(order),
+      sellpia_item_no: sellpiaItemNo,
+      sellpia_product_code: firstText(item.p_code, item.sellpia_p_code, item.sellpia_product_code),
+      own_code: firstText(item.prod_code, item.p_dpcode, item.own_code),
+      event_type: ITEM_EVENT.SHORTAGE_CREATED,
+      quantity: itemShortageQty(memo2),
+      memo: memo2,
+      source: "sellpia_memo2_baseline",
+      event_at: eventAt,
+      payload: { synthetic: true, baseline: true, memo2 },
+    });
+  }
+
+  return baselineEvents;
+}
+
 export function buildSyntheticMemoEvents({ orders = [], orderItems = [], itemEventHistory = [] } = {}) {
   const ordersByGroup = new Map();
   const syntheticItemEvents = [];
@@ -256,6 +305,7 @@ export function buildSyntheticMemoEvents({ orders = [], orderItems = [], itemEve
     if (itemHistoryKeys.has(`${groupNo}::${sellpiaItemNo}`)) continue;
 
     const repickDone = isRepickDoneMemo(memo2);
+    if (!repickDone) continue;
     syntheticItemEvents.push({
       id: syntheticId--,
       receipt_date: receiptDate(item) || receiptDate(order) || null,
@@ -386,8 +436,14 @@ export function buildWorkflowQueues({
   invoiceEvents = [],
   itemEventHistory = itemEvents,
 } = {}) {
+  const shortageBaselineEvents = buildShortageMemoBaselineEvents({
+    orders,
+    orderItems,
+    itemEventHistory,
+    cutoffTime: scrapeCutoffTime(orders),
+  });
   const syntheticEvents = buildSyntheticMemoEvents({ orders, orderItems, itemEventHistory });
-  const mergedItemEvents = [...syntheticEvents.itemEvents, ...itemEvents];
+  const mergedItemEvents = [...shortageBaselineEvents, ...syntheticEvents.itemEvents, ...itemEvents];
   const mergedInvoiceEvents = [...syntheticEvents.invoiceEvents, ...invoiceEvents];
   const shippingHoldSignals = [...(syntheticEvents.shippingHoldSignals || []), ...buildLegacyShippingHoldSignals({ pickingRows })];
   const scrapedShippingHoldBaselines = buildScrapedShippingHoldBaselines({ orders });
@@ -404,6 +460,7 @@ export function buildWorkflowQueues({
   return {
     viewModel,
     workflowState,
+    shortageBaselineEvents,
     syntheticEvents,
     shippingHoldSignals,
     scrapedShippingHoldBaselines,

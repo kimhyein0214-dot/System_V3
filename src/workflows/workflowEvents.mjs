@@ -92,12 +92,6 @@ export function reduceItemEvents(events = []) {
         break;
       case ITEM_EVENT.SHORTAGE_QTY_CHANGED:
         state.shortageQty = Math.max(0, qty);
-        state.shortageOpen = state.shortageQty > 0;
-        if (state.shortageOpen) {
-          state.shortageRepicked = false;
-          state.inspected = false;
-          state.cancelled = false;
-        }
         break;
       case ITEM_EVENT.SHORTAGE_REPICK_COMPLETED:
         state.shortageOpen = false;
