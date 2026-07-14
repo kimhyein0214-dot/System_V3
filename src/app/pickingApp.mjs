@@ -4073,7 +4073,7 @@ function itemOrderMemo(invoice, item) {
 }
 
 function itemSellpiaOrderMemo(invoice, item) {
-  return firstRawPreservedText(item.raw, "order_memo", "item_order_memo", "sellpia_order_memo") || "";
+  return firstRawPreservedText(item.raw, "order_memo", "item_order_memo", "sellpia_order_memo") || invoice.orderMemo || "";
 }
 
 function inspectionMemoCode(item) {
