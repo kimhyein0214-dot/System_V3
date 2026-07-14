@@ -1561,13 +1561,13 @@ input {
 }
 
 .workflow-row.is-hold {
-  border-left: 4px solid var(--purple);
-  background: var(--purple-soft);
+  border-left: 4px solid #6d28d9;
+  background: #e9d5ff;
 }
 
 .workflow-row.is-hold:hover,
 .workflow-row.is-hold.selected {
-  background: #ede9fe;
+  background: #ddd6fe;
 }
 
 .workflow-row.is-gold {
@@ -1582,15 +1582,15 @@ input {
 
 .workflow-row.is-hold.is-gold,
 .workflow-row.is-hold.has-shortage {
-  border-left-color: var(--purple);
-  background: var(--purple-soft);
+  border-left-color: #6d28d9;
+  background: #e9d5ff;
 }
 
 .workflow-row.is-hold.is-gold:hover,
 .workflow-row.is-hold.is-gold.selected,
 .workflow-row.is-hold.has-shortage:hover,
 .workflow-row.is-hold.has-shortage.selected {
-  background: #ede9fe;
+  background: #ddd6fe;
 }
 
 .workflow-row.is-completed,
