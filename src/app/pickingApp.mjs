@@ -4073,20 +4073,38 @@ function cleanSellpiaManageMemo(value) {
     .join("\n");
 }
 
+function rawTextOrNull(source, key) {
+  const value = source?.[key];
+  return value === null || value === undefined ? null : String(value);
+}
+
+function itemSystemOrderMemoOverride(item) {
+  const value = firstRawPreservedText(item.raw, "order_memo", "item_order_memo", "sellpia_order_memo");
+  if (value) return { present: true, value };
+
+  const orderMemo = rawTextOrNull(item.raw, "order_memo");
+  const updatedAt = firstRawText(item.raw, "order_memo_updated_at");
+  if (orderMemo !== null && !orderMemo.trim() && updatedAt) return { present: true, value: "" };
+
+  return { present: false, value: "" };
+}
+
 function itemOrderMemo(invoice, item) {
-  return cleanSellpiaManageMemo(
-    firstRawText(item.raw, "order_memo", "o_memo", "memo")
-      || firstRawText(item.raw, "sellpia_order_memo_raw")
-      || invoice.orderMemo
-      || "",
-  );
+  const override = itemSystemOrderMemoOverride(item);
+  if (override.present) return cleanSellpiaManageMemo(override.value);
+
+  const rawSellpiaMemo = rawTextOrNull(item.raw, "sellpia_order_memo_raw");
+  if (rawSellpiaMemo !== null) return cleanSellpiaManageMemo(rawSellpiaMemo);
+
+  return "";
 }
 
 function itemSellpiaOrderMemo(invoice, item) {
-  return firstRawPreservedText(item.raw, "order_memo", "item_order_memo", "sellpia_order_memo")
-    || firstRawPreservedText(item.raw, "sellpia_order_memo_raw")
-    || invoice.orderMemo
-    || "";
+  const override = itemSystemOrderMemoOverride(item);
+  if (override.present) return override.value;
+
+  const rawSellpiaMemo = rawTextOrNull(item.raw, "sellpia_order_memo_raw");
+  return rawSellpiaMemo !== null ? rawSellpiaMemo : "";
 }
 
 function inspectionMemoCode(item) {
