@@ -4074,11 +4074,19 @@ function cleanSellpiaManageMemo(value) {
 }
 
 function itemOrderMemo(invoice, item) {
-  return cleanSellpiaManageMemo(firstRawText(item.raw, "order_memo", "o_memo", "memo") || invoice.orderMemo || "");
+  return cleanSellpiaManageMemo(
+    firstRawText(item.raw, "order_memo", "o_memo", "memo")
+      || firstRawText(item.raw, "sellpia_order_memo_raw")
+      || invoice.orderMemo
+      || "",
+  );
 }
 
 function itemSellpiaOrderMemo(invoice, item) {
-  return firstRawPreservedText(item.raw, "order_memo", "item_order_memo", "sellpia_order_memo") || invoice.orderMemo || "";
+  return firstRawPreservedText(item.raw, "order_memo", "item_order_memo", "sellpia_order_memo")
+    || firstRawPreservedText(item.raw, "sellpia_order_memo_raw")
+    || invoice.orderMemo
+    || "";
 }
 
 function inspectionMemoCode(item) {
