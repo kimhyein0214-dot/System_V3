@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>0720-미송완료처리수정(업데이터)</title>
+<title>0721-상품별주문메모전체해제(업데이터)</title>
 <style>
   * { box-sizing: border-box; margin: 0; padding: 0; }
   body { background:#141414; color:#f0f0f0; font-family:Arial,'Noto Sans KR',sans-serif; min-height:100vh; display:flex; align-items:center; justify-content:center; padding:24px; }
@@ -18,7 +18,7 @@
 </head>
 <body>
 <div class="card">
-  <h1>0720-미송완료처리수정(업데이터)</h1>
+  <h1>0721-상품별주문메모전체해제(업데이터)</h1>
   <div class="sub">재고매칭(order_stockmatch.html) 전용 / TEST MODE 기본 ON</div>
   <div class="note">
     <b>TEST MODE (NO WRITE)</b><br>
@@ -26,7 +26,7 @@
     관리메모/관리메모2/주문메모 저장, 배송보류 설정/해제, DB PATCH는 테스트모드에서 실행하지 않습니다.<br>
     결과 CSV에는 현재 셀피아 값, 시스템 예정값, 변경 필요 여부, 매칭 실패/상세없음 예외, 상태 사유가 들어갑니다.
   </div>
-  <a id="bookmarklet-link" class="btn" href="#">0720-미송완료처리수정(업데이터)</a>
+  <a id="bookmarklet-link" class="btn" href="#">0721-상품별주문메모전체해제(업데이터)</a>
   <pre id="code-display">loading...</pre>
   <button id="copy-btn">코드 복사</button>
 </div>
@@ -476,6 +476,15 @@
       return row ? row.querySelector('input[type="checkbox"]') : null;
     }
 
+    function orderMemoApplyAllCheckbox(root) {
+      if (!root) return null;
+      const direct = root.querySelector('#o_ord_memo_mode_all,[name="o_ord_memo_mode_all"]');
+      if (direct) return direct;
+      const el = root.querySelector('#dt_ord_memo,#dt_order_memo,[name="dt_ord_memo"],[name="dt_order_memo"]');
+      const row = el && el.closest('tr');
+      return row ? row.querySelector('input[type="checkbox"]') : null;
+    }
+
     function samePopupItemNo(left, right) {
       const a = normal(left);
       const b = normal(right);
@@ -808,11 +817,29 @@
       return hasItemAlias(set, row, ordNo);
     }
 
-    function addOrderMemoAlias(map, sourceMap, row, ordNo, value, source) {
-      const val = normal(value);
-      if (!val) return;
-      addItemAlias(map, row, ordNo, val, true);
-      addItemAlias(sourceMap, row, ordNo, source || 'item_level', true);
+    function addOrderMemoTarget(task, row) {
+      // Order memo is a per-Sellpia-order-item target.  Do not reuse the
+      // broader item aliases used by memo2: a blank target must stay blank
+      // and must never inherit another row's value.
+      const ordNo = normal(task?.ordNo || row?.ord_no);
+      const sellpiaOrderItemNo = normal(row?.sellpia_order_item_no);
+      if (!ordNo || !sellpiaOrderItemNo) return;
+      const key = ordNo + '::' + sellpiaOrderItemNo;
+      if (task.orderMemoMap.has(key)) {
+        task.orderMemoAmbiguousKeys.add(key);
+        return;
+      }
+      task.orderMemoMap.set(key, normal(row.order_memo));
+    }
+
+    function orderMemoTargetForGridRow(task, row, index) {
+      const ordNo = normal(task?.ordNo || rowOrdNo(row));
+      const sellpiaOrderItemNo = normal(rowItemNoStrict(row));
+      const key = ordNo && sellpiaOrderItemNo ? ordNo + '::' + sellpiaOrderItemNo : '';
+      if (!key || task?.orderMemoAmbiguousKeys?.has(key) || !task?.orderMemoMap?.has(key)) {
+        return { found: false, value: '' };
+      }
+      return { found: true, value: task.orderMemoMap.get(key) };
     }
 
     function memo2ForGridRow(task, row, index) {
@@ -831,23 +858,17 @@
     }
 
     function orderMemoForGridRow(task, row, index) {
-      for (const key of gridItemAliasKeys(task, row, index)) {
-        if (task.orderMemoMap && task.orderMemoMap.has(key)) return task.orderMemoMap.get(key);
-      }
-      return '';
+      return orderMemoTargetForGridRow(task, row, index).value;
     }
 
     function orderMemoSourceForGridRow(task, row, index) {
-      for (const key of gridItemAliasKeys(task, row, index)) {
-        if (task.orderMemoSourceMap && task.orderMemoSourceMap.has(key)) return task.orderMemoSourceMap.get(key);
-      }
-      return normal(task.orderMemo) ? 'invoice_level_reference' : 'none';
+      return orderMemoTargetForGridRow(task, row, index).found ? 'item_level' : 'none';
     }
 
     function plannedOrderMemoForGridRow(task, row, index, currentOrderMemo) {
       if (task.clear) return '';
-      const itemTarget = orderMemoForGridRow(task, row, index);
-      if (task.writeOrderMemo && normal(itemTarget)) return itemTarget;
+      const itemTarget = orderMemoTargetForGridRow(task, row, index);
+      if (task.writeOrderMemo && itemTarget.found) return itemTarget.value;
       return currentOrderMemo;
     }
 
@@ -1006,9 +1027,8 @@
         memo2Map: new Map(),
         memo2ClearMap: new Set(),
         memo2ConflictMap: new Set(),
-        orderMemo: normal(firstOrderRow?.order_memo || firstOrderRow?.o_memo),
         orderMemoMap: new Map(),
-        orderMemoSourceMap: new Map(),
+        orderMemoAmbiguousKeys: new Set(),
         itemKeyIndex: buildItemKeyIndex(orderItemRows, normal(ordNo || firstOrderRow?.ord_no)),
         hold: false,
         systemShippingHold: systemShippingHoldCurrent.status,
@@ -1067,7 +1087,7 @@
         if (normal(row.o_shop_memo2) && hasItemClearAlias(task.memo2ClearMap, row, task.ordNo)) {
           addItemAliasToSet(task.memo2ConflictMap, row, task.ordNo);
         }
-        addOrderMemoAlias(task.orderMemoMap, task.orderMemoSourceMap, row, task.ordNo, row.order_memo, 'item_level');
+        addOrderMemoTarget(task, row);
       }
 
       if (nextShipRows.length && !activeRows.length) {
@@ -1090,7 +1110,6 @@
       if (workflowDone?.done) {
         task.clear = true;
         task.memo1 = '';
-        task.orderMemo = '';
         task.writeMemo1 = true;
         task.writeMemo2 = true;
         task.writeOrderMemo = true;
@@ -1534,6 +1553,13 @@
         if (normal(el.value) !== normal(rowResult.plannedMemo2)) throw new Error('관리메모2 입력값 검증 실패');
       }
       if (rowResult.writeOrderMemo) {
+        const applyAll = orderMemoApplyAllCheckbox(root);
+        if (!applyAll) throw new Error('주문메모 전체적용 체크박스를 찾지 못했습니다. 상품별 저장을 중단합니다.');
+        if (applyAll.checked) {
+          applyAll.click();
+          await sleep(120);
+        }
+        if (applyAll.checked) throw new Error('주문메모 전체적용 체크박스를 OFF로 변경하지 못했습니다.');
         const el = root.querySelector('#dt_ord_memo,#dt_order_memo,[name="dt_ord_memo"]');
         if (!el) throw new Error('주문메모 입력 필드를 찾지 못했습니다.');
         setInputValue(el, rowResult.plannedOrderMemo);
@@ -1721,8 +1747,9 @@
           const current = readCurrentValues(root, row);
           rowPerf.readMs = perfMs(readStart);
           const plannedMemo1 = task.clear ? '' : (task.writeMemo1 ? task.memo1 : current.memo1);
-          const orderMemoTarget = orderMemoForGridRow(task, row, i);
-          const canWriteOrderMemo = task.writeOrderMemo && !!normal(orderMemoTarget);
+          const orderMemoTargetInfo = orderMemoTargetForGridRow(task, row, i);
+          const orderMemoTarget = orderMemoTargetInfo.value;
+          const canWriteOrderMemo = task.writeOrderMemo && orderMemoTargetInfo.found;
           const plannedOrderMemo = plannedOrderMemoForGridRow(task, row, i, current.orderMemo);
           const systemShippingHold = systemShippingHoldForTask(task);
           const currentSellpiaHold = current.holdStatus || (current.hold ? 'ON' : 'OFF');
@@ -1786,7 +1813,7 @@
             writeOrderMemo: orderMemoChanged,
             writeHold: holdChanged
         };
-        if (rowResult.writeOrderMemo && normal(rowResult.currentOrderMemo) && !normal(rowResult.plannedOrderMemo) && !task.clear) {
+        if (rowResult.writeOrderMemo && normal(rowResult.currentOrderMemo) && !normal(rowResult.plannedOrderMemo) && !task.clear && !orderMemoTargetInfo.found) {
           const extraWarning = 'order_memo_clear_without_item_target';
           rowResult.liveWriteAllowed = 'N';
           rowResult.currentStateWarning = [rowResult.currentStateWarning, extraWarning].filter(Boolean).join(' / ');
@@ -2050,7 +2077,7 @@
       overlay.style.cssText = 'position:fixed;right:16px;top:80px;left:auto;bottom:auto;max-width:94vw;max-height:calc(100vh - 96px);overflow:auto;background:transparent;z-index:999999;font-family:Arial,sans-serif;';
       overlay.innerHTML =
         '<div style="width:560px;max-width:94vw;background:#111827;color:#fff;border:1px solid #334155;border-radius:12px;padding:22px;box-shadow:0 24px 80px rgba(0,0,0,.45)">' +
-        '<div style="font-size:18px;font-weight:900;margin-bottom:4px">0720-미송완료처리수정(업데이터)</div>' +
+        '<div style="font-size:18px;font-weight:900;margin-bottom:4px">0721-상품별주문메모전체해제(업데이터)</div>' +
         '<div style="font-size:12px;color:#93c5fd;margin-bottom:14px">TEST MODE (NO WRITE) is ON by default</div>' +
         '<label style="font-size:12px;color:#cbd5e1">Invoice / order number (optional)</label>' +
         '<input id="smu0707-inv" style="width:100%;height:38px;margin:5px 0 10px;padding:0 10px;border-radius:8px;border:1px solid #475569;background:#0f172a;color:#fff" placeholder="Blank = use date range">' +
@@ -2190,8 +2217,8 @@
 
     makeOverlay();
   })().catch(function(err){
-    console.error('[0720-미송완료처리수정(업데이터)]', err);
-    alert('0720-미송완료처리수정(업데이터) error: ' + (err && err.message ? err.message : err));
+    console.error('[0721-상품별주문메모전체해제(업데이터)]', err);
+    alert('0721-상품별주문메모전체해제(업데이터) error: ' + (err && err.message ? err.message : err));
   });
 })();
 </script>
