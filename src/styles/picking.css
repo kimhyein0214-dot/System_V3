@@ -278,6 +278,13 @@ input {
   grid-template-columns: 42px 1fr;
 }
 
+/* Keep the compact pre-scroll layout for the picking workspace on tablets. */
+@media (min-width: 721px) and (max-width: 1120px) {
+  body:has(#picking-panel:not([hidden])) .main-grid {
+    min-width: 0;
+  }
+}
+
 .sidebar {
   min-height: 0;
   padding: 8px;
