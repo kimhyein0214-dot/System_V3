@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>0721-상품별주문메모전체해제(업데이터)</title>
+<title>0722-팝업 안전패치(업데이터)</title>
 <style>
   * { box-sizing: border-box; margin: 0; padding: 0; }
   body { background:#141414; color:#f0f0f0; font-family:Arial,'Noto Sans KR',sans-serif; min-height:100vh; display:flex; align-items:center; justify-content:center; padding:24px; }
@@ -18,7 +18,7 @@
 </head>
 <body>
 <div class="card">
-  <h1>0721-상품별주문메모전체해제(업데이터)</h1>
+  <h1>0722-팝업 안전패치(업데이터)</h1>
   <div class="sub">재고매칭(order_stockmatch.html) 전용 / TEST MODE 기본 ON</div>
   <div class="note">
     <b>TEST MODE (NO WRITE)</b><br>
@@ -26,7 +26,7 @@
     관리메모/관리메모2/주문메모 저장, 배송보류 설정/해제, DB PATCH는 테스트모드에서 실행하지 않습니다.<br>
     결과 CSV에는 현재 셀피아 값, 시스템 예정값, 변경 필요 여부, 매칭 실패/상세없음 예외, 상태 사유가 들어갑니다.
   </div>
-  <a id="bookmarklet-link" class="btn" href="#">0721-상품별주문메모전체해제(업데이터)</a>
+  <a id="bookmarklet-link" class="btn" href="#">0722-팝업 안전패치(업데이터)</a>
   <pre id="code-display">loading...</pre>
   <button id="copy-btn">코드 복사</button>
 </div>
@@ -296,13 +296,13 @@
 
     async function closeDetail() {
       const dlg = openDialogRoot();
-      if (!dlg) return { fallback: false, rootKind: 'none', button: false };
+      if (!dlg) return { fallback: false, closed: true, rootKind: 'none', button: false };
       const btn = detailCloseButton(dlg);
       if (btn) btn.click();
       const closed = await waitForDetailClosed(dlg, 1200);
-      if (closed) return { fallback: false, rootKind: rootKind(dlg), button: !!btn };
+      if (closed) return { fallback: false, closed: true, rootKind: rootKind(dlg), button: !!btn };
       await sleep(300);
-      return { fallback: true, rootKind: rootKind(dlg), button: !!btn };
+      return { fallback: true, closed: false, rootKind: rootKind(dlg), button: !!btn };
     }
 
     function fieldValue(root, selectors) {
@@ -476,6 +476,15 @@
       return row ? row.querySelector('input[type="checkbox"]') : null;
     }
 
+    function memo1ApplyAllCheckbox(root) {
+      if (!root) return null;
+      const direct = root.querySelector('#o_shop_memo_mode_all,[name="o_shop_memo_mode_all"]');
+      if (direct) return direct;
+      const el = root.querySelector('#dt_shop_memo,[name="dt_shop_memo"]');
+      const row = el && el.closest('tr');
+      return row ? row.querySelector('input[type="checkbox"]') : null;
+    }
+
     function orderMemoApplyAllCheckbox(root) {
       if (!root) return null;
       const direct = root.querySelector('#o_ord_memo_mode_all,[name="o_ord_memo_mode_all"]');
@@ -518,6 +527,31 @@
       return '';
     }
 
+    function popupOrderNo(root) {
+      const direct = fieldValue(root, [
+        '#dt_ord_no',
+        '[name="dt_ord_no"]',
+        '#dt_order_no',
+        '[name="dt_order_no"]',
+        '#ord_no',
+        '[name="ord_no"]'
+      ]);
+      if (direct) return direct;
+      for (const label of [...root.querySelectorAll('th,td,label,span')]) {
+        const text = elementText(label);
+        if (text.length > 60 || !/^주문번호\s*[:：]?/.test(text) || /주문품목/.test(text)) continue;
+        const inlineValue = normal(text.replace(/^주문번호\s*[:：]?/, ''));
+        if (inlineValue) return inlineValue;
+        const row = label.closest('tr');
+        const input = row && row.querySelector('input:not([type="checkbox"]),textarea,select');
+        if (input && normal(input.value)) return normal(input.value);
+        const next = label.nextElementSibling;
+        const nextText = elementText(next);
+        if (nextText && nextText.length <= 60) return nextText;
+      }
+      return '';
+    }
+
     function assertPopupItemMatches(root, rowResult) {
       const expected = normal(rowResult.itemNoForVerify);
       if (!expected) throw new Error('저장 전 주문품목No를 확인할 수 없습니다.');
@@ -526,6 +560,32 @@
       if (!samePopupItemNo(actual, expected)) {
         throw new Error('상세 팝업 주문품목No 불일치: expected=' + expected + ', actual=' + actual);
       }
+    }
+
+    function assertPopupTargetMatches(root, rowResult) {
+      const expectedOrderNo = normal(rowResult.ordNo);
+      const actualOrderNo = popupOrderNo(root);
+      if (!expectedOrderNo) throw new Error('저장 전 주문번호를 확인할 수 없습니다.');
+      if (!actualOrderNo) throw new Error('상세 팝업에서 주문번호를 찾지 못했습니다.');
+      if (actualOrderNo !== expectedOrderNo) {
+        throw new Error('상세 팝업 주문번호 불일치: expected=' + expectedOrderNo + ', actual=' + actualOrderNo);
+      }
+      assertPopupItemMatches(root, rowResult);
+      return { orderNo: actualOrderNo, itemNo: popupItemNo(root) };
+    }
+
+    function inspectMemo1PopupSafety(root, rowResult) {
+      const popupTarget = assertPopupTargetMatches(root, rowResult);
+      const applyAll = memo1ApplyAllCheckbox(root);
+      if (!applyAll) throw new Error('관리메모 전체적용 체크박스를 찾지 못했습니다. 안전을 위해 저장을 중단합니다.');
+      const input = root.querySelector('#dt_shop_memo,[name="dt_shop_memo"]');
+      if (!input) throw new Error('관리메모 입력 필드를 찾지 못했습니다.');
+      return {
+        popupTarget,
+        applyAll,
+        input,
+        inputBefore: normal(input.value)
+      };
     }
 
     function elementText(el) {
@@ -1526,7 +1586,14 @@
         };
       }
       let itemMatchError = '';
-      if (rowResult.writeMemo2 || rowResult.writeOrderMemo) {
+      let popupTarget = { orderNo: '', itemNo: '' };
+      let memo1Safety = null;
+      if (rowResult.writeMemo1) {
+        // Management memo 1 is invoice-level in Sellpia, but its value still
+        // must never be written through a detail popup for a different item.
+        memo1Safety = inspectMemo1PopupSafety(root, rowResult);
+        popupTarget = memo1Safety.popupTarget;
+      } else if (rowResult.writeMemo2 || rowResult.writeOrderMemo) {
         try {
           assertPopupItemMatches(root, rowResult);
         } catch (err) {
@@ -1536,9 +1603,22 @@
         }
       }
       if (itemMatchError && !rowResult.writeMemo1 && !rowResult.writeHold) throw new Error(itemMatchError);
+      let memo1InputBefore = '';
+      let memo1InputAfter = '';
       if (rowResult.writeMemo1) {
-        const el = root.querySelector('#dt_shop_memo,[name="dt_shop_memo"]');
+        const applyAll = memo1Safety.applyAll;
+        if (applyAll.checked) {
+          applyAll.click();
+          await sleep(120);
+        }
+        if (applyAll.checked) throw new Error('관리메모 전체적용 체크박스를 OFF로 변경하지 못했습니다.');
+        const el = memo1Safety.input;
+        memo1InputBefore = memo1Safety.inputBefore;
         setInputValue(el, rowResult.plannedMemo1);
+        memo1InputAfter = normal(el.value);
+        if (memo1InputAfter !== normal(rowResult.plannedMemo1)) {
+          throw new Error('관리메모 입력값 검증 실패: expected=' + normal(rowResult.plannedMemo1) + ', actual=' + memo1InputAfter);
+        }
       }
       if (rowResult.writeMemo2) {
         const applyAll = memo2ApplyAllCheckbox(root);
@@ -1589,6 +1669,10 @@
       await sleep(clicked ? 150 : Math.min(CONFIG.saveDelay || 900, 500));
       return {
         ...rowResult,
+        popupOrderNo: popupTarget.orderNo,
+        popupItemNo: popupTarget.itemNo,
+        memo1InputBefore,
+        memo1InputAfter,
         status: itemMatchError ? 'PARTIAL_FAIL' : rowResult.status,
         reason: itemMatchError ? ('상품단위 저장 차단: ' + itemMatchError + (rowResult.reason ? ' / planned: ' + rowResult.reason : '')) : rowResult.reason,
         log: 'LIVE: ' + rowResult.invNo + ' / 저장 호출 완료' + (itemMatchError ? ' / 상품단위 저장 차단: ' + itemMatchError : '')
@@ -1819,7 +1903,27 @@
           rowResult.currentStateWarning = [rowResult.currentStateWarning, extraWarning].filter(Boolean).join(' / ');
         }
         if (options.testMode) {
-          pendingResult = { ...rowResult, log: 'TEST: ' + rowResult.invNo + ' / ' + rowResult.actionSummary };
+          let testGuard = {};
+          if (rowResult.writeMemo1) {
+            try {
+              const safety = inspectMemo1PopupSafety(root, rowResult);
+              testGuard = {
+                popupOrderNo: safety.popupTarget.orderNo,
+                popupItemNo: safety.popupTarget.itemNo,
+                memo1InputBefore: safety.inputBefore,
+                memo1InputAfter: safety.inputBefore
+              };
+            } catch (err) {
+              pendingResult = {
+                ...rowResult,
+                status: 'TEST_GUARD_FAIL',
+                needsChange: 'UNKNOWN',
+                reason: failReason((err && err.message) || String(err), task),
+                log: 'TEST_GUARD_FAIL: ' + rowResult.invNo + ' / ' + ((err && err.message) || String(err))
+              };
+            }
+          }
+          if (!pendingResult) pendingResult = { ...rowResult, ...testGuard, log: 'TEST: ' + rowResult.invNo + ' / ' + rowResult.actionSummary };
         } else {
           if (!actionParts.length) {
             pendingResult = { ...rowResult, log: 'LIVE SKIP: ' + rowResult.invNo + ' / 변경 없음' };
@@ -1856,6 +1960,19 @@
           rowPerf.closeFallback = closeInfo && closeInfo.fallback ? 'Y' : 'N';
           rowPerf.closeRoot = closeInfo && closeInfo.rootKind;
           rowPerf.closeBtn = closeInfo && closeInfo.button ? 'Y' : 'N';
+          if (closeInfo && !closeInfo.closed) {
+            stopped = true;
+            const closeError = '상세 팝업이 완전히 닫히지 않아 다음 배치 대상으로 진행하지 않았습니다.';
+            if (pendingResult) {
+              pendingResult = {
+                ...pendingResult,
+                status: 'CLOSE_FAIL',
+                needsChange: 'UNKNOWN',
+                reason: [pendingResult.reason, closeError].filter(Boolean).join(' / '),
+                log: (pendingResult.log || '') + ' / CLOSE_FAIL: next task stopped'
+              };
+            }
+          }
           if (pendingResult) addTaskPerfResult(pendingResult, rowPerf);
         }
       }
@@ -2025,11 +2142,11 @@
     }
 
     function downloadCsv() {
-      const headers = ['송장번호','주문번호','주문품목No','현재 관리메모','실행예정 관리메모','현재 관리메모2','실행예정 관리메모2','현재 주문메모','실행예정 주문메모','현재 배송보류','실행예정 배송보류','currentSellpiaHold','systemShippingHold','systemShippingHoldSource','systemShippingHoldUpdatedAt','systemShippingHoldKnown','sellpiaShippingHoldScraped','sellpiaShippingHoldScrapedAt','syncAction','syncReason','실행변경필요','상태','사유','DB매칭상태','clear/OFF사유','차단전 변경요약','live_write_allowed','current_state_warning','item_key_match_method','sellpia_item_no_original','sellpia_item_no_match_key','order_memo_source','memo2_target','order_memo_target','perf_open_ms','perf_read_ms','perf_write_ms','perf_close_ms','perf_total_ms','perf_open_fallback','perf_open_root','perf_open_ready','perf_close_fallback','perf_close_root','perf_close_btn'];
+      const headers = ['송장번호','주문번호','주문품목No','현재 관리메모','실행예정 관리메모','관리메모1 팝업 주문번호','관리메모1 팝업 주문품목No','관리메모1 입력 전','관리메모1 입력 후','현재 관리메모2','실행예정 관리메모2','현재 주문메모','실행예정 주문메모','현재 배송보류','실행예정 배송보류','currentSellpiaHold','systemShippingHold','systemShippingHoldSource','systemShippingHoldUpdatedAt','systemShippingHoldKnown','sellpiaShippingHoldScraped','sellpiaShippingHoldScrapedAt','syncAction','syncReason','실행변경필요','상태','사유','DB매칭상태','clear/OFF사유','차단전 변경요약','live_write_allowed','current_state_warning','item_key_match_method','sellpia_item_no_original','sellpia_item_no_match_key','order_memo_source','memo2_target','order_memo_target','perf_open_ms','perf_read_ms','perf_write_ms','perf_close_ms','perf_total_ms','perf_open_fallback','perf_open_root','perf_open_ready','perf_close_fallback','perf_close_root','perf_close_btn'];
       const lines = [headers.map(csvValue).join(',')];
       for (const r of results) {
         const row = csvDisplayRow(r);
-        lines.push([row.invNo,row.ordNo,row.itemNo,row.currentMemo1,row.plannedMemo1,row.currentMemo2,row.plannedMemo2,row.currentOrderMemo,row.plannedOrderMemo,row.currentHold,row.plannedHold,row.currentSellpiaHold,row.systemShippingHold,row.systemShippingHoldSource,row.systemShippingHoldUpdatedAt,row.systemShippingHoldKnown,row.sellpiaShippingHoldScraped,row.sellpiaShippingHoldScrapedAt,row.syncAction,row.syncReason,row.needsChange,row.status,row.reason,row.dbMatchStatus,row.clearOffReason,row.csvBlockedPlan,row.liveWriteAllowed,row.currentStateWarning,row.itemKeyMatchMethod,row.sellpiaItemNoOriginal,row.sellpiaItemNoMatchKey,row.orderMemoSource,row.memo2Target,row.orderMemoTarget,row.perfOpenMs,row.perfReadMs,row.perfWriteMs,row.perfCloseMs,row.perfTotalMs,row.perfOpenFallback,row.perfOpenRoot,row.perfOpenReady,row.perfCloseFallback,row.perfCloseRoot,row.perfCloseBtn].map(csvValue).join(','));
+        lines.push([row.invNo,row.ordNo,row.itemNo,row.currentMemo1,row.plannedMemo1,row.popupOrderNo,row.popupItemNo,row.memo1InputBefore,row.memo1InputAfter,row.currentMemo2,row.plannedMemo2,row.currentOrderMemo,row.plannedOrderMemo,row.currentHold,row.plannedHold,row.currentSellpiaHold,row.systemShippingHold,row.systemShippingHoldSource,row.systemShippingHoldUpdatedAt,row.systemShippingHoldKnown,row.sellpiaShippingHoldScraped,row.sellpiaShippingHoldScrapedAt,row.syncAction,row.syncReason,row.needsChange,row.status,row.reason,row.dbMatchStatus,row.clearOffReason,row.csvBlockedPlan,row.liveWriteAllowed,row.currentStateWarning,row.itemKeyMatchMethod,row.sellpiaItemNoOriginal,row.sellpiaItemNoMatchKey,row.orderMemoSource,row.memo2Target,row.orderMemoTarget,row.perfOpenMs,row.perfReadMs,row.perfWriteMs,row.perfCloseMs,row.perfTotalMs,row.perfOpenFallback,row.perfOpenRoot,row.perfOpenReady,row.perfCloseFallback,row.perfCloseRoot,row.perfCloseBtn].map(csvValue).join(','));
       }
       const blob = new Blob(['\ufeff' + lines.join('\n')], { type: 'text/csv;charset=utf-8' });
       const url = URL.createObjectURL(blob);
@@ -2051,11 +2168,11 @@
         alert('차단/실패/경고 행이 없습니다.');
         return;
       }
-      const headers = ['issue_reason','송장번호','주문번호','주문품목No','상태','live_write_allowed','current_state_warning','실행변경필요','사유','차단전 변경요약','현재 배송보류','실행예정 배송보류','currentSellpiaHold','systemShippingHold','systemShippingHoldSource','systemShippingHoldUpdatedAt','systemShippingHoldKnown','sellpiaShippingHoldScraped','sellpiaShippingHoldScrapedAt','syncAction','syncReason','현재 관리메모','실행예정 관리메모','현재 관리메모2','실행예정 관리메모2','현재 주문메모','실행예정 주문메모','DB매칭상태','clear/OFF사유','item_key_match_method','sellpia_item_no_original','sellpia_item_no_match_key'];
+      const headers = ['issue_reason','송장번호','주문번호','주문품목No','상태','live_write_allowed','current_state_warning','실행변경필요','사유','차단전 변경요약','현재 배송보류','실행예정 배송보류','currentSellpiaHold','systemShippingHold','systemShippingHoldSource','systemShippingHoldUpdatedAt','systemShippingHoldKnown','sellpiaShippingHoldScraped','sellpiaShippingHoldScrapedAt','syncAction','syncReason','현재 관리메모','실행예정 관리메모','관리메모1 팝업 주문번호','관리메모1 팝업 주문품목No','관리메모1 입력 전','관리메모1 입력 후','현재 관리메모2','실행예정 관리메모2','현재 주문메모','실행예정 주문메모','DB매칭상태','clear/OFF사유','item_key_match_method','sellpia_item_no_original','sellpia_item_no_match_key'];
       const lines = [headers.map(csvValue).join(',')];
       for (const r of issueRows) {
         const row = csvDisplayRow(r);
-        lines.push([issueReasonForRow(r),row.invNo,row.ordNo,row.itemNo,row.status,row.liveWriteAllowed,row.currentStateWarning,row.needsChange,row.reason,row.csvBlockedPlan,row.currentHold,row.plannedHold,row.currentSellpiaHold,row.systemShippingHold,row.systemShippingHoldSource,row.systemShippingHoldUpdatedAt,row.systemShippingHoldKnown,row.sellpiaShippingHoldScraped,row.sellpiaShippingHoldScrapedAt,row.syncAction,row.syncReason,row.currentMemo1,row.plannedMemo1,row.currentMemo2,row.plannedMemo2,row.currentOrderMemo,row.plannedOrderMemo,row.dbMatchStatus,row.clearOffReason,row.itemKeyMatchMethod,row.sellpiaItemNoOriginal,row.sellpiaItemNoMatchKey].map(csvValue).join(','));
+        lines.push([issueReasonForRow(r),row.invNo,row.ordNo,row.itemNo,row.status,row.liveWriteAllowed,row.currentStateWarning,row.needsChange,row.reason,row.csvBlockedPlan,row.currentHold,row.plannedHold,row.currentSellpiaHold,row.systemShippingHold,row.systemShippingHoldSource,row.systemShippingHoldUpdatedAt,row.systemShippingHoldKnown,row.sellpiaShippingHoldScraped,row.sellpiaShippingHoldScrapedAt,row.syncAction,row.syncReason,row.currentMemo1,row.plannedMemo1,row.popupOrderNo,row.popupItemNo,row.memo1InputBefore,row.memo1InputAfter,row.currentMemo2,row.plannedMemo2,row.currentOrderMemo,row.plannedOrderMemo,row.dbMatchStatus,row.clearOffReason,row.itemKeyMatchMethod,row.sellpiaItemNoOriginal,row.sellpiaItemNoMatchKey].map(csvValue).join(','));
       }
       const blob = new Blob(['\ufeff' + lines.join('\n')], { type: 'text/csv;charset=utf-8' });
       const url = URL.createObjectURL(blob);
@@ -2077,7 +2194,7 @@
       overlay.style.cssText = 'position:fixed;right:16px;top:80px;left:auto;bottom:auto;max-width:94vw;max-height:calc(100vh - 96px);overflow:auto;background:transparent;z-index:999999;font-family:Arial,sans-serif;';
       overlay.innerHTML =
         '<div style="width:560px;max-width:94vw;background:#111827;color:#fff;border:1px solid #334155;border-radius:12px;padding:22px;box-shadow:0 24px 80px rgba(0,0,0,.45)">' +
-        '<div style="font-size:18px;font-weight:900;margin-bottom:4px">0721-상품별주문메모전체해제(업데이터)</div>' +
+        '<div style="font-size:18px;font-weight:900;margin-bottom:4px">0722-팝업 안전패치(업데이터)</div>' +
         '<div style="font-size:12px;color:#93c5fd;margin-bottom:14px">TEST MODE (NO WRITE) is ON by default</div>' +
         '<label style="font-size:12px;color:#cbd5e1">Invoice / order number (optional)</label>' +
         '<input id="smu0707-inv" style="width:100%;height:38px;margin:5px 0 10px;padding:0 10px;border-radius:8px;border:1px solid #475569;background:#0f172a;color:#fff" placeholder="Blank = use date range">' +
@@ -2217,8 +2334,8 @@
 
     makeOverlay();
   })().catch(function(err){
-    console.error('[0721-상품별주문메모전체해제(업데이터)]', err);
-    alert('0721-상품별주문메모전체해제(업데이터) error: ' + (err && err.message ? err.message : err));
+    console.error('[0722-팝업 안전패치(업데이터)]', err);
+    alert('0722-팝업 안전패치(업데이터) error: ' + (err && err.message ? err.message : err));
   });
 })();
 </script>
