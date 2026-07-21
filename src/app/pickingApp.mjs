@@ -148,6 +148,15 @@ const state = {
     open: false,
     filter: "all",
     search: "",
+    sourceCount: 0,
+  },
+  csWorkLogModal: {
+    open: false,
+    filter: "all",
+    search: "",
+    loading: false,
+    loaded: false,
+    rows: [],
   },
   dashboardMonthKey: todayDateString().slice(0, 7),
   photoViewer: {
@@ -1732,15 +1741,18 @@ function renderDashboard() {
 function orderListModalRows() {
   const search = state.orderListModal.search.trim().toLowerCase();
   const filter = state.orderListModal.filter;
-  return sortedAllInvoices().flatMap((invoice, invoiceIndex) => {
-    const invoiceItemCount = (invoice.items || []).length;
-    const invoiceQty = (invoice.items || []).reduce((sum, item) => sum + (Number(item.quantity) || 1), 0);
-    return invoiceItemsInSellpiaRowOrder(invoice).flatMap((item) => {
-      const done = isPicked(item);
-      const shortage = shortageQty(item);
-      if (filter === "unpick" && done) return [];
-      if (filter === "done" && !done) return [];
-      if (filter === "short" && shortage <= 0) return [];
+  const source = state.viewModel?.invoices || [];
+  state.orderListModal.sourceCount = source.length;
+  return sortInvoices(source)
+    .map((invoice, invoiceIndex) => {
+      const invoiceState = workflowInvoiceState(invoice);
+      const shortage = invoiceItemsInSellpiaRowOrder(invoice).reduce((sum, item) => sum + shortageQty(item), 0);
+      const hold = Boolean(invoiceState?.systemShippingHold || invoiceState?.shippingHoldNeedsOn || invoiceState?.shippingHoldUnknown || invoiceStats(invoice).hold > 0);
+      const holdLabel = invoiceState?.systemShippingHold ? "배송보류 ON" : invoiceState?.shippingHoldNeedsOn ? "배송보류 처리필요" : invoiceState?.shippingHoldUnknown ? "배송보류 확인필요" : invoiceStats(invoice).hold > 0 ? "배송보류" : "";
+      const itemSummary = invoiceItemsInSellpiaRowOrder(invoice)
+        .map((item) => [item.ownCode || item.sellpiaProductCode, cleanOptionName(item.optionName, item.ownCode) || item.productName].filter(Boolean).join(" · "))
+        .filter(Boolean);
+      const status = [shortage > 0 ? `미송 ${shortage}` : "", holdLabel].filter(Boolean);
       const haystack = [
         invoiceSequenceWithGroupLabel(invoice, invoiceIndex),
         invoice.invoiceNo,
@@ -1749,27 +1761,20 @@ function orderListModalRows() {
         invoice.csDisplayName,
         invoice.recipientName,
         invoice.buyerName,
-        item.ownCode,
-        item.sellpiaProductCode,
-        item.productName,
-        item.optionName,
+        invoiceDrawerValue(invoice),
+        ...itemSummary,
       ]
         .join(" ")
         .toLowerCase();
-      if (search && !haystack.includes(search)) return [];
-      return [
-        {
-          invoice,
-          item,
-          invoiceIndex,
-          done,
-          shortage,
-          invoiceItemCount,
-          invoiceQty,
-        },
-      ];
+      return { invoice, invoiceIndex, shortage, hold, status, itemSummary, haystack };
+    })
+    .filter((row) => {
+      if (workflowInvoiceState(row.invoice)?.cancelled) return false;
+      if (filter === "target" && !(row.shortage > 0 || row.hold)) return false;
+      if (filter === "shortage" && row.shortage <= 0) return false;
+      if (filter === "hold" && !row.hold) return false;
+      return !search || row.haystack.includes(search);
     });
-  });
 }
 
 function ensureOrderListModal() {
@@ -1779,32 +1784,30 @@ function ensureOrderListModal() {
   modal.id = "order-list-modal";
   modal.className = "order-list-modal-overlay";
   modal.hidden = true;
-  modal.innerHTML = `<div class="order-list-modal" role="dialog" aria-modal="true" aria-label="주문리스트">
+  modal.innerHTML = `<div class="order-list-modal cs-list-modal" role="dialog" aria-modal="true" aria-label="CS 리스트">
     <div class="order-list-modal-head">
-      <h3>주문리스트</h3>
+      <h3>CS 리스트</h3>
       <div class="order-list-modal-tools">
-        <input id="order-list-modal-search" type="search" placeholder="주문자/수취인/자사코드/송장/출력">
+        <input id="order-list-modal-search" type="search" placeholder="주문자 / 수취인 / 자사코드 / 송장">
         <button type="button" class="order-list-modal-close" data-order-list-action="close">×</button>
       </div>
     </div>
     <div class="order-list-modal-filters" id="order-list-modal-filters">
+      <button type="button" data-order-list-filter="target">CS 대상</button>
       <button type="button" data-order-list-filter="all">전체</button>
-      <button type="button" data-order-list-filter="unpick">미피킹</button>
-      <button type="button" data-order-list-filter="done">피킹완료</button>
-      <button type="button" data-order-list-filter="short">미송있음</button>
+      <button type="button" data-order-list-filter="shortage">미송 진행</button>
+      <button type="button" data-order-list-filter="hold">배송보류</button>
     </div>
     <div class="order-list-modal-table-wrap">
-      <table class="order-list-modal-table">
+      <table class="order-list-modal-table cs-list-table">
         <thead>
           <tr>
-            <th>출력</th>
-            <th>주문자</th>
-            <th>자사코드</th>
-            <th>상품명</th>
-            <th>수량</th>
-            <th>서랍</th>
-            <th>부족</th>
-            <th>피킹</th>
+            <th>상태</th>
+            <th>주문 / 송장</th>
+            <th>수취인</th>
+            <th>상품</th>
+            <th>관리메모</th>
+            <th></th>
           </tr>
         </thead>
         <tbody id="order-list-modal-body"></tbody>
@@ -1816,6 +1819,15 @@ function ensureOrderListModal() {
   modal.addEventListener("click", (event) => {
     if (event.target.id === "order-list-modal" || event.target.closest("[data-order-list-action='close']")) {
       closeOrderListModal();
+      return;
+    }
+    const logButton = event.target.closest("[data-order-list-action='work-log']");
+    if (logButton) {
+      state.csWorkLogModal.search = logButton.dataset.orderSearch || "";
+      state.csWorkLogModal.loaded = false;
+      closeOrderListModal();
+      openCsWorkLogModal();
+      loadCsWorkLog().catch(showError);
       return;
     }
     const filterButton = event.target.closest("[data-order-list-filter]");
@@ -1843,31 +1855,29 @@ function renderOrderListModal() {
   const foot = modal.querySelector("#order-list-modal-foot");
   const rows = orderListModalRows();
   if (!rows.length) {
-    body.innerHTML = '<tr><td colspan="8" class="order-list-modal-empty">데이터 없음</td></tr>';
-    if (foot) foot.textContent = "0건";
+    body.innerHTML = '<tr><td colspan="6" class="order-list-modal-empty">현재 필터에 맞는 CS 대상이 없습니다.</td></tr>';
+    if (foot) foot.textContent = `표시 0건 · 현재 화면 주문 ${state.orderListModal.sourceCount}건`;
     return;
   }
   body.innerHTML = rows
-    .map(({ invoice, item, invoiceIndex, done, shortage, invoiceItemCount, invoiceQty }) => {
-      const rowClass = done ? "done" : shortage > 0 ? "shortage" : "";
-      const name = itemName(item);
-      const option = itemOption(item);
+    .map(({ invoice, invoiceIndex, shortage, hold, status, itemSummary }) => {
+      const rowClass = shortage > 0 ? "shortage" : hold ? "hold" : "";
       return `<tr class="${rowClass}">
-        <td><strong>${escapeHtml(invoiceSequenceWithGroupLabel(invoice, invoiceIndex))}</strong><small>${escapeHtml(invoice.invoiceNo || "-")}</small></td>
-        <td>${escapeHtml(invoice.displayName || invoice.csDisplayName || "-")}<div class="order-list-modal-badges"><span>${invoiceItemCount}종</span><span>${invoiceQty}개</span>${invoiceHasGold(invoice) ? "<span>골드</span>" : ""}</div></td>
-        <td class="code">${escapeHtml(item.ownCode || item.sellpiaProductCode || "-")}</td>
-        <td class="name">${escapeHtml(option ? `${name} / ${option}` : name)}</td>
-        <td class="center">${Number(item.quantity) || 1}</td>
-        <td class="center accent">${escapeHtml(invoice.sellpiaMemo1 || "-")}</td>
-        <td class="center ${shortage > 0 ? "danger" : ""}">${shortage || "-"}</td>
-        <td class="center">${done ? "✓" : "-"}</td>
+        <td><div class="order-list-modal-badges">${status.map((label) => `<span class="${label.startsWith("미송") ? "danger" : "hold"}">${escapeHtml(label)}</span>`).join("") || "<span>일반</span>"}</div></td>
+        <td><strong>${escapeHtml(invoiceSequenceWithGroupLabel(invoice, invoiceIndex))}</strong><small>${escapeHtml(invoice.invoiceNo || "-")} · ${escapeHtml(invoice.orderGroupNo || "-")}</small></td>
+        <td>${escapeHtml(invoice.recipientName || invoice.displayName || invoice.csDisplayName || "-")}</td>
+        <td class="name cs-list-products">${escapeHtml(itemSummary.slice(0, 3).join("\n"))}${itemSummary.length > 3 ? `<small>외 ${itemSummary.length - 3}종</small>` : ""}</td>
+        <td class="accent cs-list-memo">${escapeHtml(invoiceDrawerValue(invoice) || "-")}</td>
+        <td class="center"><button class="btn" type="button" data-order-list-action="work-log" data-order-search="${escapeHtml(invoice.invoiceNo || invoice.orderGroupNo || "")}">로그</button></td>
       </tr>`;
     })
     .join("");
-  if (foot) foot.textContent = `${rows.length}건`;
+  if (foot) foot.textContent = `표시 ${rows.length}건 · 현재 화면 주문 ${state.orderListModal.sourceCount}건`;
 }
 
 function openOrderListModal() {
+  state.orderListModal.filter = "all";
+  state.orderListModal.search = "";
   state.orderListModal.open = true;
   renderOrderListModal();
   document.getElementById("order-list-modal-search")?.focus();
@@ -3443,6 +3453,7 @@ function renderActivePanel(options = {}) {
 function render() {
   renderShell();
   renderActivePanel();
+  if (state.orderListModal.open) renderOrderListModal();
 }
 
 let activePanelRenderTimer = 0;
@@ -4308,6 +4319,264 @@ function alimtalkProduct(item) {
 
 function alimtalkOption(item) {
   return itemSellerOptionName(item) || item.optionName || "";
+}
+
+function csWorkLogText(...values) {
+  return values
+    .flatMap((value) => (Array.isArray(value) ? value : [value]))
+    .map((value) => String(value ?? "").trim())
+    .filter(Boolean)
+    .join(" ");
+}
+
+function csWorkLogTime(event = {}) {
+  return String(event.event_at || event.created_at || "").trim();
+}
+
+function csWorkLogScope(event = {}) {
+  return event.sellpia_item_no || event.item_no || event.order_item_no || "주문";
+}
+
+function csWorkLogItemKey(item = {}) {
+  return String(item.sellpia_item_no || item.item_no || item.sellpia_order_item_no || item.order_item_no || "").trim();
+}
+
+function csWorkLogProductLabel(item = {}) {
+  const code = String(item.own_code || item.p_dpcode || item.p_code || item.prod_code || item.sellpia_p_code || "").trim();
+  const name = String(item.p_name || item.product_name || "").trim();
+  const option = String(item.p_option || item.option_name || "").trim();
+  const quantity = Number(item.qty || item.o_amount || item.quantity || 0);
+  const title = [code, option ? `${name} / ${option}` : name].filter(Boolean).join(" · ");
+  return `${title || csWorkLogItemKey(item) || "상품 정보 없음"}${quantity > 0 ? ` (${quantity}개)` : ""}`;
+}
+
+function formatCsWorkLogTime(value) {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return String(value || "-").trim() || "-";
+  const parts = Object.fromEntries(
+    new Intl.DateTimeFormat("en-US", {
+      timeZone: "Asia/Seoul",
+      month: "2-digit",
+      day: "2-digit",
+      hour: "2-digit",
+      minute: "2-digit",
+      hourCycle: "h23",
+    })
+      .formatToParts(date)
+      .filter((part) => part.type !== "literal")
+      .map((part) => [part.type, part.value]),
+  );
+  return `${parts.month}/${parts.day} ${parts.hour}:${parts.minute}`;
+}
+
+function csWorkLogEventLabel(event = {}) {
+  const labels = {
+    picked: "피킹 완료",
+    shortage_created: "미송 생성",
+    shortage_qty_changed: "미송수량 변경",
+    shortage_repick_completed: "미송피킹 완료",
+    shortage_repick_cancelled: "미송피킹 완료취소",
+    inspection_completed: "검품 완료",
+    inspection_cancelled: "검품 완료취소",
+    hold_created: "배송보류 ON",
+    hold_cleared: "배송보류 OFF",
+  };
+  const type = String(event.event_type || "").trim();
+  const quantity = event.quantity === null || event.quantity === undefined || event.quantity === "" ? "" : ` · 수량 ${event.quantity}`;
+  const memo = String(event.memo || event.drawer_memo || event.note || "").trim();
+  return `${labels[type] || type || "작업"}${quantity}${memo ? ` · ${memo}` : ""}`;
+}
+
+function csWorkLogCategory(event = {}) {
+  const type = String(event.event_type || "").toLowerCase();
+  if (type.includes("shortage")) return "shortage";
+  if (type.includes("inspection")) return "inspection";
+  if (type.includes("pick")) return "picking";
+  return "other";
+}
+
+function csWorkLogRows({ orders = [], orderItems = [], itemEvents = [], invoiceEvents = [] }, search = "") {
+  const orderByGroup = new Map();
+  for (const order of orders) {
+    const key = String(order.ord_no || order.order_group_no || "").trim();
+    if (key && !orderByGroup.has(key)) orderByGroup.set(key, order);
+  }
+  const rowsByKey = new Map();
+  const ensureRow = ({ orderGroupNo, scope, item = null }) => {
+    const key = `${orderGroupNo}::${scope || "주문"}`;
+    if (!rowsByKey.has(key)) {
+      const order = orderByGroup.get(orderGroupNo) || {};
+      rowsByKey.set(key, {
+        orderGroupNo,
+        invoiceNo: String(order.inv_no || order.invoice_no || order.dnum || "").trim(),
+        recipient: String(order.receiver || order.receiver_name || order.recipient_name || order.orderer || order.buyer || "").trim(),
+        receiptDate: String(order.receipt_date || order.ord_date || "").trim(),
+        scope: scope || "주문",
+        product: item ? csWorkLogProductLabel(item) : "주문 전체",
+        itemSortOrder: Number(item?.sort_order) || Number.MAX_SAFE_INTEGER,
+        logs: [],
+      });
+    }
+    return rowsByKey.get(key);
+  };
+
+  for (const item of orderItems) {
+    const orderGroupNo = String(item.ord_no || item.order_group_no || "").trim();
+    const scope = csWorkLogItemKey(item);
+    if (orderGroupNo && scope) ensureRow({ orderGroupNo, scope, item });
+  }
+
+  for (const event of invoiceEvents) {
+    const orderGroupNo = String(event.order_group_no || event.ord_no || "").trim();
+    if (!orderGroupNo) continue;
+    ensureRow({ orderGroupNo, scope: "주문" }).logs.push({ event, category: csWorkLogCategory(event), time: csWorkLogTime(event) });
+  }
+
+  for (const event of itemEvents) {
+    const orderGroupNo = String(event.order_group_no || event.ord_no || "").trim();
+    if (!orderGroupNo) continue;
+    const scope = csWorkLogScope(event);
+    ensureRow({ orderGroupNo, scope }).logs.push({ event, category: csWorkLogCategory(event), time: csWorkLogTime(event) });
+  }
+
+  const needle = String(search || "").trim().toLowerCase();
+  return [...rowsByKey.values()]
+    .map((row) => ({
+      ...row,
+      logs: [...row.logs].sort((left, right) => String(left.time).localeCompare(String(right.time)) || Number(left.event.id || 0) - Number(right.event.id || 0)),
+    }))
+    .filter((row) => {
+      const logText = row.logs.map(({ event }) => csWorkLogEventLabel(event)).join(" ");
+      return !needle || csWorkLogText(row.orderGroupNo, row.invoiceNo, row.recipient, row.scope, row.product, logText).toLowerCase().includes(needle);
+    })
+    .sort((left, right) => {
+      const leftLastTime = left.logs.at(-1)?.time || "";
+      const rightLastTime = right.logs.at(-1)?.time || "";
+      return String(rightLastTime).localeCompare(String(leftLastTime)) || left.orderGroupNo.localeCompare(right.orderGroupNo) || left.itemSortOrder - right.itemSortOrder || left.scope.localeCompare(right.scope);
+    });
+}
+
+function ensureCsWorkLogModal() {
+  let modal = document.getElementById("cs-work-log-modal");
+  if (modal) return modal;
+  modal = document.createElement("div");
+  modal.id = "cs-work-log-modal";
+  modal.className = "order-list-modal-overlay";
+  modal.hidden = true;
+  modal.innerHTML = `<div class="order-list-modal cs-work-log-modal" role="dialog" aria-modal="true" aria-label="CS 작업로그 조회">
+    <div class="order-list-modal-head">
+      <h3>CS 작업로그 조회</h3>
+      <div class="order-list-modal-tools">
+        <input id="cs-work-log-search" type="search" placeholder="주문번호 / 송장번호 / 수취인 / 상품키">
+        <button class="btn" type="button" data-cs-work-log-action="search">조회</button>
+        <button type="button" class="order-list-modal-close" data-cs-work-log-action="close">×</button>
+      </div>
+    </div>
+    <div class="cs-work-log-note">읽기 전용입니다. 현재 DB에 남아 있는 주문 정보와 workflow 작업 이벤트만 조회합니다.</div>
+    <div class="order-list-modal-filters" id="cs-work-log-filters">
+      <button type="button" data-cs-work-log-filter="all">전체</button>
+      <button type="button" data-cs-work-log-filter="shortage">미송</button>
+      <button type="button" data-cs-work-log-filter="picking">피킹</button>
+      <button type="button" data-cs-work-log-filter="inspection">검품</button>
+    </div>
+    <div class="order-list-modal-table-wrap">
+      <table class="order-list-modal-table cs-work-log-table">
+        <thead><tr><th>주문 / 송장</th><th>수취인</th><th>상품행</th><th>작업로그</th></tr></thead>
+        <tbody id="cs-work-log-body"></tbody>
+      </table>
+    </div>
+    <div class="order-list-modal-foot" id="cs-work-log-foot">검색어를 입력해 주세요.</div>
+  </div>`;
+  document.body.appendChild(modal);
+  modal.addEventListener("click", (event) => {
+    const action = event.target.closest("[data-cs-work-log-action]")?.dataset.csWorkLogAction;
+    if (event.target.id === "cs-work-log-modal" || action === "close") {
+      closeCsWorkLogModal();
+      return;
+    }
+    if (action === "search") loadCsWorkLog().catch(showError);
+    const filter = event.target.closest("[data-cs-work-log-filter]")?.dataset.csWorkLogFilter;
+    if (!filter) return;
+    state.csWorkLogModal.filter = filter;
+    renderCsWorkLogModal();
+  });
+  modal.querySelector("#cs-work-log-search")?.addEventListener("input", (event) => {
+    state.csWorkLogModal.search = event.target.value;
+    state.csWorkLogModal.loaded = false;
+  });
+  modal.querySelector("#cs-work-log-search")?.addEventListener("keydown", (event) => {
+    if (event.key === "Enter") loadCsWorkLog().catch(showError);
+  });
+  return modal;
+}
+
+function renderCsWorkLogModal() {
+  const modal = ensureCsWorkLogModal();
+  modal.hidden = !state.csWorkLogModal.open;
+  if (!state.csWorkLogModal.open) return;
+  const input = modal.querySelector("#cs-work-log-search");
+  if (input && input.value !== state.csWorkLogModal.search) input.value = state.csWorkLogModal.search;
+  modal.querySelectorAll("[data-cs-work-log-filter]").forEach((button) => {
+    button.classList.toggle("active", button.dataset.csWorkLogFilter === state.csWorkLogModal.filter);
+  });
+  const body = modal.querySelector("#cs-work-log-body");
+  const foot = modal.querySelector("#cs-work-log-foot");
+  if (state.csWorkLogModal.loading) {
+    body.innerHTML = '<tr><td colspan="4" class="order-list-modal-empty">DB 작업로그를 읽는 중입니다.</td></tr>';
+    if (foot) foot.textContent = "조회 중";
+    return;
+  }
+  if (!state.csWorkLogModal.loaded) {
+    body.innerHTML = '<tr><td colspan="4" class="order-list-modal-empty">주문번호·송장번호·수취인·상품키를 입력한 뒤 조회하세요.</td></tr>';
+    return;
+  }
+  const rows = state.csWorkLogModal.rows.filter((row) => state.csWorkLogModal.filter === "all" || row.logs.some((log) => log.category === state.csWorkLogModal.filter));
+  if (!rows.length) {
+    body.innerHTML = '<tr><td colspan="4" class="order-list-modal-empty">일치하는 작업로그가 없습니다.</td></tr>';
+    if (foot) foot.textContent = "0건";
+    return;
+  }
+  body.innerHTML = rows.slice(0, 500).map((row) => `<tr>
+    <td><strong>${escapeHtml(row.orderGroupNo || "-")}</strong><small>${escapeHtml(row.invoiceNo || "송장 정보 없음")}${row.receiptDate ? ` · ${escapeHtml(row.receiptDate)}` : ""}</small></td>
+    <td>${escapeHtml(row.recipient || "-")}</td>
+    <td class="cs-work-log-product"><strong>${escapeHtml(row.product)}</strong><small>${escapeHtml(row.scope)}</small></td>
+    <td class="cs-work-log-memo">${row.logs.length ? row.logs.map(({ event, time }) => `<div><time>${escapeHtml(formatCsWorkLogTime(time))}</time>${escapeHtml(csWorkLogEventLabel(event))}</div>`).join("") : '<span class="cs-work-log-empty">작업로그 없음</span>'}</td>
+  </tr>`).join("");
+  if (foot) foot.textContent = rows.length > 500 ? `${rows.length}건 중 최근 500건 표시` : `${rows.length}건`;
+}
+
+async function loadCsWorkLog() {
+  const search = state.csWorkLogModal.search.trim();
+  if (!search) {
+    toast("검색어를 입력해 주세요.");
+    return;
+  }
+  state.csWorkLogModal.loading = true;
+  renderCsWorkLogModal();
+  try {
+    const [orders, orderItems, itemEvents, invoiceEvents] = await Promise.all([
+      fetchAllRows(() => db.from("orders").select("*").order("receipt_date", { ascending: false, nullsFirst: false })),
+      fetchAllRows(() => db.from("order_items").select("*").order("sort_order", { ascending: true, nullsFirst: false })),
+      fetchAllRows(() => db.from("workflow_item_events").select("*").order("event_at", { ascending: false }).order("id", { ascending: false })),
+      fetchAllRows(() => db.from("workflow_invoice_events").select("*").order("event_at", { ascending: false }).order("id", { ascending: false })),
+    ]);
+    state.csWorkLogModal.rows = csWorkLogRows({ orders, orderItems, itemEvents, invoiceEvents }, search);
+    state.csWorkLogModal.loaded = true;
+  } finally {
+    state.csWorkLogModal.loading = false;
+    renderCsWorkLogModal();
+  }
+}
+
+function openCsWorkLogModal() {
+  state.csWorkLogModal.open = true;
+  renderCsWorkLogModal();
+  document.getElementById("cs-work-log-search")?.focus();
+}
+
+function closeCsWorkLogModal() {
+  state.csWorkLogModal.open = false;
+  renderCsWorkLogModal();
 }
 
 function alimtalkShippingHoldState(invoice) {
@@ -6174,6 +6443,9 @@ function bindEvents() {
     if (button.dataset.dashboardAction === "postoffice-status") {
       showPostOfficeEnrichmentStatus();
     }
+    if (button.dataset.dashboardAction === "cs-work-log") {
+      openCsWorkLogModal();
+    }
     if (button.dataset.dashboardAction === "order-list") {
       openOrderListModal();
     }
@@ -6220,6 +6492,7 @@ function bindEvents() {
   document.addEventListener("keydown", (event) => {
     if (event.key === "Escape" && state.photoViewer.open) closePhotoViewer();
     if (event.key === "Escape" && state.orderListModal.open) closeOrderListModal();
+    if (event.key === "Escape" && state.csWorkLogModal.open) closeCsWorkLogModal();
   });
   document.addEventListener("click", (event) => {
     const image = event.target.closest("[data-photo-src]");

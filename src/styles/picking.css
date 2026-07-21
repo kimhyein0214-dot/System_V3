@@ -1272,6 +1272,24 @@ input {
   box-shadow: 0 20px 56px rgba(15, 23, 42, 0.28);
 }
 
+.cs-list-modal {
+  width: min(1080px, calc(100vw - 24px));
+}
+
+.cs-list-table {
+  min-width: 960px;
+}
+
+.cs-list-products {
+  min-width: 260px;
+  white-space: pre-wrap;
+}
+
+.cs-list-memo {
+  min-width: 150px;
+  white-space: pre-wrap;
+}
+
 .order-list-modal-head {
   display: flex;
   align-items: center;
@@ -1321,6 +1339,9 @@ input {
 }
 
 .order-list-modal-filters {
+  position: relative;
+  z-index: 2;
+  flex: 0 0 auto;
   display: flex;
   gap: 6px;
   padding: 8px 14px;
@@ -1348,6 +1369,7 @@ input {
 
 .order-list-modal-table-wrap {
   flex: 1;
+  min-height: 0;
   overflow: auto;
 }
 
@@ -1570,6 +1592,58 @@ input {
 .workflow-row.is-hold {
   border-left: 4px solid #6d28d9;
   background: #e9d5ff;
+}
+
+.cs-work-log-modal {
+  width: min(1160px, calc(100vw - 24px));
+}
+
+.cs-work-log-note {
+  padding: 8px 14px;
+  border-bottom: 1px solid var(--line);
+  background: #eff6ff;
+  color: #1e3a8a;
+  font-size: 11px;
+  font-weight: 800;
+}
+
+.cs-work-log-table {
+  min-width: 920px;
+}
+
+.cs-work-log-memo {
+  min-width: 360px;
+  white-space: pre-wrap;
+}
+
+.cs-work-log-memo div + div {
+  margin-top: 4px;
+}
+
+.cs-work-log-memo time {
+  display: inline-block;
+  width: 82px;
+  color: #475569;
+  font-variant-numeric: tabular-nums;
+  font-weight: 900;
+}
+
+.order-list-modal-badges span.danger {
+  background: #fee2e2;
+  color: #b91c1c;
+}
+
+.order-list-modal-badges span.hold {
+  background: #ede9fe;
+  color: #6d28d9;
+}
+
+.cs-work-log-product {
+  min-width: 220px;
+}
+
+.cs-work-log-empty {
+  color: var(--muted);
 }
 
 .workflow-row.is-hold:hover,
