@@ -137,6 +137,7 @@ const state = {
   workflowEventsChecked: false,
   saving: new Set(),
   workflowSaving: new Set(),
+  shortageSaveQueues: new Map(),
   drawerKeypad: {
     orderGroupNo: "",
     value: "",
@@ -3872,23 +3873,38 @@ async function setShortageQty(orderGroupNo, sellpiaItemNo, nextValue) {
   }
   paintPickingItemState(invoice, item);
   schedulePickingSurfaces();
-  try {
-    await savePickingRow(invoice, item, eventType, { quantity: next, memo: nextText || null });
-    await updateOrderItemMemoFields(invoice.orderGroupNo, item.sellpiaItemNo, { o_shop_memo2: nextText });
-    patchLocalItemManagementMemos(invoice.orderGroupNo, item.sellpiaItemNo, { memo2: nextText });
-    await ensureShippingHoldOnAfterMemoSave(invoice, nextText);
-    renderWorkflowSurfacesIfVisible();
-    toast("관리메모2 저장");
-  } catch (error) {
-    patchLocalPickingState(invoice, item, { shortageQty: prev, shortageMemo2: prevText });
-    item.sellpiaMemo2 = prevText;
-    if (item.raw) {
-      item.raw.o_shop_memo2 = prevText;
-      item.raw.shop_memo2 = prevText;
-      item.raw.memo2 = prevText;
+  const queueKey = itemStateKey(invoice, item);
+  const previousSave = state.shortageSaveQueues.get(queueKey) || Promise.resolve();
+  const queuedSave = previousSave.catch(() => undefined).then(async () => {
+    try {
+      await savePickingRow(invoice, item, eventType, { quantity: next, memo: nextText || null });
+      await updateOrderItemMemoFields(invoice.orderGroupNo, item.sellpiaItemNo, { o_shop_memo2: nextText });
+      patchLocalItemManagementMemos(invoice.orderGroupNo, item.sellpiaItemNo, { memo2: nextText });
+      await ensureShippingHoldOnAfterMemoSave(invoice, nextText);
+      renderWorkflowSurfacesIfVisible();
+      toast("관리메모2 저장");
+    } catch (error) {
+      // A newer input is already visible and queued; do not roll it back to an older value.
+      if (itemManagementMemo2(item) === nextText) {
+        patchLocalPickingState(invoice, item, { shortageQty: prev, shortageMemo2: prevText });
+        item.sellpiaMemo2 = prevText;
+        if (item.raw) {
+          item.raw.o_shop_memo2 = prevText;
+          item.raw.shop_memo2 = prevText;
+          item.raw.memo2 = prevText;
+        }
+        render();
+      }
+      toast(`관리메모2 저장 실패: ${error.message}`);
     }
-    render();
-    toast(`관리메모2 저장 실패: ${error.message}`);
+  });
+  state.shortageSaveQueues.set(queueKey, queuedSave);
+  try {
+    await queuedSave;
+  } finally {
+    if (state.shortageSaveQueues.get(queueKey) === queuedSave) {
+      state.shortageSaveQueues.delete(queueKey);
+    }
   }
 }
 
