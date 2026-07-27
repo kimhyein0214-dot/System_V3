@@ -11,6 +11,9 @@ const SUPABASE_URL = "https://vgxocngpykhlkosiaeew.supabase.co";
 const SUPABASE_KEY = "sb_publishable_XVnKGJo66GZiYTq5Ivu8dA_SjBVvX0g";
 const IMAGE_SUPABASE_URL = "https://bpgvqmtsjgegnrdzmpep.supabase.co";
 const IMAGE_BUCKET = "product-images";
+const RECEIVING_LABEL_BUCKET = "system-v3-shared";
+const RECEIVING_LABEL_PATH = "receiving-label/current.csv";
+const RECEIVING_LABEL_CSV_HEADER = ["product_code", "own_code", "option_name", "qty"];
 const JO_SIZE = 4;
 const CS_TEMPLATE_PRESETS = {
   d1: {
@@ -117,11 +120,14 @@ const state = {
   receivingLabel: {
     only: false,
     fileName: "",
+    entries: [],
     productMap: new Map(),
     ownCodeMap: new Map(),
     rowCount: 0,
     totalQty: 0,
     error: "",
+    source: "none",
+    syncError: "",
   },
   selectedInspectionGroup: "",
   selectedCompletedGroup: "",
@@ -157,6 +163,7 @@ const state = {
     loading: false,
     loaded: false,
     rows: [],
+    returnToOrderList: false,
   },
   dashboardMonthKey: todayDateString().slice(0, 7),
   photoViewer: {
@@ -1777,6 +1784,12 @@ function orderListModalRows() {
     });
 }
 
+function csListReceiptLabel(invoice) {
+  const receiptDate = dateKey(invoice?.receiptDate);
+  if (!receiptDate) return "접수일 -";
+  return `접수 ${receiptDate} (알림톡 ${daysSinceDateKey(receiptDate)}일차)`;
+}
+
 function ensureOrderListModal() {
   let modal = document.getElementById("order-list-modal");
   if (modal) return modal;
@@ -1803,7 +1816,7 @@ function ensureOrderListModal() {
         <thead>
           <tr>
             <th>상태</th>
-            <th>주문 / 송장</th>
+            <th>송장 / 접수</th>
             <th>수취인</th>
             <th>상품</th>
             <th>관리메모</th>
@@ -1826,7 +1839,7 @@ function ensureOrderListModal() {
       state.csWorkLogModal.search = logButton.dataset.orderSearch || "";
       state.csWorkLogModal.loaded = false;
       closeOrderListModal();
-      openCsWorkLogModal();
+      openCsWorkLogModal({ returnToOrderList: true });
       loadCsWorkLog().catch(showError);
       return;
     }
@@ -1860,13 +1873,13 @@ function renderOrderListModal() {
     return;
   }
   body.innerHTML = rows
-    .map(({ invoice, invoiceIndex, shortage, hold, status, itemSummary }) => {
+    .map(({ invoice, shortage, hold, status, itemSummary }) => {
       const rowClass = shortage > 0 ? "shortage" : hold ? "hold" : "";
       return `<tr class="${rowClass}">
         <td><div class="order-list-modal-badges">${status.map((label) => `<span class="${label.startsWith("미송") ? "danger" : "hold"}">${escapeHtml(label)}</span>`).join("") || "<span>일반</span>"}</div></td>
-        <td><strong>${escapeHtml(invoiceSequenceWithGroupLabel(invoice, invoiceIndex))}</strong><small>${escapeHtml(invoice.invoiceNo || "-")} · ${escapeHtml(invoice.orderGroupNo || "-")}</small></td>
+        <td><strong class="cs-list-invoice">${escapeHtml(invoice.invoiceNo || "-")}</strong><small>${escapeHtml(csListReceiptLabel(invoice))}</small></td>
         <td>${escapeHtml(invoice.recipientName || invoice.displayName || invoice.csDisplayName || "-")}</td>
-        <td class="name cs-list-products">${escapeHtml(itemSummary.slice(0, 3).join("\n"))}${itemSummary.length > 3 ? `<small>외 ${itemSummary.length - 3}종</small>` : ""}</td>
+        <td class="name cs-list-products">${escapeHtml(itemSummary.join("\n") || "-")}</td>
         <td class="accent cs-list-memo">${escapeHtml(invoiceDrawerValue(invoice) || "-")}</td>
         <td class="center"><button class="btn" type="button" data-order-list-action="work-log" data-order-search="${escapeHtml(invoice.invoiceNo || invoice.orderGroupNo || "")}">로그</button></td>
       </tr>`;
@@ -2270,11 +2283,14 @@ function repickedShortageRows() {
 
 function resetReceivingLabel(error = "") {
   state.receivingLabel.fileName = "";
+  state.receivingLabel.entries = [];
   state.receivingLabel.productMap = new Map();
   state.receivingLabel.ownCodeMap = new Map();
   state.receivingLabel.rowCount = 0;
   state.receivingLabel.totalQty = 0;
   state.receivingLabel.error = error;
+  state.receivingLabel.source = "none";
+  state.receivingLabel.syncError = "";
 }
 
 function addReceivingEntry(entry) {
@@ -2333,6 +2349,118 @@ function parseReceivingRows(sheetRows = []) {
   });
 }
 
+function applyReceivingEntries(entries = [], { fileName = "", source = "local" } = {}) {
+  resetReceivingLabel();
+  state.receivingLabel.fileName = fileName;
+  state.receivingLabel.source = source;
+  state.receivingLabel.entries = (entries || [])
+    .map((entry) => ({
+      productCode: String(entry?.productCode || "").trim(),
+      optionName: String(entry?.optionName || "").trim(),
+      qty: numberFromCell(entry?.qty),
+      ownCode: String(entry?.ownCode || "").trim(),
+    }))
+    .filter((entry) => entry.productCode);
+  for (const entry of state.receivingLabel.entries) {
+    addReceivingEntry(entry);
+    state.receivingLabel.totalQty += Number(entry.qty || 0);
+  }
+  state.receivingLabel.rowCount = state.receivingLabel.productMap.size;
+}
+
+function parseCsvTextRows(text = "") {
+  const rows = [];
+  let row = [];
+  let cell = "";
+  let quoted = false;
+  const source = String(text || "").replace(/^\uFEFF/, "");
+  for (let index = 0; index < source.length; index += 1) {
+    const char = source[index];
+    if (quoted) {
+      if (char === '"' && source[index + 1] === '"') {
+        cell += '"';
+        index += 1;
+      } else if (char === '"') {
+        quoted = false;
+      } else {
+        cell += char;
+      }
+      continue;
+    }
+    if (char === '"') {
+      quoted = true;
+    } else if (char === ",") {
+      row.push(cell);
+      cell = "";
+    } else if (char === "\n" || char === "\r") {
+      if (char === "\r" && source[index + 1] === "\n") index += 1;
+      row.push(cell);
+      if (row.some((value) => String(value || "").trim())) rows.push(row);
+      row = [];
+      cell = "";
+    } else {
+      cell += char;
+    }
+  }
+  row.push(cell);
+  if (row.some((value) => String(value || "").trim())) rows.push(row);
+  return rows;
+}
+
+function parseSharedReceivingLabelCsv(text = "") {
+  const rows = parseCsvTextRows(text);
+  const headers = (rows.shift() || []).map((value) => String(value || "").trim().toLowerCase());
+  const productIndex = headers.indexOf("product_code");
+  const ownIndex = headers.indexOf("own_code");
+  const optionIndex = headers.indexOf("option_name");
+  const qtyIndex = headers.indexOf("qty");
+  if (productIndex < 0 || qtyIndex < 0) throw new Error("공유 입고 라벨 형식이 올바르지 않습니다.");
+  return rows.flatMap((row) => {
+    const productCode = String(row?.[productIndex] || "").trim();
+    if (!productCode) return [];
+    return [{
+      productCode,
+      ownCode: String(row?.[ownIndex] || "").trim(),
+      optionName: String(row?.[optionIndex] || "").trim(),
+      qty: numberFromCell(row?.[qtyIndex]),
+    }];
+  });
+}
+
+function sharedReceivingLabelCsv(entries = []) {
+  return csvRowsToText([
+    RECEIVING_LABEL_CSV_HEADER,
+    ...(entries || []).map((entry) => [entry.productCode, entry.ownCode, entry.optionName, entry.qty]),
+  ]);
+}
+
+function isMissingSharedReceivingLabel(error) {
+  const status = String(error?.statusCode || error?.status || "");
+  const message = String(error?.message || "");
+  return status === "404" || /not found|object not found/i.test(message);
+}
+
+async function saveSharedReceivingLabel(entries = []) {
+  const file = new Blob([sharedReceivingLabelCsv(entries)], { type: "text/csv;charset=utf-8" });
+  const { error } = await db.storage.from(RECEIVING_LABEL_BUCKET).upload(RECEIVING_LABEL_PATH, file, {
+    upsert: true,
+    contentType: "text/csv",
+    cacheControl: "0",
+  });
+  if (error) throw error;
+}
+
+async function loadSharedReceivingLabel() {
+  const { data, error } = await db.storage.from(RECEIVING_LABEL_BUCKET).download(RECEIVING_LABEL_PATH);
+  if (error) {
+    if (isMissingSharedReceivingLabel(error)) return false;
+    throw error;
+  }
+  const entries = parseSharedReceivingLabelCsv(await data.text());
+  applyReceivingEntries(entries, { fileName: "공유 입고 라벨", source: "shared" });
+  return true;
+}
+
 async function loadReceivingLabelFile(file) {
   if (!file) return;
   if (!window.XLSX) {
@@ -2348,17 +2476,22 @@ async function loadReceivingLabelFile(file) {
     if (!firstSheetName) throw new Error("시트를 찾지 못했습니다.");
     const sheetRows = window.XLSX.utils.sheet_to_json(workbook.Sheets[firstSheetName], { header: 1, raw: false, defval: "" });
     const entries = parseReceivingRows(sheetRows);
-    resetReceivingLabel();
-    state.receivingLabel.fileName = file.name || "";
-    for (const entry of entries) {
-      addReceivingEntry(entry);
-      state.receivingLabel.totalQty += Number(entry.qty || 0);
-    }
-    state.receivingLabel.rowCount = state.receivingLabel.productMap.size;
-    toast(`입고 라벨 ${state.receivingLabel.rowCount}종 불러옴`);
+    applyReceivingEntries(entries, { fileName: file.name || "", source: "local" });
   } catch (error) {
     resetReceivingLabel(error?.message || "라벨지 읽기 실패");
     toast(`입고 라벨 읽기 실패: ${state.receivingLabel.error}`);
+    state.selectedShortageKey = "";
+    renderShortagePanels();
+    renderSideShortcuts();
+    return;
+  }
+  try {
+    await saveSharedReceivingLabel(state.receivingLabel.entries);
+    state.receivingLabel.source = "shared";
+    toast(`입고 라벨 ${state.receivingLabel.rowCount}종 공유 완료`);
+  } catch (error) {
+    state.receivingLabel.syncError = error?.message || "공유 저장 실패";
+    toast(`입고 라벨은 현재 화면에만 적용됨: ${state.receivingLabel.syncError}`);
   }
   state.selectedShortageKey = "";
   renderShortagePanels();
@@ -2393,13 +2526,22 @@ function updateShortageReceivingStatus(openRows = []) {
     els.shortageReceivingStatus.classList.add("warn");
     return;
   }
-  els.shortageReceivingStatus.classList.remove("warn");
-  if (!state.receivingLabel.rowCount) {
-    els.shortageReceivingStatus.textContent = "라벨 없음";
+  if (state.receivingLabel.syncError) {
+    els.shortageReceivingStatus.textContent = state.receivingLabel.rowCount
+      ? `입고 ${state.receivingLabel.rowCount}종 · 공유 실패`
+      : "공유 라벨 불러오기 실패";
+    els.shortageReceivingStatus.classList.add("warn");
     return;
   }
+  if (!state.receivingLabel.rowCount) {
+    els.shortageReceivingStatus.textContent = "라벨 없음";
+    els.shortageReceivingStatus.classList.remove("warn");
+    return;
+  }
+  els.shortageReceivingStatus.classList.remove("warn");
   const matched = openRows.filter(shortageRowReceivingEntry).length;
-  els.shortageReceivingStatus.textContent = `입고 ${state.receivingLabel.rowCount}종 · 미송 ${matched}건`;
+  const shared = state.receivingLabel.source === "shared" ? "공유 " : "";
+  els.shortageReceivingStatus.textContent = `${shared}입고 ${state.receivingLabel.rowCount}종 · 미송 ${matched}건`;
 }
 
 function drawerMemoForShortageRow(row) {
@@ -4469,6 +4611,7 @@ function ensureCsWorkLogModal() {
       <div class="order-list-modal-tools">
         <input id="cs-work-log-search" type="search" placeholder="주문번호 / 송장번호 / 수취인 / 상품키">
         <button class="btn" type="button" data-cs-work-log-action="search">조회</button>
+        <button class="btn cs-work-log-back" type="button" data-cs-work-log-action="back-to-list" hidden>← CS 리스트</button>
         <button type="button" class="order-list-modal-close" data-cs-work-log-action="close">×</button>
       </div>
     </div>
@@ -4490,6 +4633,10 @@ function ensureCsWorkLogModal() {
   document.body.appendChild(modal);
   modal.addEventListener("click", (event) => {
     const action = event.target.closest("[data-cs-work-log-action]")?.dataset.csWorkLogAction;
+    if (action === "back-to-list") {
+      closeCsWorkLogModal({ returnToOrderList: true });
+      return;
+    }
     if (event.target.id === "cs-work-log-modal" || action === "close") {
       closeCsWorkLogModal();
       return;
@@ -4516,6 +4663,8 @@ function renderCsWorkLogModal() {
   if (!state.csWorkLogModal.open) return;
   const input = modal.querySelector("#cs-work-log-search");
   if (input && input.value !== state.csWorkLogModal.search) input.value = state.csWorkLogModal.search;
+  const backButton = modal.querySelector("[data-cs-work-log-action='back-to-list']");
+  if (backButton) backButton.hidden = !state.csWorkLogModal.returnToOrderList;
   modal.querySelectorAll("[data-cs-work-log-filter]").forEach((button) => {
     button.classList.toggle("active", button.dataset.csWorkLogFilter === state.csWorkLogModal.filter);
   });
@@ -4568,15 +4717,21 @@ async function loadCsWorkLog() {
   }
 }
 
-function openCsWorkLogModal() {
+function openCsWorkLogModal({ returnToOrderList = false } = {}) {
+  state.csWorkLogModal.returnToOrderList = returnToOrderList;
   state.csWorkLogModal.open = true;
   renderCsWorkLogModal();
   document.getElementById("cs-work-log-search")?.focus();
 }
 
-function closeCsWorkLogModal() {
+function closeCsWorkLogModal({ returnToOrderList = state.csWorkLogModal.returnToOrderList } = {}) {
   state.csWorkLogModal.open = false;
+  state.csWorkLogModal.returnToOrderList = false;
   renderCsWorkLogModal();
+  if (!returnToOrderList) return;
+  state.orderListModal.open = true;
+  renderOrderListModal();
+  document.getElementById("order-list-modal-search")?.focus();
 }
 
 function alimtalkShippingHoldState(invoice) {
@@ -5881,6 +6036,12 @@ async function loadPickingData() {
   els.orderList.innerHTML = '<div class="empty">데이터를 불러오는 중입니다.</div>';
   const selectedDate = state.selectedDate;
   const session = state.session;
+  try {
+    await loadSharedReceivingLabel();
+  } catch (error) {
+    state.receivingLabel.syncError = error?.message || "공유 라벨 불러오기 실패";
+    console.warn("shared receiving label load failed", error);
+  }
 
   const buildOrderQuery = (query) => {
     let next = query.order("sort_order", { ascending: true, nullsFirst: false });
