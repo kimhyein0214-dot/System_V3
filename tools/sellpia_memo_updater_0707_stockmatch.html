@@ -902,12 +902,71 @@
       return { found: true, value: task.orderMemoMap.get(key) };
     }
 
-    function memo2ForGridRow(task, row, index) {
-      if (memo2ClearForGridRow(task, row, index)) return '';
-      for (const key of gridItemAliasKeys(task, row, index)) {
-        if (task.memo2Map.has(key)) return task.memo2Map.get(key);
+    function managementTargetKey(ordNo, itemNo) {
+      const ord = normal(ordNo), item = normal(itemNo);
+      return ord && item ? ord + '::' + item : '';
+    }
+
+    function addUniqueManagementTarget(index, ambiguous, key, target) {
+      if (!key || ambiguous.has(key)) return;
+      if (index.has(key)) {
+        index.delete(key);
+        ambiguous.add(key);
+        return;
       }
-      return '';
+      index.set(key, target);
+    }
+
+    // Management memo targets are deliberately item-scoped. System V3's
+    // order_items values are the source of truth; picking is workflow state,
+    // never a replacement source for the management memo target.
+    function buildManagementMemoTargets(ordNo, orderItemRows, pickingRows) {
+      const targets = new Map();
+      const ambiguousTargets = new Set();
+      const stats = { matchedByItemNo: 0, matchedBySellpiaOrderItemNo: 0, skipped: 0, ambiguous: 0 };
+      for (const row of orderItemRows || []) {
+        const target = {
+          memo1: normal(row.o_shop_memo),
+          memo2: normal(row.o_shop_memo2),
+          dbMemo1: normal(row.o_shop_memo),
+          dbMemo2: normal(row.o_shop_memo2),
+          orderItemNo: normal(row.item_no),
+          matchMethod: 'order_items_exact',
+        };
+        const itemKeys = [...new Set([row.item_no, row.sellpia_order_item_no]
+          .map(itemNo => managementTargetKey(ordNo, itemNo))
+          .filter(Boolean))];
+        for (const key of itemKeys) addUniqueManagementTarget(targets, ambiguousTargets, key, target);
+        stats.matchedByItemNo++;
+      }
+      stats.ambiguous = ambiguousTargets.size;
+      return { targets, ambiguousTargets, stats };
+    }
+
+    function managementTargetForGridRow(task, row, index) {
+      const candidates = [rowItemNoStrict(row), rowItemNo(row, index), normal(row.c_prv_item_no)].filter(Boolean);
+      for (const itemNo of candidates) {
+        const key = managementTargetKey(task?.ordNo || rowOrdNo(row), itemNo);
+        if (!key || task?.managementMemoAmbiguous?.has(key)) continue;
+        if (task?.managementMemoTargets?.has(key)) {
+          return { found: true, ...task.managementMemoTargets.get(key) };
+        }
+      }
+      return { found: false, memo1: '', memo2: '', dbMemo1: '', dbMemo2: '', orderItemNo: '', matchMethod: 'none' };
+    }
+
+    function memo1TargetForGridRow(task, row, index) {
+      const target = managementTargetForGridRow(task, row, index);
+      return { ...target, value: target.memo1 };
+    }
+
+    function memo2TargetForGridRow(task, row, index) {
+      const target = managementTargetForGridRow(task, row, index);
+      return { ...target, value: target.memo2 };
+    }
+
+    function memo2ForGridRow(task, row, index) {
+      return memo2TargetForGridRow(task, row, index).value;
     }
 
     function memo2ClearForGridRow(task, row, index) {
@@ -1084,6 +1143,9 @@
         invNo: normal(invNo || firstOrderRow?.inv_no),
         ordNo: normal(ordNo || firstOrderRow?.ord_no),
         memo1: '',
+        managementMemoTargets: new Map(),
+        managementMemoAmbiguous: new Set(),
+        managementMemoStats: null,
         memo2Map: new Map(),
         memo2ClearMap: new Set(),
         memo2ConflictMap: new Set(),
@@ -1126,46 +1188,36 @@
         workflowDone?.done ? 'workflow_done' : ''
       ].filter(Boolean).join('+') || 'DB 매칭 없음';
 
-      for (const row of pickingRows || []) {
-        if (!task.memo1 && normal(row.drawer_no) && normal(row.drawer_no) !== 'EMPTY') task.memo1 = normal(row.drawer_no);
-      }
+      const managementTargets = buildManagementMemoTargets(task.ordNo, orderItemRows, pickingRows);
+      task.managementMemoTargets = managementTargets.targets;
+      task.managementMemoAmbiguous = managementTargets.ambiguousTargets;
+      task.managementMemoStats = managementTargets.stats;
 
       const activeRows = [];
       const nextShipRows = [];
       for (const row of shortageRows || []) {
         const status = normal(row.status);
         const drawer = normal(row.drawer_no);
-        if (!task.memo1 && drawer && drawer !== 'EMPTY') task.memo1 = drawer;
         if (isNextShipStatus(status)) nextShipRows.push(row);
         else if (drawer || status === '보류' || status === '배송대기' || status === '서랍입력') activeRows.push(row);
       }
 
-      for (const row of workflowItemDoneRows) addItemClearAlias(task.memo2ClearMap, row, task.ordNo);
       for (const row of orderItemRows) {
-        if (!task.memo1 && normal(row.o_shop_memo)) task.memo1 = normal(row.o_shop_memo);
-        addMemo2Alias(task.memo2Map, row, task.ordNo, row.o_shop_memo2, true);
-        if (normal(row.o_shop_memo2) && hasItemClearAlias(task.memo2ClearMap, row, task.ordNo)) {
-          addItemAliasToSet(task.memo2ConflictMap, row, task.ordNo);
-        }
         addOrderMemoTarget(task, row);
       }
 
-      if (nextShipRows.length && !activeRows.length) {
-        task.memo1 = task.memo1 || '!!';
-      }
-
-      const hasMemo1Value = !!normal(task.memo1);
-      const hasMemo2Value = task.memo2Map.size > 0;
-      const hasMemo2Clear = task.memo2ClearMap.size > 0;
-      const allShortageItemsRepicked = hasShortageMatch && (shortageRows || []).every(row => hasItemClearAlias(task.memo2ClearMap, row, task.ordNo));
+      const hasMemo1Value = task.managementMemoTargets.size > 0;
+      const hasMemo2Value = task.managementMemoTargets.size > 0;
+      const hasMemo2Clear = false;
+      const allShortageItemsRepicked = false;
       const hasSystemMatch = hasShortageMatch || hasPickingMatch || hasOrderMatch || orderItemRows.length > 0;
       const hasOrderMemoValue = hasSystemMatch && task.orderMemoMap.size > 0;
-      const memo1HoldSignal = hasMemo1Value && !isDrawerOnlyMemo(task.memo1);
+      const memo1HoldSignal = false;
       const hasLegacyPickingHold = (pickingRows || []).some(row => !!row.hold);
       // A shortage table row can be absent even while another item still has an
       // active memo2 target (for example, a shortage reopened after repick).
       // Do not clear this invoice's memo1 until every active item target is gone.
-      const shouldClearMemo1ForAllRepicked = allShortageItemsRepicked && !hasMemo2Value;
+      const shouldClearMemo1ForAllRepicked = false;
 
       if (workflowDone?.done) {
         task.clear = true;
@@ -1179,9 +1231,8 @@
         return task;
       }
 
-      if (shouldClearMemo1ForAllRepicked) task.memo1 = '';
-      task.writeMemo1 = hasMemo1Value || shouldClearMemo1ForAllRepicked;
-      task.writeMemo2 = hasMemo2Value || hasMemo2Clear;
+      task.writeMemo1 = hasMemo1Value;
+      task.writeMemo2 = hasMemo2Value;
       task.writeOrderMemo = hasOrderMemoValue;
       task.writeHold = task.systemShippingHoldKnown;
 
@@ -1572,9 +1623,21 @@
       return message + (task && task.reason ? ' / planned: ' + task.reason : '');
     }
 
+    async function syncManagementMemoDb(rowResult) {
+      const ordNo = normal(rowResult?.ordNo);
+      const itemNo = normal(rowResult?.managementOrderItemNo);
+      if (!ordNo || !itemNo) return { status: 'SKIP_NO_ITEM_MATCH' };
+      const patch = {};
+      if (normal(rowResult.dbMemo1) !== normal(rowResult.dbTargetMemo1)) patch.o_shop_memo = rowResult.dbTargetMemo1 || '';
+      if (normal(rowResult.dbMemo2) !== normal(rowResult.dbTargetMemo2)) patch.o_shop_memo2 = rowResult.dbTargetMemo2 || '';
+      if (!Object.keys(patch).length) return { status: 'NO_CHANGE' };
+      await dbPatch('order_items', 'ord_no=eq.' + encodeURIComponent(ordNo) + '&item_no=eq.' + encodeURIComponent(itemNo), patch);
+      return { status: 'UPDATED', patch };
+    }
+
     async function setPopupValues(root, rowResult, testMode) {
       if (testMode) {
-        return { ...rowResult, log: 'TEST: ' + rowResult.invNo + ' / ' + rowResult.actionSummary };
+        return { ...rowResult, dbSync: rowResult.dbSync || (rowResult.managementOrderItemNo ? 'NO_CHANGE' : 'SKIP_NO_ITEM_MATCH'), log: 'TEST: ' + rowResult.invNo + ' / ' + rowResult.actionSummary };
       }
       if (rowResult.liveWriteAllowed !== 'Y') {
         return {
@@ -1653,6 +1716,19 @@
         await sleep(120);
         if (!!cb.checked !== wantHold) throw new Error('배송보류 상태 변경 실패: expected=' + (wantHold ? 'ON' : 'OFF') + ', actual=' + (cb.checked ? 'ON' : 'OFF'));
       }
+      const hasSellpiaWrite = rowResult.writeMemo1 || rowResult.writeMemo2 || rowResult.writeOrderMemo || rowResult.writeHold;
+      if (!hasSellpiaWrite) {
+        const dbSync = await syncManagementMemoDb(rowResult);
+        return {
+          ...rowResult,
+          popupOrderNo: popupTarget.orderNo,
+          popupItemNo: popupTarget.itemNo,
+          memo1InputBefore,
+          memo1InputAfter,
+          dbSync: dbSync.status,
+          log: 'LIVE DB SYNC: ' + rowResult.invNo + ' / ' + dbSync.status
+        };
+      }
       if (typeof window.updateOrder !== 'function') throw new Error('updateOrder 함수를 찾지 못했습니다.');
       const originalConfirm = window.confirm;
       window.confirm = () => true;
@@ -1667,12 +1743,29 @@
         clicked = await clickConfirmDialogs('save', 2);
       }
       await sleep(clicked ? 150 : Math.min(CONFIG.saveDelay || 900, 500));
+      let dbSync;
+      try {
+        dbSync = await syncManagementMemoDb(rowResult);
+      } catch (error) {
+        return {
+          ...rowResult,
+          popupOrderNo: popupTarget.orderNo,
+          popupItemNo: popupTarget.itemNo,
+          memo1InputBefore,
+          memo1InputAfter,
+          status: 'PARTIAL_FAIL',
+          dbSync: 'FAIL',
+          reason: (rowResult.reason || '') + ' / DB 관리메모 동기화 실패: ' + ((error && error.message) || error),
+          log: 'LIVE PARTIAL: ' + rowResult.invNo + ' / Sellpia saved but DB memo sync failed'
+        };
+      }
       return {
         ...rowResult,
         popupOrderNo: popupTarget.orderNo,
         popupItemNo: popupTarget.itemNo,
         memo1InputBefore,
         memo1InputAfter,
+        dbSync: dbSync.status,
         status: itemMatchError ? 'PARTIAL_FAIL' : rowResult.status,
         reason: itemMatchError ? ('상품단위 저장 차단: ' + itemMatchError + (rowResult.reason ? ' / planned: ' + rowResult.reason : '')) : rowResult.reason,
         log: 'LIVE: ' + rowResult.invNo + ' / 저장 호출 완료' + (itemMatchError ? ' / 상품단위 저장 차단: ' + itemMatchError : '')
@@ -1785,6 +1878,8 @@
         rowPerf.openRoot = openInfo && openInfo.rootKind;
         rowPerf.openReady = openInfo && openInfo.ready ? 'Y' : 'N';
         if (!root) {
+          const memo1TargetWithoutRoot = memo1TargetForGridRow(task, row, i);
+          const memo2TargetWithoutRoot = memo2TargetForGridRow(task, row, i);
           const plannedMemo2WithoutRoot = task.clear ? '' : memo2ForGridRow(task, row, i);
           const plannedOrderMemoWithoutRoot = plannedOrderMemoForGridRow(task, row, i, '');
           const policy = buildRowPolicyMeta(task, row, i, { plannedOrderMemo: plannedOrderMemoWithoutRoot });
@@ -1793,8 +1888,14 @@
             ordNo: task.ordNo || rowOrdNo(row),
             itemNo: rowItemNo(row, i),
             itemNoForVerify: rowItemNoStrict(row) || rowItemNo(row, i),
+            managementOrderItemNo: memo1TargetWithoutRoot.orderItemNo,
+            managementMatchMethod: memo1TargetWithoutRoot.matchMethod,
+            dbMemo1: memo1TargetWithoutRoot.dbMemo1,
+            dbTargetMemo1: memo1TargetWithoutRoot.value,
+            dbMemo2: memo2TargetWithoutRoot.dbMemo2,
+            dbTargetMemo2: memo2TargetWithoutRoot.value,
             currentMemo1: '',
-            plannedMemo1: task.clear ? '' : task.memo1,
+            plannedMemo1: task.clear ? '' : memo1TargetWithoutRoot.value,
             currentMemo2: '',
             plannedMemo2: plannedMemo2WithoutRoot,
             currentOrderMemo: '',
@@ -1830,7 +1931,8 @@
           const readStart = perfNow();
           const current = readCurrentValues(root, row);
           rowPerf.readMs = perfMs(readStart);
-          const plannedMemo1 = task.clear ? '' : (task.writeMemo1 ? task.memo1 : current.memo1);
+          const memo1Target = memo1TargetForGridRow(task, row, i);
+          const plannedMemo1 = task.clear ? '' : (memo1Target.found ? memo1Target.value : current.memo1);
           const orderMemoTargetInfo = orderMemoTargetForGridRow(task, row, i);
           const orderMemoTarget = orderMemoTargetInfo.value;
           const canWriteOrderMemo = task.writeOrderMemo && orderMemoTargetInfo.found;
@@ -1842,18 +1944,23 @@
           const plannedHoldStatus = syncAction === 'SET_ON' ? 'ON' : syncAction === 'SET_OFF' ? 'OFF' : currentSellpiaHold;
           const plannedHold = plannedHoldStatus === 'ON';
           const policy = buildRowPolicyMeta(task, row, i, { currentOrderMemo: current.orderMemo, plannedOrderMemo });
-          const memo1Changed = task.writeMemo1 && needsChange(current.memo1, plannedMemo1);
+          const memo1Changed = (task.clear || memo1Target.found) && needsChange(current.memo1, plannedMemo1);
           const orderMemoChanged = task.writeOrderMemo && (task.clear || canWriteOrderMemo) && needsChange(current.orderMemo, plannedOrderMemo);
           const holdChanged = task.writeHold && (syncAction === 'SET_ON' || syncAction === 'SET_OFF');
-        const rowMemo2Clear = memo2ClearForGridRow(task, row, i);
           const curMemo2 = current.memo2;
-        const rowPlannedMemo2 = memo2ForGridRow(task, row, i);
-        const writeMemo2 = task.writeMemo2 && (task.clear || rowMemo2Clear || !!normal(rowPlannedMemo2));
-        const plannedMemo2 = task.clear ? '' : (writeMemo2 ? rowPlannedMemo2 : curMemo2);
-        const memo2Changed = writeMemo2 && needsChange(curMemo2, plannedMemo2);
-        const actionParts = [];
+        const memo2Target = memo2TargetForGridRow(task, row, i);
+        const rowPlannedMemo2 = memo2Target.value;
+          const writeMemo2 = task.clear || memo2Target.found;
+          const plannedMemo2 = task.clear ? '' : (writeMemo2 ? rowPlannedMemo2 : curMemo2);
+          const memo2Changed = writeMemo2 && needsChange(curMemo2, plannedMemo2);
+          const dbSyncNeeded = memo1Target.found && (
+            normal(memo1Target.dbMemo1) !== normal(memo1Target.value) ||
+            normal(memo2Target.dbMemo2) !== normal(memo2Target.value)
+          );
+          const actionParts = [];
           if (memo1Changed) actionParts.push('관리메모 ' + (plannedMemo1 || '(clear)'));
-        if (memo2Changed) actionParts.push('관리메모2 ' + (plannedMemo2 || '(clear)'));
+          if (memo2Changed) actionParts.push('관리메모2 ' + (plannedMemo2 || '(clear)'));
+          if (dbSyncNeeded) actionParts.push('DB 관리메모 동기화');
           if (orderMemoChanged) actionParts.push('주문메모 ' + (plannedOrderMemo || '(clear)'));
           if (holdChanged) actionParts.push('배송보류 ' + (plannedHold ? 'ON' : 'OFF'));
         const clearOffParts = [];
@@ -1866,6 +1973,14 @@
           ordNo: task.ordNo || rowOrdNo(row),
           itemNo: rowItemNo(row, i),
           itemNoForVerify: rowItemNoStrict(row) || rowItemNo(row, i),
+          managementOrderItemNo: memo1Target.orderItemNo,
+          managementMatchMethod: memo1Target.matchMethod,
+          dbMemo1: memo1Target.dbMemo1,
+          dbTargetMemo1: memo1Target.value,
+          dbMemo2: memo2Target.dbMemo2,
+          dbTargetMemo2: memo2Target.value,
+          dbSync: dbSyncNeeded ? 'DRY_RUN' : 'NO_CHANGE',
+          dbSyncNeeded,
             currentMemo1: current.memo1,
             plannedMemo1,
           currentMemo2: curMemo2,
@@ -2142,11 +2257,11 @@
     }
 
     function downloadCsv() {
-      const headers = ['송장번호','주문번호','주문품목No','현재 관리메모','실행예정 관리메모','관리메모1 팝업 주문번호','관리메모1 팝업 주문품목No','관리메모1 입력 전','관리메모1 입력 후','현재 관리메모2','실행예정 관리메모2','현재 주문메모','실행예정 주문메모','현재 배송보류','실행예정 배송보류','currentSellpiaHold','systemShippingHold','systemShippingHoldSource','systemShippingHoldUpdatedAt','systemShippingHoldKnown','sellpiaShippingHoldScraped','sellpiaShippingHoldScrapedAt','syncAction','syncReason','실행변경필요','상태','사유','DB매칭상태','clear/OFF사유','차단전 변경요약','live_write_allowed','current_state_warning','item_key_match_method','sellpia_item_no_original','sellpia_item_no_match_key','order_memo_source','memo2_target','order_memo_target','perf_open_ms','perf_read_ms','perf_write_ms','perf_close_ms','perf_total_ms','perf_open_fallback','perf_open_root','perf_open_ready','perf_close_fallback','perf_close_root','perf_close_btn'];
+      const headers = ['송장번호','주문번호','주문품목No','관리메모 DB 상품키','관리메모 매칭방식','DB 현재 관리메모','DB target 관리메모','DB 현재 관리메모2','DB target 관리메모2','DB 동기화 결과','현재 관리메모','실행예정 관리메모','관리메모1 팝업 주문번호','관리메모1 팝업 주문품목No','관리메모1 입력 전','관리메모1 입력 후','현재 관리메모2','실행예정 관리메모2','현재 주문메모','실행예정 주문메모','현재 배송보류','실행예정 배송보류','currentSellpiaHold','systemShippingHold','systemShippingHoldSource','systemShippingHoldUpdatedAt','systemShippingHoldKnown','sellpiaShippingHoldScraped','sellpiaShippingHoldScrapedAt','syncAction','syncReason','실행변경필요','상태','사유','DB매칭상태','clear/OFF사유','차단전 변경요약','live_write_allowed','current_state_warning','item_key_match_method','sellpia_item_no_original','sellpia_item_no_match_key','order_memo_source','memo2_target','order_memo_target','perf_open_ms','perf_read_ms','perf_write_ms','perf_close_ms','perf_total_ms','perf_open_fallback','perf_open_root','perf_open_ready','perf_close_fallback','perf_close_root','perf_close_btn'];
       const lines = [headers.map(csvValue).join(',')];
       for (const r of results) {
         const row = csvDisplayRow(r);
-        lines.push([row.invNo,row.ordNo,row.itemNo,row.currentMemo1,row.plannedMemo1,row.popupOrderNo,row.popupItemNo,row.memo1InputBefore,row.memo1InputAfter,row.currentMemo2,row.plannedMemo2,row.currentOrderMemo,row.plannedOrderMemo,row.currentHold,row.plannedHold,row.currentSellpiaHold,row.systemShippingHold,row.systemShippingHoldSource,row.systemShippingHoldUpdatedAt,row.systemShippingHoldKnown,row.sellpiaShippingHoldScraped,row.sellpiaShippingHoldScrapedAt,row.syncAction,row.syncReason,row.needsChange,row.status,row.reason,row.dbMatchStatus,row.clearOffReason,row.csvBlockedPlan,row.liveWriteAllowed,row.currentStateWarning,row.itemKeyMatchMethod,row.sellpiaItemNoOriginal,row.sellpiaItemNoMatchKey,row.orderMemoSource,row.memo2Target,row.orderMemoTarget,row.perfOpenMs,row.perfReadMs,row.perfWriteMs,row.perfCloseMs,row.perfTotalMs,row.perfOpenFallback,row.perfOpenRoot,row.perfOpenReady,row.perfCloseFallback,row.perfCloseRoot,row.perfCloseBtn].map(csvValue).join(','));
+        lines.push([row.invNo,row.ordNo,row.itemNo,row.managementOrderItemNo,row.managementMatchMethod,row.dbMemo1,row.dbTargetMemo1,row.dbMemo2,row.dbTargetMemo2,row.dbSync,row.currentMemo1,row.plannedMemo1,row.popupOrderNo,row.popupItemNo,row.memo1InputBefore,row.memo1InputAfter,row.currentMemo2,row.plannedMemo2,row.currentOrderMemo,row.plannedOrderMemo,row.currentHold,row.plannedHold,row.currentSellpiaHold,row.systemShippingHold,row.systemShippingHoldSource,row.systemShippingHoldUpdatedAt,row.systemShippingHoldKnown,row.sellpiaShippingHoldScraped,row.sellpiaShippingHoldScrapedAt,row.syncAction,row.syncReason,row.needsChange,row.status,row.reason,row.dbMatchStatus,row.clearOffReason,row.csvBlockedPlan,row.liveWriteAllowed,row.currentStateWarning,row.itemKeyMatchMethod,row.sellpiaItemNoOriginal,row.sellpiaItemNoMatchKey,row.orderMemoSource,row.memo2Target,row.orderMemoTarget,row.perfOpenMs,row.perfReadMs,row.perfWriteMs,row.perfCloseMs,row.perfTotalMs,row.perfOpenFallback,row.perfOpenRoot,row.perfOpenReady,row.perfCloseFallback,row.perfCloseRoot,row.perfCloseBtn].map(csvValue).join(','));
       }
       const blob = new Blob(['\ufeff' + lines.join('\n')], { type: 'text/csv;charset=utf-8' });
       const url = URL.createObjectURL(blob);
