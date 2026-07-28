@@ -4,6 +4,7 @@ import { createCsCaseAdapter, openShortageItemKeys } from "../adapters/csCaseAda
 import { createAlimtalkSendAdapter } from "../adapters/alimtalkSendAdapter.mjs?v=20260728-alimtalk-history2";
 import { isGoldOwnCode } from "../domain/gold.mjs?v=20260728-gold-own-code1";
 import { alimtalkSendLogCode, alimtalkSendNaturalKey, appendAlimtalkSendLog, resolveAlimtalkTemplate } from "../domain/alimtalk.mjs?v=20260728-alimtalk-log-codes1";
+import { receiptBusinessDayKeys, receiptBusinessDaysSince } from "../domain/businessDays.mjs?v=20260728-receipt-business-days1";
 import {
   buildWorkflowState,
   completedInvoicesForInspection,
@@ -155,6 +156,8 @@ const state = {
   csGoldFilter: "all",
   csSort: "receipt_desc",
   csManualCandidates: [],
+  csReceiptBusinessDates: new Set(),
+  csReceiptBusinessDayCache: new Map(),
   csOpenShortageItemKeys: new Set(),
   sidebarCollapsed: false,
   workflowEventsReady: false,
@@ -1795,7 +1798,7 @@ function orderListModalRows() {
 function csListReceiptLabel(invoice) {
   const receiptDate = dateKey(invoice?.receiptDate);
   if (!receiptDate) return "접수일 -";
-  return `접수 ${receiptDate} (알림톡 ${daysSinceDateKey(receiptDate)}일차)`;
+  return `접수 ${receiptDate} (알림톡 ${receiptBusinessDaysSinceDateKey(receiptDate)}일차)`;
 }
 
 function ensureOrderListModal() {
@@ -2977,12 +2980,14 @@ function csShortageStartEvent(invoice, item) {
     .sort((a, b) => workflowEventTime(a) - workflowEventTime(b))[0];
 }
 
-function daysSinceDateKey(key) {
-  if (!key) return 0;
-  const start = new Date(`${key}T00:00:00`);
-  const today = new Date(`${todayDateString()}T00:00:00`);
-  if (Number.isNaN(start.getTime())) return 0;
-  return Math.max(0, Math.floor((today.getTime() - start.getTime()) / 86400000));
+function receiptBusinessDaysSinceDateKey(key) {
+  const basisDate = dateKey(key);
+  if (!basisDate) return 0;
+  const cacheKey = `${basisDate}::${todayDateString()}`;
+  if (state.csReceiptBusinessDayCache.has(cacheKey)) return state.csReceiptBusinessDayCache.get(cacheKey);
+  const elapsed = receiptBusinessDaysSince(basisDate, state.csReceiptBusinessDates, todayDateString());
+  state.csReceiptBusinessDayCache.set(cacheKey, elapsed);
+  return elapsed;
 }
 
 function isValidDateKey(key) {
@@ -3095,7 +3100,7 @@ function legacyAllCsRows() {
         shortageQty: qty || previousShortageQuantity(invoice, item) || 1,
         currentShortageQty: qty,
         shortageDate: date,
-        elapsedDays: daysSinceDateKey(date),
+        elapsedDays: receiptBusinessDaysSinceDateKey(date),
         csMethod: csMethodText(invoice, item),
         csReason: invoiceNeedsCs ? "hold" : "shortage",
       });
@@ -3113,7 +3118,7 @@ function legacyAllCsRows() {
         shortageQty: 0,
         currentShortageQty: 0,
         shortageDate: date,
-        elapsedDays: daysSinceDateKey(date),
+        elapsedDays: receiptBusinessDaysSinceDateKey(date),
         csMethod: csMethodText(invoice, item),
         csReason: "hold",
       });
@@ -3869,7 +3874,7 @@ function csRecommendedTemplateKeys(row) {
 function csAlimtalkTemplateRule(row, basisDate = "") {
   const caseRow = row?.caseRow || {};
   return resolveAlimtalkTemplate({
-    elapsedDays: daysSinceDateKey(basisDate || caseRow.basis_date || caseRow.receipt_date || row?.order?.receipt_date || row?.item?.receipt_date || ""),
+    elapsedDays: receiptBusinessDaysSinceDateKey(basisDate || caseRow.basis_date || caseRow.receipt_date || row?.order?.receipt_date || row?.item?.receipt_date || ""),
     isGold: Boolean(row?.isGold),
     isMakeshop: isCsMakeshopMethod({
       invoice: { seller: row?.order?.seller || row?.order?.provider_name || "" },
@@ -4101,6 +4106,11 @@ async function loadCsCaseData() {
     ]);
     state.csCases = cases;
     state.csManualCandidates = candidates;
+    // The candidate source contains every currently readable order.  Build a
+    // receipt-active calendar from it once so the CS screen and Alimtalk CSV
+    // use the same business-day definition: dates with at least one receipt.
+    state.csReceiptBusinessDates = receiptBusinessDayKeys(candidates.map((candidate) => candidate.order));
+    state.csReceiptBusinessDayCache = new Map();
     // The candidate load already contains the current order/item rows needed
     // by the CS detail.  Use its memo2 baseline immediately so a slow
     // supplemental shortage lookup cannot block the full detail panel.
@@ -4131,6 +4141,8 @@ async function loadManualCsCandidates() {
   render();
   try {
     state.csManualCandidates = await csCases.loadManualCsCandidates();
+    state.csReceiptBusinessDates = receiptBusinessDayKeys(state.csManualCandidates.map((candidate) => candidate.order));
+    state.csReceiptBusinessDayCache = new Map();
   } catch (error) {
     state.csCaseError = `수동 CS 원본 조회 실패: ${error?.message || error}`;
     console.warn("manual CS source load failed", error);
@@ -5773,7 +5785,7 @@ function alimtalkBaseRow(row, item, extra = {}) {
     shortageQty: item ? workflowAwareShortageQty(itemState, item) || previousShortageQuantity(invoice, item) || 1 : 0,
     currentShortageQty: item ? workflowAwareShortageQty(itemState, item) : 0,
     shortageDate: date,
-    elapsedDays: daysSinceDateKey(date),
+    elapsedDays: receiptBusinessDaysSinceDateKey(date),
     csMethod: item ? csMethodText(invoice, item) : "",
     receiptDate: date,
     delayBaseDate: date,
