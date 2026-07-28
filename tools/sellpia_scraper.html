@@ -22,6 +22,9 @@
 function managementMemoKey(ordNo,itemNo){var ord=String(ordNo||'').trim(),item=String(itemNo||'').trim();return ord&&item?ord+'::'+item:'';}
 function addUniqueManagementRow(map,ambiguous,key,row){if(!key||ambiguous.has(key))return;if(map.has(key)){map.delete(key);ambiguous.add(key);return;}map.set(key,row);}
 function positiveManagementQty(value){var n=Number(value);return Number.isFinite(n)&&n>0?n:0;}
+function sellpiaOutboundScheduledHistory(row){var value=readSellpiaField(row,['\uCD9C\uACE0\uC608\uC815\uC77C'],['c_delirsvin_date','delirsvin_date']),text=String(value==null?'':value).trim();return text||null;}
+function normalizeSellpiaOutboundConfirmedDate(value){var text=String(value==null?'':value).trim(),match=text.match(/^(\d{4})\D+(\d{1,2})\D+(\d{1,2})/);if(!match)return null;return match[1]+'-'+String(Number(match[2])).padStart(2,'0')+'-'+String(Number(match[3])).padStart(2,'0');}
+function sellpiaOutboundConfirmedDate(row){return normalizeSellpiaOutboundConfirmedDate(readSellpiaField(row,['\uCD9C\uACE0\uD655\uC815\uC77C'],['c_delirsvout_date','delirsvout_date']));}
 async function loadManagementMemoState(ordNos){
   var orderItemRows=[];ordNos=(ordNos||[]).filter(Boolean);
   for(var i=0;i<ordNos.length;i+=40){
@@ -41,7 +44,11 @@ function mergeManagementMemoState(itemRows,state){
     var keyByItem=managementMemoKey(row.ord_no,row.item_no),keyBySellpia=managementMemoKey(row.ord_no,row.sellpia_order_item_no),existing=null;
     if(keyByItem&&!ambiguousItemNo.has(keyByItem))existing=byItemNo.get(keyByItem)||null;
     if(!existing&&keyBySellpia&&!ambiguousSellpiaOrderItemNo.has(keyBySellpia))existing=bySellpiaOrderItemNo.get(keyBySellpia)||null;
-    if(existing){row.o_shop_memo=existing.o_shop_memo;row.o_shop_memo2=existing.o_shop_memo2;stats.preservedExisting++;}
+    if(existing){
+      row.o_shop_memo=existing.o_shop_memo;
+      row.o_shop_memo2=existing.o_shop_memo2;
+      stats.preservedExisting++;
+    }
     else stats.freshFromSellpia++;
   });
   stats.ambiguous=ambiguousItemNo.size+ambiguousSellpiaOrderItemNo.size;
@@ -49,13 +56,19 @@ function mergeManagementMemoState(itemRows,state){
 }
 `;
     const saveHook = "var orderMemoOverrideIndex=buildOrderMemoOverrideIndex(await loadExistingOrderMemoOverrides(scrapedOrdNos));";
-    if (!SRC.includes(saveHook)) {
-      console.error("[SCRAPER] management memo sync hook not found");
+    const itemRawMemoHook = 'sellpia_order_memo_raw:orderMemo,';
+    const orderDateHook = 'o_cs_status:"",o_cs_type:"",delay:Number(it.c_delay||0),';
+    const orderDateMergeHook = 'if(invNo&&!existingOrder.inv_no)existingOrder.inv_no=invNo;';
+    if (![saveHook, itemRawMemoHook, orderDateHook, orderDateMergeHook].every(hook => SRC.includes(hook))) {
+      console.error("[SCRAPER] outbound date or management memo sync hook not found");
       return;
     }
     const syncCall = "var managementMemoState=await loadManagementMemoState(scrapedOrdNos);var managementMemoStats=mergeManagementMemoState(itemRows,managementMemoState);addLog('management memo preserve: existing '+managementMemoStats.preservedExisting+', fresh Sellpia '+managementMemoStats.freshFromSellpia+', ambiguous '+managementMemoStats.ambiguous);";
     const patched = SRC
       .replace("function hasOrderMemoOverride", helpers + "function hasOrderMemoOverride")
+      .replace(itemRawMemoHook, itemRawMemoHook + 'sellpia_outbound_confirmed_date:sellpiaOutboundConfirmedDate(it),')
+      .replace(orderDateHook, orderDateHook + 'sellpia_outbound_scheduled_date:sellpiaOutboundScheduledHistory(it),')
+      .replace(orderDateMergeHook, orderDateMergeHook + "var scheduledHistory=sellpiaOutboundScheduledHistory(it);if(scheduledHistory&&!existingOrder.sellpia_outbound_scheduled_date)existingOrder.sellpia_outbound_scheduled_date=scheduledHistory;else if(scheduledHistory&&existingOrder.sellpia_outbound_scheduled_date&&scheduledHistory!==existingOrder.sellpia_outbound_scheduled_date)addLog('WARN outbound scheduled history mismatch ord_no='+ordNo+': '+existingOrder.sellpia_outbound_scheduled_date+' / '+scheduledHistory);")
       .replace(saveHook, syncCall + saveHook);
     document.getElementById('bookmarklet-link').href = 'javascript:' + encodeURIComponent(patched);
     document.getElementById('code-display').textContent = patched;

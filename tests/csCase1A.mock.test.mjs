@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { createCsCaseAdapter, csCaseNaturalKey } from "../src/adapters/csCaseAdapter.mjs";
+import { createCsCaseAdapter, csCaseNaturalKey, openShortageItemKeys } from "../src/adapters/csCaseAdapter.mjs";
 import { isGoldOwnCode } from "../src/domain/gold.mjs";
 
 function resolveExactItem(items, { ordNo, itemNo, sellpiaOrderItemNo }) {
@@ -45,6 +45,20 @@ assert.equal(isGoldOwnCode("GPA-12"), true);
 assert.equal(isGoldOwnCode("x-gpb-03"), true);
 assert.equal(isGoldOwnCode("14K 상품명만 있음"), false);
 assert.equal(isGoldOwnCode("CA-01"), false);
+
+// CS automatic candidates use the full current shortage baseline, not only
+// invoices loaded into the currently selected work-date tab.
+const openShortageKeys = openShortageItemKeys({
+  candidates: [
+    { order: { ord_no: "order-a" }, item: { item_no: "item-1", sellpia_order_item_no: "sellpia-1", o_shop_memo2: "2" } },
+    { order: { ord_no: "order-a" }, item: { item_no: "item-2", sellpia_order_item_no: "sellpia-2", o_shop_memo2: "" } },
+  ],
+  shortageRows: [{ ord_no: "order-b", item_no: "item-3", short_qty: 1 }],
+});
+assert.equal(openShortageKeys.has("order-a::item-1"), true);
+assert.equal(openShortageKeys.has("order-a::sellpia-1"), true);
+assert.equal(openShortageKeys.has("order-a::item-2"), false);
+assert.equal(openShortageKeys.has("order-b::item-3"), true);
 
 function createMemoryDb(seed) {
   const tables = {
@@ -123,6 +137,26 @@ const automatic = await adapter.createAutoShortageCsCase({
 assert.equal(automatic.caseRow.source, "auto");
 assert.equal(automatic.caseRow.alimtalk_template, "14k_1");
 assert.equal((await adapter.updateCsCase(automatic.caseRow.id, { alimtalk_template: "d3_pf" })).alimtalk_template, "d3_pf");
+const autoExcluded = await adapter.excludeAutoShortageCsCase({
+  ordNo: "order-a",
+  itemNo: "item-3",
+  sellpiaOrderItemNo: "sellpia-3",
+  invNo: "invoice-a",
+  receiptDate: "2026-07-28",
+  basisDate: "2026-07-28",
+});
+assert.equal(autoExcluded.excluded, true);
+assert.equal(autoExcluded.caseRow.status, "excluded");
+const manualShortage = await adapter.createManualCsCase({
+  ordNo: "order-a",
+  itemNo: "item-1",
+  sellpiaOrderItemNo: "sellpia-1",
+  caseType: "shortage",
+});
+const manualUntouched = await adapter.excludeAutoShortageCsCase({ ordNo: "order-a", itemNo: "item-1" });
+assert.equal(manualUntouched.excluded, false);
+assert.equal(manualUntouched.caseRow.id, manualShortage.caseRow.id);
+assert.equal(manualUntouched.caseRow.status, "pending");
 const contexts = await adapter.loadCsCaseContexts(await adapter.loadCsCases());
 assert.equal(contexts.orders.get("order-a").inv_no, "invoice-a");
 assert.equal(contexts.items.get("item-2").sellpia_order_item_no, "sellpia-2");

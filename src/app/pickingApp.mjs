@@ -4044,7 +4044,7 @@ function renderCsCaseDetail(group) {
   const holdLabel = holdState?.actionLabel || "배송보류 처리";
   const holdDisabled = invoice && allowWorkflowEvents ? "" : "disabled";
   const managementReadonly = allowWrites ? "" : "readonly";
-  const scheduledDate = String(group.order?.sellpia_outbound_scheduled_date || "");
+  const scheduledHistory = String(group.order?.sellpia_outbound_scheduled_date || "");
   els.csDetail.innerHTML = `<div class="cs-detail-card cs-case-detail-card">
     <div class="workflow-detail-head cs-order-detail-head">
       <div><strong>송장 ${escapeHtml(group.invoiceNo || "-")} · ${escapeHtml(receiver)}</strong></div>
@@ -4052,11 +4052,11 @@ function renderCsCaseDetail(group) {
         <span class="workflow-row-badge ${state.csMode === "manual" ? "manual" : ""}">${state.csMode === "manual" ? "수동 추가 대상" : `CS ${caseCount}건`}</span>
         <button class="btn" data-cs-hold-action="${escapeHtml(holdAction)}" data-cs-order-group="${escapeHtml(group.ordNo || "")}" type="button" ${holdDisabled}>${escapeHtml(holdLabel)}</button>
         ${invoice ? shippingHoldBadge(invoice) : ""}
-        <label class="cs-order-scheduled-date"><span>출고예정일 <em>송장 공통</em></span><input data-cs-order-sync-field="outbound_scheduled_date" data-cs-order-group="${escapeHtml(group.ordNo || "")}" type="date" value="${escapeHtml(scheduledDate)}" ${managementReadonly}></label>
+        <label class="cs-order-scheduled-date"><span>출고예정일 기록 <em>송장 공통 · 누적 메모</em></span><textarea data-cs-order-sync-field="outbound_scheduled_date" data-cs-order-group="${escapeHtml(group.ordNo || "")}" rows="3" ${managementReadonly}>${escapeHtml(scheduledHistory)}</textarea></label>
       </div>
     </div>
     <p class="workflow-note">미송 자동대상과 별도 CS를 구분합니다. 알림톡 템플릿·기준일·주문메모·관리메모는 상품행별로 저장하며, 배송보류는 주문 단위로 위 버튼에서 처리합니다.</p>
-    <div class="cs-sync-note"><strong>CS 백업·동기화 기준</strong><span>알림톡 발송확정일은 송장 단위의 <b>출고예정일</b>에 기록하고, 상품 입고 예정일은 상품행 단위의 <b>출고확정일</b>에 기록합니다. 관리메모·주문메모와 연결하지 않습니다.</span></div>
+    <div class="cs-sync-note"><strong>CS 백업·동기화 기준</strong><span>송장 단위의 <b>출고예정일 기록</b>에는 알림톡 <b>템플릿별 발송확정</b>과 <b>별도 CS 처리</b>가 누적됩니다. 상품행 입고예정일은 <b>출고확정일</b>에 기록합니다. 관리메모·주문메모와 연결하지 않습니다.</span></div>
     <div class="cs-item-card-stack">${group.items.map(renderCsCaseItemEditor).join("")}</div>
   </div>`;
 }
@@ -4163,10 +4163,10 @@ async function saveCsOrderScheduledDate(ordNo, value) {
   }
   const normalizedOrdNo = String(ordNo || "").trim();
   if (!normalizedOrdNo) throw new Error("Missing order number for outbound scheduled date.");
-  const scheduledDate = String(value || "").trim() || null;
+  const scheduledHistory = String(value || "").trim() || null;
   const { data, error } = await db
     .from("orders")
-    .update({ sellpia_outbound_scheduled_date: scheduledDate })
+    .update({ sellpia_outbound_scheduled_date: scheduledHistory })
     .eq("ord_no", normalizedOrdNo)
     .select("ord_no,sellpia_outbound_scheduled_date");
   if (error) throw error;
@@ -4177,7 +4177,32 @@ async function saveCsOrderScheduledDate(ordNo, value) {
   for (const candidate of state.csManualCandidates || []) {
     if (String(candidate?.order?.ord_no || "") === normalizedOrdNo) candidate.order.sellpia_outbound_scheduled_date = nextValue;
   }
-  toast("출고예정일 저장");
+  toast("출고예정일 기록 저장");
+}
+
+function outboundHistoryDatePrefix(value = todayDateString()) {
+  const [, month = "", day = ""] = String(value || "").split("-");
+  return month && day ? `${month}/${day}` : String(value || "");
+}
+
+function appendOutboundHistoryLine(current, line) {
+  const existing = String(current || "").trim();
+  const entry = String(line || "").trim();
+  return entry ? (existing ? `${existing}\n${entry}` : entry) : existing;
+}
+
+async function appendCsOrderScheduledHistory(ordNo, entry) {
+  const normalizedOrdNo = String(ordNo || "").trim();
+  if (!normalizedOrdNo || !String(entry || "").trim()) return "";
+  const { data, error } = await db
+    .from("orders")
+    .select("ord_no,sellpia_outbound_scheduled_date")
+    .eq("ord_no", normalizedOrdNo);
+  if (error) throw error;
+  if (!data || data.length !== 1) throw new Error(`Order not found for outbound scheduled history (${normalizedOrdNo}).`);
+  const nextValue = appendOutboundHistoryLine(data[0].sellpia_outbound_scheduled_date, entry);
+  await saveCsOrderScheduledDate(normalizedOrdNo, nextValue);
+  return nextValue;
 }
 
 async function saveCsItemConfirmedDate(row, value) {
@@ -4207,20 +4232,22 @@ async function saveCsItemConfirmedDate(row, value) {
 
 async function recordAlimtalkSendScheduledDate(batchId) {
   const items = await alimtalkSends.loadBatchItems(batchId);
-  const ordNos = [...new Set(items.map((item) => String(item?.ord_no || "").trim()).filter(Boolean))];
-  const scheduledDate = todayDateString();
-  await Promise.all(ordNos.map(async (ordNo) => {
-    const { data, error } = await db
-      .from("orders")
-      .update({ sellpia_outbound_scheduled_date: scheduledDate })
-      .eq("ord_no", ordNo)
-      .select("ord_no,sellpia_outbound_scheduled_date");
-    if (error) throw error;
-    if (!data || data.length !== 1) throw new Error(`Order not found for Alimtalk send record (${ordNo}).`);
-    const current = state.csCaseContexts?.orders?.get(ordNo);
-    if (current) current.sellpia_outbound_scheduled_date = scheduledDate;
-  }));
-  return ordNos.length;
+  const templateKeysByOrder = new Map();
+  for (const item of items) {
+    const ordNo = String(item?.ord_no || "").trim();
+    const templateKey = String(item?.template_key || "").trim();
+    if (!ordNo || !templateKey) continue;
+    if (!templateKeysByOrder.has(ordNo)) templateKeysByOrder.set(ordNo, new Set());
+    templateKeysByOrder.get(ordNo).add(templateKey);
+  }
+  const prefix = outboundHistoryDatePrefix();
+  for (const [ordNo, templateKeys] of templateKeysByOrder) {
+    for (const templateKey of templateKeys) {
+      const templateLabel = CS_TEMPLATE_PRESETS[templateKey]?.label || templateKey;
+      await appendCsOrderScheduledHistory(ordNo, `${prefix} ${templateLabel} 발송확정`);
+    }
+  }
+  return templateKeysByOrder.size;
 }
 
 async function excludeAutomaticCsAfterInspectionHoldRelease(invoice) {
@@ -4440,6 +4467,12 @@ async function createManualCsCaseFromDetail(itemNo, row, scope) {
     basisDateSource: basisDate && basisDate !== receiptDate ? "manual" : "receipt_date",
     assignedTo: csDetailInput("assigned_to", scope)?.value || "",
   });
+  if (result.created) {
+    await appendCsOrderScheduledHistory(
+      result.caseRow.ord_no || row.order?.ord_no,
+      `${outboundHistoryDatePrefix()} 별도 CS 추가`,
+    );
+  }
   await loadCsCaseData();
   state.csMode = "cases";
   state.csStatusFilter = result.caseRow.status || "pending";
@@ -4483,6 +4516,10 @@ async function changeCsCaseStatus(caseId, action) {
     : action === "exclude"
       ? await csCases.excludeCsCase(caseId)
       : await csCases.reopenCsCase(caseId);
+  if (next.source === "manual") {
+    const actionLabel = ({ resolve: "해결", exclude: "제외", reopen: "재개" })[action] || action;
+    await appendCsOrderScheduledHistory(next.ord_no, `${outboundHistoryDatePrefix()} 별도 CS ${actionLabel}`);
+  }
   state.csCases = state.csCases.map((entry) => (entry.id === next.id ? next : entry));
   state.selectedCsKey = `order:${String(next.ord_no || "")}`;
   toast(`CS 케이스 ${csStatusLabel(next.status)}`);

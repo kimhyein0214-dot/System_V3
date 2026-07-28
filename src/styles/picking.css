@@ -3505,11 +3505,12 @@ input {
 
 .cs-order-scheduled-date {
   display: grid;
-  grid-template-columns: auto 136px;
-  align-items: center;
+  grid-template-columns: 1fr;
+  align-items: stretch;
   gap: 7px;
-  min-height: 34px;
-  padding: 4px 7px 4px 9px;
+  min-width: 230px;
+  max-width: 320px;
+  padding: 6px 8px;
   border: 1px solid #9db8e5;
   border-radius: 8px;
   background: #f7faff;
@@ -3525,10 +3526,11 @@ input {
   font-weight: 800;
 }
 
-.cs-order-scheduled-date input {
+.cs-order-scheduled-date textarea {
   min-width: 0;
-  min-height: 27px;
-  padding: 3px 6px;
+  min-height: 54px;
+  resize: vertical;
+  padding: 5px 7px;
   border: 1px solid #b9cae4;
   border-radius: 6px;
   background: #fff;
