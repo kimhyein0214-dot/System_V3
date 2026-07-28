@@ -3721,7 +3721,10 @@ function filteredCsCaseRows() {
     .filter((row) => {
       if (!state.csTypeFilter) return true;
       if (state.csTypeFilter === "manual") return row.caseRow?.source === "manual";
-      if (state.csTypeFilter === "none") return row.caseRow?.source === "auto" && !csAlimtalkTemplateRule(row).templateKey;
+      if (state.csTypeFilter === "d5_selection_required") return csNeedsFiveDayTemplateSelection(row);
+      if (state.csTypeFilter === "none") return row.caseRow?.source === "auto"
+        && !csAlimtalkTemplateRule(row).templateKey
+        && !csNeedsFiveDayTemplateSelection(row);
       return row.caseRow?.source === "auto" && csAutoTemplateKeys(row).includes(state.csTypeFilter);
     })
     .filter((row) => state.csGoldFilter === "all" || (state.csGoldFilter === "gold" ? row.isGold : !row.isGold))
@@ -3889,13 +3892,26 @@ function csAutoTemplateKeys(row) {
   return rule.templateKey ? [rule.templateKey] : [];
 }
 
+function csNeedsFiveDayTemplateSelection(row) {
+  const caseRow = row?.caseRow;
+  if (!caseRow || (!row.virtualAutoCase && caseRow.source !== "auto")) return false;
+  const rule = csAlimtalkTemplateRule(row);
+  return !rule.templateKey
+    && rule.selectionRequired
+    && rule.allowedTemplateKeys.length === 2
+    && rule.allowedTemplateKeys.includes("d5_hi")
+    && rule.allowedTemplateKeys.includes("d5_lo");
+}
+
 function csTemplateSelect(row, disabled = "") {
   const rule = csAlimtalkTemplateRule(row);
   if (!rule.allowedTemplateKeys.length) {
     return `<label class="cs-template-static neutral"><span>알림톡 템플릿</span><strong>${escapeHtml(rule.label)}</strong></label>`;
   }
   const selectedTemplate = rule.templateKey;
-  const placeholder = rule.selectionRequired ? rule.label : (CS_TEMPLATE_PRESETS[selectedTemplate]?.label || "템플릿 없음");
+  const placeholder = csNeedsFiveDayTemplateSelection(row)
+    ? "5일차 선택 필요"
+    : rule.selectionRequired ? rule.label : (CS_TEMPLATE_PRESETS[selectedTemplate]?.label || "템플릿 없음");
   return `<label class="cs-template-field"><span>알림톡 템플릿</span><select data-cs-case-field="alimtalk_template" ${disabled}>
     <option value="" ${selectedTemplate ? "" : "selected"}>${escapeHtml(placeholder)}</option>
     ${rule.allowedTemplateKeys.map((templateKey) => `<option value="${escapeHtml(templateKey)}" ${selectedTemplate === templateKey ? "selected" : ""}>${escapeHtml(CS_TEMPLATE_PRESETS[templateKey]?.label || templateKey)}</option>`).join("")}
@@ -3914,9 +3930,14 @@ function csCaseBadges(group) {
     const templateLabel = CS_TEMPLATE_PRESETS[templateKey]?.label || templateKey;
     badges.push(`<span class="workflow-row-badge warn" title="${escapeHtml(templateKey)}">알림톡 ${escapeHtml(templateLabel)}</span>`);
   });
+  const fiveDaySelectionCount = group.items.filter(csNeedsFiveDayTemplateSelection).length;
+  if (fiveDaySelectionCount) {
+    badges.push(`<span class="workflow-row-badge warn">5일차 선택 필요${fiveDaySelectionCount > 1 ? ` ${fiveDaySelectionCount}` : ""}</span>`);
+  }
   const noTemplateLabels = [...new Set(
     group.items
       .filter((row) => row.virtualAutoCase || row.caseRow?.source === "auto")
+      .filter((row) => !csNeedsFiveDayTemplateSelection(row))
       .map((row) => csAlimtalkTemplateRule(row))
       .filter((rule) => !rule.templateKey)
       .map((rule) => rule.label),
@@ -3940,8 +3961,9 @@ function renderCsCaseFilters() {
     ${statusButtons.map(([value, label]) => `<button class="filter-chip ${state.csMode === "cases" && state.csStatusFilter === value ? "active" : ""}" data-cs-case-status="${value}" type="button">${label}</button>`).join("")}
     <select class="filter-chip" data-cs-template-filter aria-label="알림톡 템플릿 필터">
       <option value="">템플릿별</option>
+      <option value="d5_selection_required" ${state.csTypeFilter === "d5_selection_required" ? "selected" : ""}>5일차 선택 필요</option>
       ${Object.entries(CS_TEMPLATE_PRESETS).map(([templateKey, preset]) => `<option value="${escapeHtml(templateKey)}" ${state.csTypeFilter === templateKey ? "selected" : ""}>${escapeHtml(preset.label)}</option>`).join("")}
-      <option value="none" ${state.csTypeFilter === "none" ? "selected" : ""}>템플릿 없음</option>
+      <option value="none" ${state.csTypeFilter === "none" ? "selected" : ""}>템플릿 없음 (기타)</option>
       <option value="manual" ${state.csTypeFilter === "manual" ? "selected" : ""}>별도 CS</option>
     </select>
     <select class="filter-chip" data-cs-gold-filter aria-label="골드 필터">

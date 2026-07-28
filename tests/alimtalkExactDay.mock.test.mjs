@@ -10,6 +10,8 @@ assert.equal(normal(3, "d3_pf").templateKey, "d3_pf");
 assert.equal(resolveAlimtalkTemplate({ elapsedDays: 3, isMakeshop: true }).templateKey, "d3_ms");
 assert.equal(normal(5).templateKey, "");
 assert.deepEqual(normal(5).allowedTemplateKeys, ["d5_hi", "d5_lo"]);
+assert.equal(normal(5).selectionRequired, true);
+assert.equal(normal(5).label, "5일차 · 템플릿 선택 필요");
 assert.equal(normal(5, "d5_hi").templateKey, "d5_hi");
 assert.equal(normal(5, "d5_lo").templateKey, "d5_lo");
 assert.equal(normal(5, "d1").templateKey, "");
