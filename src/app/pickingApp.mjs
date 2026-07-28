@@ -3982,7 +3982,6 @@ function renderCsCaseItemEditor(row, itemNumber = 0) {
   const disabled = allowWrites ? "" : "disabled";
   const receiptDate = caseRow?.receipt_date || order.receipt_date || item.receipt_date || "";
   const memo = String(item.order_memo ?? "");
-  const managementMemo1 = String(item.o_shop_memo ?? item.shop_memo ?? item.memo1 ?? "");
   const managementMemo2 = String(item.o_shop_memo2 ?? item.shop_memo2 ?? item.memo2 ?? "");
   const outboundConfirmedDate = String(item.sellpia_outbound_confirmed_date ?? "");
   const basisDate = caseRow?.basis_date || receiptDate;
@@ -4024,7 +4023,6 @@ function renderCsCaseItemEditor(row, itemNumber = 0) {
     </section>
     <section class="cs-item-section cs-item-memo-fields">
       <h4>상품 메모</h4>
-      <label><span>관리메모1</span><input data-cs-management-field="memo1" value="${escapeHtml(managementMemo1)}" ${managementReadonly}></label>
       <label><span>관리메모2</span><input data-cs-management-field="memo2" value="${escapeHtml(managementMemo2)}" ${managementReadonly}></label>
       <label class="inspection-memo-cell ${memo.trim() ? "has-value" : ""}"><span>주문메모 / CS메모</span><textarea data-cs-case-order-memo rows="2" ${readonly}>${escapeHtml(memo)}</textarea></label>
     </section>
@@ -4053,10 +4051,11 @@ function renderCsCaseDetail(group) {
         <span class="workflow-row-badge ${state.csMode === "manual" ? "manual" : ""}">${state.csMode === "manual" ? "수동 추가 대상" : `CS ${caseCount}건`}</span>
         <button class="btn" data-cs-hold-action="${escapeHtml(holdAction)}" data-cs-order-group="${escapeHtml(group.ordNo || "")}" type="button" ${holdDisabled}>${escapeHtml(holdLabel)}</button>
         ${invoice ? shippingHoldBadge(invoice) : ""}
+        <label class="cs-order-drawer-box"><span>관리메모1 <em>송장 공통</em></span><textarea class="drawer-input cs-order-drawer-input" data-cs-drawer data-order-group="${escapeHtml(group.ordNo || "")}" rows="2" placeholder="서랍번호 / 관리메모1" ${managementReadonly}>${escapeHtml(invoice ? invoiceDrawerValue(invoice) : "")}</textarea></label>
         <label class="cs-order-scheduled-date"><span>알림톡 발송로그 <em>송장 공통 · 코드 누적</em></span><textarea data-cs-order-sync-field="outbound_scheduled_date" data-cs-order-group="${escapeHtml(group.ordNo || "")}" rows="3" placeholder="예: 1,3,5ㅂ" title="0=내일출고, 1=일반 1일차, 1_14=14K 1일차, 3=일반 3일차 플랫폼, 3ㅁ=일반 3일차 메이크샵, 5ㅂ=5일차 부분출고, 5ㅊ=5일차 취소출고, 5_14k=14K 5일차 부분출고, 10=10일차 잔여취소, ㅂㅂ=별도 CS 처리" ${managementReadonly}>${escapeHtml(scheduledHistory)}</textarea></label>
       </div>
     </div>
-    <p class="workflow-note">미송 자동대상과 별도 CS를 구분합니다. 알림톡 템플릿·기준일·주문메모·관리메모는 상품행별로 저장하며, 배송보류는 주문 단위로 위 버튼에서 처리합니다.</p>
+    <p class="workflow-note">미송 자동대상과 별도 CS를 구분합니다. 관리메모1과 알림톡 발송로그는 송장 공통이며, 관리메모2·주문메모·기준일은 상품행별로 저장합니다. 배송보류는 주문 단위로 위 버튼에서 처리합니다.</p>
     <div class="cs-sync-note"><strong>CS 백업·동기화 기준</strong><span>송장 단위의 <b>알림톡 발송로그</b>는 쉼표로 누적합니다. <b>0</b>=내일출고, <b>1</b>=일반1일차, <b>1_14</b>=14K1일차, <b>3</b>=플랫폼, <b>3ㅁ</b>=메이크샵, <b>5ㅂ</b>=부분출고, <b>5ㅊ</b>=취소출고, <b>5_14k</b>=14K5일차, <b>10</b>=잔여취소, <b>ㅂㅂ</b>=별도 CS 처리입니다. 상품행 입고예정일은 <b>출고확정일</b>에 기록합니다.</span></div>
     <div class="cs-item-card-stack">${group.items.map((row, index) => renderCsCaseItemEditor(row, index + 1)).join("")}</div>
   </div>`;
@@ -4305,13 +4304,15 @@ async function saveCsManagementFields(row, scope = els.csDetail, { renderAfter =
   if (!row?.item) throw new Error("관리메모를 저장할 상품행을 찾지 못했습니다.");
   const { ordNo, itemNo, sellpiaOrderItemNo } = csItemIdentity(row);
   if (!ordNo || (!itemNo && !sellpiaOrderItemNo)) throw new Error("관리메모 저장에 필요한 상품행키가 없습니다.");
-  const memo1 = String(scope?.querySelector("[data-cs-management-field='memo1']")?.value || "").trim();
-  const memo2 = String(scope?.querySelector("[data-cs-management-field='memo2']")?.value || "").trim();
+  const memo1Field = scope?.querySelector("[data-cs-management-field='memo1']");
+  const memo2Field = scope?.querySelector("[data-cs-management-field='memo2']");
 
   const previousMemo1 = String(row.item.o_shop_memo ?? row.item.shop_memo ?? row.item.memo1 ?? "").trim();
   const previousMemo2 = String(row.item.o_shop_memo2 ?? row.item.shop_memo2 ?? row.item.memo2 ?? "").trim();
-  const memo1Changed = memo1 !== previousMemo1;
-  const memo2Changed = memo2 !== previousMemo2;
+  const memo1 = memo1Field ? String(memo1Field.value || "").trim() : previousMemo1;
+  const memo2 = memo2Field ? String(memo2Field.value || "").trim() : previousMemo2;
+  const memo1Changed = Boolean(memo1Field) && memo1 !== previousMemo1;
+  const memo2Changed = Boolean(memo2Field) && memo2 !== previousMemo2;
   if (!memo1Changed && !memo2Changed) {
     toast("변경된 관리메모가 없습니다.");
     return;
