@@ -3304,7 +3304,31 @@ input {
 }
 
 .cs-layout {
-  grid-template-columns: minmax(320px, 0.34fr) minmax(0, 1fr);
+  grid-template-columns: minmax(250px, 0.23fr) minmax(0, 1fr);
+}
+
+.cs-layout .workflow-list-head {
+  gap: 6px;
+}
+
+.cs-list-sort {
+  margin-left: auto;
+}
+
+.cs-list-sort select {
+  min-height: 28px;
+  max-width: 106px;
+  padding: 3px 6px;
+  border: 1px solid #cbd5e1;
+  border-radius: 6px;
+  background: #f8fafc;
+  color: #334155;
+  font-size: 10px;
+  font-weight: 900;
+}
+
+.cs-layout .workflow-list-head #cs-list-count {
+  flex-basis: 100%;
 }
 
 .cs-detail-card {
@@ -3315,6 +3339,476 @@ input {
   border: 1px solid #dbe4f0;
   border-radius: 8px;
   padding: 14px;
+}
+
+/* Product-line CS case detail: keep the new case fields compact without
+   changing the legacy CS/invoice detail layout. */
+.cs-case-detail-card .workflow-detail-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+  margin: 0;
+}
+
+.cs-case-detail-card .workflow-detail-grid > div {
+  min-width: 0;
+  border: 1px solid #dbe4f0;
+  border-radius: 7px;
+  background: #f8fafc;
+  padding: 8px;
+}
+
+.cs-case-detail-card .workflow-detail-grid dt {
+  color: #64748b;
+  font-size: 11px;
+  font-weight: 900;
+}
+
+.cs-case-detail-card .workflow-detail-grid dd {
+  margin: 3px 0 0;
+  overflow-wrap: anywhere;
+  color: #1a2840;
+  font-size: 13px;
+  font-weight: 900;
+}
+
+.cs-case-fields {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.cs-case-fields .inspection-memo-cell {
+  grid-column: 1 / -1;
+}
+
+/* Keep the product-line CS list compact.  Manual-add mode is intentionally
+   warm-toned so it cannot be mistaken for the existing case list. */
+.cs-mode-indicator {
+  display: inline-flex;
+  align-items: center;
+  min-height: 32px;
+  padding: 0 10px;
+  border: 1px solid #dbe4f0;
+  border-radius: 999px;
+  background: #f1f5f9;
+  color: #64748b;
+  font-size: 11px;
+  font-weight: 900;
+  white-space: nowrap;
+}
+
+.cs-mode-indicator.manual {
+  border-color: #fdba74;
+  background: #fff7ed;
+  color: #9a3412;
+}
+
+.workflow-list.cs-manual-mode {
+  border-color: #fdba74;
+  box-shadow: inset 0 0 0 1px rgb(251 146 60 / 18%);
+}
+
+.workflow-list.cs-manual-mode .workflow-list-head {
+  background: #fff7ed;
+  color: #9a3412;
+}
+
+.workflow-list.cs-manual-mode .workflow-list-body,
+.workflow-detail.cs-manual-mode {
+  background: #fffaf5;
+}
+
+.workflow-row.cs-case-row {
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: start;
+  gap: 8px;
+  padding: 8px;
+}
+
+.cs-case-row-main {
+  display: grid;
+  min-width: 0;
+  gap: 4px;
+}
+
+.cs-case-row-main strong,
+.cs-case-row-main small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.cs-case-row-main strong {
+  color: #1a2840;
+  font-size: 11px;
+  font-weight: 1000;
+}
+
+.cs-case-row-main small {
+  color: #64748b;
+  font-size: 9px;
+  font-weight: 800;
+}
+
+.cs-case-row-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  align-items: center;
+  min-width: 0;
+}
+
+.cs-case-row-meta .seller-badge,
+.cs-case-row-meta .workflow-row-badge {
+  max-width: 100%;
+  overflow: hidden;
+  padding: 3px 5px;
+  font-size: 9px;
+  text-overflow: ellipsis;
+}
+
+.cs-case-row-side {
+  display: grid;
+  justify-items: end;
+  align-content: start;
+  gap: 4px;
+}
+
+.cs-case-row-side small {
+  max-width: 76px;
+  overflow: hidden;
+  color: #64748b;
+  font-size: 10px;
+  font-weight: 900;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.workflow-row-badge.manual {
+  background: #ffedd5;
+  color: #c2410c;
+}
+
+.cs-case-row.is-manual-source {
+  border-color: #fed7aa;
+  background: #fffaf5;
+}
+
+.cs-case-row.is-manual-source:hover,
+.cs-case-row.is-manual-source.selected {
+  border-color: #fb923c;
+  background: #fff3e6;
+}
+
+.cs-order-detail-head {
+  margin-bottom: 10px;
+}
+
+.cs-case-item-stack {
+  display: grid;
+  gap: 10px;
+}
+
+.cs-case-item-editor {
+  display: grid;
+  gap: 10px;
+  padding: 12px;
+  border: 1px solid #dbe4f0;
+  border-radius: 10px;
+  background: #fff;
+}
+
+.cs-case-item-editor.is-cs-target {
+  border-color: #f3b5b5;
+  border-left: 4px solid #ef6a6a;
+  background: #fff8f8;
+}
+
+.cs-case-item-editor.is-cs-target .cs-case-item-head {
+  border-bottom-color: #f6d3d3;
+}
+
+.cs-template-static {
+  display: grid;
+  gap: 4px;
+  align-content: start;
+}
+
+.cs-template-static strong {
+  min-height: 36px;
+  padding: 8px 10px;
+  border: 1px solid #fdba74;
+  border-radius: 7px;
+  background: #fff7ed;
+  color: #c2410c;
+  font-size: 12px;
+}
+
+.cs-template-static.neutral strong {
+  border-color: #cbd5e1;
+  background: #f8fafc;
+  color: #64748b;
+}
+
+.workflow-row-badge.neutral {
+  background: #eef2f7;
+  color: #64748b;
+}
+
+.cs-item-card-stack {
+  display: grid;
+  gap: 10px;
+  padding: 10px 12px 12px;
+}
+
+.cs-item-card {
+  display: grid;
+  grid-template-columns: minmax(430px, 1.25fr) minmax(270px, 0.75fr) minmax(390px, 0.95fr) 82px;
+  gap: 12px;
+  align-items: stretch;
+  padding: 12px;
+  border: 1px solid #dbe4f0;
+  border-radius: 10px;
+  background: #ffffff;
+}
+
+.cs-item-card.is-cs-target {
+  border-color: #f3b5b5;
+  border-left: 4px solid #ef6a6a;
+  background: #fff8f8;
+}
+
+.cs-item-overview {
+  display: grid;
+  grid-template-columns: 92px minmax(0, 1fr) auto;
+  gap: 10px;
+  align-items: center;
+  min-width: 0;
+}
+
+.cs-item-overview .workflow-item-photo {
+  width: 92px;
+  height: 92px;
+  aspect-ratio: 1;
+}
+
+.cs-item-product {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+}
+
+.cs-item-product strong,
+.cs-item-product em {
+  overflow-wrap: anywhere;
+  white-space: normal;
+}
+
+.cs-item-facts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px 10px;
+  color: #64748b;
+  font-size: 11px;
+  font-weight: 800;
+}
+
+.cs-item-facts b {
+  color: #1f3f94;
+  font-size: 12px;
+}
+
+.cs-item-product em {
+  color: #1a2840;
+  font-size: 15px;
+  font-style: normal;
+  font-weight: 1000;
+  line-height: 1.3;
+}
+
+.cs-item-product strong {
+  color: #1f3f94;
+  font-size: 15px;
+  font-weight: 1000;
+  line-height: 1.3;
+}
+
+.cs-item-status {
+  align-content: center;
+}
+
+.cs-sync-note {
+  display: flex;
+  align-items: baseline;
+  gap: 9px;
+  margin: 10px 12px 0;
+  padding: 8px 10px;
+  border: 1px solid #d7e4f6;
+  border-left: 4px solid #5b8def;
+  border-radius: 7px;
+  background: #f7faff;
+  color: #475569;
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.cs-sync-note strong {
+  flex: 0 0 auto;
+  color: #1f3f94;
+}
+
+.cs-sync-note b {
+  color: #1e4f9f;
+}
+
+.cs-item-section {
+  display: grid;
+  align-content: start;
+  gap: 7px;
+  padding: 9px;
+  border: 1px solid #dbe4f0;
+  border-radius: 8px;
+  background: #f8fafc;
+}
+
+.cs-item-card.is-cs-target .cs-item-section {
+  border-color: #f5c2c2;
+  background: #fffafa;
+}
+
+.cs-item-section h4 {
+  margin: 0 0 1px;
+  color: #334155;
+  font-size: 12px;
+  font-weight: 1000;
+}
+
+.cs-item-memo-fields {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.cs-item-memo-fields h4,
+.cs-item-memo-fields .inspection-memo-cell {
+  grid-column: 1 / -1;
+}
+
+.cs-item-case-classification .cs-template-field select {
+  border-color: #f6bd58;
+  background: #fffaf0;
+  color: #8a5100;
+  font-weight: 900;
+}
+
+.cs-item-case-classification .cs-template-field select:focus {
+  border-color: #d97706;
+  box-shadow: 0 0 0 3px rgb(245 158 11 / 18%);
+}
+
+.cs-item-section label,
+.cs-item-section .cs-template-field {
+  display: grid;
+  grid-template-columns: 100px minmax(0, 1fr);
+  align-items: center;
+  gap: 6px;
+}
+
+.cs-item-section label > span,
+.cs-item-section .cs-template-field > span {
+  color: #64748b;
+  font-size: 11px;
+  font-weight: 900;
+  text-align: left;
+}
+
+.cs-item-section input,
+.cs-item-section select {
+  min-width: 0;
+  min-height: 32px;
+  padding: 4px 7px;
+  border-color: #cbd5e1;
+  border-radius: 7px;
+  background: #ffffff;
+  color: #1e293b;
+  font-size: 13px;
+  font-weight: 800;
+}
+
+.cs-item-section input:focus,
+.cs-item-section select:focus {
+  border-color: #2563eb;
+  box-shadow: 0 0 0 3px rgb(37 99 235 / 14%);
+}
+
+.cs-item-section .cs-template-static {
+  grid-template-columns: 100px minmax(0, 1fr);
+}
+
+.cs-item-section .cs-template-static strong {
+  min-height: 30px;
+  padding: 6px 8px;
+  font-size: 11px;
+}
+
+.cs-item-memo-fields .inspection-memo-cell {
+  align-self: stretch;
+  padding: 7px;
+  border: 1px solid #dbe4f0;
+  border-radius: 7px;
+  background: #f8fafc;
+}
+
+.cs-item-card.is-cs-target .inspection-memo-cell {
+  border-color: #f5c2c2;
+  background: #fffafa;
+}
+
+.cs-item-memo-fields .inspection-memo-cell textarea {
+  min-height: 52px;
+}
+
+.cs-item-card-actions {
+  display: grid;
+  align-content: center;
+  gap: 5px;
+  min-width: 66px;
+}
+
+.cs-item-card-actions .btn {
+  min-height: 32px;
+  padding: 5px 7px;
+  font-size: 11px;
+}
+
+@media (max-width: 1450px) {
+  .cs-item-card {
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  }
+
+  .cs-item-overview {
+    grid-column: 1 / -1;
+  }
+
+  .cs-item-card-actions {
+    grid-column: 1 / -1;
+    grid-auto-flow: column;
+    grid-template-columns: repeat(auto-fit, minmax(72px, max-content));
+    justify-content: end;
+  }
+}
+
+.cs-manual-mode .cs-case-item-editor {
+  border-color: #fed7aa;
+  background: #fffdf9;
+}
+
+.cs-case-item-head {
+  margin: 0;
+  padding-bottom: 8px;
+  border-bottom: 1px solid #e8eef6;
+}
+
+.cs-layout .workflow-row-code {
+  min-width: 112px;
+  word-break: normal;
 }
 
 .cs-product-line {
@@ -3795,6 +4289,26 @@ input {
   .tray-board {
     grid-template-columns: repeat(4, minmax(160px, 1fr));
   }
+
+  .cs-case-detail-card .workflow-detail-grid,
+  .cs-case-fields {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .cs-item-card {
+    grid-template-columns: minmax(300px, 1fr) minmax(230px, 0.8fr);
+  }
+
+  .cs-item-overview {
+    grid-column: 1 / -1;
+  }
+
+  .cs-item-card-actions {
+    grid-column: 1 / -1;
+    grid-auto-flow: column;
+    grid-template-columns: repeat(auto-fit, minmax(72px, max-content));
+    justify-content: end;
+  }
 }
 
 @media (max-width: 720px) {
@@ -3900,8 +4414,32 @@ input {
   .picking-layout,
   .shortage-layout,
   .inspection-layout,
+  .cs-layout,
   .completed-layout {
     grid-template-columns: 1fr;
+  }
+
+  .cs-case-detail-card .workflow-detail-grid,
+  .cs-case-fields {
+    grid-template-columns: 1fr;
+  }
+
+  .cs-item-card {
+    grid-template-columns: 1fr;
+  }
+
+  .cs-item-overview {
+    grid-template-columns: 76px minmax(0, 1fr);
+  }
+
+  .cs-item-overview .cs-item-status {
+    grid-column: 1 / -1;
+  }
+
+  .cs-item-card-actions {
+    grid-auto-flow: column;
+    grid-template-columns: repeat(auto-fit, minmax(72px, max-content));
+    justify-content: start;
   }
 
   .panel-tools,

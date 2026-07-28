@@ -10,7 +10,7 @@
     <link rel="apple-touch-icon" href="assets/system-v3-icon.svg">
     <link rel="preconnect" href="https://cdnjs.cloudflare.com" crossorigin>
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/pretendard/1.3.9/static/pretendard.css">
-    <link rel="stylesheet" href="src/styles/picking.css?v=20260721-cs-list2">
+  <link rel="stylesheet" href="src/styles/picking.css?v=20260728-cs-sort-style1">
     <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
   </head>
   <body>
@@ -227,21 +227,29 @@
           <div class="panel-head">
             <div>
               <h2>CS</h2>
-              <p>CS가 필요한 주문의 주문메모를 확인하고 수정합니다.</p>
+              <p>상품행별 CS 케이스와 주문메모를 관리합니다.</p>
             </div>
             <div id="cs-filter-bar" class="panel-tools cs-tools">
               <div id="cs-date-tabs" class="filter-bar" aria-label="CS 일차"></div>
-              <input id="cs-search-input" class="search" placeholder="송장번호 / 이름 / 자사코드 / 옵션명">
+              <input id="cs-search-input" class="search" placeholder="주문번호 / 송장번호 / 주문자·수령자 / 상품 / 코드">
             </div>
           </div>
           <div class="workflow-layout cs-layout">
             <aside class="workflow-list">
               <div class="workflow-list-head">
-                <strong>CS 필요</strong>
+                <strong>CS 케이스</strong>
+                <label class="cs-list-sort" aria-label="CS 목록 정렬기준">
+                  <select id="cs-list-sort">
+                    <option value="receipt_desc">접수일 최신</option>
+                    <option value="receipt_asc">접수일 오래</option>
+                    <option value="order_desc">주문번호 최신</option>
+                    <option value="order_asc">주문번호 오래</option>
+                  </select>
+                </label>
                 <span id="cs-list-count">0건</span>
               </div>
               <div id="cs-list-body" class="workflow-list-body">
-                <div class="workflow-empty">미송 발생 데이터를 불러오는 중입니다.</div>
+                <div class="workflow-empty">CS 케이스를 불러오는 중입니다.</div>
               </div>
             </aside>
             <section class="workflow-detail">
@@ -317,7 +325,7 @@
     <div id="toast" class="toast" hidden></div>
 
     <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
-    <script type="module" src="src/app/pickingApp.mjs?v=20260721-cs-list5"></script>
+    <script type="module" src="src/app/pickingApp.mjs?v=20260728-cs-sort-style1"></script>
     <script>
       if ("serviceWorker" in navigator) {
         window.addEventListener("load", () => {

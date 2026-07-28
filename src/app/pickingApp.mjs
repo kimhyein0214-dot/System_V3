@@ -1,5 +1,7 @@
 import { annotateShippingHoldState, loadWorkflowQueues } from "../adapters/workflowEventAdapter.mjs?v=20260714-shortage-baseline1";
 import { buildPickingViewModel } from "../workflows/picking/buildPickingViewModel.mjs?v=20260706-memo2-text1";
+import { createCsCaseAdapter } from "../adapters/csCaseAdapter.mjs?v=20260728-cs-cases1";
+import { isGoldOwnCode } from "../domain/gold.mjs?v=20260728-gold-own-code1";
 import {
   buildWorkflowState,
   completedInvoicesForInspection,
@@ -91,6 +93,7 @@ const allowWrites = params.get("write") === "1";
 const allowOrderReorder = allowWrites && params.get("reorder") === "1";
 const allowWorkflowEvents = allowWrites && params.get("events") === "1";
 const db = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
+const csCases = createCsCaseAdapter(db);
 
 function todayDateString() {
   const date = new Date();
@@ -138,6 +141,17 @@ const state = {
   csDateFilter: "all",
   csSearchText: "",
   selectedCsKey: "",
+  csCases: [],
+  csCaseContexts: { orders: new Map(), items: new Map() },
+  csCasesLoading: false,
+  csCasesLoaded: false,
+  csCaseError: "",
+  csMode: "cases",
+  csStatusFilter: "pending",
+  csTypeFilter: "",
+  csGoldFilter: "all",
+  csSort: "receipt_desc",
+  csManualCandidates: [],
   sidebarCollapsed: false,
   workflowEventsReady: false,
   workflowEventsChecked: false,
@@ -213,6 +227,7 @@ const els = {
   csDateTabs: document.getElementById("cs-date-tabs"),
   csSearchInput: document.getElementById("cs-search-input"),
   csListCount: document.getElementById("cs-list-count"),
+  csListSort: document.getElementById("cs-list-sort"),
   csListBody: document.getElementById("cs-list-body"),
   csDetail: document.getElementById("cs-detail"),
   completedListCount: document.getElementById("completed-list-count"),
@@ -427,18 +442,7 @@ function isHold(item) {
 }
 
 function isGoldItem(item) {
-  const ownCode = String(item.ownCode || "").trim().toUpperCase();
-  const sellpiaCode = String(item.sellpiaProductCode || "").trim().toUpperCase();
-  const text = `${item.productName || ""} ${item.optionName || ""}`.toUpperCase();
-  return (
-    ownCode.startsWith("GPA") ||
-    ownCode.startsWith("GPB") ||
-    ownCode.includes("14K") ||
-    sellpiaCode.startsWith("GPA") ||
-    sellpiaCode.startsWith("GPB") ||
-    sellpiaCode.includes("14K") ||
-    text.includes("14K")
-  );
+  return isGoldOwnCode(item?.ownCode || item?.raw?.prod_code || item?.raw?.own_code || "");
 }
 
 function invoiceHasGold(invoice) {
@@ -3263,7 +3267,7 @@ function filteredCsRows() {
   });
 }
 
-function renderCsPanels() {
+function renderLegacyCsInvoicePanels() {
   if (els.csSearchInput && els.csSearchInput.value !== state.csSearchText) els.csSearchInput.value = state.csSearchText;
   if (state.workflowQueueError) {
     renderWorkflowEmpty(els.csListBody, state.workflowQueueError);
@@ -3389,6 +3393,10 @@ function renderCsPanels() {
         })
         .join("")}
     </div>`;
+}
+
+function renderCsPanels() {
+  renderCsCasePanels();
 }
 
 function renderCompletedPanels() {
@@ -3596,6 +3604,749 @@ function render() {
   renderShell();
   renderActivePanel();
   if (state.orderListModal.open) renderOrderListModal();
+}
+
+function csCaseContext(caseRow) {
+  const order = state.csCaseContexts.orders.get(String(caseRow.ord_no || "")) || null;
+  const item = state.csCaseContexts.items.get(String(caseRow.item_no || "")) || null;
+  const ownCode = String(item?.prod_code || item?.p_dpcode || item?.own_code || "").trim();
+  return {
+    caseRow,
+    order,
+    item,
+    ownCode,
+    isGold: isGoldOwnCode(ownCode),
+    key: String(caseRow.id),
+  };
+}
+
+function csSearchTextFor({ order, item, caseRow }) {
+  return [
+    caseRow?.ord_no,
+    caseRow?.inv_no,
+    order?.ord_no,
+    order?.inv_no,
+    order?.orderer,
+    order?.receiver,
+    order?.receiver_name,
+    item?.p_name,
+    item?.p_option,
+    item?.p_code,
+    item?.prod_code,
+  ]
+    .map((value) => String(value || "").toLowerCase())
+    .join(" ");
+}
+
+function autoShortageCsRows() {
+  const openItemKeys = new Set();
+  for (const invoice of allWorkflowInvoices()) {
+    for (const item of invoice.items || []) {
+      if (!itemHasOpenWorkflowShortage(invoice, item)) continue;
+      const ordNo = String(invoice.orderGroupNo || "").trim();
+      const itemNo = String(item?.raw?.item_no || item?.sellpiaItemNo || "").trim();
+      const sellpiaOrderItemNo = String(item?.raw?.sellpia_order_item_no || "").trim();
+      if (ordNo && itemNo) openItemKeys.add(`${ordNo}::${itemNo}`);
+      if (ordNo && sellpiaOrderItemNo) openItemKeys.add(`${ordNo}::${sellpiaOrderItemNo}`);
+    }
+  }
+  if (!openItemKeys.size) return [];
+  const persistedShortageKeys = new Set(
+    state.csCases
+      .filter((row) => String(row.case_type || "") === "shortage")
+      .flatMap((row) => [
+        `${String(row.ord_no || "")}::${String(row.item_no || "")}`,
+        `${String(row.ord_no || "")}::${String(row.sellpia_order_item_no || "")}`,
+      ]),
+  );
+  return state.csManualCandidates
+    .map(manualCsCandidateRow)
+    .filter((row) => {
+      const ordNo = csRowOrderNo(row);
+      const itemNo = String(row.item?.item_no || "").trim();
+      const sellpiaOrderItemNo = String(row.item?.sellpia_order_item_no || "").trim();
+      const isOpen = openItemKeys.has(`${ordNo}::${itemNo}`) || openItemKeys.has(`${ordNo}::${sellpiaOrderItemNo}`);
+      const isPersisted = persistedShortageKeys.has(`${ordNo}::${itemNo}`) || persistedShortageKeys.has(`${ordNo}::${sellpiaOrderItemNo}`);
+      return isOpen && !isPersisted;
+    })
+    .map((row) => ({
+      ...row,
+      key: `auto-shortage:${csRowOrderNo(row)}:${String(row.item?.item_no || row.item?.sellpia_order_item_no || "")}`,
+      virtualAutoCase: true,
+      caseRow: {
+        id: null,
+        ord_no: csRowOrderNo(row),
+        item_no: row.item?.item_no || null,
+        sellpia_order_item_no: row.item?.sellpia_order_item_no || null,
+        inv_no: row.order?.inv_no || row.item?.inv_no || null,
+        receipt_date: row.order?.receipt_date || row.item?.receipt_date || null,
+        case_type: "shortage",
+        status: "pending",
+        source: "auto",
+      },
+    }));
+}
+
+function allCsDisplayRows() {
+  return [...state.csCases.map(csCaseContext), ...autoShortageCsRows()];
+}
+
+function filteredCsCaseRows() {
+  const search = state.csSearchText.trim().toLowerCase();
+  return allCsDisplayRows()
+    .filter((row) => state.csStatusFilter === "all" || row.caseRow.status === state.csStatusFilter)
+    .filter((row) => {
+      if (!state.csTypeFilter) return true;
+      if (state.csTypeFilter === "manual") return row.caseRow?.source === "manual";
+      return row.caseRow?.source === "auto" && csAutoTemplateKeys(row).includes(state.csTypeFilter);
+    })
+    .filter((row) => state.csGoldFilter === "all" || (state.csGoldFilter === "gold" ? row.isGold : !row.isGold))
+    .filter((row) => !search || csSearchTextFor(row).includes(search));
+}
+
+function filteredManualCsCandidates() {
+  const search = state.csSearchText.trim().toLowerCase();
+  if (!search) return [];
+  return state.csManualCandidates
+    .filter((row) => csSearchTextFor(row).includes(search))
+    .slice(0, 100)
+    .map(manualCsCandidateRow);
+}
+
+function manualCsCandidateRow(row) {
+  const itemNo = String(row?.item?.item_no || "").trim();
+  const sellpiaOrderItemNo = String(row?.item?.sellpia_order_item_no || "").trim();
+  const ownCode = String(row?.item?.prod_code || row?.item?.p_dpcode || row?.item?.own_code || "").trim();
+  return {
+    ...row,
+    key: `manual:${itemNo || sellpiaOrderItemNo}`,
+    ownCode,
+    isGold: isGoldOwnCode(ownCode),
+  };
+}
+
+function csRowOrderNo(row) {
+  return String(row?.caseRow?.ord_no || row?.order?.ord_no || row?.item?.ord_no || row?.item?.order_group_no || "").trim();
+}
+
+function groupedCsRows(rows) {
+  const groups = new Map();
+  for (const row of rows) {
+    const ordNo = csRowOrderNo(row);
+    const invoiceNo = csRowInvoiceNo(row);
+    const key = `order:${ordNo || invoiceNo || row.key}`;
+    if (!groups.has(key)) {
+      groups.set(key, {
+        key,
+        ordNo,
+        invoiceNo,
+        order: row.order || null,
+        items: [],
+      });
+    }
+    const group = groups.get(key);
+    group.items.push(row);
+    if (!group.order && row.order) group.order = row.order;
+  }
+  return [...groups.values()].sort((left, right) => {
+    const leftReceiptDate = String(left.order?.receipt_date || left.items.find((row) => row.caseRow?.receipt_date)?.caseRow?.receipt_date || "");
+    const rightReceiptDate = String(right.order?.receipt_date || right.items.find((row) => row.caseRow?.receipt_date)?.caseRow?.receipt_date || "");
+    const leftOrderKey = String(left.ordNo || left.invoiceNo || "");
+    const rightOrderKey = String(right.ordNo || right.invoiceNo || "");
+    const numericOptions = { numeric: true };
+    if (state.csSort === "receipt_asc") {
+      return leftReceiptDate.localeCompare(rightReceiptDate) || leftOrderKey.localeCompare(rightOrderKey, undefined, numericOptions);
+    }
+    if (state.csSort === "order_desc") {
+      return rightOrderKey.localeCompare(leftOrderKey, undefined, numericOptions) || rightReceiptDate.localeCompare(leftReceiptDate);
+    }
+    if (state.csSort === "order_asc") {
+      return leftOrderKey.localeCompare(rightOrderKey, undefined, numericOptions) || leftReceiptDate.localeCompare(rightReceiptDate);
+    }
+    return rightReceiptDate.localeCompare(leftReceiptDate) || rightOrderKey.localeCompare(leftOrderKey, undefined, numericOptions);
+  });
+}
+
+function manualCsRowsForMatchedOrders() {
+  const matchedRows = filteredManualCsCandidates();
+  const matchedOrderNos = new Set(matchedRows.map(csRowOrderNo).filter(Boolean));
+  if (!matchedOrderNos.size) return [];
+  return state.csManualCandidates
+    .filter((row) => matchedOrderNos.has(csRowOrderNo(row)))
+    .map(manualCsCandidateRow);
+}
+
+function caseRowsForMatchedOrders() {
+  const matchedCaseRows = filteredCsCaseRows();
+  if (!state.csManualCandidates.length) return matchedCaseRows;
+  const matchedOrderNos = new Set(matchedCaseRows.map(csRowOrderNo).filter(Boolean));
+  if (!matchedOrderNos.size) return [];
+  const allCaseByItemKey = new Map();
+  for (const row of allCsDisplayRows()) {
+    const caseRow = row.caseRow;
+    const itemKey = `${String(caseRow?.ord_no || "")}::${String(caseRow?.item_no || caseRow?.sellpia_order_item_no || "")}`;
+    if (itemKey.endsWith("::")) continue;
+    allCaseByItemKey.set(itemKey, row);
+  }
+  const expandedRows = state.csManualCandidates
+    .filter((row) => matchedOrderNos.has(csRowOrderNo(row)))
+    .map((row) => {
+      const normalized = manualCsCandidateRow(row);
+      const orderNo = csRowOrderNo(normalized);
+      const itemKey = `${orderNo}::${String(normalized.item?.item_no || normalized.item?.sellpia_order_item_no || "")}`;
+      const matchedCase = allCaseByItemKey.get(itemKey) || null;
+      return {
+        ...normalized,
+        caseRow: matchedCase?.caseRow || null,
+        virtualAutoCase: Boolean(matchedCase?.virtualAutoCase),
+      };
+    });
+  const expandedItemKeys = new Set(expandedRows.map((row) => `${csRowOrderNo(row)}::${String(row.item?.item_no || row.item?.sellpia_order_item_no || "")}`));
+  for (const row of matchedCaseRows) {
+    const itemKey = `${csRowOrderNo(row)}::${String(row.caseRow?.item_no || row.caseRow?.sellpia_order_item_no || "")}`;
+    if (!expandedItemKeys.has(itemKey)) expandedRows.push(row);
+  }
+  return expandedRows;
+}
+
+function renderedCsGroups() {
+  const rows = state.csMode === "manual" ? manualCsRowsForMatchedOrders() : caseRowsForMatchedOrders();
+  return groupedCsRows(rows);
+}
+
+function selectedCsRenderedGroup() {
+  const groups = renderedCsGroups();
+  return groups.find((group) => group.key === state.selectedCsKey) || null;
+}
+
+function selectedCsItemRow(rowKey) {
+  return selectedCsRenderedGroup()?.items.find((row) => row.key === rowKey) || null;
+}
+
+function csStatusLabel(status) {
+  return ({ pending: "진행", resolved: "해결", excluded: "제외" })[status] || status || "-";
+}
+
+function csRowDisplayName(row) {
+  return row.order?.receiver || row.order?.receiver_name || row.order?.orderer || "-";
+}
+
+function csRowInvoiceNo(row) {
+  return row.caseRow?.inv_no || row.order?.inv_no || row.item?.inv_no || "-";
+}
+
+function csSellerMeta(group) {
+  const seller = group.order?.seller || group.order?.provider_name || group.order?.seller_id || "";
+  return sellerBadgeMeta(seller);
+}
+
+function csRecommendedTemplateKeys(row) {
+  const caseRow = row?.caseRow;
+  if (!caseRow || (!row.virtualAutoCase && caseRow.source !== "auto")) return [];
+
+  const basisDate = String(caseRow.basis_date || caseRow.receipt_date || row.order?.receipt_date || row.item?.receipt_date || "").trim();
+  const templateRows = classifyCsRowsByDay([
+    {
+      invoice: {
+        seller: row.order?.seller || row.order?.provider_name || "",
+        orderGroupNo: csRowOrderNo(row),
+      },
+      item: {
+        ownCode: row.ownCode || row.item?.prod_code || row.item?.p_dpcode || row.item?.own_code || "",
+      },
+      csReason: "shortage",
+      currentShortageQty: 1,
+      elapsedDays: daysSinceDateKey(basisDate),
+      csMethod: "",
+    },
+  ]);
+  return CS_DAYS.filter((day) => day.key !== "all" && templateRows[day.key]?.length).map((day) => CS_DAY_TEMPLATE[day.key] || day.key);
+}
+
+function csAutoTemplateKeys(row) {
+  const savedTemplate = String(row?.caseRow?.alimtalk_template || "").trim();
+  return savedTemplate ? [savedTemplate] : csRecommendedTemplateKeys(row);
+}
+
+function csTemplateSelect(row, disabled = "") {
+  const savedTemplate = String(row?.caseRow?.alimtalk_template || "").trim();
+  const recommendedLabels = csRecommendedTemplateKeys(row)
+    .map((templateKey) => CS_TEMPLATE_PRESETS[templateKey]?.label || templateKey)
+    .join(" / ");
+  return `<label class="cs-template-field"><span>알림톡 템플릿</span><select data-cs-case-field="alimtalk_template" ${disabled}>
+    <option value="" ${savedTemplate ? "" : "selected"}>${escapeHtml(recommendedLabels || "템플릿 미분류")}</option>
+    ${Object.entries(CS_TEMPLATE_PRESETS).map(([templateKey, preset]) => `<option value="${escapeHtml(templateKey)}" ${savedTemplate === templateKey ? "selected" : ""}>${escapeHtml(preset.label)}</option>`).join("")}
+  </select></label>`;
+}
+
+function csCaseBadges(group) {
+  const badges = [];
+  const seller = csSellerMeta(group);
+  if (seller) badges.push(`<span class="seller-badge ${seller.className}">${escapeHtml(seller.label)}</span>`);
+
+  const automaticTemplateKeys = [...new Set(
+    group.items.filter((row) => row.virtualAutoCase || row.caseRow?.source === "auto").flatMap((row) => csAutoTemplateKeys(row)),
+  )];
+  automaticTemplateKeys.forEach((templateKey) => {
+    const templateLabel = CS_TEMPLATE_PRESETS[templateKey]?.label || templateKey;
+    badges.push(`<span class="workflow-row-badge warn" title="${escapeHtml(templateKey)}">알림톡 ${escapeHtml(templateLabel)}</span>`);
+  });
+
+  const manualCaseCount = group.items.filter((row) => row.caseRow?.source === "manual").length;
+  if (manualCaseCount) {
+    badges.push(`<span class="workflow-row-badge manual">별도 CS${manualCaseCount > 1 ? ` ${manualCaseCount}` : ""}</span>`);
+  }
+  return badges.join("");
+}
+
+function renderCsCaseFilters() {
+  const statusButtons = [
+    ["pending", "진행"],
+    ["excluded", "제외"],
+    ["all", "전체"],
+  ];
+  els.csDateTabs.innerHTML = `
+    ${statusButtons.map(([value, label]) => `<button class="filter-chip ${state.csMode === "cases" && state.csStatusFilter === value ? "active" : ""}" data-cs-case-status="${value}" type="button">${label}</button>`).join("")}
+    <select class="filter-chip" data-cs-template-filter aria-label="알림톡 템플릿 필터">
+      <option value="">템플릿별</option>
+      ${Object.entries(CS_TEMPLATE_PRESETS).map(([templateKey, preset]) => `<option value="${escapeHtml(templateKey)}" ${state.csTypeFilter === templateKey ? "selected" : ""}>${escapeHtml(preset.label)}</option>`).join("")}
+      <option value="manual" ${state.csTypeFilter === "manual" ? "selected" : ""}>별도 CS</option>
+    </select>
+    <select class="filter-chip" data-cs-gold-filter aria-label="골드 필터">
+      <option value="all" ${state.csGoldFilter === "all" ? "selected" : ""}>일반/14K 전체</option>
+      <option value="normal" ${state.csGoldFilter === "normal" ? "selected" : ""}>일반</option>
+      <option value="gold" ${state.csGoldFilter === "gold" ? "selected" : ""}>14K</option>
+    </select>
+    <button class="filter-chip ${state.csMode === "manual" ? "active" : ""}" data-cs-mode="manual" type="button">수동 추가</button>
+    <span class="cs-mode-indicator ${state.csMode === "manual" ? "manual" : ""}">${state.csMode === "manual" ? "수동 추가 모드 · 검색 결과에서 상품행을 선택하세요" : "CS 케이스 목록"}</span>`;
+}
+
+function renderCsCaseRow(group, selected) {
+  const caseRows = group.items.filter((row) => row.caseRow);
+  const autoShortageCount = caseRows.filter((row) => row.virtualAutoCase || row.caseRow.source === "auto").length;
+  const pendingCount = caseRows.filter((row) => row.caseRow.status === "pending").length;
+  const goldCount = group.items.filter((row) => row.isGold).length;
+  const badgeClass = caseRows.length ? (pendingCount ? "danger" : caseRows.every((row) => row.caseRow.status === "excluded") ? "hold" : "done") : "manual";
+  const modeLabel = autoShortageCount ? `미송 ${autoShortageCount}` : caseRows.length ? (pendingCount ? `진행 ${pendingCount}` : "처리됨") : "수동 추가";
+  const receiver = group.order?.receiver || group.order?.receiver_name || group.order?.orderer || "-";
+  const badges = csCaseBadges(group);
+  return `<button class="workflow-row cs-case-row ${caseRows.length ? "is-case" : "is-manual-source"} ${selected ? "selected" : ""}" data-cs-key="${escapeHtml(group.key)}" type="button">
+    <span class="cs-case-row-main">
+      <strong>송장 ${escapeHtml(group.invoiceNo || "-")} · ${escapeHtml(receiver)}</strong>
+      <small>상품 ${group.items.length}건${caseRows.length ? ` · ${autoShortageCount ? `미송 ${autoShortageCount}건` : `CS ${caseRows.length}건`}` : ""}</small>
+      ${badges ? `<span class="cs-case-row-meta">${badges}</span>` : ""}
+    </span>
+    <span class="cs-case-row-side">
+      <span class="workflow-row-badge ${badgeClass}">${escapeHtml(modeLabel)}</span>
+      ${goldCount ? `<span class="workflow-row-badge gold">14K ${goldCount}</span>` : ""}
+    </span>
+  </button>`;
+}
+
+function renderCsCaseItemEditor(row) {
+  const caseRow = row.caseRow || null;
+  const virtualAutoCase = Boolean(row.virtualAutoCase);
+  const item = row.item || {};
+  const order = row.order || {};
+  const readonly = allowWrites && !virtualAutoCase ? "" : "readonly";
+  const managementReadonly = allowWrites ? "" : "readonly";
+  const disabled = allowWrites ? "" : "disabled";
+  const receiptDate = caseRow?.receipt_date || order.receipt_date || item.receipt_date || "";
+  const memo = String(item.order_memo ?? "");
+  const managementMemo1 = String(item.o_shop_memo ?? item.shop_memo ?? item.memo1 ?? "");
+  const managementMemo2 = String(item.o_shop_memo2 ?? item.shop_memo2 ?? item.memo2 ?? "");
+  const basisDate = caseRow?.basis_date || receiptDate;
+  const automaticCase = Boolean(virtualAutoCase || caseRow?.source === "auto");
+  const manualCase = Boolean(caseRow && !virtualAutoCase && caseRow.source === "manual");
+  const hasCase = Boolean(caseRow);
+  const caseBadge = virtualAutoCase
+    ? '<span class="workflow-row-badge danger">미송 자동대상</span>'
+    : automaticCase
+      ? `<span class="workflow-row-badge danger">${escapeHtml(csStatusLabel(caseRow.status))}</span><span class="workflow-row-badge danger">미송 CS</span>`
+      : manualCase
+        ? `<span class="workflow-row-badge manual">별도 CS</span><span class="workflow-row-badge ${caseRow.status === "pending" ? "danger" : caseRow.status === "excluded" ? "hold" : "done"}">${escapeHtml(csStatusLabel(caseRow.status))}</span>`
+        : '<span class="workflow-row-badge neutral">CS 대상 아님</span>';
+  const caseClassification = automaticCase
+    ? csTemplateSelect(row, allowWrites ? "" : "disabled")
+    : manualCase
+      ? '<label class="cs-template-static"><span>CS 구분</span><strong>별도 CS</strong></label>'
+      : '<label class="cs-template-static neutral"><span>CS 구분</span><strong>CS 대상 아님</strong></label>';
+  const imageCode = item.sellpia_p_code || item.sellpia_product_code || item.p_code || "";
+  const imageUrl = productImageUrl(imageCode);
+  const actionButtons = virtualAutoCase
+    ? `<button class="btn primary" data-cs-case-action="register-auto" data-cs-row-key="${escapeHtml(row.key)}" type="button" ${disabled}>미송 CS 저장</button>`
+    : hasCase
+      ? `<button class="btn primary" data-cs-case-action="save-all" data-cs-case-id="${caseRow.id}" data-cs-row-key="${escapeHtml(row.key)}" type="button" ${disabled}>저장</button>
+          ${caseRow.status === "pending" ? `<button class="btn" data-cs-case-action="resolve" data-cs-case-id="${caseRow.id}" data-cs-row-key="${escapeHtml(row.key)}" type="button" ${disabled}>해결</button><button class="btn" data-cs-case-action="exclude" data-cs-case-id="${caseRow.id}" data-cs-row-key="${escapeHtml(row.key)}" type="button" ${disabled}>제외</button>` : `<button class="btn primary" data-cs-case-action="reopen" data-cs-case-id="${caseRow.id}" data-cs-row-key="${escapeHtml(row.key)}" type="button" ${disabled}>재개</button>`}`
+      : `<button class="btn primary" data-cs-case-action="create" data-cs-manual-item-no="${escapeHtml(item.item_no || "")}" data-cs-row-key="${escapeHtml(row.key)}" type="button" ${disabled}>별도 CS 추가</button>`;
+  return `<article class="cs-item-card ${caseRow?.status === "pending" ? "is-cs-target" : ""}" data-cs-row-key="${escapeHtml(row.key)}">
+    <section class="cs-item-overview">
+      <div class="workflow-item-photo">${imageUrl ? `<img src="${imageUrl}" ${photoImgAttrs(imageUrl, `${row.ownCode || ""} · ${item.p_name || ""}`)} alt="" loading="lazy" onerror="this.style.visibility='hidden'">` : "사진"}</div>
+      <div class="cs-item-product"><strong>${escapeHtml(item.p_name || "상품 정보 없음")}</strong><em>${escapeHtml(item.p_option || "옵션 없음")}</em><div class="cs-item-facts"><span>수량 <b>${escapeHtml(String(item.qty ?? item.o_amount ?? "-"))}</b></span><span>자사코드 <b>${escapeHtml(row.ownCode || "-")}</b></span></div></div>
+      <div class="workflow-row-badges cs-item-status">${caseBadge}${row.isGold ? '<span class="workflow-row-badge gold">14K</span>' : '<span class="workflow-row-badge">일반</span>'}</div>
+    </section>
+    <section class="cs-item-section cs-item-case-classification">
+      <h4>CS 진행</h4>
+      ${caseClassification}
+      <label><span>기준일</span><input data-cs-case-field="basis_date" type="date" value="${escapeHtml(basisDate || receiptDate || "")}" ${readonly}></label>
+    </section>
+    <section class="cs-item-section cs-item-memo-fields">
+      <h4>상품 메모</h4>
+      <label><span>관리메모1</span><input data-cs-management-field="memo1" value="${escapeHtml(managementMemo1)}" ${managementReadonly}></label>
+      <label><span>관리메모2 / 미송수량</span><input data-cs-management-field="memo2" inputmode="numeric" value="${escapeHtml(managementMemo2)}" ${managementReadonly}></label>
+      <label class="inspection-memo-cell ${memo.trim() ? "has-value" : ""}"><span>주문메모 / CS메모</span><textarea data-cs-case-order-memo rows="3" ${readonly}>${escapeHtml(memo)}</textarea></label>
+    </section>
+    <div class="cs-item-card-actions">${actionButtons}</div>
+  </article>`;
+}
+
+function renderCsCaseDetail(group) {
+  if (!group) {
+    renderWorkflowEmpty(els.csDetail, state.csMode === "manual" ? "검색어를 입력해 주문을 찾으세요." : "CS 케이스를 선택하세요.");
+    return;
+  }
+  const receiver = group.order?.receiver || group.order?.receiver_name || group.order?.orderer || "-";
+  const caseCount = group.items.filter((row) => row.caseRow).length;
+  const invoice = allWorkflowInvoices().find((candidate) => String(candidate?.orderGroupNo || "") === String(group.ordNo || "")) || null;
+  const holdState = invoice ? shippingHoldUiState(invoice) : null;
+  const holdAction = holdState?.action || "inspection-hold";
+  const holdLabel = holdState?.actionLabel || "배송보류 처리";
+  const holdDisabled = invoice && allowWorkflowEvents ? "" : "disabled";
+  els.csDetail.innerHTML = `<div class="cs-detail-card cs-case-detail-card">
+    <div class="workflow-detail-head cs-order-detail-head">
+      <div><strong>송장 ${escapeHtml(group.invoiceNo || "-")} · ${escapeHtml(receiver)}</strong></div>
+      <div class="inspection-actions">
+        <span class="workflow-row-badge ${state.csMode === "manual" ? "manual" : ""}">${state.csMode === "manual" ? "수동 추가 대상" : `CS ${caseCount}건`}</span>
+        <button class="btn" data-cs-hold-action="${escapeHtml(holdAction)}" data-cs-order-group="${escapeHtml(group.ordNo || "")}" type="button" ${holdDisabled}>${escapeHtml(holdLabel)}</button>
+        ${invoice ? shippingHoldBadge(invoice) : ""}
+      </div>
+    </div>
+    <p class="workflow-note">미송 자동대상과 별도 CS를 구분합니다. 알림톡 템플릿·기준일·주문메모·관리메모는 상품행별로 저장하며, 배송보류는 주문 단위로 위 버튼에서 처리합니다.</p>
+    <div class="cs-sync-note"><strong>CS 백업·동기화 기준</strong><span>알림톡 발송일은 송장 단위의 <b>출고예정일</b>에, 상품 입고 예정일은 상품행 단위의 <b>출고확정일</b>에 별도로 백업·동기화합니다. 관리메모·주문메모와 연결하지 않습니다.</span></div>
+    <div class="cs-item-card-stack">${group.items.map(renderCsCaseItemEditor).join("")}</div>
+  </div>`;
+}
+
+function renderCsCasePanels() {
+  if (els.csSearchInput && els.csSearchInput.value !== state.csSearchText) els.csSearchInput.value = state.csSearchText;
+  if (els.csListSort && els.csListSort.value !== state.csSort) els.csListSort.value = state.csSort;
+  els.csListBody?.closest(".workflow-list")?.classList.toggle("cs-manual-mode", state.csMode === "manual");
+  els.csDetail?.classList.toggle("cs-manual-mode", state.csMode === "manual");
+  renderCsCaseFilters();
+  if (state.csCaseError) {
+    renderWorkflowEmpty(els.csListBody, state.csCaseError);
+    renderWorkflowEmpty(els.csDetail, "CS 케이스를 불러오지 못했습니다.");
+    return;
+  }
+  if (state.csCasesLoading) {
+    renderWorkflowEmpty(els.csListBody, "CS 케이스를 불러오는 중입니다.");
+    renderWorkflowEmpty(els.csDetail, "잠시만 기다려주세요.");
+    return;
+  }
+  const groups = renderedCsGroups();
+  const total = state.csMode === "manual"
+    ? groupedCsRows(state.csManualCandidates.map(manualCsCandidateRow)).length
+    : groupedCsRows(allCsDisplayRows()).length;
+  if (els.csListCount) els.csListCount.textContent = `${groups.length}건 / 전체 ${total}건`;
+  if (!groups.length) {
+    renderWorkflowEmpty(els.csListBody, state.csMode === "manual" ? "검색어를 입력하면 주문·상품행을 찾을 수 있습니다." : "현재 필터에 맞는 CS 케이스가 없습니다.");
+    renderWorkflowEmpty(els.csDetail, state.csMode === "manual" ? "주문번호, 송장번호, 이름, 상품명, 상품코드 또는 자사코드로 검색하세요." : "수동 추가로 상품행 CS 케이스를 등록할 수 있습니다.");
+    return;
+  }
+  if (!groups.some((group) => group.key === state.selectedCsKey)) state.selectedCsKey = groups[0].key;
+  els.csListBody.innerHTML = groups.map((group) => renderCsCaseRow(group, group.key === state.selectedCsKey)).join("");
+  renderCsCaseDetail(groups.find((group) => group.key === state.selectedCsKey) || groups[0]);
+}
+
+async function loadCsCaseData() {
+  state.csCasesLoading = true;
+  state.csCaseError = "";
+  render();
+  try {
+    const [cases, candidates] = await Promise.all([
+      csCases.loadCsCases(),
+      state.csManualCandidates.length ? Promise.resolve(state.csManualCandidates) : csCases.loadManualCsCandidates(),
+    ]);
+    state.csCases = cases;
+    state.csManualCandidates = candidates;
+    state.csCaseContexts = await csCases.loadCsCaseContexts(cases);
+    state.csCasesLoaded = true;
+  } catch (error) {
+    state.csCaseError = `CS 케이스 조회 실패: ${error?.message || error}`;
+    console.warn("CS case load failed", error);
+  } finally {
+    state.csCasesLoading = false;
+    render();
+  }
+}
+
+async function loadManualCsCandidates() {
+  if (state.csManualCandidates.length) return;
+  state.csCasesLoading = true;
+  render();
+  try {
+    state.csManualCandidates = await csCases.loadManualCsCandidates();
+  } catch (error) {
+    state.csCaseError = `수동 CS 원본 조회 실패: ${error?.message || error}`;
+    console.warn("manual CS source load failed", error);
+  } finally {
+    state.csCasesLoading = false;
+    render();
+  }
+}
+
+function selectedCsRenderedRow() {
+  return selectedCsRenderedGroup();
+}
+
+function csDetailInput(name, scope = els.csDetail) {
+  return scope?.querySelector(`[data-cs-case-field="${name}"]`);
+}
+
+function csItemIdentity(row) {
+  return {
+    ordNo: String(row?.caseRow?.ord_no || row?.order?.ord_no || row?.item?.ord_no || "").trim(),
+    itemNo: String(row?.caseRow?.item_no || row?.item?.item_no || "").trim(),
+    sellpiaOrderItemNo: String(row?.caseRow?.sellpia_order_item_no || row?.item?.sellpia_order_item_no || "").trim(),
+  };
+}
+
+function findCsWorkflowItem(row) {
+  const { ordNo, itemNo, sellpiaOrderItemNo } = csItemIdentity(row);
+  for (const invoice of allWorkflowInvoices()) {
+    if (String(invoice?.orderGroupNo || "") !== ordNo) continue;
+    const matched = (invoice.items || []).find((item) => {
+      const rawItemNo = String(item?.raw?.item_no || item?.sellpiaItemNo || "").trim();
+      const rawSellpiaItemNo = String(item?.raw?.sellpia_order_item_no || "").trim();
+      return (itemNo && rawItemNo === itemNo) || (!itemNo && sellpiaOrderItemNo && rawSellpiaItemNo === sellpiaOrderItemNo);
+    });
+    if (matched) return { invoice, item: matched };
+  }
+  return { invoice: null, item: null };
+}
+
+async function findCsPickingRowExact(row) {
+  const { ordNo, itemNo, sellpiaOrderItemNo } = csItemIdentity(row);
+  const itemKeys = [...new Set([itemNo, sellpiaOrderItemNo].filter(Boolean))];
+  if (!ordNo || !itemKeys.length) throw new Error("관리메모 저장에 필요한 주문번호 또는 상품행키가 없습니다.");
+  const { data, error } = await db
+    .from("picking")
+    .select("id,item_no")
+    .eq("ord_no", ordNo)
+    .in("item_no", itemKeys);
+  if (error) throw error;
+  if (!data || data.length !== 1) {
+    throw new Error(`picking exact 행을 찾지 못했습니다 (${ordNo} / ${itemNo || sellpiaOrderItemNo}).`);
+  }
+  return data[0];
+}
+
+async function saveCsManagementFields(row, scope = els.csDetail, { renderAfter = true } = {}) {
+  if (!allowWrites) {
+    toast("읽기전용입니다. URL에 write=1을 붙여야 관리메모를 저장할 수 있습니다.");
+    return;
+  }
+  if (!row?.item) throw new Error("관리메모를 저장할 상품행을 찾지 못했습니다.");
+  const { ordNo, itemNo, sellpiaOrderItemNo } = csItemIdentity(row);
+  if (!ordNo || (!itemNo && !sellpiaOrderItemNo)) throw new Error("관리메모 저장에 필요한 상품행키가 없습니다.");
+  const memo1 = String(scope?.querySelector("[data-cs-management-field='memo1']")?.value || "").trim();
+  const memo2 = normalizedShortageMemo2(scope?.querySelector("[data-cs-management-field='memo2']")?.value || "");
+  if (memo2 && !/^\d+$/.test(memo2)) {
+    throw new Error("관리메모2는 미송수량 숫자 또는 빈값으로 입력하세요.");
+  }
+
+  const previousMemo1 = String(row.item.o_shop_memo ?? row.item.shop_memo ?? row.item.memo1 ?? "").trim();
+  const previousMemo2 = String(row.item.o_shop_memo2 ?? row.item.shop_memo2 ?? row.item.memo2 ?? "").trim();
+  const memo1Changed = memo1 !== previousMemo1;
+  const memo2Changed = memo2 !== previousMemo2;
+  if (!memo1Changed && !memo2Changed) {
+    toast("변경된 관리메모가 없습니다.");
+    return;
+  }
+
+  if (memo1Changed) {
+    const pickingRow = await findCsPickingRowExact(row);
+    await updateOrderItemOrderMemoExact({
+      ordNo,
+      itemNo,
+      sellpiaOrderItemNo,
+      patch: { o_shop_memo: memo1 },
+    });
+    const { error } = await db.from("picking").update({ drawer_no: memo1 }).eq("id", pickingRow.id);
+    if (error) throw error;
+    row.item.o_shop_memo = memo1;
+    row.item.shop_memo = memo1;
+    row.item.memo1 = memo1;
+  }
+
+  if (memo2Changed) {
+    const { invoice, item } = findCsWorkflowItem(row);
+    if (!invoice || !item) {
+      throw new Error("현재 작업 데이터에서 해당 상품행을 찾지 못해 관리메모2를 저장하지 않았습니다.");
+    }
+    await setShortageQty(invoice.orderGroupNo, item.sellpiaItemNo, memo2);
+    row.item.o_shop_memo2 = memo2;
+    row.item.shop_memo2 = memo2;
+    row.item.memo2 = memo2;
+  }
+
+  const { invoice, item } = findCsWorkflowItem(row);
+  if (invoice && item) {
+    patchLocalItemManagementMemos(invoice.orderGroupNo, item.sellpiaItemNo, {
+      ...(memo1Changed ? { memo1 } : {}),
+      ...(memo2Changed ? { memo2 } : {}),
+    });
+  }
+  toast("상품행 관리메모 저장");
+  if (renderAfter) renderCsPanels();
+}
+
+async function saveCsCaseOrderMemo(row, scope = els.csDetail) {
+  if (!allowWrites) {
+    toast("읽기전용입니다. URL에 write=1을 붙여야 주문메모를 저장할 수 있습니다.");
+    return;
+  }
+  const ordNo = String(row?.caseRow?.ord_no || row?.order?.ord_no || "").trim();
+  const itemNo = String(row?.caseRow?.item_no || row?.item?.item_no || "").trim();
+  const sellpiaOrderItemNo = String(row?.caseRow?.sellpia_order_item_no || row?.item?.sellpia_order_item_no || "").trim();
+  if (!ordNo || (!itemNo && !sellpiaOrderItemNo)) throw new Error("CS 주문메모 저장에 필요한 주문번호 또는 상품행키가 없습니다.");
+  const value = String(scope?.querySelector("[data-cs-case-order-memo]")?.value || "");
+  await updateOrderItemOrderMemoExact({
+    ordNo,
+    itemNo,
+    sellpiaOrderItemNo,
+    patch: { order_memo: value, order_memo_updated_at: new Date().toISOString() },
+  });
+  if (row.item) {
+    row.item.order_memo = value;
+    row.item.order_memo_updated_at = new Date().toISOString();
+  }
+  patchLocalOrderMemoByExact(ordNo, itemNo, value, sellpiaOrderItemNo);
+  toast("상품행 주문메모 저장");
+}
+
+function patchLocalOrderMemoByExact(ordNo, itemNo, value, sellpiaOrderItemNo = "") {
+  for (const invoice of allWorkflowInvoices()) {
+    if (String(invoice?.orderGroupNo || "") !== String(ordNo || "")) continue;
+    for (const item of invoice.items || []) {
+      const rawItemNo = String(item?.raw?.item_no || item?.sellpiaItemNo || "");
+      const rawRegularNo = String(item?.raw?.sellpia_order_item_no || "");
+      const matches = itemNo ? rawItemNo === String(itemNo) : rawRegularNo === String(sellpiaOrderItemNo);
+      if (!matches) continue;
+      if (!item.raw) item.raw = {};
+      item.raw.order_memo = value;
+      item.raw.order_memo_updated_at = new Date().toISOString();
+    }
+  }
+}
+
+async function saveCsCaseFields(caseId, row, scope, { renderAfter = true } = {}) {
+  if (!allowWrites) {
+    toast("읽기전용입니다. URL에 write=1을 붙여야 CS 케이스를 저장할 수 있습니다.");
+    return;
+  }
+  const current = row?.caseRow;
+  if (!current || Number(current.id) !== Number(caseId)) throw new Error("선택한 CS 케이스를 찾지 못했습니다.");
+  const caseType = String(csDetailInput("case_type", scope)?.value || current.case_type || "general").trim();
+  const basisDate = String(csDetailInput("basis_date", scope)?.value || "").trim() || null;
+  const assignedField = csDetailInput("assigned_to", scope);
+  const assignedTo = assignedField ? String(assignedField.value || "").trim() || null : current.assigned_to || null;
+  const templateField = csDetailInput("alimtalk_template", scope);
+  const patch = {
+    case_type: caseType,
+    basis_date: basisDate,
+    basis_date_source: basisDate !== (current.basis_date || null) ? "manual" : current.basis_date_source,
+    assigned_to: assignedTo,
+    updated_by: null,
+  };
+  if (current.source === "auto" && templateField) patch.alimtalk_template = String(templateField.value || "").trim() || null;
+  const next = await csCases.updateCsCase(caseId, patch);
+  state.csCases = state.csCases.map((entry) => (entry.id === next.id ? next : entry));
+  state.selectedCsKey = `order:${String(next.ord_no || row.order?.ord_no || "")}`;
+  toast("CS 케이스 저장");
+  if (renderAfter) renderCsPanels();
+}
+
+async function saveCsItemCard(caseId, row, scope) {
+  if (!allowWrites) {
+    toast("읽기전용입니다. URL에 write=1을 붙여야 CS 정보를 저장할 수 있습니다.");
+    return;
+  }
+  await saveCsManagementFields(row, scope, { renderAfter: false });
+  await saveCsCaseOrderMemo(row, scope);
+  await saveCsCaseFields(caseId, row, scope, { renderAfter: false });
+  renderCsPanels();
+}
+
+async function createManualCsCaseFromDetail(itemNo, row, scope) {
+  if (!allowWrites) {
+    toast("읽기전용입니다. URL에 write=1을 붙여야 수동 CS를 추가할 수 있습니다.");
+    return;
+  }
+  if (!row?.item || String(row.item.item_no || "") !== String(itemNo || "")) throw new Error("수동 추가할 상품행을 찾지 못했습니다.");
+  const caseType = "general";
+  await saveCsManagementFields(row, scope, { renderAfter: false });
+  await saveCsCaseOrderMemo(row, scope);
+  const receiptDate = String(row.order?.receipt_date || row.item?.receipt_date || "").trim();
+  const basisDate = String(csDetailInput("basis_date", scope)?.value || "").trim();
+  const result = await csCases.createManualCsCase({
+    ordNo: row.order?.ord_no,
+    itemNo: row.item?.item_no,
+    sellpiaOrderItemNo: row.item?.sellpia_order_item_no,
+    invNo: row.order?.inv_no || row.item?.inv_no,
+    receiptDate,
+    caseType,
+    basisDate,
+    basisDateSource: basisDate && basisDate !== receiptDate ? "manual" : "receipt_date",
+    assignedTo: csDetailInput("assigned_to", scope)?.value || "",
+  });
+  await loadCsCaseData();
+  state.csMode = "cases";
+  state.csStatusFilter = result.caseRow.status || "pending";
+  state.selectedCsKey = `order:${String(result.caseRow.ord_no || row.order?.ord_no || "")}`;
+  toast(result.created ? "수동 CS 케이스 추가" : "이미 같은 CS 케이스가 있습니다.");
+  renderCsPanels();
+}
+
+async function registerAutoShortageCsCase(row, scope) {
+  if (!allowWrites) {
+    toast("읽기전용입니다. URL에 write=1을 붙여야 자동 CS 케이스를 저장할 수 있습니다.");
+    return;
+  }
+  if (!row?.virtualAutoCase || !row?.item) throw new Error("자동 등록할 미송 상품행을 찾지 못했습니다.");
+  await saveCsManagementFields(row, scope, { renderAfter: false });
+  await saveCsCaseOrderMemo(row, scope);
+  const receiptDate = String(row.order?.receipt_date || row.item?.receipt_date || "").trim();
+  const result = await csCases.createAutoShortageCsCase({
+    ordNo: row.order?.ord_no || row.caseRow?.ord_no,
+    itemNo: row.item?.item_no,
+    sellpiaOrderItemNo: row.item?.sellpia_order_item_no,
+    invNo: row.order?.inv_no || row.item?.inv_no,
+    receiptDate,
+    basisDate: receiptDate,
+    basisDateSource: "receipt_date",
+    alimtalkTemplate: csDetailInput("alimtalk_template", scope)?.value || "",
+  });
+  await loadCsCaseData();
+  state.selectedCsKey = `order:${String(result.caseRow.ord_no || row.order?.ord_no || "")}`;
+  toast(result.created ? "미송 자동 CS 케이스를 저장했습니다." : "이미 저장된 미송 CS 케이스입니다.");
+  renderCsPanels();
+}
+
+async function changeCsCaseStatus(caseId, action) {
+  if (!allowWrites) {
+    toast("읽기전용입니다. URL에 write=1을 붙여야 상태를 변경할 수 있습니다.");
+    return;
+  }
+  const next = action === "resolve"
+    ? await csCases.resolveCsCase(caseId)
+    : action === "exclude"
+      ? await csCases.excludeCsCase(caseId)
+      : await csCases.reopenCsCase(caseId);
+  state.csCases = state.csCases.map((entry) => (entry.id === next.id ? next : entry));
+  state.selectedCsKey = `order:${String(next.ord_no || "")}`;
+  toast(`CS 케이스 ${csStatusLabel(next.status)}`);
+  renderCsPanels();
 }
 
 let activePanelRenderTimer = 0;
@@ -4379,17 +5130,47 @@ function patchLocalItemManagementMemos(orderGroupNo, sellpiaItemNo, { memo1, mem
 }
 
 async function updateOrderItemMemoFields(orderGroupNo, sellpiaItemNo, patch) {
-  const { data, error } = await db
+  const primary = await db
     .from("order_items")
     .update(patch)
     .eq("ord_no", orderGroupNo)
     .eq("item_no", sellpiaItemNo)
-    .select("ord_no,item_no");
-  if (error) throw error;
-  if (!data || !data.length) {
+    .select("ord_no,item_no,sellpia_order_item_no");
+  if (primary.error) throw primary.error;
+  if (primary.data?.length) return primary.data;
+
+  // Some Sellpia flows expose the regular item number while System V3 stores
+  // the prefixed internal item number. Fall back only within the same order.
+  const fallback = await db
+    .from("order_items")
+    .update(patch)
+    .eq("ord_no", orderGroupNo)
+    .eq("sellpia_order_item_no", sellpiaItemNo)
+    .select("ord_no,item_no,sellpia_order_item_no");
+  if (fallback.error) throw fallback.error;
+  if (!fallback.data || fallback.data.length !== 1) {
     throw new Error(`order_items 대상 행 없음 (${orderGroupNo} / ${sellpiaItemNo})`);
   }
-  return data;
+  return fallback.data;
+}
+
+async function updateOrderItemOrderMemoExact({ ordNo, itemNo, sellpiaOrderItemNo, patch }) {
+  const normalizedOrdNo = String(ordNo || "").trim();
+  const normalizedItemNo = String(itemNo || "").trim();
+  const normalizedSellpiaItemNo = String(sellpiaOrderItemNo || "").trim();
+  if (!normalizedOrdNo) throw new Error("order_items update requires ord_no.");
+
+  let query = db.from("order_items").update(patch).eq("ord_no", normalizedOrdNo);
+  if (normalizedItemNo) query = query.eq("item_no", normalizedItemNo);
+  else if (normalizedSellpiaItemNo) query = query.eq("sellpia_order_item_no", normalizedSellpiaItemNo);
+  else throw new Error("order_items update requires item_no or legacy sellpia_order_item_no.");
+
+  const result = await query.select("ord_no,item_no,sellpia_order_item_no");
+  if (result.error) throw result.error;
+  if (!result.data || result.data.length !== 1) {
+    throw new Error(`order_items exact row not found (${normalizedOrdNo} / ${normalizedItemNo || normalizedSellpiaItemNo}).`);
+  }
+  return result.data[0];
 }
 
 function buildPlannedPrintCsvRows() {
@@ -5635,19 +6416,26 @@ async function saveInspectionSellpiaOrderMemo(orderGroupNo, sellpiaItemNo, value
     return;
   }
   const nextValue = String(value || "");
-  const buildQuery = (patch) => {
-    let query = db.from("order_items").update(patch).eq("ord_no", invoice.orderGroupNo);
-    if (item.sellpiaItemNo) query = query.eq("item_no", item.sellpiaItemNo);
-    else query = query.eq("sort_order", item.sortOrder || item.itemOrderIndex || 0);
-    return query;
-  };
-  let { error } = await buildQuery({ order_memo: nextValue, order_memo_updated_at: new Date().toISOString() });
-  if (error && /order_memo_updated_at|column|schema cache/i.test(error.message || "")) {
-    ({ error } = await buildQuery({ order_memo: nextValue }));
-  }
-  if (error) {
-    toast(`셀피아 주문메모 저장 실패: ${error.message}`);
-    throw error;
+  const itemNo = String(item.raw?.item_no || item.sellpiaItemNo || "").trim();
+  const sellpiaOrderItemNo = String(item.raw?.sellpia_order_item_no || "").trim();
+  try {
+    await updateOrderItemOrderMemoExact({
+      ordNo: invoice.orderGroupNo,
+      itemNo,
+      sellpiaOrderItemNo,
+      patch: { order_memo: nextValue, order_memo_updated_at: new Date().toISOString() },
+    });
+  } catch (error) {
+    if (!/order_memo_updated_at|column|schema cache/i.test(error?.message || "")) {
+      toast(`셀피아 주문메모 저장 실패: ${error.message}`);
+      throw error;
+    }
+    await updateOrderItemOrderMemoExact({
+      ordNo: invoice.orderGroupNo,
+      itemNo,
+      sellpiaOrderItemNo,
+      patch: { order_memo: nextValue },
+    });
   }
   patchLocalSellpiaOrderMemo(invoice, item, nextValue);
   toast("셀피아 주문메모 저장");
@@ -5753,6 +6541,25 @@ async function toggleSelectedInspectionHold(orderGroupNo = state.selectedInspect
   state.selectedInspectionGroup = invoice.orderGroupNo;
   renderWorkflowSurfaces();
   toast(holdOn ? "보류 해제되었습니다." : "배송보류 ON 처리되었습니다.");
+}
+
+async function toggleCsShippingHold(orderGroupNo) {
+  const invoice = allWorkflowInvoices().find((candidate) => String(candidate?.orderGroupNo || "") === String(orderGroupNo || ""));
+  if (!invoice) {
+    toast("CS 주문의 배송보류 대상을 찾지 못했습니다.");
+    return;
+  }
+  const holdOn = Boolean(workflowInvoiceState(invoice)?.systemShippingHold);
+  const event = await saveShippingHoldCurrentThenEvent(
+    invoice,
+    holdOn ? "OFF" : "ON",
+    holdOn ? "cs_hold_off" : "cs_hold_on",
+    holdOn ? "hold_released" : "hold_created",
+    { memo: holdOn ? "shipping hold released from cs" : "shipping hold on from cs", source: "f_v1_cs" },
+  );
+  if (!event) return;
+  renderWorkflowSurfaces();
+  toast(holdOn ? "배송보류를 해제했습니다." : "배송보류를 처리했습니다.");
 }
 
 async function onOrderListClick(event) {
@@ -6080,6 +6887,7 @@ async function loadPickingData() {
   rebuildGroups();
   render();
   await loadWorkflowData();
+  await loadCsCaseData();
 }
 
 async function loadInspectionMemoRows(orderNos) {
@@ -6139,6 +6947,9 @@ function setActiveTab(tab) {
   }
   renderShell();
   renderActivePanelSoon(0, { metrics: false });
+  if (state.activeTab === "cs" && !state.csCasesLoaded && !state.csCasesLoading) {
+    loadCsCaseData().catch(showError);
+  }
 }
 
 function scrollToTrayItem(key) {
@@ -6518,11 +7329,42 @@ function bindEvents() {
     }
   });
   els.csDateTabs?.addEventListener("click", (event) => {
+    const statusButton = event.target.closest("[data-cs-case-status]");
+    if (statusButton) {
+      state.csMode = "cases";
+      state.csStatusFilter = statusButton.dataset.csCaseStatus || "pending";
+      state.selectedCsKey = "";
+      renderCsPanels();
+      return;
+    }
+    const modeButton = event.target.closest("[data-cs-mode]");
+    if (modeButton?.dataset.csMode === "manual") {
+      state.csMode = "manual";
+      state.selectedCsKey = "";
+      loadManualCsCandidates().catch(showError);
+      renderCsPanels();
+      return;
+    }
     const button = event.target.closest("[data-cs-date]");
     if (!button) return;
     state.csDateFilter = button.dataset.csDate || "all";
     state.selectedCsKey = "";
     renderCsPanels();
+  });
+  els.csDateTabs?.addEventListener("change", (event) => {
+    const templateSelect = event.target.closest("[data-cs-template-filter]");
+    if (templateSelect) {
+      state.csTypeFilter = templateSelect.value || "";
+      state.selectedCsKey = "";
+      renderCsPanels();
+      return;
+    }
+    const goldSelect = event.target.closest("[data-cs-gold-filter]");
+    if (goldSelect) {
+      state.csGoldFilter = goldSelect.value || "all";
+      state.selectedCsKey = "";
+      renderCsPanels();
+    }
   });
   els.csSearchInput?.addEventListener("input", () => {
     state.csSearchText = els.csSearchInput.value;
@@ -6535,8 +7377,13 @@ function bindEvents() {
     state.selectedCsKey = button.dataset.csKey;
     renderCsPanels();
   });
+  els.csListSort?.addEventListener("change", () => {
+    state.csSort = els.csListSort.value || "receipt_desc";
+    state.selectedCsKey = "";
+    renderCsPanels();
+  });
   els.csDetail?.addEventListener("input", (event) => {
-    const field = event.target.closest("[data-cs-order-memo]");
+    const field = event.target.closest("[data-cs-order-memo], [data-cs-case-order-memo]");
     if (!field) return;
     field.closest(".inspection-memo-cell")?.classList.toggle("has-value", Boolean(field.value.trim()));
   });
@@ -6549,11 +7396,48 @@ function bindEvents() {
       onDrawerChange(event);
       return;
     }
+    const managementField = event.target.closest("[data-cs-management-field]");
+    if (managementField) {
+      if (managementField.dataset.csManagementField === "memo2") {
+        managementField.value = normalizedShortageMemo2(managementField.value);
+      }
+      const scope = managementField.closest(".cs-item-row");
+      const row = selectedCsItemRow(scope?.dataset.csRowKey || "");
+      saveCsManagementFields(row, scope).catch(showError);
+      return;
+    }
+    if (event.target.closest("[data-cs-case-order-memo]")) return;
     const field = event.target.closest("[data-cs-order-memo]");
     if (!field) return;
     saveInspectionSellpiaOrderMemo(field.dataset.orderGroup || "", field.dataset.itemNo || "", field.value).catch(showError);
   });
   els.csDetail?.addEventListener("click", (event) => {
+    const holdButton = event.target.closest("[data-cs-hold-action]");
+    if (holdButton) {
+      toggleCsShippingHold(holdButton.dataset.csOrderGroup || "").catch(showError);
+      return;
+    }
+    const caseAction = event.target.closest("[data-cs-case-action]");
+    if (caseAction) {
+      const action = caseAction.dataset.csCaseAction;
+      const caseId = Number(caseAction.dataset.csCaseId || 0);
+      const row = selectedCsItemRow(caseAction.dataset.csRowKey || "");
+      const scope = caseAction.closest(".cs-case-item-editor, .cs-item-row");
+      if (action === "register-auto") {
+        registerAutoShortageCsCase(row, scope).catch(showError);
+      } else if (action === "create") {
+        createManualCsCaseFromDetail(caseAction.dataset.csManualItemNo || "", row, scope).catch(showError);
+      } else if (action === "save-all") {
+        saveCsItemCard(caseId, row, scope).catch(showError);
+      } else if (action === "save") {
+        saveCsCaseFields(caseId, row, scope).catch(showError);
+      } else if (action === "memo") {
+        saveCsCaseOrderMemo(row, scope).then(renderCsPanels).catch(showError);
+      } else if (action === "resolve" || action === "exclude" || action === "reopen") {
+        changeCsCaseStatus(caseId, action).catch(showError);
+      }
+      return;
+    }
     const memoButton = event.target.closest("[data-cs-order-memo-save]");
     if (!memoButton) return;
     const orderGroupNo = memoButton.dataset.orderGroup;
