@@ -5945,6 +5945,57 @@ function formatAlimtalkBatchTime(value) {
   }).format(date);
 }
 
+async function openLatestAlimtalkSendConfirmModal() {
+  const [batch] = await alimtalkSends.loadUnconfirmedBatches();
+  if (!batch) {
+    toast("발송확정할 알림톡 CSV 내보내기 기록이 없습니다.");
+    return;
+  }
+
+  let modal = document.getElementById("alimtalk-send-confirm-modal");
+  if (!modal) {
+    modal = document.createElement("div");
+    modal.id = "alimtalk-send-confirm-modal";
+    modal.className = "order-list-modal-overlay";
+    document.body.append(modal);
+  }
+  modal.innerHTML = `<div class="order-list-modal cs-list-modal" role="dialog" aria-modal="true" aria-label="알림톡 CSV 발송확정">
+    <div class="order-list-modal-head">
+      <h3>알림톡 CSV 발송확정</h3>
+      <div class="order-list-modal-tools"><button type="button" class="order-list-modal-close" data-alimtalk-confirm-action="close">×</button></div>
+    </div>
+    <div class="cs-work-log-note"><b>가장 최근에 내보낸 알림톡 ZIP 전체</b>를 발송확정합니다. ZIP 안의 모든 템플릿·주문 대상이 함께 확정되고, 주문별 발송로그도 템플릿 코드로 누적됩니다.</div>
+    <div class="order-list-modal-table-wrap"><table class="order-list-modal-table"><thead><tr><th>내보낸 시각</th><th>확정 대상</th><th>처리</th></tr></thead><tbody>
+      <tr><td>${escapeHtml(formatAlimtalkBatchTime(batch.created_at))}</td><td>${escapeHtml(batch.target_count)} 주문·템플릿</td><td><button class="btn primary" data-alimtalk-confirm-action="confirm" data-alimtalk-batch-id="${escapeHtml(batch.id)}" type="button">전체 발송확정</button></td></tr>
+    </tbody></table></div>
+  </div>`;
+  modal.hidden = false;
+  modal.onclick = (event) => {
+    if (event.target === modal || event.target.closest("[data-alimtalk-confirm-action='close']")) {
+      modal.hidden = true;
+      return;
+    }
+    const confirmButton = event.target.closest("[data-alimtalk-confirm-action='confirm']");
+    if (!confirmButton) return;
+    const id = Number(confirmButton.dataset.alimtalkBatchId || 0);
+    if (!window.confirm(`가장 최근에 내보낸 알림톡 ZIP 전체(${batch.target_count} 주문·템플릿)를 실제 발송완료로 확정할까요?\n확정 후 ZIP에 포함된 전체 대상은 다음 CSV에서 제외됩니다.`)) return;
+    confirmButton.disabled = true;
+    alimtalkSends.confirmExportBatch(id)
+      .then(async () => {
+        let syncedOrders = 0;
+        try {
+          syncedOrders = await recordAlimtalkSendScheduledDate(id);
+        } catch (error) {
+          console.warn("failed to record Alimtalk scheduled date", error);
+          toast("알림톡 발송은 확정됐지만 출고예정일 기록 저장에 실패했습니다.");
+        }
+        modal.hidden = true;
+        toast(`알림톡 ZIP 전체를 발송확정했습니다.${syncedOrders ? ` 출고예정일 ${syncedOrders}건 기록` : ""}`);
+      })
+      .catch(showCsError);
+  };
+}
+
 async function openAlimtalkSendHistoryModal() {
   const batches = await alimtalkSends.loadUnconfirmedBatches();
   let modal = document.getElementById("alimtalk-send-history-modal");
@@ -7605,7 +7656,7 @@ function bindEvents() {
     const alimtalkAction = event.target.closest("[data-cs-alimtalk-action]");
     if (alimtalkAction) {
       if (alimtalkAction.dataset.csAlimtalkAction === "export") exportAlimtalkCsv().catch(showCsError);
-      if (alimtalkAction.dataset.csAlimtalkAction === "history") openAlimtalkSendHistoryModal().catch(showCsError);
+      if (alimtalkAction.dataset.csAlimtalkAction === "history") openLatestAlimtalkSendConfirmModal().catch(showCsError);
       return;
     }
     const statusButton = event.target.closest("[data-cs-case-status]");
