@@ -3946,7 +3946,7 @@ function renderCsCaseFilters() {
     </select>
     <button class="filter-chip ${state.csMode === "manual" ? "active" : ""}" data-cs-mode="manual" type="button">수동 추가</button>
     <button class="filter-chip" data-cs-alimtalk-action="export" type="button" ${allowWrites ? "" : "disabled"}>알림톡 CSV</button>
-    <button class="filter-chip" data-cs-alimtalk-action="history" type="button" ${allowWrites ? "" : "disabled"}>발송확정</button>
+    <button class="filter-chip" data-cs-alimtalk-action="history" type="button" ${allowWrites ? "" : "disabled"}>CSV 발송확정</button>
     <span class="cs-mode-indicator ${state.csMode === "manual" ? "manual" : ""}">${state.csMode === "manual" ? "수동 추가 모드 · 검색 결과에서 상품행을 선택하세요" : "CS 케이스 목록"}</span>`;
 }
 
@@ -5954,12 +5954,12 @@ async function openAlimtalkSendHistoryModal() {
     modal.className = "order-list-modal-overlay";
     document.body.append(modal);
   }
-  modal.innerHTML = `<div class="order-list-modal cs-list-modal" role="dialog" aria-modal="true" aria-label="알림톡 발송확정">
+  modal.innerHTML = `<div class="order-list-modal cs-list-modal" role="dialog" aria-modal="true" aria-label="알림톡 CSV 발송확정">
     <div class="order-list-modal-head">
-      <h3>알림톡 발송확정</h3>
+      <h3>알림톡 CSV 발송확정</h3>
       <div class="order-list-modal-tools"><button type="button" class="order-list-modal-close" data-alimtalk-history-action="close">×</button></div>
     </div>
-    <div class="cs-work-log-note">CSV 다운로드는 <b>내보냄</b>만 기록합니다. 외부 알림톡 발송을 끝낸 배치만 발송확정하세요. 확정된 주문·템플릿은 다음 CSV 대상에서 제외됩니다.</div>
+    <div class="cs-work-log-note">CSV 다운로드는 <b>내보냄</b>만 기록합니다. 외부 알림톡 발송을 끝낸 배치만 확정하세요. <b>배치 1건을 확정하면 그 CSV에 포함된 주문·템플릿 전체가 함께 발송확정</b>되며, 다음 CSV 대상에서 제외됩니다.</div>
     <div class="order-list-modal-table-wrap"><table class="order-list-modal-table"><thead><tr><th>배치</th><th>내보낸 시각</th><th>대상</th><th>상태</th><th>처리</th></tr></thead><tbody>
       ${batches.length ? batches.map((batch) => `<tr><td>#${escapeHtml(batch.id)}</td><td>${escapeHtml(formatAlimtalkBatchTime(batch.created_at))}</td><td>${escapeHtml(batch.target_count)} 주문·템플릿</td><td>내보냄</td><td><button class="btn primary" data-alimtalk-history-action="confirm" data-alimtalk-batch-id="${escapeHtml(batch.id)}" type="button">발송확정</button></td></tr>`).join("") : '<tr><td colspan="5" class="order-list-modal-empty">발송확정할 내보냄 기록이 없습니다.</td></tr>'}
     </tbody></table></div>
