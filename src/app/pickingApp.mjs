@@ -3,7 +3,7 @@ import { buildPickingViewModel } from "../workflows/picking/buildPickingViewMode
 import { createCsCaseAdapter, openShortageItemKeys } from "../adapters/csCaseAdapter.mjs?v=20260728-cs-cases3";
 import { createAlimtalkSendAdapter } from "../adapters/alimtalkSendAdapter.mjs?v=20260728-alimtalk-history2";
 import { isGoldOwnCode } from "../domain/gold.mjs?v=20260728-gold-own-code1";
-import { alimtalkSendNaturalKey, resolveAlimtalkTemplate } from "../domain/alimtalk.mjs?v=20260728-exact-day2";
+import { alimtalkSendLogCode, alimtalkSendNaturalKey, appendAlimtalkSendLog, resolveAlimtalkTemplate } from "../domain/alimtalk.mjs?v=20260728-alimtalk-log-codes1";
 import {
   buildWorkflowState,
   completedInvoicesForInspection,
@@ -3972,7 +3972,7 @@ function renderCsCaseRow(group, selected) {
   </button>`;
 }
 
-function renderCsCaseItemEditor(row) {
+function renderCsCaseItemEditor(row, itemNumber = 0) {
   const caseRow = row.caseRow || null;
   const virtualAutoCase = Boolean(row.virtualAutoCase);
   const item = row.item || {};
@@ -4011,6 +4011,7 @@ function renderCsCaseItemEditor(row) {
       : `<button class="btn primary" data-cs-case-action="create" data-cs-manual-item-no="${escapeHtml(item.item_no || "")}" data-cs-row-key="${escapeHtml(row.key)}" type="button" ${disabled}>별도 CS 추가</button>`;
   return `<article class="cs-item-card ${caseRow?.status === "pending" ? "is-cs-target" : ""}" data-cs-row-key="${escapeHtml(row.key)}">
     <section class="cs-item-overview">
+      <span class="cs-item-line-number" title="상품행번호 ${escapeHtml(String(itemNumber || "-"))}">${escapeHtml(String(itemNumber || "-"))}</span>
       <div class="workflow-item-photo">${imageUrl ? `<img src="${imageUrl}" ${photoImgAttrs(imageUrl, `${row.ownCode || ""} · ${item.p_name || ""}`)} alt="" loading="lazy" onerror="this.style.visibility='hidden'">` : "사진"}</div>
       <div class="cs-item-product"><strong>${escapeHtml(item.p_name || "상품 정보 없음")}</strong><em>${escapeHtml(item.p_option || "옵션 없음")}</em><div class="cs-item-facts"><span>수량 <b>${escapeHtml(String(item.qty ?? item.o_amount ?? "-"))}</b></span><span>자사코드 <b>${escapeHtml(row.ownCode || "-")}</b></span></div></div>
       <div class="workflow-row-badges cs-item-status">${caseBadge}${row.isGold ? '<span class="workflow-row-badge gold">14K</span>' : '<span class="workflow-row-badge">일반</span>'}</div>
@@ -4024,8 +4025,8 @@ function renderCsCaseItemEditor(row) {
     <section class="cs-item-section cs-item-memo-fields">
       <h4>상품 메모</h4>
       <label><span>관리메모1</span><input data-cs-management-field="memo1" value="${escapeHtml(managementMemo1)}" ${managementReadonly}></label>
-      <label><span>관리메모2 / 미송수량</span><input data-cs-management-field="memo2" inputmode="numeric" value="${escapeHtml(managementMemo2)}" ${managementReadonly}></label>
-      <label class="inspection-memo-cell ${memo.trim() ? "has-value" : ""}"><span>주문메모 / CS메모</span><textarea data-cs-case-order-memo rows="3" ${readonly}>${escapeHtml(memo)}</textarea></label>
+      <label><span>관리메모2</span><input data-cs-management-field="memo2" value="${escapeHtml(managementMemo2)}" ${managementReadonly}></label>
+      <label class="inspection-memo-cell ${memo.trim() ? "has-value" : ""}"><span>주문메모 / CS메모</span><textarea data-cs-case-order-memo rows="2" ${readonly}>${escapeHtml(memo)}</textarea></label>
     </section>
     <div class="cs-item-card-actions">${actionButtons}</div>
   </article>`;
@@ -4052,12 +4053,12 @@ function renderCsCaseDetail(group) {
         <span class="workflow-row-badge ${state.csMode === "manual" ? "manual" : ""}">${state.csMode === "manual" ? "수동 추가 대상" : `CS ${caseCount}건`}</span>
         <button class="btn" data-cs-hold-action="${escapeHtml(holdAction)}" data-cs-order-group="${escapeHtml(group.ordNo || "")}" type="button" ${holdDisabled}>${escapeHtml(holdLabel)}</button>
         ${invoice ? shippingHoldBadge(invoice) : ""}
-        <label class="cs-order-scheduled-date"><span>출고예정일 기록 <em>송장 공통 · 누적 메모</em></span><textarea data-cs-order-sync-field="outbound_scheduled_date" data-cs-order-group="${escapeHtml(group.ordNo || "")}" rows="3" ${managementReadonly}>${escapeHtml(scheduledHistory)}</textarea></label>
+        <label class="cs-order-scheduled-date"><span>알림톡 발송로그 <em>송장 공통 · 코드 누적</em></span><textarea data-cs-order-sync-field="outbound_scheduled_date" data-cs-order-group="${escapeHtml(group.ordNo || "")}" rows="3" placeholder="예: 1,3,5ㅂ" title="0=내일출고, 1=일반 1일차, 1_14=14K 1일차, 3=일반 3일차 플랫폼, 3ㅁ=일반 3일차 메이크샵, 5ㅂ=5일차 부분출고, 5ㅊ=5일차 취소출고, 5_14k=14K 5일차 부분출고, 10=10일차 잔여취소, ㅂㅂ=별도 CS 처리" ${managementReadonly}>${escapeHtml(scheduledHistory)}</textarea></label>
       </div>
     </div>
     <p class="workflow-note">미송 자동대상과 별도 CS를 구분합니다. 알림톡 템플릿·기준일·주문메모·관리메모는 상품행별로 저장하며, 배송보류는 주문 단위로 위 버튼에서 처리합니다.</p>
-    <div class="cs-sync-note"><strong>CS 백업·동기화 기준</strong><span>송장 단위의 <b>출고예정일 기록</b>에는 알림톡 <b>템플릿별 발송확정</b>과 <b>별도 CS 처리</b>가 누적됩니다. 상품행 입고예정일은 <b>출고확정일</b>에 기록합니다. 관리메모·주문메모와 연결하지 않습니다.</span></div>
-    <div class="cs-item-card-stack">${group.items.map(renderCsCaseItemEditor).join("")}</div>
+    <div class="cs-sync-note"><strong>CS 백업·동기화 기준</strong><span>송장 단위의 <b>알림톡 발송로그</b>는 쉼표로 누적합니다. <b>0</b>=내일출고, <b>1</b>=일반1일차, <b>1_14</b>=14K1일차, <b>3</b>=플랫폼, <b>3ㅁ</b>=메이크샵, <b>5ㅂ</b>=부분출고, <b>5ㅊ</b>=취소출고, <b>5_14k</b>=14K5일차, <b>10</b>=잔여취소, <b>ㅂㅂ</b>=별도 CS 처리입니다. 상품행 입고예정일은 <b>출고확정일</b>에 기록합니다.</span></div>
+    <div class="cs-item-card-stack">${group.items.map((row, index) => renderCsCaseItemEditor(row, index + 1)).join("")}</div>
   </div>`;
 }
 
@@ -4163,7 +4164,7 @@ async function saveCsOrderScheduledDate(ordNo, value) {
   }
   const normalizedOrdNo = String(ordNo || "").trim();
   if (!normalizedOrdNo) throw new Error("Missing order number for outbound scheduled date.");
-  const scheduledHistory = String(value || "").trim() || null;
+  const scheduledHistory = appendAlimtalkSendLog("", value) || null;
   const { data, error } = await db
     .from("orders")
     .update({ sellpia_outbound_scheduled_date: scheduledHistory })
@@ -4180,17 +4181,6 @@ async function saveCsOrderScheduledDate(ordNo, value) {
   toast("출고예정일 기록 저장");
 }
 
-function outboundHistoryDatePrefix(value = todayDateString()) {
-  const [, month = "", day = ""] = String(value || "").split("-");
-  return month && day ? `${month}/${day}` : String(value || "");
-}
-
-function appendOutboundHistoryLine(current, line) {
-  const existing = String(current || "").trim();
-  const entry = String(line || "").trim();
-  return entry ? (existing ? `${existing}\n${entry}` : entry) : existing;
-}
-
 async function appendCsOrderScheduledHistory(ordNo, entry) {
   const normalizedOrdNo = String(ordNo || "").trim();
   if (!normalizedOrdNo || !String(entry || "").trim()) return "";
@@ -4200,7 +4190,7 @@ async function appendCsOrderScheduledHistory(ordNo, entry) {
     .eq("ord_no", normalizedOrdNo);
   if (error) throw error;
   if (!data || data.length !== 1) throw new Error(`Order not found for outbound scheduled history (${normalizedOrdNo}).`);
-  const nextValue = appendOutboundHistoryLine(data[0].sellpia_outbound_scheduled_date, entry);
+  const nextValue = appendAlimtalkSendLog(data[0].sellpia_outbound_scheduled_date, entry);
   await saveCsOrderScheduledDate(normalizedOrdNo, nextValue);
   return nextValue;
 }
@@ -4240,11 +4230,10 @@ async function recordAlimtalkSendScheduledDate(batchId) {
     if (!templateKeysByOrder.has(ordNo)) templateKeysByOrder.set(ordNo, new Set());
     templateKeysByOrder.get(ordNo).add(templateKey);
   }
-  const prefix = outboundHistoryDatePrefix();
   for (const [ordNo, templateKeys] of templateKeysByOrder) {
     for (const templateKey of templateKeys) {
-      const templateLabel = CS_TEMPLATE_PRESETS[templateKey]?.label || templateKey;
-      await appendCsOrderScheduledHistory(ordNo, `${prefix} ${templateLabel} 발송확정`);
+      const logCode = alimtalkSendLogCode(templateKey);
+      if (logCode) await appendCsOrderScheduledHistory(ordNo, logCode);
     }
   }
   return templateKeysByOrder.size;
@@ -4301,7 +4290,8 @@ async function findCsPickingRowExact(row) {
     .eq("ord_no", ordNo)
     .in("item_no", itemKeys);
   if (error) throw error;
-  if (!data || data.length !== 1) {
+  if (!data || data.length === 0) return null;
+  if (data.length !== 1) {
     throw new Error(`picking exact 행을 찾지 못했습니다 (${ordNo} / ${itemNo || sellpiaOrderItemNo}).`);
   }
   return data[0];
@@ -4316,10 +4306,7 @@ async function saveCsManagementFields(row, scope = els.csDetail, { renderAfter =
   const { ordNo, itemNo, sellpiaOrderItemNo } = csItemIdentity(row);
   if (!ordNo || (!itemNo && !sellpiaOrderItemNo)) throw new Error("관리메모 저장에 필요한 상품행키가 없습니다.");
   const memo1 = String(scope?.querySelector("[data-cs-management-field='memo1']")?.value || "").trim();
-  const memo2 = normalizedShortageMemo2(scope?.querySelector("[data-cs-management-field='memo2']")?.value || "");
-  if (memo2 && !/^\d+$/.test(memo2)) {
-    throw new Error("관리메모2는 미송수량 숫자 또는 빈값으로 입력하세요.");
-  }
+  const memo2 = String(scope?.querySelector("[data-cs-management-field='memo2']")?.value || "").trim();
 
   const previousMemo1 = String(row.item.o_shop_memo ?? row.item.shop_memo ?? row.item.memo1 ?? "").trim();
   const previousMemo2 = String(row.item.o_shop_memo2 ?? row.item.shop_memo2 ?? row.item.memo2 ?? "").trim();
@@ -4331,26 +4318,29 @@ async function saveCsManagementFields(row, scope = els.csDetail, { renderAfter =
   }
 
   if (memo1Changed) {
-    const pickingRow = await findCsPickingRowExact(row);
     await updateOrderItemOrderMemoExact({
       ordNo,
       itemNo,
       sellpiaOrderItemNo,
       patch: { o_shop_memo: memo1 },
     });
-    const { error } = await db.from("picking").update({ drawer_no: memo1 }).eq("id", pickingRow.id);
-    if (error) throw error;
+    const pickingRow = await findCsPickingRowExact(row);
+    if (pickingRow) {
+      const { error } = await db.from("picking").update({ drawer_no: memo1 }).eq("id", pickingRow.id);
+      if (error) throw error;
+    }
     row.item.o_shop_memo = memo1;
     row.item.shop_memo = memo1;
     row.item.memo1 = memo1;
   }
 
   if (memo2Changed) {
-    const { invoice, item } = findCsWorkflowItem(row);
-    if (!invoice || !item) {
-      throw new Error("현재 작업 데이터에서 해당 상품행을 찾지 못해 관리메모2를 저장하지 않았습니다.");
-    }
-    await setShortageQty(invoice.orderGroupNo, item.sellpiaItemNo, memo2);
+    await updateOrderItemOrderMemoExact({
+      ordNo,
+      itemNo,
+      sellpiaOrderItemNo,
+      patch: { o_shop_memo2: memo2 },
+    });
     row.item.o_shop_memo2 = memo2;
     row.item.shop_memo2 = memo2;
     row.item.memo2 = memo2;
@@ -4470,7 +4460,7 @@ async function createManualCsCaseFromDetail(itemNo, row, scope) {
   if (result.created) {
     await appendCsOrderScheduledHistory(
       result.caseRow.ord_no || row.order?.ord_no,
-      `${outboundHistoryDatePrefix()} 별도 CS 추가`,
+      alimtalkSendLogCode("manual"),
     );
   }
   await loadCsCaseData();
@@ -4517,8 +4507,7 @@ async function changeCsCaseStatus(caseId, action) {
       ? await csCases.excludeCsCase(caseId)
       : await csCases.reopenCsCase(caseId);
   if (next.source === "manual") {
-    const actionLabel = ({ resolve: "해결", exclude: "제외", reopen: "재개" })[action] || action;
-    await appendCsOrderScheduledHistory(next.ord_no, `${outboundHistoryDatePrefix()} 별도 CS ${actionLabel}`);
+    await appendCsOrderScheduledHistory(next.ord_no, alimtalkSendLogCode("manual"));
   }
   state.csCases = state.csCases.map((entry) => (entry.id === next.id ? next : entry));
   state.selectedCsKey = `order:${String(next.ord_no || "")}`;
@@ -6436,7 +6425,14 @@ function labelInvoiceRank(invoice, shortageRankMap) {
 
 function labelSourceInvoices(shortageRankMap = new Map()) {
   void shortageRankMap;
-  return inspectionSourceInvoices().filter(invoiceHasGold).filter(invoiceHasLabelTarget);
+  return inspectionSourceInvoices()
+    .filter(invoiceHasGold)
+    .filter(invoiceHasLabelTarget)
+    .sort((a, b) => {
+      const aReceivedAt = labelReceivedAtForItem(a, (a.items || [])[0]);
+      const bReceivedAt = labelReceivedAtForItem(b, (b.items || [])[0]);
+      return getLabelDayOffset(aReceivedAt) - getLabelDayOffset(bReceivedAt);
+    });
 }
 
 function labelItemsForInvoice(invoice, shortageRankMap) {
@@ -7692,15 +7688,18 @@ function bindEvents() {
     }
     const managementField = event.target.closest("[data-cs-management-field]");
     if (managementField) {
-      if (managementField.dataset.csManagementField === "memo2") {
-        managementField.value = normalizedShortageMemo2(managementField.value);
-      }
       const scope = managementField.closest(".cs-item-card, .cs-item-row");
       const row = selectedCsItemRow(scope?.dataset.csRowKey || "");
       saveCsManagementFields(row, scope).catch(showCsError);
       return;
     }
-    if (event.target.closest("[data-cs-case-order-memo]")) return;
+    const caseOrderMemoField = event.target.closest("[data-cs-case-order-memo]");
+    if (caseOrderMemoField) {
+      const scope = caseOrderMemoField.closest(".cs-item-card, .cs-item-row");
+      const row = selectedCsItemRow(scope?.dataset.csRowKey || "");
+      saveCsCaseOrderMemo(row, scope).catch(showCsError);
+      return;
+    }
     const field = event.target.closest("[data-cs-order-memo]");
     if (!field) return;
     saveInspectionSellpiaOrderMemo(field.dataset.orderGroup || "", field.dataset.itemNo || "", field.value).catch(showError);

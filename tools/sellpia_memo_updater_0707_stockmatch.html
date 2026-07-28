@@ -2135,7 +2135,7 @@
             }
           } else if (rowResult.writeOutboundScheduledDate || rowResult.writeOutboundConfirmedDate) {
             try {
-              const popupTarget = assertPopupItemMatches(root, rowResult);
+              const popupTarget = assertPopupTargetMatches(root, rowResult);
               testGuard = {
                 popupOrderNo: popupTarget.orderNo,
                 popupItemNo: popupTarget.itemNo

@@ -3304,7 +3304,7 @@ input {
 }
 
 .cs-layout {
-  grid-template-columns: minmax(250px, 0.23fr) minmax(0, 1fr);
+  grid-template-columns: minmax(280px, 0.25fr) minmax(0, 1fr);
 }
 
 .cs-layout .workflow-list-head {
@@ -3421,13 +3421,13 @@ input {
   grid-template-columns: minmax(0, 1fr) auto;
   align-items: start;
   gap: 8px;
-  padding: 8px;
+  padding: 10px;
 }
 
 .cs-case-row-main {
   display: grid;
   min-width: 0;
-  gap: 4px;
+  gap: 5px;
 }
 
 .cs-case-row-main strong,
@@ -3439,13 +3439,13 @@ input {
 
 .cs-case-row-main strong {
   color: #1a2840;
-  font-size: 11px;
+  font-size: 13px;
   font-weight: 1000;
 }
 
 .cs-case-row-main small {
   color: #64748b;
-  font-size: 9px;
+  font-size: 11px;
   font-weight: 800;
 }
 
@@ -3461,8 +3461,8 @@ input {
 .cs-case-row-meta .workflow-row-badge {
   max-width: 100%;
   overflow: hidden;
-  padding: 3px 5px;
-  font-size: 9px;
+  padding: 4px 6px;
+  font-size: 10px;
   text-overflow: ellipsis;
 }
 
@@ -3477,7 +3477,7 @@ input {
   max-width: 76px;
   overflow: hidden;
   color: #64748b;
-  font-size: 10px;
+  font-size: 11px;
   font-weight: 900;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -3508,27 +3508,27 @@ input {
   grid-template-columns: 1fr;
   align-items: stretch;
   gap: 7px;
-  min-width: 230px;
-  max-width: 320px;
-  padding: 6px 8px;
+  min-width: 260px;
+  max-width: 360px;
+  padding: 8px 10px;
   border: 1px solid #9db8e5;
   border-radius: 8px;
   background: #f7faff;
   color: #1f3f94;
-  font-size: 11px;
+  font-size: 12px;
   font-weight: 900;
 }
 
 .cs-order-scheduled-date em {
   color: #64748b;
-  font-size: 10px;
+  font-size: 11px;
   font-style: normal;
   font-weight: 800;
 }
 
 .cs-order-scheduled-date textarea {
   min-width: 0;
-  min-height: 54px;
+  min-height: 64px;
   resize: vertical;
   padding: 5px 7px;
   border: 1px solid #b9cae4;
@@ -3592,16 +3592,16 @@ input {
 
 .cs-item-card-stack {
   display: grid;
-  gap: 10px;
-  padding: 10px 12px 12px;
+  gap: 12px;
+  padding: 12px 14px 14px;
 }
 
 .cs-item-card {
   display: grid;
-  grid-template-columns: minmax(430px, 1.25fr) minmax(270px, 0.75fr) minmax(390px, 0.95fr) 82px;
-  gap: 12px;
-  align-items: stretch;
-  padding: 12px;
+  grid-template-columns: minmax(480px, 1.25fr) minmax(310px, 0.75fr) minmax(440px, 0.95fr) 88px;
+  gap: 14px;
+  align-items: start;
+  padding: 12px 16px;
   border: 1px solid #dbe4f0;
   border-radius: 10px;
   background: #ffffff;
@@ -3615,16 +3615,31 @@ input {
 
 .cs-item-overview {
   display: grid;
-  grid-template-columns: 92px minmax(0, 1fr) auto;
-  gap: 10px;
+  grid-template-columns: 34px 112px minmax(0, 1fr) auto;
+  gap: 12px;
   align-items: center;
   min-width: 0;
 }
 
 .cs-item-overview .workflow-item-photo {
-  width: 92px;
-  height: 92px;
+  width: 112px;
+  height: 112px;
   aspect-ratio: 1;
+}
+
+.cs-item-line-number {
+  display: grid;
+  place-items: center;
+  align-self: center;
+  width: 32px;
+  min-height: 32px;
+  border: 1px solid #d6dfec;
+  border-radius: 50%;
+  background: #f8fafc;
+  color: #64748b;
+  font-size: 15px;
+  font-weight: 1000;
+  line-height: 1;
 }
 
 .cs-item-product {
@@ -3644,18 +3659,18 @@ input {
   flex-wrap: wrap;
   gap: 5px 10px;
   color: #64748b;
-  font-size: 11px;
+  font-size: 12px;
   font-weight: 800;
 }
 
 .cs-item-facts b {
   color: #1f3f94;
-  font-size: 12px;
+  font-size: 13px;
 }
 
 .cs-item-product em {
   color: #1a2840;
-  font-size: 15px;
+  font-size: 16px;
   font-style: normal;
   font-weight: 1000;
   line-height: 1.3;
@@ -3663,7 +3678,7 @@ input {
 
 .cs-item-product strong {
   color: #1f3f94;
-  font-size: 15px;
+  font-size: 17px;
   font-weight: 1000;
   line-height: 1.3;
 }
@@ -3684,7 +3699,7 @@ input {
   border-radius: 7px;
   background: #f7faff;
   color: #475569;
-  font-size: 12px;
+  font-size: 13px;
   line-height: 1.45;
 }
 
@@ -3726,8 +3741,8 @@ input {
 .cs-item-section {
   display: grid;
   align-content: start;
-  gap: 7px;
-  padding: 9px;
+  gap: 8px;
+  padding: 12px;
   border: 1px solid #dbe4f0;
   border-radius: 8px;
   background: #f8fafc;
@@ -3741,7 +3756,7 @@ input {
 .cs-item-section h4 {
   margin: 0 0 1px;
   color: #334155;
-  font-size: 12px;
+  font-size: 13px;
   font-weight: 1000;
 }
 
@@ -3777,7 +3792,7 @@ input {
 .cs-item-section label > span,
 .cs-item-section .cs-template-field > span {
   color: #64748b;
-  font-size: 11px;
+  font-size: 12px;
   font-weight: 900;
   text-align: left;
 }
@@ -3785,13 +3800,13 @@ input {
 .cs-item-section input,
 .cs-item-section select {
   min-width: 0;
-  min-height: 32px;
-  padding: 4px 7px;
+  min-height: 36px;
+  padding: 5px 8px;
   border-color: #cbd5e1;
   border-radius: 7px;
   background: #ffffff;
   color: #1e293b;
-  font-size: 13px;
+  font-size: 14px;
   font-weight: 800;
 }
 
@@ -3806,9 +3821,9 @@ input {
 }
 
 .cs-item-section .cs-template-static strong {
-  min-height: 30px;
-  padding: 6px 8px;
-  font-size: 11px;
+  min-height: 36px;
+  padding: 7px 9px;
+  font-size: 12px;
 }
 
 .cs-item-memo-fields .inspection-memo-cell {
@@ -3825,7 +3840,9 @@ input {
 }
 
 .cs-item-memo-fields .inspection-memo-cell textarea {
-  min-height: 52px;
+  min-height: 42px;
+  max-height: 42px;
+  resize: vertical;
 }
 
 .cs-item-card-actions {
@@ -3836,9 +3853,9 @@ input {
 }
 
 .cs-item-card-actions .btn {
-  min-height: 32px;
-  padding: 5px 7px;
-  font-size: 11px;
+  min-height: 36px;
+  padding: 6px 8px;
+  font-size: 12px;
 }
 
 @media (max-width: 1450px) {

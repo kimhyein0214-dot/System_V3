@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { alimtalkElapsedLabel, alimtalkSendNaturalKey, resolveAlimtalkTemplate } from "../src/domain/alimtalk.mjs";
+import { alimtalkElapsedLabel, alimtalkSendLogCode, alimtalkSendNaturalKey, appendAlimtalkSendLog, resolveAlimtalkTemplate } from "../src/domain/alimtalk.mjs";
 
 const normal = (elapsedDays, selectedTemplate = "") => resolveAlimtalkTemplate({ elapsedDays, selectedTemplate });
 const gold = (elapsedDays) => resolveAlimtalkTemplate({ elapsedDays, isGold: true });
@@ -26,5 +26,18 @@ assert.equal(gold(3).templateKey, "");
 assert.equal(resolveAlimtalkTemplate({ isReady: true }).templateKey, "d0");
 assert.equal(alimtalkSendNaturalKey("order-1", "d1"), alimtalkSendNaturalKey(" order-1 ", "d1"));
 assert.notEqual(alimtalkSendNaturalKey("order-1", "d1"), alimtalkSendNaturalKey("order-1", "d3_pf"));
+
+assert.equal(alimtalkSendLogCode("d0"), "0");
+assert.equal(alimtalkSendLogCode("d1"), "1");
+assert.equal(alimtalkSendLogCode("14k_1"), "1_14");
+assert.equal(alimtalkSendLogCode("d3_pf"), "3");
+assert.equal(alimtalkSendLogCode("d3_ms"), "3ㅁ");
+assert.equal(alimtalkSendLogCode("d5_hi"), "5ㅂ");
+assert.equal(alimtalkSendLogCode("d5_lo"), "5ㅊ");
+assert.equal(alimtalkSendLogCode("14k_5"), "5_14k");
+assert.equal(alimtalkSendLogCode("d10"), "10");
+assert.equal(alimtalkSendLogCode("manual"), "ㅂㅂ");
+assert.equal(appendAlimtalkSendLog("1\n3", "5ㅂ"), "1,3,5ㅂ");
+assert.equal(appendAlimtalkSendLog("1, 3, 5ㅂ", "10"), "1,3,5ㅂ,10");
 
 console.log("Alimtalk exact-day rules: passed");

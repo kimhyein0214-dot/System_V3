@@ -3,6 +3,32 @@ function nonNegativeInteger(value) {
   return Number.isFinite(number) && number >= 0 ? Math.floor(number) : 0;
 }
 
+export const ALIMTALK_SEND_LOG_CODES = Object.freeze({
+  d0: "0",
+  d1: "1",
+  "14k_1": "1_14",
+  d3_pf: "3",
+  d3_ms: "3ㅁ",
+  d5_hi: "5ㅂ",
+  d5_lo: "5ㅊ",
+  "14k_5": "5_14k",
+  d10: "10",
+  manual: "ㅂㅂ",
+});
+
+export function alimtalkSendLogCode(templateKey) {
+  return ALIMTALK_SEND_LOG_CODES[String(templateKey || "").trim()] || "";
+}
+
+export function appendAlimtalkSendLog(currentValue, nextCode) {
+  const code = String(nextCode || "").trim();
+  const existingCodes = String(currentValue || "")
+    .split(/[\r\n,]+/)
+    .map((value) => value.trim())
+    .filter(Boolean);
+  return code ? [...existingCodes, code].join(",") : existingCodes.join(",");
+}
+
 export function alimtalkElapsedLabel(value) {
   const days = nonNegativeInteger(value);
   return days >= 11 ? "11일차 이후" : `${days}일차`;
