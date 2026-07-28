@@ -4052,10 +4052,11 @@ function renderCsCaseDetail(group) {
         <span class="workflow-row-badge ${state.csMode === "manual" ? "manual" : ""}">${state.csMode === "manual" ? "수동 추가 대상" : `CS ${caseCount}건`}</span>
         <button class="btn" data-cs-hold-action="${escapeHtml(holdAction)}" data-cs-order-group="${escapeHtml(group.ordNo || "")}" type="button" ${holdDisabled}>${escapeHtml(holdLabel)}</button>
         ${invoice ? shippingHoldBadge(invoice) : ""}
+        <label class="cs-order-scheduled-date"><span>출고예정일 <em>송장 공통</em></span><input data-cs-order-sync-field="outbound_scheduled_date" data-cs-order-group="${escapeHtml(group.ordNo || "")}" type="date" value="${escapeHtml(scheduledDate)}" ${managementReadonly}></label>
       </div>
     </div>
     <p class="workflow-note">미송 자동대상과 별도 CS를 구분합니다. 알림톡 템플릿·기준일·주문메모·관리메모는 상품행별로 저장하며, 배송보류는 주문 단위로 위 버튼에서 처리합니다.</p>
-    <div class="cs-sync-note"><strong>CS 백업·동기화 기준</strong><span>알림톡 발송확정일은 송장 단위의 <b>출고예정일</b>에 기록하고, 상품 입고 예정일은 상품행 단위의 <b>출고확정일</b>에 기록합니다. 관리메모·주문메모와 연결하지 않습니다.</span><label><span>출고예정일 / 알림톡 발송기록</span><input data-cs-order-sync-field="outbound_scheduled_date" data-cs-order-group="${escapeHtml(group.ordNo || "")}" type="date" value="${escapeHtml(scheduledDate)}" ${managementReadonly}></label></div>
+    <div class="cs-sync-note"><strong>CS 백업·동기화 기준</strong><span>알림톡 발송확정일은 송장 단위의 <b>출고예정일</b>에 기록하고, 상품 입고 예정일은 상품행 단위의 <b>출고확정일</b>에 기록합니다. 관리메모·주문메모와 연결하지 않습니다.</span></div>
     <div class="cs-item-card-stack">${group.items.map(renderCsCaseItemEditor).join("")}</div>
   </div>`;
 }
