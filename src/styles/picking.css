@@ -3638,7 +3638,8 @@ input {
 
 .cs-sync-note {
   display: flex;
-  align-items: baseline;
+  align-items: center;
+  flex-wrap: wrap;
   gap: 9px;
   margin: 10px 12px 0;
   padding: 8px 10px;
@@ -3658,6 +3659,32 @@ input {
 
 .cs-sync-note b {
   color: #1e4f9f;
+}
+
+.cs-sync-note > span {
+  flex: 1 1 360px;
+}
+
+.cs-sync-note > label {
+  display: grid;
+  grid-template-columns: auto 132px;
+  align-items: center;
+  gap: 6px;
+  margin-left: auto;
+  color: #64748b;
+  font-size: 11px;
+  font-weight: 900;
+}
+
+.cs-sync-note > label input {
+  min-width: 0;
+  min-height: 30px;
+  padding: 4px 7px;
+  border: 1px solid #cbd5e1;
+  border-radius: 7px;
+  background: #ffffff;
+  color: #1e293b;
+  font: inherit;
 }
 
 .cs-item-section {

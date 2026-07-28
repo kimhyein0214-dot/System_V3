@@ -22,6 +22,32 @@ export function csCaseNaturalKey({ ordNo, itemNo, caseType }) {
   return `${text(ordNo)}\u0000${text(itemNo)}\u0000${text(caseType)}`;
 }
 
+export function openShortageItemKeys({ candidates = [], shortageRows = [] } = {}) {
+  const keys = new Set();
+  const add = (ordNo, itemNo) => {
+    const ord = text(ordNo);
+    const item = text(itemNo);
+    if (ord && item) keys.add(`${ord}::${item}`);
+  };
+
+  // The current memo2 value is the scrape-time shortage baseline.  It is
+  // intentionally item-scoped: one item's shortage must not make siblings
+  // appear in CS.
+  for (const row of candidates) {
+    if (!text(row?.item?.o_shop_memo2)) continue;
+    add(row?.order?.ord_no || row?.item?.ord_no, row?.item?.item_no);
+    add(row?.order?.ord_no || row?.item?.ord_no, row?.item?.sellpia_order_item_no);
+  }
+
+  // Some legacy/current shortages do not have memo2 populated, so retain the
+  // shortage table as an additional (not mandatory) open-state signal.
+  for (const row of shortageRows) {
+    if (!(Number(row?.short_qty) > 0)) continue;
+    add(row?.ord_no, row?.item_no);
+  }
+  return keys;
+}
+
 export function createCsCaseAdapter(db) {
   if (!db?.from) throw new Error("A Supabase client is required.");
 
@@ -58,6 +84,15 @@ export function createCsCaseAdapter(db) {
     return (itemResult.data || [])
       .map((item) => ({ order: orderByNo.get(text(item.ord_no)) || null, item }))
       .filter((row) => row.order && text(row.item?.item_no));
+  }
+
+  async function loadOpenShortageItemKeys(candidates = []) {
+    const { data, error } = await db
+      .from("shortage")
+      .select("ord_no,item_no,short_qty")
+      .gt("short_qty", 0);
+    if (error) throw error;
+    return openShortageItemKeys({ candidates, shortageRows: data || [] });
   }
 
   async function findCsCase({ ordNo, itemNo, caseType }) {
@@ -140,6 +175,27 @@ export function createCsCaseAdapter(db) {
     });
   }
 
+  async function excludeAutoShortageCsCase(input) {
+    const payload = {
+      ordNo: nonEmpty(input.ordNo, "ord_no"),
+      itemNo: nonEmpty(input.itemNo, "item_no"),
+      sellpiaOrderItemNo: text(input.sellpiaOrderItemNo) || null,
+      invNo: text(input.invNo) || null,
+      receiptDate: text(input.receiptDate) || null,
+      basisDate: text(input.basisDate) || null,
+    };
+    const existing = await findCsCase({ ordNo: payload.ordNo, itemNo: payload.itemNo, caseType: "shortage" });
+    if (existing) {
+      if (existing.source !== "auto" || existing.status !== "pending") return { caseRow: existing, excluded: false };
+      return { caseRow: await excludeCsCase(existing.id), excluded: true };
+    }
+    const created = await createAutoShortageCsCase({
+      ...payload,
+      basisDateSource: "receipt_date",
+    });
+    return { caseRow: await excludeCsCase(created.caseRow.id), excluded: true };
+  }
+
   async function reopenCsCase(caseId, updatedBy = "") {
     return updateCsCase(caseId, {
       status: "pending",
@@ -153,12 +209,14 @@ export function createCsCaseAdapter(db) {
     loadCsCases,
     loadCsCaseContexts,
     loadManualCsCandidates,
+    loadOpenShortageItemKeys,
     findCsCase,
     createManualCsCase,
     createAutoShortageCsCase,
     updateCsCase,
     resolveCsCase,
     excludeCsCase,
+    excludeAutoShortageCsCase,
     reopenCsCase,
   };
 }

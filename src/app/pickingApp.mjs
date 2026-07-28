@@ -1,7 +1,9 @@
 import { annotateShippingHoldState, loadWorkflowQueues } from "../adapters/workflowEventAdapter.mjs?v=20260714-shortage-baseline1";
 import { buildPickingViewModel } from "../workflows/picking/buildPickingViewModel.mjs?v=20260706-memo2-text1";
-import { createCsCaseAdapter } from "../adapters/csCaseAdapter.mjs?v=20260728-cs-cases1";
+import { createCsCaseAdapter, openShortageItemKeys } from "../adapters/csCaseAdapter.mjs?v=20260728-cs-cases3";
+import { createAlimtalkSendAdapter } from "../adapters/alimtalkSendAdapter.mjs?v=20260728-alimtalk-history2";
 import { isGoldOwnCode } from "../domain/gold.mjs?v=20260728-gold-own-code1";
+import { alimtalkSendNaturalKey, resolveAlimtalkTemplate } from "../domain/alimtalk.mjs?v=20260728-exact-day2";
 import {
   buildWorkflowState,
   completedInvoicesForInspection,
@@ -94,6 +96,7 @@ const allowOrderReorder = allowWrites && params.get("reorder") === "1";
 const allowWorkflowEvents = allowWrites && params.get("events") === "1";
 const db = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
 const csCases = createCsCaseAdapter(db);
+const alimtalkSends = createAlimtalkSendAdapter(db);
 
 function todayDateString() {
   const date = new Date();
@@ -152,6 +155,7 @@ const state = {
   csGoldFilter: "all",
   csSort: "receipt_desc",
   csManualCandidates: [],
+  csOpenShortageItemKeys: new Set(),
   sidebarCollapsed: false,
   workflowEventsReady: false,
   workflowEventsChecked: false,
@@ -3009,6 +3013,16 @@ function csDayKeyForTemplate(templateKey) {
   return CS_DAYS.find((day) => CS_DAY_TEMPLATE[day.key] === templateKey)?.key || "";
 }
 
+function alimtalkRuleForRow(row, { isReady = false, selectedTemplate = "" } = {}) {
+  return resolveAlimtalkTemplate({
+    elapsedDays: row?.elapsedDays,
+    isGold: isGoldItem(row?.item),
+    isReady,
+    isMakeshop: isCsMakeshopMethod(row),
+    selectedTemplate,
+  });
+}
+
 function classifyCsRowsByDay(rows) {
   const groups = Object.fromEntries(CS_DAYS.filter((day) => day.key !== "all").map((day) => [day.key, []]));
   const invoiceRows = new Map();
@@ -3022,25 +3036,12 @@ function classifyCsRowsByDay(rows) {
     const sameInvoiceRows = invoiceRows.get(key) || [];
     const hasHoldRow = sameInvoiceRows.some((item) => item.csReason === "hold");
     const allReady = sameInvoiceRows.length > 0 && !hasHoldRow && sameInvoiceRows.every((item) => Number(item.currentShortageQty || 0) === 0);
-    const elapsed = Number(row.elapsedDays || 0);
     const pushTemplate = (templateKey) => {
       const dayKey = csDayKeyForTemplate(templateKey);
       if (dayKey) groups[dayKey]?.push({ ...row, csDayKey: dayKey });
     };
-    if (allReady) {
-      pushTemplate("d0");
-      return;
-    }
-    if (isGoldItem(row.item)) {
-      pushTemplate(elapsed >= 5 ? "14k_5" : "14k_1");
-      return;
-    }
-    if (elapsed >= 10) pushTemplate("d10");
-    else if (elapsed >= 5) {
-      pushTemplate("d5_hi");
-      pushTemplate("d5_lo");
-    } else if (elapsed >= 3) pushTemplate(isCsMakeshopMethod(row) ? "d3_ms" : "d3_pf");
-    else pushTemplate("d1");
+    const rule = alimtalkRuleForRow(row, { isReady: allReady });
+    if (rule.templateKey) pushTemplate(rule.templateKey);
   });
   return groups;
 }
@@ -3055,14 +3056,14 @@ function defaultCsDayKey(row) {
 }
 
 function recommendedCsTemplateKey(row) {
-  const dayKey = row.csDayKey || defaultCsDayKey(row);
-  return CS_DAY_TEMPLATE[dayKey] || (isGoldItem(row.item) ? "14k_1" : "d1");
+  return alimtalkRuleForRow(row).templateKey;
 }
 
 function buildCsMessage(row) {
   const option = cleanOptionName(row.item.optionName, row.item.ownCode) || row.item.productName || "-";
   const product = row.item.productName || row.item.ownCode || "-";
-  const preset = CS_TEMPLATE_PRESETS[recommendedCsTemplateKey(row)] || CS_TEMPLATE_PRESETS.d1;
+  const preset = CS_TEMPLATE_PRESETS[recommendedCsTemplateKey(row)];
+  if (!preset) return "";
   return preset.text
     .replace(/#{SHOPNAME}/g, "핑크로켓")
     .replace(/#{NAME}/g, row.invoice.displayName || row.invoice.csDisplayName || row.invoice.recipientName || "고객")
@@ -3606,9 +3607,26 @@ function render() {
   if (state.orderListModal.open) renderOrderListModal();
 }
 
+function csCandidateForCase(caseRow) {
+  const ordNo = String(caseRow?.ord_no || "").trim();
+  const itemNo = String(caseRow?.item_no || "").trim();
+  const sellpiaOrderItemNo = String(caseRow?.sellpia_order_item_no || "").trim();
+  return state.csManualCandidates.find((candidate) => {
+    const candidateOrdNo = String(candidate?.order?.ord_no || candidate?.item?.ord_no || "").trim();
+    if (!ordNo || candidateOrdNo !== ordNo) return false;
+    const candidateItemNo = String(candidate?.item?.item_no || "").trim();
+    if (itemNo && candidateItemNo === itemNo) return true;
+    // Only use the Sellpia item key if the internal key is absent on the
+    // persisted legacy case.
+    return !itemNo && sellpiaOrderItemNo
+      && String(candidate?.item?.sellpia_order_item_no || "").trim() === sellpiaOrderItemNo;
+  }) || null;
+}
+
 function csCaseContext(caseRow) {
-  const order = state.csCaseContexts.orders.get(String(caseRow.ord_no || "")) || null;
-  const item = state.csCaseContexts.items.get(String(caseRow.item_no || "")) || null;
+  const candidate = csCandidateForCase(caseRow);
+  const order = state.csCaseContexts.orders.get(String(caseRow.ord_no || "")) || candidate?.order || null;
+  const item = state.csCaseContexts.items.get(String(caseRow.item_no || "")) || candidate?.item || null;
   const ownCode = String(item?.prod_code || item?.p_dpcode || item?.own_code || "").trim();
   return {
     caseRow,
@@ -3639,7 +3657,7 @@ function csSearchTextFor({ order, item, caseRow }) {
 }
 
 function autoShortageCsRows() {
-  const openItemKeys = new Set();
+  const openItemKeys = new Set(state.csOpenShortageItemKeys || []);
   for (const invoice of allWorkflowInvoices()) {
     for (const item of invoice.items || []) {
       if (!itemHasOpenWorkflowShortage(invoice, item)) continue;
@@ -3698,6 +3716,7 @@ function filteredCsCaseRows() {
     .filter((row) => {
       if (!state.csTypeFilter) return true;
       if (state.csTypeFilter === "manual") return row.caseRow?.source === "manual";
+      if (state.csTypeFilter === "none") return row.caseRow?.source === "auto" && !csAlimtalkTemplateRule(row).templateKey;
       return row.caseRow?.source === "auto" && csAutoTemplateKeys(row).includes(state.csTypeFilter);
     })
     .filter((row) => state.csGoldFilter === "all" || (state.csGoldFilter === "gold" ? row.isGold : !row.isGold))
@@ -3843,39 +3862,38 @@ function csSellerMeta(group) {
 function csRecommendedTemplateKeys(row) {
   const caseRow = row?.caseRow;
   if (!caseRow || (!row.virtualAutoCase && caseRow.source !== "auto")) return [];
-
   const basisDate = String(caseRow.basis_date || caseRow.receipt_date || row.order?.receipt_date || row.item?.receipt_date || "").trim();
-  const templateRows = classifyCsRowsByDay([
-    {
-      invoice: {
-        seller: row.order?.seller || row.order?.provider_name || "",
-        orderGroupNo: csRowOrderNo(row),
-      },
-      item: {
-        ownCode: row.ownCode || row.item?.prod_code || row.item?.p_dpcode || row.item?.own_code || "",
-      },
-      csReason: "shortage",
-      currentShortageQty: 1,
-      elapsedDays: daysSinceDateKey(basisDate),
-      csMethod: "",
-    },
-  ]);
-  return CS_DAYS.filter((day) => day.key !== "all" && templateRows[day.key]?.length).map((day) => CS_DAY_TEMPLATE[day.key] || day.key);
+  return csAlimtalkTemplateRule(row, basisDate).allowedTemplateKeys;
+}
+
+function csAlimtalkTemplateRule(row, basisDate = "") {
+  const caseRow = row?.caseRow || {};
+  return resolveAlimtalkTemplate({
+    elapsedDays: daysSinceDateKey(basisDate || caseRow.basis_date || caseRow.receipt_date || row?.order?.receipt_date || row?.item?.receipt_date || ""),
+    isGold: Boolean(row?.isGold),
+    isMakeshop: isCsMakeshopMethod({
+      invoice: { seller: row?.order?.seller || row?.order?.provider_name || "" },
+      csMethod: row?.csMethod || "",
+    }),
+    selectedTemplate: caseRow.alimtalk_template || "",
+  });
 }
 
 function csAutoTemplateKeys(row) {
-  const savedTemplate = String(row?.caseRow?.alimtalk_template || "").trim();
-  return savedTemplate ? [savedTemplate] : csRecommendedTemplateKeys(row);
+  const rule = csAlimtalkTemplateRule(row);
+  return rule.templateKey ? [rule.templateKey] : [];
 }
 
 function csTemplateSelect(row, disabled = "") {
-  const savedTemplate = String(row?.caseRow?.alimtalk_template || "").trim();
-  const recommendedLabels = csRecommendedTemplateKeys(row)
-    .map((templateKey) => CS_TEMPLATE_PRESETS[templateKey]?.label || templateKey)
-    .join(" / ");
+  const rule = csAlimtalkTemplateRule(row);
+  if (!rule.allowedTemplateKeys.length) {
+    return `<label class="cs-template-static neutral"><span>알림톡 템플릿</span><strong>${escapeHtml(rule.label)}</strong></label>`;
+  }
+  const selectedTemplate = rule.templateKey;
+  const placeholder = rule.selectionRequired ? rule.label : (CS_TEMPLATE_PRESETS[selectedTemplate]?.label || "템플릿 없음");
   return `<label class="cs-template-field"><span>알림톡 템플릿</span><select data-cs-case-field="alimtalk_template" ${disabled}>
-    <option value="" ${savedTemplate ? "" : "selected"}>${escapeHtml(recommendedLabels || "템플릿 미분류")}</option>
-    ${Object.entries(CS_TEMPLATE_PRESETS).map(([templateKey, preset]) => `<option value="${escapeHtml(templateKey)}" ${savedTemplate === templateKey ? "selected" : ""}>${escapeHtml(preset.label)}</option>`).join("")}
+    <option value="" ${selectedTemplate ? "" : "selected"}>${escapeHtml(placeholder)}</option>
+    ${rule.allowedTemplateKeys.map((templateKey) => `<option value="${escapeHtml(templateKey)}" ${selectedTemplate === templateKey ? "selected" : ""}>${escapeHtml(CS_TEMPLATE_PRESETS[templateKey]?.label || templateKey)}</option>`).join("")}
   </select></label>`;
 }
 
@@ -3891,6 +3909,14 @@ function csCaseBadges(group) {
     const templateLabel = CS_TEMPLATE_PRESETS[templateKey]?.label || templateKey;
     badges.push(`<span class="workflow-row-badge warn" title="${escapeHtml(templateKey)}">알림톡 ${escapeHtml(templateLabel)}</span>`);
   });
+  const noTemplateLabels = [...new Set(
+    group.items
+      .filter((row) => row.virtualAutoCase || row.caseRow?.source === "auto")
+      .map((row) => csAlimtalkTemplateRule(row))
+      .filter((rule) => !rule.templateKey)
+      .map((rule) => rule.label),
+  )];
+  noTemplateLabels.forEach((label) => badges.push(`<span class="workflow-row-badge neutral">${escapeHtml(label)}</span>`));
 
   const manualCaseCount = group.items.filter((row) => row.caseRow?.source === "manual").length;
   if (manualCaseCount) {
@@ -3910,6 +3936,7 @@ function renderCsCaseFilters() {
     <select class="filter-chip" data-cs-template-filter aria-label="알림톡 템플릿 필터">
       <option value="">템플릿별</option>
       ${Object.entries(CS_TEMPLATE_PRESETS).map(([templateKey, preset]) => `<option value="${escapeHtml(templateKey)}" ${state.csTypeFilter === templateKey ? "selected" : ""}>${escapeHtml(preset.label)}</option>`).join("")}
+      <option value="none" ${state.csTypeFilter === "none" ? "selected" : ""}>템플릿 없음</option>
       <option value="manual" ${state.csTypeFilter === "manual" ? "selected" : ""}>별도 CS</option>
     </select>
     <select class="filter-chip" data-cs-gold-filter aria-label="골드 필터">
@@ -3918,6 +3945,8 @@ function renderCsCaseFilters() {
       <option value="gold" ${state.csGoldFilter === "gold" ? "selected" : ""}>14K</option>
     </select>
     <button class="filter-chip ${state.csMode === "manual" ? "active" : ""}" data-cs-mode="manual" type="button">수동 추가</button>
+    <button class="filter-chip" data-cs-alimtalk-action="export" type="button" ${allowWrites ? "" : "disabled"}>알림톡 CSV</button>
+    <button class="filter-chip" data-cs-alimtalk-action="history" type="button" ${allowWrites ? "" : "disabled"}>발송확정</button>
     <span class="cs-mode-indicator ${state.csMode === "manual" ? "manual" : ""}">${state.csMode === "manual" ? "수동 추가 모드 · 검색 결과에서 상품행을 선택하세요" : "CS 케이스 목록"}</span>`;
 }
 
@@ -3955,6 +3984,7 @@ function renderCsCaseItemEditor(row) {
   const memo = String(item.order_memo ?? "");
   const managementMemo1 = String(item.o_shop_memo ?? item.shop_memo ?? item.memo1 ?? "");
   const managementMemo2 = String(item.o_shop_memo2 ?? item.shop_memo2 ?? item.memo2 ?? "");
+  const outboundConfirmedDate = String(item.sellpia_outbound_confirmed_date ?? "");
   const basisDate = caseRow?.basis_date || receiptDate;
   const automaticCase = Boolean(virtualAutoCase || caseRow?.source === "auto");
   const manualCase = Boolean(caseRow && !virtualAutoCase && caseRow.source === "manual");
@@ -3989,6 +4019,7 @@ function renderCsCaseItemEditor(row) {
       <h4>CS 진행</h4>
       ${caseClassification}
       <label><span>기준일</span><input data-cs-case-field="basis_date" type="date" value="${escapeHtml(basisDate || receiptDate || "")}" ${readonly}></label>
+      <label><span>출고확정일 / 입고예정</span><input data-cs-item-sync-field="outbound_confirmed_date" type="date" value="${escapeHtml(outboundConfirmedDate)}" ${managementReadonly}></label>
     </section>
     <section class="cs-item-section cs-item-memo-fields">
       <h4>상품 메모</h4>
@@ -4012,6 +4043,8 @@ function renderCsCaseDetail(group) {
   const holdAction = holdState?.action || "inspection-hold";
   const holdLabel = holdState?.actionLabel || "배송보류 처리";
   const holdDisabled = invoice && allowWorkflowEvents ? "" : "disabled";
+  const managementReadonly = allowWrites ? "" : "readonly";
+  const scheduledDate = String(group.order?.sellpia_outbound_scheduled_date || "");
   els.csDetail.innerHTML = `<div class="cs-detail-card cs-case-detail-card">
     <div class="workflow-detail-head cs-order-detail-head">
       <div><strong>송장 ${escapeHtml(group.invoiceNo || "-")} · ${escapeHtml(receiver)}</strong></div>
@@ -4022,7 +4055,7 @@ function renderCsCaseDetail(group) {
       </div>
     </div>
     <p class="workflow-note">미송 자동대상과 별도 CS를 구분합니다. 알림톡 템플릿·기준일·주문메모·관리메모는 상품행별로 저장하며, 배송보류는 주문 단위로 위 버튼에서 처리합니다.</p>
-    <div class="cs-sync-note"><strong>CS 백업·동기화 기준</strong><span>알림톡 발송일은 송장 단위의 <b>출고예정일</b>에, 상품 입고 예정일은 상품행 단위의 <b>출고확정일</b>에 별도로 백업·동기화합니다. 관리메모·주문메모와 연결하지 않습니다.</span></div>
+    <div class="cs-sync-note"><strong>CS 백업·동기화 기준</strong><span>알림톡 발송확정일은 송장 단위의 <b>출고예정일</b>에 기록하고, 상품 입고 예정일은 상품행 단위의 <b>출고확정일</b>에 기록합니다. 관리메모·주문메모와 연결하지 않습니다.</span><label><span>출고예정일 / 알림톡 발송기록</span><input data-cs-order-sync-field="outbound_scheduled_date" data-cs-order-group="${escapeHtml(group.ordNo || "")}" type="date" value="${escapeHtml(scheduledDate)}" ${managementReadonly}></label></div>
     <div class="cs-item-card-stack">${group.items.map(renderCsCaseItemEditor).join("")}</div>
   </div>`;
 }
@@ -4038,11 +4071,9 @@ function renderCsCasePanels() {
     renderWorkflowEmpty(els.csDetail, "CS 케이스를 불러오지 못했습니다.");
     return;
   }
-  if (state.csCasesLoading) {
-    renderWorkflowEmpty(els.csListBody, "CS 케이스를 불러오는 중입니다.");
-    renderWorkflowEmpty(els.csDetail, "잠시만 기다려주세요.");
-    return;
-  }
+  // Never replace an already-renderable CS list with a blocking loading
+  // screen.  The candidates are sufficient to draw the item detail; any
+  // supplemental DB reads can finish in the background.
   const groups = renderedCsGroups();
   const total = state.csMode === "manual"
     ? groupedCsRows(state.csManualCandidates.map(manualCsCandidateRow)).length
@@ -4069,8 +4100,21 @@ async function loadCsCaseData() {
     ]);
     state.csCases = cases;
     state.csManualCandidates = candidates;
-    state.csCaseContexts = await csCases.loadCsCaseContexts(cases);
+    // The candidate load already contains the current order/item rows needed
+    // by the CS detail.  Use its memo2 baseline immediately so a slow
+    // supplemental shortage lookup cannot block the full detail panel.
+    state.csCaseContexts = { orders: new Map(), items: new Map() };
+    state.csOpenShortageItemKeys = openShortageItemKeys({ candidates });
     state.csCasesLoaded = true;
+    // A shortage row is supplemental legacy coverage only.  It must never
+    // hold the main CS UI in loading state after its primary item baseline is
+    // ready.
+    csCases.loadOpenShortageItemKeys(candidates)
+      .then((keys) => {
+        state.csOpenShortageItemKeys = keys;
+        if (state.activeTab === "cs") renderCsPanels();
+      })
+      .catch((error) => console.warn("supplemental CS shortage load failed", error));
   } catch (error) {
     state.csCaseError = `CS 케이스 조회 실패: ${error?.message || error}`;
     console.warn("CS case load failed", error);
@@ -4109,6 +4153,100 @@ function csItemIdentity(row) {
     itemNo: String(row?.caseRow?.item_no || row?.item?.item_no || "").trim(),
     sellpiaOrderItemNo: String(row?.caseRow?.sellpia_order_item_no || row?.item?.sellpia_order_item_no || "").trim(),
   };
+}
+
+async function saveCsOrderScheduledDate(ordNo, value) {
+  if (!allowWrites) {
+    toast("Read-only mode: add write=1 to save the outbound scheduled date.");
+    return;
+  }
+  const normalizedOrdNo = String(ordNo || "").trim();
+  if (!normalizedOrdNo) throw new Error("Missing order number for outbound scheduled date.");
+  const scheduledDate = String(value || "").trim() || null;
+  const { data, error } = await db
+    .from("orders")
+    .update({ sellpia_outbound_scheduled_date: scheduledDate })
+    .eq("ord_no", normalizedOrdNo)
+    .select("ord_no,sellpia_outbound_scheduled_date");
+  if (error) throw error;
+  if (!data || data.length !== 1) throw new Error(`Order not found for outbound scheduled date (${normalizedOrdNo}).`);
+  const nextValue = data[0].sellpia_outbound_scheduled_date || "";
+  const current = state.csCaseContexts?.orders?.get(normalizedOrdNo);
+  if (current) current.sellpia_outbound_scheduled_date = nextValue;
+  for (const candidate of state.csManualCandidates || []) {
+    if (String(candidate?.order?.ord_no || "") === normalizedOrdNo) candidate.order.sellpia_outbound_scheduled_date = nextValue;
+  }
+  toast("출고예정일 저장");
+}
+
+async function saveCsItemConfirmedDate(row, value) {
+  if (!allowWrites) {
+    toast("Read-only mode: add write=1 to save the outbound confirmed date.");
+    return;
+  }
+  const { ordNo, itemNo, sellpiaOrderItemNo } = csItemIdentity(row);
+  if (!ordNo || (!itemNo && !sellpiaOrderItemNo)) throw new Error("Missing item key for outbound confirmed date.");
+  const confirmedDate = String(value || "").trim() || null;
+  await updateOrderItemOrderMemoExact({
+    ordNo,
+    itemNo,
+    sellpiaOrderItemNo,
+    patch: { sellpia_outbound_confirmed_date: confirmedDate },
+  });
+  if (row?.item) row.item.sellpia_outbound_confirmed_date = confirmedDate;
+  const contextItem = state.csCaseContexts?.items?.get(itemNo);
+  if (contextItem) contextItem.sellpia_outbound_confirmed_date = confirmedDate;
+  for (const candidate of state.csManualCandidates || []) {
+    if (String(candidate?.order?.ord_no || "") !== ordNo) continue;
+    if (String(candidate?.item?.item_no || "") !== itemNo) continue;
+    candidate.item.sellpia_outbound_confirmed_date = confirmedDate;
+  }
+  toast("출고확정일 저장");
+}
+
+async function recordAlimtalkSendScheduledDate(batchId) {
+  const items = await alimtalkSends.loadBatchItems(batchId);
+  const ordNos = [...new Set(items.map((item) => String(item?.ord_no || "").trim()).filter(Boolean))];
+  const scheduledDate = todayDateString();
+  await Promise.all(ordNos.map(async (ordNo) => {
+    const { data, error } = await db
+      .from("orders")
+      .update({ sellpia_outbound_scheduled_date: scheduledDate })
+      .eq("ord_no", ordNo)
+      .select("ord_no,sellpia_outbound_scheduled_date");
+    if (error) throw error;
+    if (!data || data.length !== 1) throw new Error(`Order not found for Alimtalk send record (${ordNo}).`);
+    const current = state.csCaseContexts?.orders?.get(ordNo);
+    if (current) current.sellpia_outbound_scheduled_date = scheduledDate;
+  }));
+  return ordNos.length;
+}
+
+async function excludeAutomaticCsAfterInspectionHoldRelease(invoice) {
+  const ordNo = String(invoice?.orderGroupNo || "").trim();
+  if (!ordNo) return 0;
+  const pendingAutoCases = (state.csCases || []).filter((row) => (
+    String(row?.ord_no || "") === ordNo && row?.source === "auto" && row?.status === "pending"
+  ));
+  const excludedItemNos = new Set(pendingAutoCases.map((row) => String(row.item_no || "")).filter(Boolean));
+  const operations = pendingAutoCases.map((row) => csCases.excludeCsCase(row.id));
+  for (const item of invoice.items || []) {
+    if (!itemHasOpenWorkflowShortage(invoice, item)) continue;
+    const itemNo = String(item?.raw?.item_no || item?.sellpiaItemNo || "").trim();
+    if (!itemNo || excludedItemNos.has(itemNo)) continue;
+    operations.push(csCases.excludeAutoShortageCsCase({
+      ordNo,
+      itemNo,
+      sellpiaOrderItemNo: String(item?.raw?.sellpia_order_item_no || "").trim(),
+      invNo: String(invoice?.invoiceNo || invoice?.raw?.inv_no || "").trim(),
+      receiptDate: String(invoice?.receiptDate || invoice?.raw?.receipt_date || "").trim(),
+      basisDate: String(invoice?.receiptDate || invoice?.raw?.receipt_date || "").trim(),
+    }));
+  }
+  if (!operations.length) return 0;
+  const results = await Promise.all(operations);
+  await loadCsCaseData();
+  return results.filter((result) => result?.excluded !== false).length;
 }
 
 function findCsWorkflowItem(row) {
@@ -4211,6 +4349,7 @@ async function saveCsCaseOrderMemo(row, scope = els.csDetail) {
   const sellpiaOrderItemNo = String(row?.caseRow?.sellpia_order_item_no || row?.item?.sellpia_order_item_no || "").trim();
   if (!ordNo || (!itemNo && !sellpiaOrderItemNo)) throw new Error("CS 주문메모 저장에 필요한 주문번호 또는 상품행키가 없습니다.");
   const value = String(scope?.querySelector("[data-cs-case-order-memo]")?.value || "");
+  if (value === String(row?.item?.order_memo ?? "")) return;
   await updateOrderItemOrderMemoExact({
     ordNo,
     itemNo,
@@ -5244,6 +5383,22 @@ function alimtalkOption(item) {
   return itemSellerOptionName(item) || item.optionName || "";
 }
 
+function alimtalkInboundExpectedDate(item) {
+  return String(
+    item?.sellpia_outbound_confirmed_date
+    ?? item?.raw?.sellpia_outbound_confirmed_date
+    ?? item?.outbound_confirmed_date
+    ?? "",
+  ).trim();
+}
+
+function alimtalkOptionWithInboundExpectedDate(item) {
+  const option = alimtalkOption(item);
+  const inboundExpectedDate = alimtalkInboundExpectedDate(item);
+  if (!inboundExpectedDate) return option;
+  return `${option}${option ? " " : ""}(입고예정일: ${inboundExpectedDate})`;
+}
+
 function csWorkLogText(...values) {
   return values
     .flatMap((value) => (Array.isArray(value) ? value : [value]))
@@ -5564,27 +5719,14 @@ function alimtalkProductLine(item) {
 }
 
 function alimtalkDebugColumns(row) {
-  const invoiceState = workflowInvoiceState(row.invoice);
   const seller = sellerBadgeMeta(row.invoice.seller)?.label || row.invoice.seller || "";
   const delayedItems = alimtalkDelayedItemsForInvoice(row.invoice);
   return [
     seller,
     dateKey(row.invoice.receiptDate),
-    invoiceState?.inspected ? "ON" : "OFF",
+    row.systemShippingHold || "UNKNOWN",
     delayedItems.map(alimtalkProductLine).join("\n"),
     row.alimtalkBucket || row.csDayKey || "",
-    row.alimtalkBucketReason || "",
-    row.receiptDate || dateKey(row.invoice.receiptDate),
-    row.delayBaseDate || "",
-    row.delayBaseDateSource || "receiptDate",
-    row.elapsedDays,
-    row.systemShippingHold || "",
-    row.systemShippingHoldKnown ? "Y" : "N",
-    row.systemShippingHoldSource || "",
-    row.hasOpenShortage ? "Y" : "N",
-    row.shortageQtyTotal ?? "",
-    row.allReady ? "Y" : "N",
-    row.readyReason || "",
   ];
 }
 
@@ -5649,30 +5791,38 @@ function buildAlimtalkRowsFromCsInvoices(csRows) {
   return rows;
 }
 
+function alimtalkCsCaseForRow(row) {
+  const ordNo = String(row?.invoice?.orderGroupNo || row?.invoice?.raw?.ord_no || "").trim();
+  const itemNo = String(row?.item?.raw?.item_no || row?.item?.item_no || row?.item?.sellpiaItemNo || "").trim();
+  if (!ordNo || !itemNo) return null;
+  return state.csCases.find((caseRow) =>
+    caseRow.source === "auto"
+    && caseRow.case_type === "shortage"
+    && String(caseRow.ord_no || "") === ordNo
+    && String(caseRow.item_no || "") === itemNo,
+  ) || null;
+}
+
 function classifyAlimtalkRowsByDay(rows) {
   const groups = Object.fromEntries(CS_DAYS.filter((day) => day.key !== "all").map((day) => [day.key, []]));
   rows.forEach((row) => {
-    const elapsed = Number(row.elapsedDays || 0);
     const pushTemplate = (templateKey, reason) => {
       const dayKey = csDayKeyForTemplate(templateKey);
       if (dayKey) groups[dayKey]?.push({ ...row, csDayKey: dayKey, alimtalkBucket: dayKey, alimtalkBucketReason: reason });
     };
-    if (row.csReason === "ready") {
-      pushTemplate("d0", "shipping_hold_on_ready_no_shortage");
-      return;
-    }
-    if (!row.hasOpenShortage && !(Number(row.shortageQtyTotal || 0) > 0)) return;
+    if (row.csReason !== "ready" && !row.hasOpenShortage && !(Number(row.shortageQtyTotal || 0) > 0)) return;
     if (!isValidDateKey(row.delayBaseDate)) return;
-    if (isGoldItem(row.item)) {
-      pushTemplate(elapsed >= 5 ? "14k_5" : "14k_1", elapsed >= 5 ? "shipping_hold_on_gold_elapsed_5_plus" : "shipping_hold_on_gold_elapsed_under_5");
-      return;
-    }
-    if (elapsed >= 10) pushTemplate("d10", "shipping_hold_on_shortage_elapsed_10_plus");
-    else if (elapsed >= 5) {
-      pushTemplate("d5_hi", "shipping_hold_on_shortage_elapsed_5_plus");
-      pushTemplate("d5_lo", "shipping_hold_on_shortage_elapsed_5_plus");
-    } else if (elapsed >= 3) pushTemplate(isCsMakeshopMethod(row) ? "d3_ms" : "d3_pf", "shipping_hold_on_shortage_elapsed_3_plus");
-    else if (elapsed === 1) pushTemplate("d1", "shipping_hold_on_shortage_elapsed_1");
+    const caseRow = alimtalkCsCaseForRow(row);
+    if (caseRow && caseRow.status !== "pending") return;
+    const rule = resolveAlimtalkTemplate({
+      elapsedDays: row.elapsedDays,
+      isGold: isGoldItem(row.item),
+      isReady: row.csReason === "ready",
+      isMakeshop: isCsMakeshopMethod(row),
+      selectedTemplate: caseRow?.alimtalk_template || "",
+    });
+    if (!rule.templateKey) return;
+    pushTemplate(rule.templateKey, `exact_day_${rule.elapsedDays}`);
   });
   return groups;
 }
@@ -5682,56 +5832,135 @@ function alimtalkRowsForDay(dayKey, rows) {
   const debugHeader = [
     "판매처",
     "접수일",
-    "검품완료여부",
+    "배송보류 ON/OFF",
     "미송상품",
-    "alimtalkBucket",
-    "alimtalkBucketReason",
-    "receiptDate",
-    "delayBaseDate",
-    "delayBaseDateSource",
-    "elapsedDays",
-    "systemShippingHold",
-    "systemShippingHoldKnown",
-    "systemShippingHoldSource",
-    "hasOpenShortage",
-    "shortageQtyTotal",
-    "allReady",
-    "readyReason",
+    "알림톡 일차",
   ];
   const header = (dayKey === "내일출고" ? ["전화번호", "#{NAME}"] : ["전화번호", "#{NAME}", "#{PRODUCT}", "#{OPTION}"]).concat(debugSpacer, debugHeader);
   const body = rows.map((row) =>
     dayKey === "내일출고"
       ? [alimtalkPhone(row.invoice), alimtalkName(row.invoice), ...debugSpacer, ...alimtalkDebugColumns(row)]
-      : [alimtalkPhone(row.invoice), alimtalkName(row.invoice), alimtalkProduct(row.item), alimtalkOption(row.item), ...debugSpacer, ...alimtalkDebugColumns(row)],
+      : [alimtalkPhone(row.invoice), alimtalkName(row.invoice), alimtalkProduct(row.item), alimtalkOptionWithInboundExpectedDate(row.item), ...debugSpacer, ...alimtalkDebugColumns(row)],
   );
   return [header, ...body];
 }
 
-function exportAlimtalkCsv() {
+function alimtalkOrderNo(row) {
+  return String(row?.invoice?.orderGroupNo || row?.invoice?.raw?.ord_no || row?.key || "").trim();
+}
+
+async function exportAlimtalkCsv() {
+  if (!allowWrites) {
+    toast("알림톡 내보내기 이력을 남기려면 URL에 write=1을 붙여야 합니다.");
+    return;
+  }
   const allRows = buildAlimtalkRowsFromCsInvoices(allCsRows());
   if (!allRows.length) {
     toast("알림톡 CSV 대상이 없습니다.");
     return;
   }
   const byDay = classifyAlimtalkRowsByDay(allRows);
+  const sentKeys = await alimtalkSends.loadSentKeys();
   const timestamp = timestampForFilename();
   const files = [];
+  const sendTargets = new Map();
   let fileCount = 0;
   let rowCount = 0;
   CS_DAYS.filter((day) => day.key !== "all").forEach((day) => {
-    const rows = byDay[day.key] || [];
+    const templateKey = CS_DAY_TEMPLATE[day.key] || day.key;
+    const rows = (byDay[day.key] || []).filter((row) => !sentKeys.has(alimtalkSendNaturalKey(alimtalkOrderNo(row), templateKey)));
     if (!rows.length) return;
     const csvRows = alimtalkRowsForDay(day.key, rows);
-    const templateKey = CS_DAY_TEMPLATE[day.key] || day.key;
     files.push({
       filename: `alimtalk_${compactFilenamePart(day.label)}_${templateKey}_${timestamp}.csv`,
       content: csvRowsToText(csvRows),
     });
+    rows.forEach((row) => {
+      const ordNo = alimtalkOrderNo(row);
+      if (!ordNo) return;
+      const key = alimtalkSendNaturalKey(ordNo, templateKey);
+      const existing = sendTargets.get(key);
+      sendTargets.set(key, {
+        ord_no: ordNo,
+        inv_no: String(row.invoice?.invoiceNo || row.invoice?.raw?.inv_no || "").trim() || null,
+        template_key: templateKey,
+        basis_date: String(row.delayBaseDate || row.invoice?.receiptDate || "").trim() || null,
+        target_snapshot: {
+          item_count: Number(existing?.target_snapshot?.item_count || 0) + 1,
+          item_keys: [...new Set([...(existing?.target_snapshot?.item_keys || []), String(row.item?.raw?.item_no || row.item?.sellpiaItemNo || "").trim()].filter(Boolean))],
+        },
+      });
+    });
     fileCount += 1;
     rowCount += rows.length;
   });
-  if (files.length) downloadBlob(`${monthDayForFilename()}알림톡.zip`, buildZipBlob(files));
-  toast(fileCount ? `알림톡 ZIP ${fileCount}개 파일 · ${rowCount}건 다운로드` : "알림톡 CSV 대상이 없습니다.");
+  if (!files.length || !sendTargets.size) {
+    toast("오늘 정확한 일차의 새 알림톡 대상이 없습니다.");
+    return;
+  }
+  const batch = await alimtalkSends.createExportBatch({ items: [...sendTargets.values()] });
+  downloadBlob(`${monthDayForFilename()}알림톡.zip`, buildZipBlob(files));
+  toast(`알림톡 ZIP ${fileCount}개 파일 · ${rowCount}행을 내보냈습니다. 발송 후 배치 #${batch.id}를 발송확정하세요.`);
+}
+
+function formatAlimtalkBatchTime(value) {
+  if (!value) return "-";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return String(value);
+  return new Intl.DateTimeFormat("ko-KR", {
+    timeZone: "Asia/Seoul",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false,
+  }).format(date);
+}
+
+async function openAlimtalkSendHistoryModal() {
+  const batches = await alimtalkSends.loadUnconfirmedBatches();
+  let modal = document.getElementById("alimtalk-send-history-modal");
+  if (!modal) {
+    modal = document.createElement("div");
+    modal.id = "alimtalk-send-history-modal";
+    modal.className = "order-list-modal-overlay";
+    document.body.append(modal);
+  }
+  modal.innerHTML = `<div class="order-list-modal cs-list-modal" role="dialog" aria-modal="true" aria-label="알림톡 발송확정">
+    <div class="order-list-modal-head">
+      <h3>알림톡 발송확정</h3>
+      <div class="order-list-modal-tools"><button type="button" class="order-list-modal-close" data-alimtalk-history-action="close">×</button></div>
+    </div>
+    <div class="cs-work-log-note">CSV 다운로드는 <b>내보냄</b>만 기록합니다. 외부 알림톡 발송을 끝낸 배치만 발송확정하세요. 확정된 주문·템플릿은 다음 CSV 대상에서 제외됩니다.</div>
+    <div class="order-list-modal-table-wrap"><table class="order-list-modal-table"><thead><tr><th>배치</th><th>내보낸 시각</th><th>대상</th><th>상태</th><th>처리</th></tr></thead><tbody>
+      ${batches.length ? batches.map((batch) => `<tr><td>#${escapeHtml(batch.id)}</td><td>${escapeHtml(formatAlimtalkBatchTime(batch.created_at))}</td><td>${escapeHtml(batch.target_count)} 주문·템플릿</td><td>내보냄</td><td><button class="btn primary" data-alimtalk-history-action="confirm" data-alimtalk-batch-id="${escapeHtml(batch.id)}" type="button">발송확정</button></td></tr>`).join("") : '<tr><td colspan="5" class="order-list-modal-empty">발송확정할 내보냄 기록이 없습니다.</td></tr>'}
+    </tbody></table></div>
+  </div>`;
+  modal.hidden = false;
+  modal.onclick = (event) => {
+    if (event.target === modal || event.target.closest("[data-alimtalk-history-action='close']")) {
+      modal.hidden = true;
+      return;
+    }
+    const confirmButton = event.target.closest("[data-alimtalk-history-action='confirm']");
+    if (!confirmButton) return;
+    const id = Number(confirmButton.dataset.alimtalkBatchId || 0);
+    if (!window.confirm(`배치 #${id}의 알림톡 발송이 실제로 완료되었습니까?\n확정 후 해당 주문·템플릿은 다음 CSV 대상에서 제외됩니다.`)) return;
+    confirmButton.disabled = true;
+    alimtalkSends.confirmExportBatch(id)
+      .then(async () => {
+        let syncedOrders = 0;
+        try {
+          syncedOrders = await recordAlimtalkSendScheduledDate(id);
+        } catch (error) {
+          console.warn("failed to record Alimtalk scheduled date", error);
+          toast("알림톡 발송은 확정됐지만 출고예정일 기록 저장에 실패했습니다.");
+        }
+        toast(`알림톡 배치 #${id}를 발송확정했습니다.${syncedOrders ? ` 출고예정일 ${syncedOrders}건 기록` : ""}`);
+        return openAlimtalkSendHistoryModal();
+      })
+      .catch(showCsError);
+  };
 }
 
 function invoiceReceiverTel(invoice) {
@@ -6538,6 +6767,15 @@ async function toggleSelectedInspectionHold(orderGroupNo = state.selectedInspect
     { memo: holdOn ? "shipping hold released" : "shipping hold on" }
   );
   if (!ok) return;
+  let excludedCount = 0;
+  if (holdOn) {
+    try {
+      excludedCount = await excludeAutomaticCsAfterInspectionHoldRelease(invoice);
+    } catch (error) {
+      console.warn("automatic CS exclusion after inspection hold release failed", error);
+      toast("배송보류는 해제됐지만 자동 CS 제외 저장에 실패했습니다. CS 탭에서 다시 확인해주세요.");
+    }
+  }
   state.selectedInspectionGroup = invoice.orderGroupNo;
   renderWorkflowSurfaces();
   toast(holdOn ? "보류 해제되었습니다." : "배송보류 ON 처리되었습니다.");
@@ -7329,6 +7567,12 @@ function bindEvents() {
     }
   });
   els.csDateTabs?.addEventListener("click", (event) => {
+    const alimtalkAction = event.target.closest("[data-cs-alimtalk-action]");
+    if (alimtalkAction) {
+      if (alimtalkAction.dataset.csAlimtalkAction === "export") exportAlimtalkCsv().catch(showCsError);
+      if (alimtalkAction.dataset.csAlimtalkAction === "history") openAlimtalkSendHistoryModal().catch(showCsError);
+      return;
+    }
     const statusButton = event.target.closest("[data-cs-case-status]");
     if (statusButton) {
       state.csMode = "cases";
@@ -7396,14 +7640,26 @@ function bindEvents() {
       onDrawerChange(event);
       return;
     }
+    const orderSyncField = event.target.closest("[data-cs-order-sync-field]");
+    if (orderSyncField) {
+      saveCsOrderScheduledDate(orderSyncField.dataset.csOrderGroup || "", orderSyncField.value).catch(showCsError);
+      return;
+    }
+    const itemSyncField = event.target.closest("[data-cs-item-sync-field]");
+    if (itemSyncField) {
+      const scope = itemSyncField.closest(".cs-item-card, .cs-item-row");
+      const row = selectedCsItemRow(scope?.dataset.csRowKey || "");
+      saveCsItemConfirmedDate(row, itemSyncField.value).catch(showCsError);
+      return;
+    }
     const managementField = event.target.closest("[data-cs-management-field]");
     if (managementField) {
       if (managementField.dataset.csManagementField === "memo2") {
         managementField.value = normalizedShortageMemo2(managementField.value);
       }
-      const scope = managementField.closest(".cs-item-row");
+      const scope = managementField.closest(".cs-item-card, .cs-item-row");
       const row = selectedCsItemRow(scope?.dataset.csRowKey || "");
-      saveCsManagementFields(row, scope).catch(showError);
+      saveCsManagementFields(row, scope).catch(showCsError);
       return;
     }
     if (event.target.closest("[data-cs-case-order-memo]")) return;
@@ -7422,19 +7678,19 @@ function bindEvents() {
       const action = caseAction.dataset.csCaseAction;
       const caseId = Number(caseAction.dataset.csCaseId || 0);
       const row = selectedCsItemRow(caseAction.dataset.csRowKey || "");
-      const scope = caseAction.closest(".cs-case-item-editor, .cs-item-row");
+      const scope = caseAction.closest(".cs-item-card, .cs-case-item-editor, .cs-item-row");
       if (action === "register-auto") {
-        registerAutoShortageCsCase(row, scope).catch(showError);
+        registerAutoShortageCsCase(row, scope).catch(showCsError);
       } else if (action === "create") {
-        createManualCsCaseFromDetail(caseAction.dataset.csManualItemNo || "", row, scope).catch(showError);
+        createManualCsCaseFromDetail(caseAction.dataset.csManualItemNo || "", row, scope).catch(showCsError);
       } else if (action === "save-all") {
-        saveCsItemCard(caseId, row, scope).catch(showError);
+        saveCsItemCard(caseId, row, scope).catch(showCsError);
       } else if (action === "save") {
-        saveCsCaseFields(caseId, row, scope).catch(showError);
+        saveCsCaseFields(caseId, row, scope).catch(showCsError);
       } else if (action === "memo") {
-        saveCsCaseOrderMemo(row, scope).then(renderCsPanels).catch(showError);
+        saveCsCaseOrderMemo(row, scope).then(renderCsPanels).catch(showCsError);
       } else if (action === "resolve" || action === "exclude" || action === "reopen") {
-        changeCsCaseStatus(caseId, action).catch(showError);
+        changeCsCaseStatus(caseId, action).catch(showCsError);
       }
       return;
     }
@@ -7481,9 +7737,6 @@ function bindEvents() {
     }
     if (button.dataset.dashboardAction === "gold-label") {
       exportGoldLabelXlsx().catch(showError);
-    }
-    if (button.dataset.dashboardAction === "alimtalk-csv") {
-      exportAlimtalkCsv();
     }
     if (button.dataset.dashboardAction === "postoffice-status") {
       showPostOfficeEnrichmentStatus();
@@ -7689,6 +7942,11 @@ function bindEvents() {
 function showError(error) {
   console.error(error);
   els.orderList.innerHTML = `<div class="error">${escapeHtml(error.message || error)}</div>`;
+}
+
+function showCsError(error) {
+  console.error(error);
+  toast(`CS 처리 실패: ${error?.message || error}`);
 }
 
 function init() {
