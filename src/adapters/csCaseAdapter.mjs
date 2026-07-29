@@ -125,7 +125,18 @@ export function createCsCaseAdapter(db) {
       updated_by: text(input.updatedBy) || null,
     };
     const existing = await findCsCase({ ordNo: payload.ord_no, itemNo: payload.item_no, caseType: payload.case_type });
-    if (existing) return { caseRow: existing, created: false };
+    if (existing) {
+      // 제외/해결했던 같은 상품행의 별도 CS를 다시 추가하면 새 행을
+      // 만들지 않고 기존 수동 케이스만 진행 상태로 복구한다.
+      if (existing.source === "manual" && existing.status !== "pending") {
+        return {
+          caseRow: await reopenCsCase(existing.id, payload.updated_by || ""),
+          created: false,
+          reopened: true,
+        };
+      }
+      return { caseRow: existing, created: false, reopened: false };
+    }
     const { data, error } = await db.from("cs_cases").insert(payload).select("*");
     return { caseRow: oneRow(data, error, "create CS case"), created: true };
   }

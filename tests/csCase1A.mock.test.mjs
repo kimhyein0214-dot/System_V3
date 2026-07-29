@@ -124,6 +124,21 @@ assert.equal(duplicate.created, false);
 assert.equal(memoryDb.tables.cs_cases.length, 1);
 assert.equal((await adapter.resolveCsCase(created.caseRow.id)).status, "resolved");
 assert.equal((await adapter.excludeCsCase(created.caseRow.id)).status, "excluded");
+
+const readded = await adapter.createManualCsCase({
+  ordNo: "order-a",
+  itemNo: "item-2",
+  sellpiaOrderItemNo: "sellpia-2",
+  invNo: "invoice-a",
+  receiptDate: "2026-07-28",
+  caseType: "shortage",
+});
+assert.equal(readded.created, false);
+assert.equal(readded.reopened, true);
+assert.equal(readded.caseRow.status, "pending");
+assert.equal(memoryDb.tables.cs_cases.length, 1);
+
+assert.equal((await adapter.excludeCsCase(created.caseRow.id)).status, "excluded");
 assert.equal((await adapter.reopenCsCase(created.caseRow.id)).status, "pending");
 const automatic = await adapter.createAutoShortageCsCase({
   ordNo: "order-a",

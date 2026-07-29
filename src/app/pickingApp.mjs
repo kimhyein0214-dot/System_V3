@@ -2861,6 +2861,7 @@ function renderInspectionPanels(options = {}) {
         const itemStates = (invoice.items || []).map((item) => workflowItemState(invoice, item)).filter(Boolean);
         const repicked = itemStates.filter((row) => row.shortageRepicked && !row.inspected && !row.cancelled).length;
         const manualCsCount = manualPendingCsCountForInspectionInvoice(invoice);
+        const partialHoldCount = (invoice.items || []).filter((item) => isHold(item)).length;
         const invoiceState = workflowInvoiceState(invoice);
         const completed = Boolean(invoiceState?.inspected);
         const seller = sellerBadgeMeta(invoice.seller);
@@ -2869,6 +2870,7 @@ function renderInspectionPanels(options = {}) {
           invoice.orderGroupNo === state.selectedInspectionGroup ? "selected" : "",
           completed ? "is-completed" : "",
           invoiceState?.systemShippingHold ? "is-hold" : "",
+          partialHoldCount ? "has-hold" : "",
           repicked ? "has-shortage" : "",
           invoiceHasGold(invoice) ? "is-gold" : "",
         ]
@@ -2879,6 +2881,7 @@ function renderInspectionPanels(options = {}) {
           completed ? '<span class="workflow-row-badge done">완료</span>' : "",
           invoiceHasGold(invoice) ? '<span class="workflow-row-badge gold">골드</span>' : "",
           shippingHoldBadge(invoice),
+          partialHoldCount ? `<span class="workflow-row-badge hold">부분보류 ${partialHoldCount}</span>` : "",
           manualCsCount ? `<span class="workflow-row-badge manual">별도 CS ${manualCsCount}</span>` : "",
           repicked ? `<span class="workflow-row-badge warn">검품 ${repicked}</span>` : "",
         ]
@@ -2909,6 +2912,7 @@ function renderInspectionPanels(options = {}) {
   const holdState = shippingHoldUiState(selected);
   const selectedCompleted = Boolean(invoiceState?.inspected);
   const actionDisabled = allowWorkflowEvents ? "" : "disabled";
+  const partialHoldActionDisabled = allowWrites ? "" : "disabled";
   const holdAction = holdState.action;
   const holdLabel = holdState.actionLabel;
   const selectedRepicked = (selected.items || []).filter((item) => {
@@ -2916,6 +2920,7 @@ function renderInspectionPanels(options = {}) {
     return itemState?.shortageRepicked && !itemState?.inspected && !itemState?.cancelled;
   }).length;
   const selectedManualCsCount = manualPendingCsCountForInspectionInvoice(selected);
+  const selectedPartialHoldCount = (selected.items || []).filter((item) => isHold(item)).length;
   const selectedIndex = invoices.findIndex((invoice) => invoice.orderGroupNo === selected.orderGroupNo);
   const selectedGold = invoiceHasGold(selected);
   const selectedLabelTarget = invoiceHasLabelTarget(selected);
@@ -2948,6 +2953,7 @@ function renderInspectionPanels(options = {}) {
         ${selectedGold ? '<span class="workflow-row-badge gold">골드</span>' : ""}
         ${selectedRepicked ? `<span class="workflow-row-badge warn">미송 ${selectedRepicked}</span>` : ""}
         ${selectedManualCsCount ? `<span class="workflow-row-badge manual">별도 CS ${selectedManualCsCount}</span>` : ""}
+        ${selectedPartialHoldCount ? `<span class="workflow-row-badge hold">부분보류 ${selectedPartialHoldCount}</span>` : ""}
         ${shippingHoldBadge(selected)}
       </div>
     </div>
@@ -2959,7 +2965,8 @@ function renderInspectionPanels(options = {}) {
           const itemState = workflowItemState(selected, item);
           const itemRepicked = Boolean(itemState?.shortageRepicked && !itemState?.cancelled);
           const itemManualCsCount = manualPendingCsCasesForInspectionItem(selected, item).length;
-          const rowClass = [itemRepicked ? "repicked" : "", selectedCompleted ? "inspected" : ""].filter(Boolean).join(" ");
+          const itemPartialShippingHold = isHold(item);
+          const rowClass = [itemRepicked ? "repicked" : "", itemPartialShippingHold ? "has-hold" : "", selectedCompleted ? "inspected" : ""].filter(Boolean).join(" ");
           const imageUrl = productImageUrl(item.sellpiaProductCode);
           const option = cleanOptionName(item.optionName, item.ownCode) || "-";
           const product = item.productName || "-";
@@ -2975,6 +2982,9 @@ function renderInspectionPanels(options = {}) {
             itemRepicked && !selectedCompleted
               ? `<button class="workflow-inline-btn danger" data-action="shortage-repick-reopen" data-order-group="${escapeHtml(selected.orderGroupNo)}" data-item-no="${escapeHtml(item.sellpiaItemNo)}" type="button" ${actionDisabled}>완료취소</button>`
               : "";
+          const partialHoldReleaseButton = itemPartialShippingHold
+            ? `<button class="workflow-inline-btn danger" data-action="inspection-partial-hold-release" data-order-group="${escapeHtml(selected.orderGroupNo)}" data-item-no="${escapeHtml(item.sellpiaItemNo)}" type="button" ${partialHoldActionDisabled}>부분보류 해제</button>`
+            : "";
           return `<div class="workflow-item-row ${rowClass}">
             <span class="workflow-seq-cell">${itemSequenceNo(item, index)}</span>
             ${selectedLabelTarget ? `<span class="workflow-label-cell">${escapeHtml(labelNo)}</span>` : ""}
@@ -2995,8 +3005,10 @@ function renderInspectionPanels(options = {}) {
             <small class="workflow-status-cell">
               <span>${escapeHtml(statusText)}</span>
               ${itemManualCsCount ? `<span class="workflow-row-badge manual">별도 CS</span>` : ""}
+              ${itemPartialShippingHold ? '<span class="workflow-row-badge hold">부분보류 ON</span>' : ""}
               ${statusNotes.length ? `<em>${escapeHtml(statusNotes.join(" / "))}</em>` : ""}
               ${reopenButton}
+              ${partialHoldReleaseButton}
             </small>
           </div>`;
         })
@@ -3859,10 +3871,18 @@ function caseRowsForMatchedOrders() {
       const orderNo = csRowOrderNo(normalized);
       const itemKey = `${orderNo}::${String(normalized.item?.item_no || normalized.item?.sellpia_order_item_no || "")}`;
       const matchedCase = allCaseByItemKey.get(itemKey) || null;
+      // 한 송장의 다른 상품 때문에 상세를 함께 보여 주는 경우에도,
+      // 제외된 별도 CS 상품은 진행 화면에서 CS가 없던 원래 상품행으로 복원한다.
+      // 제외 탭에서는 이력을 확인하고 재개할 수 있도록 원본 케이스를 유지한다.
+      const visibleCase = matchedCase?.caseRow?.source === "manual"
+        && matchedCase.caseRow.status === "excluded"
+        && state.csStatusFilter !== "excluded"
+        ? null
+        : matchedCase;
       return {
         ...normalized,
-        caseRow: matchedCase?.caseRow || null,
-        virtualAutoCase: Boolean(matchedCase?.virtualAutoCase),
+        caseRow: visibleCase?.caseRow || null,
+        virtualAutoCase: Boolean(visibleCase?.virtualAutoCase),
       };
     });
   const expandedItemKeys = new Set(expandedRows.map((row) => `${csRowOrderNo(row)}::${String(row.item?.item_no || row.item?.sellpia_order_item_no || "")}`));
@@ -3979,7 +3999,11 @@ function csCaseBadges(group) {
   )];
   noTemplateLabels.forEach((label) => badges.push(`<span class="workflow-row-badge neutral">${escapeHtml(label)}</span>`));
 
-  const manualCaseCount = group.items.filter((row) => row.caseRow?.source === "manual").length;
+  // 제외한 별도 CS는 일반 상품으로 되돌아간 것처럼 보여야 한다.
+  // 따라서 진행 중인 수동 케이스만 송장/검품 뱃지에 반영한다.
+  const manualCaseCount = group.items.filter((row) => (
+    row.caseRow?.source === "manual" && row.caseRow?.status === "pending"
+  )).length;
   if (manualCaseCount) {
     badges.push(`<span class="workflow-row-badge manual">별도 CS${manualCaseCount > 1 ? ` ${manualCaseCount}` : ""}</span>`);
   }
@@ -4007,10 +4031,10 @@ function renderCsCaseFilters() {
       <option value="normal" ${state.csGoldFilter === "normal" ? "selected" : ""}>일반</option>
       <option value="gold" ${state.csGoldFilter === "gold" ? "selected" : ""}>14K</option>
     </select>
-    <button class="filter-chip ${state.csMode === "manual" ? "active" : ""}" data-cs-mode="manual" type="button">수동 추가</button>
+    <button class="filter-chip ${state.csMode === "manual" ? "active" : ""}" data-cs-mode="manual" type="button">수동 CS 추가</button>
     <button class="filter-chip" data-cs-alimtalk-action="export" type="button" ${allowWrites ? "" : "disabled"}>알림톡 CSV</button>
     <button class="filter-chip" data-cs-alimtalk-action="history" type="button" ${allowWrites ? "" : "disabled"}>CSV 발송확정</button>
-    <span class="cs-mode-indicator ${state.csMode === "manual" ? "manual" : ""}">${state.csMode === "manual" ? "수동 추가 모드 · 검색 결과에서 상품행을 선택하세요" : "CS 케이스 목록"}</span>`;
+    <span class="cs-mode-indicator ${state.csMode === "manual" ? "manual" : ""}">${state.csMode === "manual" ? "수동 CS 추가 모드 · 검색 후 상품행의 ‘별도 CS 추가’를 누르세요" : "CS 케이스 목록"}</span>`;
 }
 
 function renderCsCaseRow(group, selected) {
@@ -4019,7 +4043,7 @@ function renderCsCaseRow(group, selected) {
   const pendingCount = caseRows.filter((row) => row.caseRow.status === "pending").length;
   const goldCount = group.items.filter((row) => row.isGold).length;
   const badgeClass = caseRows.length ? (pendingCount ? "danger" : caseRows.every((row) => row.caseRow.status === "excluded") ? "hold" : "done") : "manual";
-  const modeLabel = autoShortageCount ? `미송 ${autoShortageCount}` : caseRows.length ? (pendingCount ? `진행 ${pendingCount}` : "처리됨") : "수동 추가";
+  const modeLabel = autoShortageCount ? `미송 ${autoShortageCount}` : caseRows.length ? (pendingCount ? `진행 ${pendingCount}` : "처리됨") : "수동 등록 가능";
   const receiver = group.order?.receiver || group.order?.receiver_name || group.order?.orderer || "-";
   const badges = csCaseBadges(group);
   return `<button class="workflow-row cs-case-row ${caseRows.length ? "is-case" : "is-manual-source"} ${selected ? "selected" : ""}" data-cs-key="${escapeHtml(group.key)}" type="button">
@@ -4040,9 +4064,12 @@ function renderCsCaseItemEditor(row, itemNumber = 0) {
   const virtualAutoCase = Boolean(row.virtualAutoCase);
   const item = row.item || {};
   const order = row.order || {};
+  const workflowItem = findCsWorkflowItem(row).item;
+  const partialShippingHoldOn = Boolean(workflowItem && isHold(workflowItem));
   const readonly = allowWrites && !virtualAutoCase ? "" : "readonly";
   const managementReadonly = allowWrites ? "" : "readonly";
   const disabled = allowWrites ? "" : "disabled";
+  const partialHoldDisabled = allowWrites && workflowItem ? "" : "disabled";
   const receiptDate = caseRow?.receipt_date || order.receipt_date || item.receipt_date || "";
   const memo = String(item.order_memo ?? "");
   const managementMemo2 = String(item.o_shop_memo2 ?? item.shop_memo2 ?? item.memo2 ?? "");
@@ -4071,12 +4098,14 @@ function renderCsCaseItemEditor(row, itemNumber = 0) {
       ? `<button class="btn primary" data-cs-case-action="save-all" data-cs-case-id="${caseRow.id}" data-cs-row-key="${escapeHtml(row.key)}" type="button" ${disabled}>저장</button>
           ${caseRow.status === "pending" ? `<button class="btn" data-cs-case-action="resolve" data-cs-case-id="${caseRow.id}" data-cs-row-key="${escapeHtml(row.key)}" type="button" ${disabled}>해결</button><button class="btn" data-cs-case-action="exclude" data-cs-case-id="${caseRow.id}" data-cs-row-key="${escapeHtml(row.key)}" type="button" ${disabled}>제외</button>` : `<button class="btn primary" data-cs-case-action="reopen" data-cs-case-id="${caseRow.id}" data-cs-row-key="${escapeHtml(row.key)}" type="button" ${disabled}>재개</button>`}`
       : `<button class="btn primary" data-cs-case-action="create" data-cs-manual-item-no="${escapeHtml(item.item_no || "")}" data-cs-row-key="${escapeHtml(row.key)}" type="button" ${disabled}>별도 CS 추가</button>`;
-  return `<article class="cs-item-card ${caseRow?.status === "pending" ? "is-cs-target" : ""}" data-cs-row-key="${escapeHtml(row.key)}">
+  const partialHoldButton = `<button class="btn ${partialShippingHoldOn ? "" : "primary"}" data-cs-item-hold-action="${partialShippingHoldOn ? "off" : "on"}" data-cs-row-key="${escapeHtml(row.key)}" type="button" title="상품행 단위 부분 배송보류 (셀피아 동기화 전 System 테스트)" ${partialHoldDisabled}>${partialShippingHoldOn ? "부분보류 해제" : "부분보류 처리"}</button>`;
+  const partialHoldBadge = partialShippingHoldOn ? '<span class="workflow-row-badge hold">부분보류 ON</span>' : "";
+  return `<article class="cs-item-card ${caseRow?.status === "pending" ? "is-cs-target" : ""} ${partialShippingHoldOn ? "has-partial-hold" : ""}" data-cs-row-key="${escapeHtml(row.key)}">
     <section class="cs-item-overview">
       <span class="cs-item-line-number" title="상품행번호 ${escapeHtml(String(itemNumber || "-"))}">${escapeHtml(String(itemNumber || "-"))}</span>
       <div class="workflow-item-photo">${imageUrl ? `<img src="${imageUrl}" ${photoImgAttrs(imageUrl, `${row.ownCode || ""} · ${item.p_name || ""}`)} alt="" loading="lazy" onerror="this.style.visibility='hidden'">` : "사진"}</div>
       <div class="cs-item-product"><strong>${escapeHtml(item.p_name || "상품 정보 없음")}</strong><em>${escapeHtml(item.p_option || "옵션 없음")}</em><div class="cs-item-facts"><span>수량 <b>${escapeHtml(String(item.qty ?? item.o_amount ?? "-"))}</b></span><span>자사코드 <b>${escapeHtml(row.ownCode || "-")}</b></span></div></div>
-      <div class="workflow-row-badges cs-item-status">${caseBadge}${row.isGold ? '<span class="workflow-row-badge gold">14K</span>' : '<span class="workflow-row-badge">일반</span>'}</div>
+      <div class="workflow-row-badges cs-item-status">${caseBadge}${partialHoldBadge}${row.isGold ? '<span class="workflow-row-badge gold">14K</span>' : '<span class="workflow-row-badge">일반</span>'}</div>
     </section>
     <section class="cs-item-section cs-item-case-classification">
       <h4>CS 진행</h4>
@@ -4089,7 +4118,7 @@ function renderCsCaseItemEditor(row, itemNumber = 0) {
       <label><span>관리메모2</span><input data-cs-management-field="memo2" value="${escapeHtml(managementMemo2)}" ${managementReadonly}></label>
       <label class="inspection-memo-cell ${memo.trim() ? "has-value" : ""}"><span>주문메모 / CS메모</span><textarea data-cs-case-order-memo rows="2" ${readonly}>${escapeHtml(memo)}</textarea></label>
     </section>
-    <div class="cs-item-card-actions">${actionButtons}</div>
+    <div class="cs-item-card-actions">${partialHoldButton}${actionButtons}</div>
   </article>`;
 }
 
@@ -4352,6 +4381,58 @@ function findCsWorkflowItem(row) {
   return { invoice: null, item: null };
 }
 
+async function toggleCsPartialShippingHold(row) {
+  if (!allowWrites) {
+    toast("읽기전용입니다. URL에 write=1을 붙여 부분보류를 저장할 수 있습니다.");
+    return;
+  }
+  const { invoice, item } = findCsWorkflowItem(row);
+  if (!invoice || !item) {
+    throw new Error("부분보류를 저장할 정확한 상품행을 찾지 못했습니다.");
+  }
+  const itemKey = itemStateKey(invoice, item);
+  if (state.saving.has(itemKey)) return;
+
+  const previous = isHold(item);
+  patchLocalPickingState(invoice, item, { isHold: !previous });
+  renderWorkflowSurfacesIfVisible();
+  try {
+    await savePickingRow(invoice, item);
+    toast(previous ? "상품행 부분보류를 해제했습니다." : "상품행 부분보류를 처리했습니다.");
+  } catch (error) {
+    patchLocalPickingState(invoice, item, { isHold: previous });
+    renderWorkflowSurfacesIfVisible();
+    throw error;
+  }
+}
+
+async function releaseInspectionPartialShippingHold(orderGroupNo, sellpiaItemNo) {
+  if (!allowWrites) {
+    toast("읽기전용입니다. URL에 write=1을 붙여 부분보류를 저장할 수 있습니다.");
+    return;
+  }
+  const invoice = allWorkflowInvoices().find((candidate) => candidate.orderGroupNo === orderGroupNo);
+  const item = invoice?.items?.find((candidate) => candidate.sellpiaItemNo === sellpiaItemNo);
+  if (!invoice || !item) {
+    throw new Error("부분보류를 해제할 정확한 상품행을 찾지 못했습니다.");
+  }
+  if (!isHold(item)) return;
+
+  const itemKey = itemStateKey(invoice, item);
+  if (state.saving.has(itemKey)) return;
+
+  patchLocalPickingState(invoice, item, { isHold: false });
+  renderWorkflowSurfacesIfVisible();
+  try {
+    await savePickingRow(invoice, item);
+    toast("상품행 부분보류를 해제했습니다.");
+  } catch (error) {
+    patchLocalPickingState(invoice, item, { isHold: true });
+    renderWorkflowSurfacesIfVisible();
+    throw error;
+  }
+}
+
 async function findCsPickingRowExact(row) {
   const { ordNo, itemNo, sellpiaOrderItemNo } = csItemIdentity(row);
   const itemKeys = [...new Set([itemNo, sellpiaOrderItemNo].filter(Boolean))];
@@ -4541,7 +4622,13 @@ async function createManualCsCaseFromDetail(itemNo, row, scope) {
   state.csMode = "cases";
   state.csStatusFilter = result.caseRow.status || "pending";
   state.selectedCsKey = `order:${String(result.caseRow.ord_no || row.order?.ord_no || "")}`;
-  toast(result.created ? "수동 CS 케이스 추가" : "이미 같은 CS 케이스가 있습니다.");
+  toast(
+    result.created
+      ? "수동 CS 케이스 추가"
+      : result.reopened
+        ? "제외된 별도 CS를 다시 진행으로 복구했습니다."
+        : "이미 진행 중인 별도 CS 케이스가 있습니다."
+  );
   renderCsPanels();
 }
 
@@ -4580,9 +4667,8 @@ async function changeCsCaseStatus(caseId, action) {
     : action === "exclude"
       ? await csCases.excludeCsCase(caseId)
       : await csCases.reopenCsCase(caseId);
-  if (next.source === "manual") {
-    await appendCsOrderScheduledHistory(next.ord_no, alimtalkSendLogCode("manual"));
-  }
+  // 별도 CS 코드(ㅂㅂ)는 실제 수동 등록 시에만 주문 공통 이력에 남긴다.
+  // 제외·해결·재개는 케이스의 현재 상태만 바꾸며, 같은 이력을 다시 누적하지 않는다.
   state.csCases = state.csCases.map((entry) => (entry.id === next.id ? next : entry));
   state.selectedCsKey = `order:${String(next.ord_no || "")}`;
   toast(`CS 케이스 ${csStatusLabel(next.status)}`);
@@ -4653,20 +4739,40 @@ function findInvoiceAndItem(orderGroupNo, sellpiaItemNo) {
 }
 
 function patchLocalPickingState(invoice, item, patch) {
-  if (!item.pickingState) {
-    item.pickingState = {
-      orderGroupNo: invoice.orderGroupNo,
-      sellpiaItemNo: item.sellpiaItemNo,
-      key: itemStateKey(invoice, item),
-      isPicked: false,
-      shortageQty: 0,
-      drawerMemo: "",
-      isHold: false,
-      status: "",
-      raw: null,
-    };
+  const orderGroupNo = String(invoice?.orderGroupNo || "").trim();
+  const sellpiaItemNo = String(item?.sellpiaItemNo || "").trim();
+  const patchedItems = new Set();
+  const applyPatch = (targetInvoice, targetItem) => {
+    if (!targetItem?.pickingState) {
+      targetItem.pickingState = {
+        orderGroupNo: targetInvoice?.orderGroupNo || orderGroupNo,
+        sellpiaItemNo: targetItem?.sellpiaItemNo || sellpiaItemNo,
+        key: itemStateKey(targetInvoice, targetItem),
+        isPicked: false,
+        shortageQty: 0,
+        drawerMemo: "",
+        isHold: false,
+        status: "",
+        raw: null,
+      };
+    }
+    Object.assign(targetItem.pickingState, patch);
+    patchedItems.add(targetItem);
+  };
+
+  // 피킹·검품·CS는 동일 주문을 각 화면 모델에 사본으로 들고 있을 수 있다.
+  // 부분보류는 주문 전체가 아닌 같은 주문그룹 + 상품행에만 즉시 반영한다.
+  if (orderGroupNo && sellpiaItemNo) {
+    allWorkflowInvoices().forEach((candidateInvoice) => {
+      if (String(candidateInvoice?.orderGroupNo || "").trim() !== orderGroupNo) return;
+      (candidateInvoice.items || []).forEach((candidateItem) => {
+        if (String(candidateItem?.sellpiaItemNo || "").trim() !== sellpiaItemNo) return;
+        if (!patchedItems.has(candidateItem)) applyPatch(candidateInvoice, candidateItem);
+      });
+    });
   }
-  Object.assign(item.pickingState, patch);
+
+  if (!patchedItems.has(item)) applyPatch(invoice, item);
 }
 
 function itemDataSelector(invoice, item) {
@@ -7842,6 +7948,12 @@ function bindEvents() {
       toggleCsShippingHold(holdButton.dataset.csOrderGroup || "").catch(showError);
       return;
     }
+    const partialHoldButton = event.target.closest("[data-cs-item-hold-action]");
+    if (partialHoldButton) {
+      const row = selectedCsItemRow(partialHoldButton.dataset.csRowKey || "");
+      toggleCsPartialShippingHold(row).catch(showCsError);
+      return;
+    }
     const caseAction = event.target.closest("[data-cs-case-action]");
     if (caseAction) {
       const action = caseAction.dataset.csCaseAction;
@@ -8058,6 +8170,9 @@ function bindEvents() {
     }
     if (button.dataset.action === "inspection-hold" || button.dataset.action === "inspection-hold-release") {
       toggleSelectedInspectionHold(button.dataset.inspectionGroup).catch(showError);
+    }
+    if (button.dataset.action === "inspection-partial-hold-release") {
+      releaseInspectionPartialShippingHold(button.dataset.orderGroup || "", button.dataset.itemNo || "").catch(showError);
     }
     if (button.dataset.action === "shortage-repick-reopen") {
       reopenShortageRepick(button.dataset.orderGroup, button.dataset.itemNo).catch(showError);
