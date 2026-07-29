@@ -3,6 +3,8 @@ function nonNegativeInteger(value) {
   return Number.isFinite(number) && number >= 0 ? Math.floor(number) : 0;
 }
 
+const TEMPLATE_KEYS = new Set(["d0", "d1", "14k_1", "d3_pf", "d3_ms", "d5_hi", "d5_lo", "14k_5", "d10"]);
+
 export const ALIMTALK_SEND_LOG_CODES = Object.freeze({
   d0: "0",
   d1: "1",
@@ -46,7 +48,28 @@ export function resolveAlimtalkTemplate({
   isMakeshop = false,
   selectedTemplate = "",
 } = {}) {
-  if (isReady) {
+  const days = nonNegativeInteger(elapsedDays);
+  const selected = String(selectedTemplate || "").trim();
+
+  // A user-selected template is an explicit CS decision.  It must not be
+  // discarded merely because its normal automatic day has passed.
+  if (TEMPLATE_KEYS.has(selected)) {
+    return {
+      elapsedDays: days,
+      dayKey: selected,
+      label: "",
+      templateKey: selected,
+      allowedTemplateKeys: [],
+      hasTemplate: true,
+      selectionRequired: false,
+      manuallySelected: true,
+    };
+  }
+
+  // elapsedDays is zero-based: a receipt made today has elapsedDays === 0.
+  // The operator-facing delay days are one-based.  The sole exception is
+  // the ready-to-ship notice: it is only for today's fully-ready held order.
+  if (isReady && days === 0) {
     return {
       elapsedDays: 0,
       dayKey: "내일출고",
@@ -55,24 +78,22 @@ export function resolveAlimtalkTemplate({
       allowedTemplateKeys: ["d0"],
       hasTemplate: true,
       selectionRequired: false,
+      manuallySelected: false,
     };
   }
 
-  const days = nonNegativeInteger(elapsedDays);
   let allowedTemplateKeys = [];
-  if (days === 0) {
-    allowedTemplateKeys = ["d0"];
-  } else if (isGold) {
-    if (days === 1) allowedTemplateKeys = ["14k_1"];
-    if (days === 5) allowedTemplateKeys = ["14k_5"];
-  } else if (days === 1) {
+  if (isGold) {
+    if (days === 0) allowedTemplateKeys = ["14k_1"];
+    if (days === 4) allowedTemplateKeys = ["14k_5"];
+  } else if (days === 0) {
     allowedTemplateKeys = ["d1"];
-  } else if (days === 3) {
+  } else if (days === 2) {
     allowedTemplateKeys = [isMakeshop ? "d3_ms" : "d3_pf"];
-  } else if (days === 5) {
+  } else if (days === 4) {
     // The operator must choose either partial-shipment or cancellation-shipment.
     allowedTemplateKeys = ["d5_hi", "d5_lo"];
-  } else if (days === 10) {
+  } else if (days === 9) {
     allowedTemplateKeys = ["d10"];
   }
 
@@ -80,29 +101,28 @@ export function resolveAlimtalkTemplate({
     return {
       elapsedDays: days,
       dayKey: "",
-      label: `${alimtalkElapsedLabel(days)} · 템플릿 없음`,
+      label: `${alimtalkElapsedLabel(days + 1)} · 템플릿 없음`,
       templateKey: "",
       allowedTemplateKeys,
       hasTemplate: false,
       selectionRequired: false,
+      manuallySelected: false,
     };
   }
 
-  const selected = String(selectedTemplate || "").trim();
   const selectionRequired = allowedTemplateKeys.length > 1;
-  const templateKey = allowedTemplateKeys.includes(selected)
-    ? selected
-    : selectionRequired
+  const templateKey = selectionRequired
       ? ""
       : allowedTemplateKeys[0];
   return {
     elapsedDays: days,
     dayKey: templateKey,
-    label: templateKey ? "" : `${alimtalkElapsedLabel(days)} · 템플릿 선택 필요`,
+    label: templateKey ? "" : `${alimtalkElapsedLabel(days + 1)} · 템플릿 선택 필요`,
     templateKey,
     allowedTemplateKeys,
     hasTemplate: Boolean(templateKey),
     selectionRequired,
+    manuallySelected: false,
   };
 }
 

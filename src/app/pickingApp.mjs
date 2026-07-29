@@ -3,7 +3,7 @@ import { buildPickingViewModel } from "../workflows/picking/buildPickingViewMode
 import { createCsCaseAdapter, openShortageItemKeys } from "../adapters/csCaseAdapter.mjs?v=20260728-cs-cases3";
 import { createAlimtalkSendAdapter } from "../adapters/alimtalkSendAdapter.mjs?v=20260728-alimtalk-history2";
 import { isGoldOwnCode } from "../domain/gold.mjs?v=20260728-gold-own-code1";
-import { alimtalkSendLogCode, alimtalkSendNaturalKey, appendAlimtalkSendLog, resolveAlimtalkTemplate } from "../domain/alimtalk.mjs?v=20260728-alimtalk-log-codes1";
+import { alimtalkSendLogCode, alimtalkSendNaturalKey, appendAlimtalkSendLog, resolveAlimtalkTemplate } from "../domain/alimtalk.mjs?v=20260729-alimtalk-template-override1";
 import { receiptBusinessDayKeys, receiptBusinessDaysSince } from "../domain/businessDays.mjs?v=20260728-receipt-business-days1";
 import {
   buildWorkflowState,
@@ -153,6 +153,7 @@ const state = {
   csMode: "cases",
   csStatusFilter: "pending",
   csTypeFilter: "",
+  csTemplateOnly: false,
   csGoldFilter: "all",
   csSort: "receipt_desc",
   csManualCandidates: [],
@@ -3718,6 +3719,7 @@ function filteredCsCaseRows() {
   const search = state.csSearchText.trim().toLowerCase();
   return allCsDisplayRows()
     .filter((row) => state.csStatusFilter === "all" || row.caseRow.status === state.csStatusFilter)
+    .filter((row) => !state.csTemplateOnly || csAutoTemplateKeys(row).length > 0)
     .filter((row) => {
       if (!state.csTypeFilter) return true;
       if (state.csTypeFilter === "manual") return row.caseRow?.source === "manual";
@@ -3905,16 +3907,14 @@ function csNeedsFiveDayTemplateSelection(row) {
 
 function csTemplateSelect(row, disabled = "") {
   const rule = csAlimtalkTemplateRule(row);
-  if (!rule.allowedTemplateKeys.length) {
-    return `<label class="cs-template-static neutral"><span>알림톡 템플릿</span><strong>${escapeHtml(rule.label)}</strong></label>`;
-  }
-  const selectedTemplate = rule.templateKey;
+  const explicitTemplate = String(row?.caseRow?.alimtalk_template || "").trim();
+  const selectedTemplate = explicitTemplate || rule.templateKey;
   const placeholder = csNeedsFiveDayTemplateSelection(row)
     ? "5일차 선택 필요"
-    : rule.selectionRequired ? rule.label : (CS_TEMPLATE_PRESETS[selectedTemplate]?.label || "템플릿 없음");
+    : rule.label ? `자동 추천 · ${rule.label}` : "자동 추천으로 되돌리기";
   return `<label class="cs-template-field"><span>알림톡 템플릿</span><select data-cs-case-field="alimtalk_template" ${disabled}>
     <option value="" ${selectedTemplate ? "" : "selected"}>${escapeHtml(placeholder)}</option>
-    ${rule.allowedTemplateKeys.map((templateKey) => `<option value="${escapeHtml(templateKey)}" ${selectedTemplate === templateKey ? "selected" : ""}>${escapeHtml(CS_TEMPLATE_PRESETS[templateKey]?.label || templateKey)}</option>`).join("")}
+    ${Object.entries(CS_TEMPLATE_PRESETS).map(([templateKey, preset]) => `<option value="${escapeHtml(templateKey)}" ${selectedTemplate === templateKey ? "selected" : ""}>${escapeHtml(preset.label || templateKey)}</option>`).join("")}
   </select></label>`;
 }
 
@@ -3966,6 +3966,7 @@ function renderCsCaseFilters() {
       <option value="none" ${state.csTypeFilter === "none" ? "selected" : ""}>템플릿 없음 (기타)</option>
       <option value="manual" ${state.csTypeFilter === "manual" ? "selected" : ""}>별도 CS</option>
     </select>
+    <label class="filter-chip cs-template-only"><input type="checkbox" data-cs-template-only ${state.csTemplateOnly ? "checked" : ""}> 템플릿 없음 제외</label>
     <select class="filter-chip" data-cs-gold-filter aria-label="골드 필터">
       <option value="all" ${state.csGoldFilter === "all" ? "selected" : ""}>일반/14K 전체</option>
       <option value="normal" ${state.csGoldFilter === "normal" ? "selected" : ""}>일반</option>
@@ -4073,7 +4074,12 @@ function renderCsCaseDetail(group) {
   const scheduledHistory = String(group.order?.sellpia_outbound_scheduled_date || "");
   els.csDetail.innerHTML = `<div class="cs-detail-card cs-case-detail-card">
     <div class="workflow-detail-head cs-order-detail-head">
-      <div><strong>송장 ${escapeHtml(group.invoiceNo || "-")} · ${escapeHtml(receiver)}</strong></div>
+      <div class="cs-order-title-block"><strong>송장 ${escapeHtml(group.invoiceNo || "-")} · ${escapeHtml(receiver)}</strong>
+        <div class="cs-order-status-summary" aria-label="현재 CS 및 배송보류 상태">
+          <span class="workflow-row-badge ${state.csMode === "manual" ? "manual" : ""}">${state.csMode === "manual" ? "수동 추가 대상" : `CS ${caseCount}건`}</span>
+          ${invoice ? shippingHoldBadge(invoice) : ""}
+        </div>
+      </div>
       <div class="inspection-actions">
         <span class="workflow-row-badge ${state.csMode === "manual" ? "manual" : ""}">${state.csMode === "manual" ? "수동 추가 대상" : `CS ${caseCount}건`}</span>
         <button class="btn" data-cs-hold-action="${escapeHtml(holdAction)}" data-cs-order-group="${escapeHtml(group.ordNo || "")}" type="button" ${holdDisabled}>${escapeHtml(holdLabel)}</button>
@@ -7716,6 +7722,13 @@ function bindEvents() {
     renderCsPanels();
   });
   els.csDateTabs?.addEventListener("change", (event) => {
+    const templateOnly = event.target.closest("[data-cs-template-only]");
+    if (templateOnly) {
+      state.csTemplateOnly = Boolean(templateOnly.checked);
+      state.selectedCsKey = "";
+      renderCsPanels();
+      return;
+    }
     const templateSelect = event.target.closest("[data-cs-template-filter]");
     if (templateSelect) {
       state.csTypeFilter = templateSelect.value || "";

@@ -2170,6 +2170,25 @@ input {
   display: none;
 }
 
+.cs-order-status-summary {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 6px;
+  flex-wrap: wrap;
+}
+
+.cs-template-only {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  cursor: pointer;
+}
+
+.cs-template-only input {
+  margin: 0;
+}
+
 .inspection-header-skeleton.is-hold {
   border-left: 4px solid #8b5cf6;
   background: #f5f3ff;
