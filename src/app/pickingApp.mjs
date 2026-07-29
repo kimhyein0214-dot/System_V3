@@ -3683,7 +3683,7 @@ function csCaseContext(caseRow) {
   const order = state.csCaseContexts.orders.get(String(caseRow.ord_no || "")) || candidate?.order || null;
   const item = state.csCaseContexts.items.get(String(caseRow.item_no || "")) || candidate?.item || null;
   const ownCode = String(item?.prod_code || item?.p_dpcode || item?.own_code || "").trim();
-  return {
+  const context = {
     caseRow,
     order,
     item,
@@ -3691,6 +3691,7 @@ function csCaseContext(caseRow) {
     isGold: isGoldOwnCode(ownCode),
     key: String(caseRow.id),
   };
+  return { ...context, templateOverride: csTemplateOverrideForRow(context) };
 }
 
 function csSearchTextFor({ order, item, caseRow }) {
@@ -3761,7 +3762,8 @@ function autoShortageCsRows() {
 }
 
 function allCsDisplayRows() {
-  return [...state.csCases.map(csCaseContext), ...autoShortageCsRows()];
+  const visibleCases = state.csCases.filter((caseRow) => caseRow?.case_type !== "template_override");
+  return [...visibleCases.map(csCaseContext), ...autoShortageCsRows()];
 }
 
 function filteredCsCaseRows() {
@@ -3800,11 +3802,27 @@ function manualCsCandidateRow(row) {
     key: `manual:${itemNo || sellpiaOrderItemNo}`,
     ownCode,
     isGold: isGoldOwnCode(ownCode),
+    templateOverride: csTemplateOverrideForRow(row),
   };
 }
 
 function csRowOrderNo(row) {
   return String(row?.caseRow?.ord_no || row?.order?.ord_no || row?.item?.ord_no || row?.item?.order_group_no || "").trim();
+}
+
+function csTemplateOverrideForRow(row) {
+  const ordNo = csRowOrderNo(row);
+  const itemNo = String(row?.item?.item_no || row?.caseRow?.item_no || "").trim();
+  if (!ordNo || !itemNo) return null;
+  return state.csCases.find((caseRow) => (
+    caseRow?.case_type === "template_override"
+    && String(caseRow?.ord_no || "") === ordNo
+    && String(caseRow?.item_no || "") === itemNo
+  )) || null;
+}
+
+function csSelectedAlimtalkTemplate(row) {
+  return String(row?.caseRow?.alimtalk_template || row?.templateOverride?.alimtalk_template || "").trim();
 }
 
 function groupedCsRows(rows) {
@@ -3964,11 +3982,16 @@ function csNeedsFiveDayTemplateSelection(row) {
 
 function csTemplateSelect(row, disabled = "") {
   const rule = csAlimtalkTemplateRule(row);
-  const explicitTemplate = String(row?.caseRow?.alimtalk_template || "").trim();
-  const selectedTemplate = explicitTemplate || rule.templateKey;
-  const placeholder = csNeedsFiveDayTemplateSelection(row)
-    ? "5일차 선택 필요"
-    : rule.label ? `자동 추천 · ${rule.label}` : "자동 추천으로 되돌리기";
+  const explicitTemplate = csSelectedAlimtalkTemplate(row);
+  const automaticCase = Boolean(row?.virtualAutoCase || row?.caseRow?.source === "auto");
+  // 일반 상품행은 자동 알림톡 대상이 아니다. 사용자가 직접 고른 값만
+  // 보이며, 선택 전에는 반드시 '템플릿 없음'으로 둔다.
+  const selectedTemplate = explicitTemplate || (automaticCase ? rule.templateKey : "");
+  const placeholder = !automaticCase
+    ? "템플릿 없음"
+    : csNeedsFiveDayTemplateSelection(row)
+      ? "5일차 선택 필요"
+      : rule.label ? `자동 추천 · ${rule.label}` : "자동 추천으로 되돌리기";
   return `<label class="cs-template-field"><span>알림톡 템플릿</span><select data-cs-case-field="alimtalk_template" ${disabled}>
     <option value="" ${selectedTemplate ? "" : "selected"}>${escapeHtml(placeholder)}</option>
     ${Object.entries(CS_TEMPLATE_PRESETS).map(([templateKey, preset]) => `<option value="${escapeHtml(templateKey)}" ${selectedTemplate === templateKey ? "selected" : ""}>${escapeHtml(preset.label || templateKey)}</option>`).join("")}
@@ -4091,7 +4114,7 @@ function renderCsCaseItemEditor(row, itemNumber = 0) {
     ? csTemplateSelect(row, allowWrites ? "" : "disabled")
     : manualCase
       ? '<label class="cs-template-static"><span>CS 구분</span><strong>별도 CS</strong></label>'
-      : '<label class="cs-template-static neutral"><span>CS 구분</span><strong>CS 대상 아님</strong></label>';
+      : csTemplateSelect(row, allowWrites ? "" : "disabled");
   const imageCode = item.sellpia_p_code || item.sellpia_product_code || item.p_code || "";
   const imageUrl = productImageUrl(imageCode);
   const actionButtons = virtualAutoCase
@@ -4099,7 +4122,8 @@ function renderCsCaseItemEditor(row, itemNumber = 0) {
     : hasCase
       ? `<button class="btn primary" data-cs-case-action="save-all" data-cs-case-id="${caseRow.id}" data-cs-row-key="${escapeHtml(row.key)}" type="button" ${disabled}>저장</button>
           ${caseRow.status === "pending" ? `<button class="btn" data-cs-case-action="resolve" data-cs-case-id="${caseRow.id}" data-cs-row-key="${escapeHtml(row.key)}" type="button" ${disabled}>해결</button><button class="btn" data-cs-case-action="exclude" data-cs-case-id="${caseRow.id}" data-cs-row-key="${escapeHtml(row.key)}" type="button" ${disabled}>제외</button>` : `<button class="btn primary" data-cs-case-action="reopen" data-cs-case-id="${caseRow.id}" data-cs-row-key="${escapeHtml(row.key)}" type="button" ${disabled}>재개</button>`}`
-      : `<button class="btn primary" data-cs-case-action="create" data-cs-manual-item-no="${escapeHtml(item.item_no || "")}" data-cs-row-key="${escapeHtml(row.key)}" type="button" ${disabled}>별도 CS 추가</button>`;
+      : `<button class="btn" data-cs-case-action="save-template-override" data-cs-row-key="${escapeHtml(row.key)}" type="button" ${disabled}>템플릿 저장</button>
+          <button class="btn primary" data-cs-case-action="create" data-cs-manual-item-no="${escapeHtml(item.item_no || "")}" data-cs-row-key="${escapeHtml(row.key)}" type="button" ${disabled}>별도 CS 추가</button>`;
   const partialHoldButton = `<button class="btn ${partialShippingHoldOn ? "" : "primary"}" data-cs-item-hold-action="${partialShippingHoldOn ? "off" : "on"}" data-cs-row-key="${escapeHtml(row.key)}" type="button" title="상품행 단위 부분 배송보류 (셀피아 동기화 전 System 테스트)" ${partialHoldDisabled}>${partialShippingHoldOn ? "부분보류 해제" : "부분보류 처리"}</button>`;
   const partialHoldBadge = partialShippingHoldOn ? '<span class="workflow-row-badge hold">부분보류 ON</span>' : "";
   return `<article class="cs-item-card ${caseRow?.status === "pending" ? "is-cs-target" : ""} ${partialShippingHoldOn ? "has-partial-hold" : ""}" data-cs-row-key="${escapeHtml(row.key)}">
@@ -4537,6 +4561,36 @@ async function saveCsCaseOrderMemo(row, scope = els.csDetail) {
   }
   patchLocalOrderMemoByExact(ordNo, itemNo, value, sellpiaOrderItemNo);
   toast("상품행 주문메모 저장");
+}
+
+async function saveCsTemplateOverride(row, scope = els.csDetail) {
+  if (!allowWrites) {
+    toast("읽기전용입니다. URL에 write=1을 붙여야 알림톡 템플릿을 저장할 수 있습니다.");
+    return;
+  }
+  const ordNo = csRowOrderNo(row);
+  const itemNo = String(row?.item?.item_no || row?.caseRow?.item_no || "").trim();
+  const sellpiaOrderItemNo = String(row?.item?.sellpia_order_item_no || row?.caseRow?.sellpia_order_item_no || "").trim();
+  if (!ordNo || !itemNo) throw new Error("템플릿 저장에는 주문번호와 상품행번호가 필요합니다.");
+  const templateField = csDetailInput("alimtalk_template", scope);
+  if (!templateField) throw new Error("알림톡 템플릿 선택칸을 찾지 못했습니다.");
+  const receiptDate = String(row?.order?.receipt_date || row?.item?.receipt_date || row?.caseRow?.receipt_date || "").trim();
+  const result = await csCases.upsertTemplateOverride({
+    ordNo,
+    itemNo,
+    sellpiaOrderItemNo,
+    invNo: row?.order?.inv_no || row?.item?.inv_no || row?.caseRow?.inv_no || "",
+    receiptDate,
+    alimtalkTemplate: templateField.value || "",
+  });
+  if (result.caseRow) {
+    state.csCases = [
+      ...state.csCases.filter((entry) => Number(entry.id) !== Number(result.caseRow.id)),
+      result.caseRow,
+    ];
+  }
+  toast(result.caseRow?.alimtalk_template ? "알림톡 템플릿을 저장했습니다." : "알림톡 템플릿 선택을 해제했습니다.");
+  renderCsPanels();
 }
 
 function patchLocalOrderMemoByExact(ordNo, itemNo, value, sellpiaOrderItemNo = "") {
@@ -7964,6 +8018,8 @@ function bindEvents() {
       const scope = caseAction.closest(".cs-item-card, .cs-case-item-editor, .cs-item-row");
       if (action === "register-auto") {
         registerAutoShortageCsCase(row, scope).catch(showCsError);
+      } else if (action === "save-template-override") {
+        saveCsTemplateOverride(row, scope).catch(showCsError);
       } else if (action === "create") {
         createManualCsCaseFromDetail(caseAction.dataset.csManualItemNo || "", row, scope).catch(showCsError);
       } else if (action === "save-all") {

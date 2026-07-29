@@ -161,6 +161,43 @@ export function createCsCaseAdapter(db) {
     return { caseRow: oneRow(data, error, "create auto shortage CS case"), created: true };
   }
 
+  async function upsertTemplateOverride(input) {
+    const payload = {
+      ord_no: nonEmpty(input.ordNo, "ord_no"),
+      item_no: nonEmpty(input.itemNo, "item_no"),
+      sellpia_order_item_no: text(input.sellpiaOrderItemNo) || null,
+      inv_no: text(input.invNo) || null,
+      receipt_date: text(input.receiptDate) || null,
+      case_type: "template_override",
+      status: "excluded",
+      source: "manual",
+      basis_date: text(input.receiptDate) || null,
+      basis_date_source: "receipt_date",
+      alimtalk_template: text(input.alimtalkTemplate) || null,
+      updated_by: text(input.updatedBy) || null,
+    };
+    const existing = await findCsCase({
+      ordNo: payload.ord_no,
+      itemNo: payload.item_no,
+      caseType: payload.case_type,
+    });
+    if (!existing && !payload.alimtalk_template) {
+      return { caseRow: null, created: false };
+    }
+    if (existing) {
+      const caseRow = await updateCsCase(existing.id, {
+        sellpia_order_item_no: payload.sellpia_order_item_no,
+        inv_no: payload.inv_no,
+        receipt_date: payload.receipt_date,
+        alimtalk_template: payload.alimtalk_template,
+        updated_by: payload.updated_by,
+      });
+      return { caseRow, created: false };
+    }
+    const { data, error } = await db.from("cs_cases").insert(payload).select("*");
+    return { caseRow: oneRow(data, error, "save CS template override"), created: true };
+  }
+
   async function updateCsCase(caseId, patch) {
     const id = Number(caseId);
     if (!Number.isSafeInteger(id) || id <= 0) throw new Error("A valid CS case id is required.");
@@ -224,6 +261,7 @@ export function createCsCaseAdapter(db) {
     findCsCase,
     createManualCsCase,
     createAutoShortageCsCase,
+    upsertTemplateOverride,
     updateCsCase,
     resolveCsCase,
     excludeCsCase,
