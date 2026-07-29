@@ -5121,10 +5121,13 @@ async function savePickingRow(invoice, item, eventType = null, eventOverrides = 
   };
 
   try {
+    // picking의 실제 유니크 키는 inv_no + item_no입니다. 같은 주문/상품에 예전
+    // 빈 송장 행이 남아 있을 수 있으므로 ord_no + item_no로 첫 행을 고르면 현재
+    // 송장 행의 inv_no를 덮어쓰며 유니크 충돌이 납니다.
     const { data: existing, error: findError } = await db
       .from("picking")
       .select("id")
-      .eq("ord_no", row.ord_no)
+      .eq("inv_no", row.inv_no)
       .eq("item_no", row.item_no)
       .limit(1);
     if (findError) throw findError;
@@ -5183,8 +5186,19 @@ async function setShortageQty(orderGroupNo, sellpiaItemNo, nextValue) {
   const previousSave = state.shortageSaveQueues.get(queueKey) || Promise.resolve();
   const queuedSave = previousSave.catch(() => undefined).then(async () => {
     try {
-      await savePickingRow(invoice, item, eventType, { quantity: next, memo: nextText || null });
+      // 관리메모2를 비우는 것은 단순 메모 수정이 아니라 미송피킹완료 상태 전이입니다.
+      // 이벤트 저장이 꺼져 있거나 실패한 경우 메모만 비워 두면, 다음 렌더에서 이전
+      // shortage 이벤트가 다시 우선되어 부족수량이 되돌아옵니다. 따라서 현재값을
+      // 먼저 저장한 뒤 완료/수량 이벤트가 성공한 경우에만 메모 변경을 확정합니다.
+      await savePickingRow(invoice, item);
       await updateOrderItemMemoFields(invoice.orderGroupNo, item.sellpiaItemNo, { o_shop_memo2: nextText });
+      if (eventType) {
+        const savedEvent = await saveWorkflowItemEvent(invoice, item, eventType, { quantity: next, memo: nextText || null });
+        if (!savedEvent) {
+          await updateOrderItemMemoFields(invoice.orderGroupNo, item.sellpiaItemNo, { o_shop_memo2: prevText });
+          throw new Error("미송 상태 이벤트가 저장되지 않아 관리메모2 변경을 취소했습니다. URL에 write=1&events=1을 붙여 다시 시도하세요.");
+        }
+      }
       patchLocalItemManagementMemos(invoice.orderGroupNo, item.sellpiaItemNo, { memo2: nextText });
       await ensureShippingHoldOnAfterMemoSave(invoice, nextText);
       renderWorkflowSurfacesIfVisible();
