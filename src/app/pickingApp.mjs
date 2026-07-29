@@ -2781,6 +2781,35 @@ function renderShortagePanels() {
   </div>`;
 }
 
+function manualPendingCsCasesForInspectionItem(invoice, item) {
+  const ordNo = String(invoice?.orderGroupNo || invoice?.raw?.ord_no || "").trim();
+  const itemNo = String(item?.raw?.item_no || item?.sellpiaItemNo || "").trim();
+  const sellpiaOrderItemNo = String(item?.raw?.sellpia_order_item_no || "").trim();
+  if (!ordNo || (!itemNo && !sellpiaOrderItemNo)) return [];
+
+  return (state.csCases || []).filter((caseRow) => {
+    if (caseRow?.source !== "manual" || caseRow?.status !== "pending") return false;
+    if (String(caseRow?.ord_no || "").trim() !== ordNo) return false;
+    const caseItemNo = String(caseRow?.item_no || "").trim();
+    if (itemNo && caseItemNo) return caseItemNo === itemNo;
+
+    // Legacy cases only: a Sellpia item number must never override a present internal item key.
+    return !caseItemNo
+      && Boolean(sellpiaOrderItemNo)
+      && String(caseRow?.sellpia_order_item_no || "").trim() === sellpiaOrderItemNo;
+  });
+}
+
+function manualPendingCsCountForInspectionInvoice(invoice) {
+  const caseIds = new Set();
+  for (const item of invoice?.items || []) {
+    for (const caseRow of manualPendingCsCasesForInspectionItem(invoice, item)) {
+      caseIds.add(String(caseRow?.id || `${caseRow?.ord_no || ""}::${caseRow?.item_no || caseRow?.sellpia_order_item_no || ""}::${caseRow?.case_type || ""}`));
+    }
+  }
+  return caseIds.size;
+}
+
 function renderInspectionPanels(options = {}) {
   ensureInspectionFilterButtons();
   const renderList = options.list !== false;
@@ -2831,6 +2860,7 @@ function renderInspectionPanels(options = {}) {
       .map((invoice, index) => {
         const itemStates = (invoice.items || []).map((item) => workflowItemState(invoice, item)).filter(Boolean);
         const repicked = itemStates.filter((row) => row.shortageRepicked && !row.inspected && !row.cancelled).length;
+        const manualCsCount = manualPendingCsCountForInspectionInvoice(invoice);
         const invoiceState = workflowInvoiceState(invoice);
         const completed = Boolean(invoiceState?.inspected);
         const seller = sellerBadgeMeta(invoice.seller);
@@ -2849,6 +2879,7 @@ function renderInspectionPanels(options = {}) {
           completed ? '<span class="workflow-row-badge done">완료</span>' : "",
           invoiceHasGold(invoice) ? '<span class="workflow-row-badge gold">골드</span>' : "",
           shippingHoldBadge(invoice),
+          manualCsCount ? `<span class="workflow-row-badge manual">별도 CS ${manualCsCount}</span>` : "",
           repicked ? `<span class="workflow-row-badge warn">검품 ${repicked}</span>` : "",
         ]
           .filter(Boolean)
@@ -2884,6 +2915,7 @@ function renderInspectionPanels(options = {}) {
     const itemState = workflowItemState(selected, item);
     return itemState?.shortageRepicked && !itemState?.inspected && !itemState?.cancelled;
   }).length;
+  const selectedManualCsCount = manualPendingCsCountForInspectionInvoice(selected);
   const selectedIndex = invoices.findIndex((invoice) => invoice.orderGroupNo === selected.orderGroupNo);
   const selectedGold = invoiceHasGold(selected);
   const selectedLabelTarget = invoiceHasLabelTarget(selected);
@@ -2915,6 +2947,7 @@ function renderInspectionPanels(options = {}) {
         ${selectedCompleted ? '<span class="workflow-row-badge done">완료</span>' : ""}
         ${selectedGold ? '<span class="workflow-row-badge gold">골드</span>' : ""}
         ${selectedRepicked ? `<span class="workflow-row-badge warn">미송 ${selectedRepicked}</span>` : ""}
+        ${selectedManualCsCount ? `<span class="workflow-row-badge manual">별도 CS ${selectedManualCsCount}</span>` : ""}
         ${shippingHoldBadge(selected)}
       </div>
     </div>
@@ -2925,6 +2958,7 @@ function renderInspectionPanels(options = {}) {
         .map((item, index) => {
           const itemState = workflowItemState(selected, item);
           const itemRepicked = Boolean(itemState?.shortageRepicked && !itemState?.cancelled);
+          const itemManualCsCount = manualPendingCsCasesForInspectionItem(selected, item).length;
           const rowClass = [itemRepicked ? "repicked" : "", selectedCompleted ? "inspected" : ""].filter(Boolean).join(" ");
           const imageUrl = productImageUrl(item.sellpiaProductCode);
           const option = cleanOptionName(item.optionName, item.ownCode) || "-";
@@ -2960,6 +2994,7 @@ function renderInspectionPanels(options = {}) {
             </label>
             <small class="workflow-status-cell">
               <span>${escapeHtml(statusText)}</span>
+              ${itemManualCsCount ? `<span class="workflow-row-badge manual">별도 CS</span>` : ""}
               ${statusNotes.length ? `<em>${escapeHtml(statusNotes.join(" / "))}</em>` : ""}
               ${reopenButton}
             </small>
