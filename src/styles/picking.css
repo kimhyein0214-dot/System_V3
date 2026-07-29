@@ -2160,6 +2160,21 @@ input {
   justify-content: flex-end;
 }
 
+.inspection-header-controls {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  justify-content: flex-start;
+  gap: 6px;
+  margin-left: auto;
+  min-width: 0;
+  align-self: stretch;
+}
+
+.inspection-hold-action {
+  flex: 0 0 auto;
+}
+
 .inspection-slot-badge {
   padding: 6px 10px;
   font-size: 18px;

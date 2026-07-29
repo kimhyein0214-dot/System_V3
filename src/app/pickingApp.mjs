@@ -2946,15 +2946,17 @@ function renderInspectionPanels(options = {}) {
           ${renderInspectionTotalAmountBadge(selected)}
         </label>
       </div>
-      <div class="inspection-actions">
-        <span class="invoice-badge inspection-slot-badge">${escapeHtml(invoiceSecondaryWorkflowLabel(selected, selectedIndex >= 0 ? selectedIndex : 0))}</span>
-        <button class="btn" data-action="${holdAction}" data-inspection-group="${escapeHtml(selected.orderGroupNo)}" type="button" ${actionDisabled}>${holdLabel}</button>
-        ${selectedCompleted ? '<span class="workflow-row-badge done">완료</span>' : ""}
-        ${selectedGold ? '<span class="workflow-row-badge gold">골드</span>' : ""}
-        ${selectedRepicked ? `<span class="workflow-row-badge warn">미송 ${selectedRepicked}</span>` : ""}
-        ${selectedManualCsCount ? `<span class="workflow-row-badge manual">별도 CS ${selectedManualCsCount}</span>` : ""}
-        ${selectedPartialHoldCount ? `<span class="workflow-row-badge hold">부분보류 ${selectedPartialHoldCount}</span>` : ""}
-        ${shippingHoldBadge(selected)}
+      <div class="inspection-header-controls">
+        <button class="btn inspection-hold-action" data-action="${holdAction}" data-inspection-group="${escapeHtml(selected.orderGroupNo)}" type="button" ${actionDisabled}>${holdLabel}</button>
+        <div class="inspection-actions">
+          <span class="invoice-badge inspection-slot-badge">${escapeHtml(invoiceSecondaryWorkflowLabel(selected, selectedIndex >= 0 ? selectedIndex : 0))}</span>
+          ${selectedCompleted ? '<span class="workflow-row-badge done">완료</span>' : ""}
+          ${selectedGold ? '<span class="workflow-row-badge gold">골드</span>' : ""}
+          ${selectedRepicked ? `<span class="workflow-row-badge warn">미송 ${selectedRepicked}</span>` : ""}
+          ${selectedManualCsCount ? `<span class="workflow-row-badge manual">별도 CS ${selectedManualCsCount}</span>` : ""}
+          ${selectedPartialHoldCount ? `<span class="workflow-row-badge hold">부분보류 ${selectedPartialHoldCount}</span>` : ""}
+          ${shippingHoldBadge(selected)}
+        </div>
       </div>
     </div>
     ${holdNotice}
