@@ -4072,13 +4072,11 @@ function renderCsCaseDetail(group) {
   const holdDisabled = invoice && allowWorkflowEvents ? "" : "disabled";
   const managementReadonly = allowWrites ? "" : "readonly";
   const scheduledHistory = String(group.order?.sellpia_outbound_scheduled_date || "");
+  const headerBadges = csCaseBadges(group);
   els.csDetail.innerHTML = `<div class="cs-detail-card cs-case-detail-card">
     <div class="workflow-detail-head cs-order-detail-head">
       <div class="cs-order-title-block"><strong>송장 ${escapeHtml(group.invoiceNo || "-")} · ${escapeHtml(receiver)}</strong>
-        <div class="cs-order-status-summary" aria-label="현재 CS 및 배송보류 상태">
-          <span class="workflow-row-badge ${state.csMode === "manual" ? "manual" : ""}">${state.csMode === "manual" ? "수동 추가 대상" : `CS ${caseCount}건`}</span>
-          ${invoice ? shippingHoldBadge(invoice) : ""}
-        </div>
+        ${headerBadges ? `<div class="cs-case-row-meta cs-order-header-meta">${headerBadges}</div>` : ""}
       </div>
       <div class="inspection-actions">
         <span class="workflow-row-badge ${state.csMode === "manual" ? "manual" : ""}">${state.csMode === "manual" ? "수동 추가 대상" : `CS ${caseCount}건`}</span>

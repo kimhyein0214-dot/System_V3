@@ -2170,12 +2170,8 @@ input {
   display: none;
 }
 
-.cs-order-status-summary {
-  display: flex;
-  align-items: center;
-  gap: 6px;
+.cs-order-header-meta {
   margin-top: 6px;
-  flex-wrap: wrap;
 }
 
 .cs-template-only {
