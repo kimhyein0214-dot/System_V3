@@ -573,11 +573,13 @@ function invoiceItemKindCount(invoice) {
 function compareWorkInvoices(a, b) {
   const aStats = invoiceStats(a);
   const bStats = invoiceStats(b);
+  const aRepresentativeRouteCode = invoiceRepresentativeRouteCode(a);
+  const bRepresentativeRouteCode = invoiceRepresentativeRouteCode(b);
   return (
     invoiceSessionRank(a) - invoiceSessionRank(b) ||
     invoiceItemKindCount(a) - invoiceItemKindCount(b) ||
+    compareExportRouteCode(aRepresentativeRouteCode, bRepresentativeRouteCode) ||
     aStats.qty - bStats.qty ||
-    (a.sortOrder ?? 999999) - (b.sortOrder ?? 999999) ||
     String(a.orderGroupNo).localeCompare(String(b.orderGroupNo), "ko", { numeric: true })
   );
 }
@@ -662,34 +664,34 @@ function exportRouteBaseCode(value) {
 
 const EXPORT_ROUTE_ORDER = [
   "CA",
-  "PS",
   "PT",
-  "PQ",
+  "PS",
   "PR",
-  "PO",
+  "PQ",
   "PP",
-  "PM",
+  "PO",
   "PN",
-  "PG",
-  "PH",
-  "PE",
-  "PF",
-  "PC",
-  "PD",
-  "PA",
-  "PB",
-  "PK",
+  "PM",
   "PL",
-  "PI",
+  "PK",
   "PJ",
+  "PI",
+  "PH",
+  "PG",
+  "PF",
+  "PE",
+  "PD",
+  "PC",
+  "PB",
+  "PA",
   "EA",
   "ED",
   "EC",
   "EB",
-  "EE",
   "EF",
-  "BA",
+  "EE",
   "NA",
+  "BA",
   "SA",
   "RA",
   "HA",
@@ -720,6 +722,13 @@ function compareExportRouteCode(a, b) {
   const bRank = exportRouteRank(b);
   if (aRank !== bRank) return aRank - bRank;
   return String(exportRouteBaseCode(a)).localeCompare(String(exportRouteBaseCode(b)), "en", { numeric: true, sensitivity: "base" });
+}
+
+function invoiceRepresentativeRouteCode(invoice) {
+  const routeCodes = (invoice?.items || [])
+    .map((item) => item?.ownCode || item?.sellpiaProductCode || "")
+    .filter((code) => String(code).trim());
+  return routeCodes.sort(compareExportRouteCode)[0] || "";
 }
 
 function exportRouteMetrics(codes = []) {
