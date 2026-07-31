@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>0727-관리메모1 수정</title>
+<title>0731-CS부분보류</title>
 <style>
   * { box-sizing: border-box; margin: 0; padding: 0; }
   body { background:#141414; color:#f0f0f0; font-family:Arial,'Noto Sans KR',sans-serif; min-height:100vh; display:flex; align-items:center; justify-content:center; padding:24px; }
@@ -18,7 +18,7 @@
 </head>
 <body>
 <div class="card">
-  <h1>0727-관리메모1 수정</h1>
+  <h1>0731-CS부분보류</h1>
   <div class="sub">재고매칭(order_stockmatch.html) 전용 / TEST MODE 기본 ON</div>
   <div class="note">
     <b>TEST MODE (NO WRITE)</b><br>
@@ -26,7 +26,7 @@
     관리메모/관리메모2/주문메모 저장, 배송보류 설정/해제, DB PATCH는 테스트모드에서 실행하지 않습니다.<br>
     결과 CSV에는 현재 셀피아 값, 시스템 예정값, 변경 필요 여부, 매칭 실패/상세없음 예외, 상태 사유가 들어갑니다.
   </div>
-  <a id="bookmarklet-link" class="btn" href="#">0727-관리메모1 수정</a>
+  <a id="bookmarklet-link" class="btn" href="#">0731-CS부분보류</a>
   <pre id="code-display">loading...</pre>
   <button id="copy-btn">코드 복사</button>
 </div>
@@ -303,6 +303,36 @@
       if (closed) return { fallback: false, closed: true, rootKind: rootKind(dlg), button: !!btn };
       await sleep(300);
       return { fallback: true, closed: false, rootKind: rootKind(dlg), button: !!btn };
+    }
+
+    // A checked checkbox inside the already-open popup only proves that the
+    // browser accepted the click.  Reopen the exact grid row after save so a
+    // partial-hold write is never reported as successful until Sellpia serves
+    // the persisted checkbox state back to us.
+    async function verifyPersistedHold(rowResult) {
+      const expected = plannedHoldBool(rowResult);
+      const closed = await closeDetail();
+      if (!closed.closed) {
+        throw new Error('Shipping hold verification could not close the saved detail popup.');
+      }
+      await sleep(280);
+      const reopened = await openDetail(rowResult.gridRowIndex);
+      const root = reopened && reopened.root;
+      if (!root) {
+        throw new Error('Shipping hold verification could not reopen the exact Sellpia item row.');
+      }
+      try {
+        assertPopupTargetMatches(root, rowResult);
+        const checkbox = holdCheckbox(root);
+        if (!checkbox) throw new Error('Shipping hold verification could not find the checkbox after reopen.');
+        const actual = !!checkbox.checked;
+        if (actual !== expected) {
+          throw new Error('Shipping hold persistence verification failed: expected=' + (expected ? 'ON' : 'OFF') + ', actual=' + (actual ? 'ON' : 'OFF'));
+        }
+        return { expected: expected ? 'ON' : 'OFF', actual: actual ? 'ON' : 'OFF', rootKind: rootKind(root) };
+      } finally {
+        await closeDetail();
+      }
     }
 
     function fieldValue(root, selectors) {
@@ -958,6 +988,121 @@
       index.set(key, target);
     }
 
+    function isPickingHoldOn(value) {
+      if (value === true || value === 1) return true;
+      return /^(1|Y|YES|ON|TRUE|CHECKED)$/i.test(normal(value));
+    }
+
+    function preferPickingRowsForInvoice(matches, invNo) {
+      const rows = [...new Set(matches || [])];
+      const scopedInvNo = normal(invNo);
+      if (!scopedInvNo) return { rows, exactInvoicePreferred: false };
+      const exactInvoiceRows = rows.filter(row => normal(row?.inv_no) === scopedInvNo);
+      return exactInvoiceRows.length
+        ? { rows: exactInvoiceRows, exactInvoicePreferred: true }
+        : { rows, exactInvoicePreferred: false };
+    }
+
+    // Partial shipping hold is a product-row workflow value.  Map it to the
+    // same exact order_items keys used elsewhere in this updater; never use
+    // invoice, product code, or a first row as a fallback.
+    function buildPartialHoldTargets(ordNo, invNo, orderItemRows, pickingRows) {
+      const targets = new Map();
+      const ambiguous = new Set();
+      const byPickingItemNo = new Map();
+      const stats = { matched: 0, unmatched: 0, ambiguous: 0, holdOn: 0, exactInvoicePreferred: 0 };
+      const scopedOrdNo = normal(ordNo);
+
+      for (const pickingRow of pickingRows || []) {
+        if (scopedOrdNo && normal(pickingRow.ord_no) && normal(pickingRow.ord_no) !== scopedOrdNo) continue;
+        const pickingItemNo = normal(pickingRow.item_no);
+        if (!pickingItemNo) continue;
+        const key = managementTargetKey(scopedOrdNo, pickingItemNo);
+        if (!key) continue;
+        if (!byPickingItemNo.has(key)) byPickingItemNo.set(key, []);
+        byPickingItemNo.get(key).push(pickingRow);
+      }
+
+      for (const orderItemRow of orderItemRows || []) {
+        const lookupKeys = [...new Set([orderItemRow.item_no, orderItemRow.sellpia_order_item_no]
+          .map(itemNo => managementTargetKey(scopedOrdNo, itemNo))
+          .filter(Boolean))];
+        const allMatches = [...new Set(lookupKeys.flatMap(key => byPickingItemNo.get(key) || []))];
+        // Old scraper rows can survive with an empty inv_no beside the current
+        // invoice row.  When the exact current invoice exists, it is the only
+        // valid source; genuine duplicates inside that invoice stay blocked.
+        const preferred = preferPickingRowsForInvoice(allMatches, invNo);
+        const matches = preferred.rows;
+        if (matches.length !== 1) {
+          if (matches.length > 1) stats.ambiguous++;
+          else stats.unmatched++;
+          continue;
+        }
+        const pickingRow = matches[0];
+        if (preferred.exactInvoicePreferred) stats.exactInvoicePreferred++;
+        const target = {
+          hold: isPickingHoldOn(pickingRow.hold),
+          orderItemNo: normal(orderItemRow.item_no),
+          pickingItemNo: normal(pickingRow.item_no),
+          matchMethod: (
+            normal(pickingRow.item_no) === normal(orderItemRow.item_no)
+              ? 'picking_item_no_exact'
+              : 'picking_sellpia_order_item_no_exact'
+          ) + (preferred.exactInvoicePreferred ? '_current_invoice' : '')
+        };
+        for (const key of lookupKeys) addUniqueManagementTarget(targets, ambiguous, key, target);
+        stats.matched++;
+        if (target.hold) stats.holdOn++;
+      }
+      stats.ambiguous = ambiguous.size || stats.ambiguous;
+      return { targets, ambiguous, stats };
+    }
+
+    function partialHoldTargetForGridRow(task, row, index) {
+      const candidates = [rowItemNoStrict(row), rowItemNo(row, index), normal(row.c_prv_item_no)].filter(Boolean);
+      for (const itemNo of candidates) {
+        const key = managementTargetKey(task?.ordNo || rowOrdNo(row), itemNo);
+        if (!key || task?.partialHoldAmbiguous?.has(key)) continue;
+        if (task?.partialHoldTargets?.has(key)) return { found: true, ...task.partialHoldTargets.get(key) };
+      }
+      return { found: false, hold: false, orderItemNo: '', pickingItemNo: '', matchMethod: 'none' };
+    }
+
+    function holdPlanForGridRow(task, row, index, currentSellpiaHold) {
+      const current = currentSellpiaHold === 'ON' || currentSellpiaHold === 'OFF' ? currentSellpiaHold : 'UNKNOWN';
+      if (task?.partialHoldActive) {
+        const target = partialHoldTargetForGridRow(task, row, index);
+        if (!target.found) {
+          return {
+            mode: 'partial', target, status: current, syncAction: 'REVIEW_SKIP',
+            syncReason: 'partial_hold_item_match_missing'
+          };
+        }
+        // With no order-level state, an exact partial ON is safe; an OFF is
+        // not applied unless the order current state explicitly says OFF.
+        if (!task.systemShippingHoldKnown && !target.hold) {
+          return {
+            mode: 'partial', target, status: current, syncAction: 'REVIEW_SKIP',
+            syncReason: 'partial_hold_system_state_unknown'
+          };
+        }
+        const status = target.hold ? 'ON' : 'OFF';
+        return {
+          mode: 'partial', target, status,
+          syncAction: current === status ? 'NONE' : (status === 'ON' ? 'SET_ON' : 'SET_OFF'),
+          syncReason: target.matchMethod
+        };
+      }
+      const systemShippingHold = systemShippingHoldForTask(task);
+      const syncAction = holdSyncAction(current, systemShippingHold);
+      return {
+        mode: 'order', target: null,
+        status: syncAction === 'SET_ON' ? 'ON' : syncAction === 'SET_OFF' ? 'OFF' : current,
+        syncAction,
+        syncReason: holdSyncReason(task, syncAction)
+      };
+    }
+
     // Management memo targets are deliberately item-scoped. System V3's
     // order_items values are the source of truth; picking is workflow state,
     // never a replacement source for the management memo target.
@@ -1194,6 +1339,10 @@
         orderMemoAmbiguousKeys: new Set(),
         outboundConfirmedDateTargets: new Map(),
         outboundConfirmedDateAmbiguous: new Set(),
+        partialHoldTargets: new Map(),
+        partialHoldAmbiguous: new Set(),
+        partialHoldStats: null,
+        partialHoldActive: false,
         outboundScheduledDate: normal(firstOrderRow?.sellpia_outbound_scheduled_date),
         itemKeyIndex: buildItemKeyIndex(orderItemRows, normal(ordNo || firstOrderRow?.ord_no)),
         hold: false,
@@ -1237,6 +1386,13 @@
       task.managementMemoTargets = managementTargets.targets;
       task.managementMemoAmbiguous = managementTargets.ambiguousTargets;
       task.managementMemoStats = managementTargets.stats;
+      const partialHoldTargets = buildPartialHoldTargets(task.ordNo, task.invNo, orderItemRows, pickingRows);
+      task.partialHoldTargets = partialHoldTargets.targets;
+      task.partialHoldAmbiguous = partialHoldTargets.ambiguous;
+      task.partialHoldStats = partialHoldTargets.stats;
+      // An order-level ON remains a full-order hold.  Otherwise, if any exact
+      // picking row is held, use the item-level map for this order.
+      task.partialHoldActive = task.systemShippingHold !== 'ON' && partialHoldTargets.stats.holdOn > 0;
       const outboundConfirmedTargets = buildOutboundConfirmedDateTargets(task.ordNo, orderItemRows);
       task.outboundConfirmedDateTargets = outboundConfirmedTargets.targets;
       task.outboundConfirmedDateAmbiguous = outboundConfirmedTargets.ambiguous;
@@ -1261,7 +1417,6 @@
       const hasSystemMatch = hasShortageMatch || hasPickingMatch || hasOrderMatch || orderItemRows.length > 0;
       const hasOrderMemoValue = hasSystemMatch && task.orderMemoMap.size > 0;
       const memo1HoldSignal = false;
-      const hasLegacyPickingHold = (pickingRows || []).some(row => !!row.hold);
       // A shortage table row can be absent even while another item still has an
       // active memo2 target (for example, a shortage reopened after repick).
       // Do not clear this invoice's memo1 until every active item target is gone.
@@ -1273,7 +1428,7 @@
         task.writeMemo1 = true;
         task.writeMemo2 = true;
         task.writeOrderMemo = true;
-        task.writeHold = task.systemShippingHoldKnown;
+        task.writeHold = task.systemShippingHoldKnown || task.partialHoldActive;
         task.hold = task.systemShippingHold === 'ON';
         task.reason = '검품완료(workflow): 관리메모/관리메모2/주문메모 삭제';
         return task;
@@ -1282,7 +1437,7 @@
       task.writeMemo1 = hasMemo1Value;
       task.writeMemo2 = hasMemo2Value;
       task.writeOrderMemo = hasOrderMemoValue;
-      task.writeHold = task.systemShippingHoldKnown;
+      task.writeHold = task.systemShippingHoldKnown || task.partialHoldActive;
 
       task.hold = task.systemShippingHold === 'ON';
 
@@ -1312,10 +1467,14 @@
       };
 
       if (invFilter) {
+        // A single-invoice run must use the complete SlickGrid dataset too.
+        // Large orders can otherwise have only a visible page of rows loaded,
+        // which risks leaving later item rows without a hold update.
+        const singleLoadMeta = await ensureAllGridRowsLoaded();
         const target = targetToken(invFilter);
         const hit = gridItems().find(({ item }) => rowInvNo(item) === target || rowOrdNo(item) === target);
         if (!hit) {
-          lastBuildMeta = { mode: 'single', gridRows: gridItems().length, uniqueOrdNos: 0, missingOrdRows: 0, multiInvOrdNos: [], dbMissingOrdNos: [] };
+          lastBuildMeta = { mode: 'single', gridRows: gridItems().length, gridRowsBeforeAll: singleLoadMeta.before, gridRowsAfterAll: singleLoadMeta.after, gridAllClicked: singleLoadMeta.clicked ? 'Y' : 'N', uniqueOrdNos: 0, missingOrdRows: 0, multiInvOrdNos: [], dbMissingOrdNos: [] };
           const [shortageByInv, pickingByInv, orderByInv, shortageByOrd, pickingByOrd, orderByOrd] = await Promise.all([
             safeDbRequestIn('shortage', 'inv_no', [target], 'inv_no,ord_no,item_no,p_code,sellpia_p_code,status,memo2_val,drawer_no,updated_at'),
             safeDbRequestIn('picking', 'inv_no', [target], 'inv_no,ord_no,item_no,p_code,sellpia_p_code,hold,drawer_no'),
@@ -1351,7 +1510,7 @@
         }
         const ordNo = rowOrdNo(hit.item);
         const invNo = rowInvNo(hit.item) || target;
-        lastBuildMeta = { mode: 'single', gridRows: gridItems().length, uniqueOrdNos: ordNo ? 1 : 0, missingOrdRows: ordNo ? 0 : 1, multiInvOrdNos: [], dbMissingOrdNos: [] };
+        lastBuildMeta = { mode: 'single', gridRows: gridItems().length, gridRowsBeforeAll: singleLoadMeta.before, gridRowsAfterAll: singleLoadMeta.after, gridAllClicked: singleLoadMeta.clicked ? 'Y' : 'N', uniqueOrdNos: ordNo ? 1 : 0, missingOrdRows: ordNo ? 0 : 1, multiInvOrdNos: [], dbMissingOrdNos: [] };
         const [shortageRows, pickingRows, orderRows, orderItemRows, workflowRows, workflowItemRows] = await Promise.all([
           dbRequestIn('shortage', 'ord_no', [ordNo], 'inv_no,ord_no,item_no,p_code,sellpia_p_code,status,memo2_val,drawer_no,updated_at'),
           dbRequestIn('picking', 'ord_no', [ordNo], 'inv_no,ord_no,item_no,p_code,sellpia_p_code,hold,drawer_no'),
@@ -1707,7 +1866,6 @@
           log: 'LIVE SKIP: ' + rowResult.invNo + ' / live_write_allowed=' + (rowResult.liveWriteAllowed || 'N')
         };
       }
-      let itemMatchError = '';
       let popupTarget = { orderNo: '', itemNo: '' };
       let memo1Safety = null;
       if (rowResult.writeMemo1) {
@@ -1715,18 +1873,11 @@
         // must never be written through a detail popup for a different item.
         memo1Safety = inspectMemo1PopupSafety(root, rowResult);
         popupTarget = memo1Safety.popupTarget;
-      } else if (rowResult.writeMemo2 || rowResult.writeOrderMemo || rowResult.writeOutboundScheduledDate || rowResult.writeOutboundConfirmedDate) {
-        try {
-          assertPopupItemMatches(root, rowResult);
-        } catch (err) {
-          itemMatchError = (err && err.message) || String(err);
-          rowResult.writeMemo2 = false;
-          rowResult.writeOrderMemo = false;
-          rowResult.writeOutboundScheduledDate = false;
-          rowResult.writeOutboundConfirmedDate = false;
-        }
+      } else if (rowResult.writeMemo2 || rowResult.writeOrderMemo || rowResult.writeOutboundScheduledDate || rowResult.writeOutboundConfirmedDate || rowResult.writeHold) {
+        // Every item-scoped write, including partial shipping hold, must
+        // prove that the opened Sellpia popup belongs to this exact item.
+        popupTarget = assertPopupTargetMatches(root, rowResult);
       }
-      if (itemMatchError && !rowResult.writeMemo1 && !rowResult.writeHold) throw new Error(itemMatchError);
       let memo1InputBefore = '';
       let memo1InputAfter = '';
       if (rowResult.writeMemo1) {
@@ -1820,6 +1971,10 @@
         clicked = await clickConfirmDialogs('save', 2);
       }
       await sleep(clicked ? 150 : Math.min(CONFIG.saveDelay || 900, 500));
+      let holdVerification = null;
+      if (rowResult.writeHold) {
+        holdVerification = await verifyPersistedHold(rowResult);
+      }
       let dbSync;
       try {
         dbSync = await syncManagementMemoDb(rowResult);
@@ -1842,10 +1997,11 @@
         popupItemNo: popupTarget.itemNo,
         memo1InputBefore,
         memo1InputAfter,
+        holdVerification: holdVerification ? (holdVerification.expected + '=>' + holdVerification.actual) : '',
         dbSync: dbSync.status,
-        status: itemMatchError ? 'PARTIAL_FAIL' : rowResult.status,
-        reason: itemMatchError ? ('상품단위 저장 차단: ' + itemMatchError + (rowResult.reason ? ' / planned: ' + rowResult.reason : '')) : rowResult.reason,
-        log: 'LIVE: ' + rowResult.invNo + ' / 저장 호출 완료' + (itemMatchError ? ' / 상품단위 저장 차단: ' + itemMatchError : '')
+        status: rowResult.status,
+        reason: rowResult.reason,
+        log: 'LIVE: ' + rowResult.invNo + ' / 저장 완료' + (holdVerification ? ' / 배송보류 검증 ' + holdVerification.actual : '')
       };
     }
 
@@ -2023,11 +2179,12 @@
             ? outboundConfirmedDateTarget.value
             : current.outboundConfirmedDate;
           const plannedOutboundScheduledDate = task.outboundScheduledDate;
-          const systemShippingHold = systemShippingHoldForTask(task);
           const currentSellpiaHold = current.holdStatus || (current.hold ? 'ON' : 'OFF');
-          const syncAction = holdSyncAction(currentSellpiaHold, systemShippingHold, task);
-          const syncReason = holdSyncReason(task, syncAction);
-          const plannedHoldStatus = syncAction === 'SET_ON' ? 'ON' : syncAction === 'SET_OFF' ? 'OFF' : currentSellpiaHold;
+          const holdPlan = holdPlanForGridRow(task, row, i, currentSellpiaHold);
+          const systemShippingHold = systemShippingHoldForTask(task);
+          const syncAction = holdPlan.syncAction;
+          const syncReason = holdPlan.syncReason;
+          const plannedHoldStatus = holdPlan.status;
           const plannedHold = plannedHoldStatus === 'ON';
           const policy = buildRowPolicyMeta(task, row, i, { currentOrderMemo: current.orderMemo, plannedOrderMemo });
           const memo1Changed = (task.clear || memo1Target.found) && needsChange(current.memo1, plannedMemo1);
@@ -2061,6 +2218,7 @@
           rowResult = {
           invNo: task.invNo || rowInvNo(row),
           ordNo: task.ordNo || rowOrdNo(row),
+          gridRowIndex: rows[i].idx,
           itemNo: rowItemNo(row, i),
           itemNoForVerify: rowItemNoStrict(row) || rowItemNo(row, i),
           managementOrderItemNo: memo1Target.orderItemNo,
@@ -2085,6 +2243,8 @@
             plannedHold: plannedHoldStatus,
           currentSellpiaHold,
           systemShippingHold,
+          holdTargetMode: holdPlan.mode,
+          holdTargetMatchMethod: holdPlan.target?.matchMethod || '',
           syncAction,
           syncReason,
           needsChange: actionParts.length ? 'Y' : 'N',
@@ -2133,7 +2293,7 @@
                 log: 'TEST_GUARD_FAIL: ' + rowResult.invNo + ' / ' + ((err && err.message) || String(err))
               };
             }
-          } else if (rowResult.writeOutboundScheduledDate || rowResult.writeOutboundConfirmedDate) {
+          } else if (rowResult.writeMemo2 || rowResult.writeOrderMemo || rowResult.writeOutboundScheduledDate || rowResult.writeOutboundConfirmedDate || rowResult.writeHold) {
             try {
               const popupTarget = assertPopupTargetMatches(root, rowResult);
               testGuard = {
@@ -2421,7 +2581,7 @@
       overlay.style.cssText = 'position:fixed;right:16px;top:80px;left:auto;bottom:auto;max-width:94vw;max-height:calc(100vh - 96px);overflow:auto;background:transparent;z-index:999999;font-family:Arial,sans-serif;';
       overlay.innerHTML =
         '<div style="width:560px;max-width:94vw;background:#111827;color:#fff;border:1px solid #334155;border-radius:12px;padding:22px;box-shadow:0 24px 80px rgba(0,0,0,.45)">' +
-        '<div style="font-size:18px;font-weight:900;margin-bottom:4px">0727-관리메모1 수정</div>' +
+        '<div style="font-size:18px;font-weight:900;margin-bottom:4px">0731-CS부분보류</div>' +
         '<div style="font-size:12px;color:#93c5fd;margin-bottom:14px">TEST MODE (NO WRITE) is ON by default</div>' +
         '<label style="font-size:12px;color:#cbd5e1">Invoice / order number (optional)</label>' +
         '<input id="smu0707-inv" style="width:100%;height:38px;margin:5px 0 10px;padding:0 10px;border-radius:8px;border:1px solid #475569;background:#0f172a;color:#fff" placeholder="Blank = use date range">' +
@@ -2564,8 +2724,8 @@
 
     makeOverlay();
   })().catch(function(err){
-    console.error('[0727-관리메모1 수정]', err);
-    alert('0727-관리메모1 수정 error: ' + (err && err.message ? err.message : err));
+    console.error('[0731-CS부분보류]', err);
+    alert('0731-CS부분보류 error: ' + (err && err.message ? err.message : err));
   });
 })();
 </script>

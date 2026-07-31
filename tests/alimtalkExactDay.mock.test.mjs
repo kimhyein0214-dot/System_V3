@@ -51,5 +51,6 @@ assert.equal(alimtalkSendLogCode("d10"), "10");
 assert.equal(alimtalkSendLogCode("manual"), "ㅂㅂ");
 assert.equal(appendAlimtalkSendLog("1\n3", "5ㅂ"), "1,3,5ㅂ");
 assert.equal(appendAlimtalkSendLog("1, 3, 5ㅂ", "10"), "1,3,5ㅂ,10");
+assert.equal(appendAlimtalkSendLog("1", "1"), "1,1");
 
 console.log("Alimtalk exact-day rules: passed");

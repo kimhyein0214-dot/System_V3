@@ -45,13 +45,20 @@ const batch = await adapter.createExportBatch({ items: [
 
 assert.equal(batch.status, "exported");
 assert.equal(batch.target_count, 2);
-assert.equal((await adapter.loadSentKeys()).size, 0, "CSV export alone must not mark targets as sent");
 assert.equal((await adapter.loadUnconfirmedBatches()).length, 1);
 
 await adapter.confirmExportBatch(batch.id);
-const sentKeys = await adapter.loadSentKeys();
-assert.equal(sentKeys.size, 2, "only explicit send confirmation excludes a target later");
 assert.equal((await adapter.loadUnconfirmedBatches()).length, 0);
 assert.equal(db.tables.alimtalk_send_items.every((row) => row.status === "sent" && row.sent_at), true);
+
+const repeatedBatch = await adapter.createExportBatch({ items: [
+  { ord_no: "order-1", template_key: "d1", inv_no: "invoice-1" },
+] });
+await adapter.confirmExportBatch(repeatedBatch.id);
+assert.equal(
+  db.tables.alimtalk_send_items.filter((row) => row.ord_no === "order-1" && row.template_key === "d1" && row.status === "sent").length,
+  2,
+  "the same order and template can be confirmed again in another export batch",
+);
 
 console.log("Alimtalk send history adapter: passed");

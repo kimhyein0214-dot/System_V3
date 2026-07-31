@@ -29,15 +29,6 @@ export function createAlimtalkSendAdapter(db) {
     return data || [];
   }
 
-  async function loadSentKeys() {
-    const { data, error } = await db
-      .from("alimtalk_send_items")
-      .select("ord_no,template_key")
-      .eq("status", "sent");
-    if (error) throw error;
-    return new Set((data || []).map((row) => alimtalkSendNaturalKey(row.ord_no, row.template_key)));
-  }
-
   async function loadBatchItems(value) {
     const id = batchId(value);
     const { data, error } = await db
@@ -96,5 +87,5 @@ export function createAlimtalkSendAdapter(db) {
     return oneRow(data, error, "confirm Alimtalk export batch");
   }
 
-  return { loadUnconfirmedBatches, loadSentKeys, loadBatchItems, createExportBatch, confirmExportBatch };
+  return { loadUnconfirmedBatches, loadBatchItems, createExportBatch, confirmExportBatch };
 }

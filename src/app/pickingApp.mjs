@@ -6306,7 +6306,6 @@ async function exportAlimtalkCsv() {
     return;
   }
   const byDay = classifyAlimtalkRowsByDay(allRows);
-  const sentKeys = await alimtalkSends.loadSentKeys();
   const timestamp = timestampForFilename();
   const files = [];
   const sendTargets = new Map();
@@ -6314,7 +6313,7 @@ async function exportAlimtalkCsv() {
   let rowCount = 0;
   CS_DAYS.filter((day) => day.key !== "all").forEach((day) => {
     const templateKey = CS_DAY_TEMPLATE[day.key] || day.key;
-    const rows = (byDay[day.key] || []).filter((row) => !sentKeys.has(alimtalkSendNaturalKey(alimtalkOrderNo(row), templateKey)));
+    const rows = byDay[day.key] || [];
     if (!rows.length) return;
     const csvRows = alimtalkRowsForDay(day.key, rows);
     files.push({
@@ -6382,7 +6381,7 @@ async function openLatestAlimtalkSendConfirmModal() {
       <h3>알림톡 CSV 발송확정</h3>
       <div class="order-list-modal-tools"><button type="button" class="order-list-modal-close" data-alimtalk-confirm-action="close">×</button></div>
     </div>
-    <div class="cs-work-log-note"><b>가장 최근에 내보낸 알림톡 ZIP 전체</b>를 발송확정합니다. ZIP 안의 모든 템플릿·주문 대상이 함께 확정되고, 주문별 발송로그도 템플릿 코드로 누적됩니다.</div>
+    <div class="cs-work-log-note"><b>가장 최근에 내보낸 알림톡 ZIP 전체</b>를 발송확정합니다. ZIP 안의 모든 템플릿·주문 대상이 함께 확정되고, 주문별 발송로그도 템플릿 코드로 누적됩니다. 같은 주문·템플릿도 다시 CSV로 내보낼 수 있으며 다시 확정하면 코드가 한 번 더 누적됩니다.</div>
     <div class="order-list-modal-table-wrap"><table class="order-list-modal-table"><thead><tr><th>내보낸 시각</th><th>확정 대상</th><th>처리</th></tr></thead><tbody>
       <tr><td>${escapeHtml(formatAlimtalkBatchTime(batch.created_at))}</td><td>${escapeHtml(batch.target_count)} 주문·템플릿</td><td><button class="btn primary" data-alimtalk-confirm-action="confirm" data-alimtalk-batch-id="${escapeHtml(batch.id)}" type="button">전체 발송확정</button></td></tr>
     </tbody></table></div>
@@ -6396,7 +6395,7 @@ async function openLatestAlimtalkSendConfirmModal() {
     const confirmButton = event.target.closest("[data-alimtalk-confirm-action='confirm']");
     if (!confirmButton) return;
     const id = Number(confirmButton.dataset.alimtalkBatchId || 0);
-    if (!window.confirm(`가장 최근에 내보낸 알림톡 ZIP 전체(${batch.target_count} 주문·템플릿)를 실제 발송완료로 확정할까요?\n확정 후 ZIP에 포함된 전체 대상은 다음 CSV에서 제외됩니다.`)) return;
+    if (!window.confirm(`가장 최근에 내보낸 알림톡 ZIP 전체(${batch.target_count} 주문·템플릿)를 실제 발송완료로 확정할까요?\n같은 주문·템플릿을 다시 내보내고 확정하면 발송로그 코드가 횟수만큼 누적됩니다.`)) return;
     confirmButton.disabled = true;
     alimtalkSends.confirmExportBatch(id)
       .then(async () => {
@@ -6428,7 +6427,7 @@ async function openAlimtalkSendHistoryModal() {
       <h3>알림톡 CSV 발송확정</h3>
       <div class="order-list-modal-tools"><button type="button" class="order-list-modal-close" data-alimtalk-history-action="close">×</button></div>
     </div>
-    <div class="cs-work-log-note">CSV 다운로드는 <b>내보냄</b>만 기록합니다. 외부 알림톡 발송을 끝낸 배치만 확정하세요. <b>배치 1건을 확정하면 그 CSV에 포함된 주문·템플릿 전체가 함께 발송확정</b>되며, 다음 CSV 대상에서 제외됩니다.</div>
+    <div class="cs-work-log-note">CSV 다운로드는 <b>내보냄</b>만 기록합니다. 외부 알림톡 발송을 끝낸 배치만 확정하세요. <b>배치 1건을 확정하면 그 CSV에 포함된 주문·템플릿 전체가 함께 발송확정</b>됩니다. 같은 주문·템플릿도 다시 내보내고 확정할 수 있으며 발송로그 코드는 횟수만큼 누적됩니다.</div>
     <div class="order-list-modal-table-wrap"><table class="order-list-modal-table"><thead><tr><th>배치</th><th>내보낸 시각</th><th>대상</th><th>상태</th><th>처리</th></tr></thead><tbody>
       ${batches.length ? batches.map((batch) => `<tr><td>#${escapeHtml(batch.id)}</td><td>${escapeHtml(formatAlimtalkBatchTime(batch.created_at))}</td><td>${escapeHtml(batch.target_count)} 주문·템플릿</td><td>내보냄</td><td><button class="btn primary" data-alimtalk-history-action="confirm" data-alimtalk-batch-id="${escapeHtml(batch.id)}" type="button">발송확정</button></td></tr>`).join("") : '<tr><td colspan="5" class="order-list-modal-empty">발송확정할 내보냄 기록이 없습니다.</td></tr>'}
     </tbody></table></div>
@@ -6442,7 +6441,7 @@ async function openAlimtalkSendHistoryModal() {
     const confirmButton = event.target.closest("[data-alimtalk-history-action='confirm']");
     if (!confirmButton) return;
     const id = Number(confirmButton.dataset.alimtalkBatchId || 0);
-    if (!window.confirm(`배치 #${id}의 알림톡 발송이 실제로 완료되었습니까?\n확정 후 해당 주문·템플릿은 다음 CSV 대상에서 제외됩니다.`)) return;
+    if (!window.confirm(`배치 #${id}의 알림톡 발송이 실제로 완료되었습니까?\n같은 주문·템플릿을 다시 내보내고 확정하면 발송로그 코드가 횟수만큼 누적됩니다.`)) return;
     confirmButton.disabled = true;
     alimtalkSends.confirmExportBatch(id)
       .then(async () => {
