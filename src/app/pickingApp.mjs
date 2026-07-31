@@ -3761,9 +3761,57 @@ function autoShortageCsRows() {
     }));
 }
 
+function autoTomorrowShippingCsRows() {
+  const tomorrowInvoiceByOrderNo = new Map();
+  for (const invoice of allWorkflowInvoices()) {
+    const ordNo = String(invoice?.orderGroupNo || "").trim();
+    if (!ordNo || tomorrowInvoiceByOrderNo.has(ordNo)) continue;
+    if (hasTomorrowShippingManagementMemo(invoiceDrawerValue(invoice))) {
+      tomorrowInvoiceByOrderNo.set(ordNo, invoice);
+    }
+  }
+  if (!tomorrowInvoiceByOrderNo.size) return [];
+
+  const candidateByOrderNo = new Map();
+  for (const candidate of state.csManualCandidates) {
+    const ordNo = csRowOrderNo(candidate);
+    if (!tomorrowInvoiceByOrderNo.has(ordNo)) continue;
+    const memo1 = String(
+      candidate?.item?.o_shop_memo
+        ?? candidate?.item?.shop_memo
+        ?? candidate?.item?.memo1
+        ?? "",
+    );
+    if (!candidateByOrderNo.has(ordNo) || hasTomorrowShippingManagementMemo(memo1)) {
+      candidateByOrderNo.set(ordNo, candidate);
+    }
+  }
+
+  return [...candidateByOrderNo.entries()].map(([ordNo, candidate]) => {
+    const row = manualCsCandidateRow(candidate);
+    return {
+      ...row,
+      key: `auto-tomorrow:${ordNo}:${String(row.item?.item_no || row.item?.sellpia_order_item_no || "")}`,
+      virtualTomorrowCase: true,
+      caseRow: {
+        id: null,
+        ord_no: ordNo,
+        item_no: row.item?.item_no || null,
+        sellpia_order_item_no: row.item?.sellpia_order_item_no || null,
+        inv_no: row.order?.inv_no || row.item?.inv_no || null,
+        receipt_date: row.order?.receipt_date || row.item?.receipt_date || null,
+        case_type: "tomorrow_shipping",
+        status: "pending",
+        source: "auto",
+        alimtalk_template: "d0",
+      },
+    };
+  });
+}
+
 function allCsDisplayRows() {
   const visibleCases = state.csCases.filter((caseRow) => caseRow?.case_type !== "template_override");
-  return [...visibleCases.map(csCaseContext), ...autoShortageCsRows()];
+  return [...visibleCases.map(csCaseContext), ...autoShortageCsRows(), ...autoTomorrowShippingCsRows()];
 }
 
 function filteredCsCaseRows() {
@@ -3903,6 +3951,7 @@ function caseRowsForMatchedOrders() {
         ...normalized,
         caseRow: visibleCase?.caseRow || null,
         virtualAutoCase: Boolean(visibleCase?.virtualAutoCase),
+        virtualTomorrowCase: Boolean(visibleCase?.virtualTomorrowCase),
       };
     });
   const expandedItemKeys = new Set(expandedRows.map((row) => `${csRowOrderNo(row)}::${String(row.item?.item_no || row.item?.sellpia_order_item_no || "")}`));
@@ -4064,11 +4113,18 @@ function renderCsCaseFilters() {
 
 function renderCsCaseRow(group, selected) {
   const caseRows = group.items.filter((row) => row.caseRow);
-  const autoShortageCount = caseRows.filter((row) => row.virtualAutoCase || row.caseRow.source === "auto").length;
+  const tomorrowShippingCount = caseRows.filter((row) => row.virtualTomorrowCase).length;
+  const autoShortageCount = caseRows.filter((row) => (
+    row.virtualAutoCase || (row.caseRow.source === "auto" && row.caseRow.case_type === "shortage")
+  )).length;
   const pendingCount = caseRows.filter((row) => row.caseRow.status === "pending").length;
   const goldCount = group.items.filter((row) => row.isGold).length;
   const badgeClass = caseRows.length ? (pendingCount ? "danger" : caseRows.every((row) => row.caseRow.status === "excluded") ? "hold" : "done") : "manual";
-  const modeLabel = autoShortageCount ? `미송 ${autoShortageCount}` : caseRows.length ? (pendingCount ? `진행 ${pendingCount}` : "처리됨") : "수동 등록 가능";
+  const modeLabel = tomorrowShippingCount
+    ? `내일출고${autoShortageCount ? ` · 미송 ${autoShortageCount}` : ""}`
+    : autoShortageCount
+      ? `미송 ${autoShortageCount}`
+      : caseRows.length ? (pendingCount ? `진행 ${pendingCount}` : "처리됨") : "수동 등록 가능";
   const receiver = group.order?.receiver || group.order?.receiver_name || group.order?.orderer || "-";
   const badges = csCaseBadges(group);
   return `<button class="workflow-row cs-case-row ${caseRows.length ? "is-case" : "is-manual-source"} ${selected ? "selected" : ""}" data-cs-key="${escapeHtml(group.key)}" type="button">
@@ -4087,11 +4143,13 @@ function renderCsCaseRow(group, selected) {
 function renderCsCaseItemEditor(row, itemNumber = 0) {
   const caseRow = row.caseRow || null;
   const virtualAutoCase = Boolean(row.virtualAutoCase);
+  const virtualTomorrowCase = Boolean(row.virtualTomorrowCase);
+  const virtualCase = virtualAutoCase || virtualTomorrowCase;
   const item = row.item || {};
   const order = row.order || {};
   const workflowItem = findCsWorkflowItem(row).item;
   const partialShippingHoldOn = Boolean(workflowItem && isHold(workflowItem));
-  const readonly = allowWrites && !virtualAutoCase ? "" : "readonly";
+  const readonly = allowWrites && !virtualCase ? "" : "readonly";
   const managementReadonly = allowWrites ? "" : "readonly";
   const disabled = allowWrites ? "" : "disabled";
   const partialHoldDisabled = allowWrites && workflowItem ? "" : "disabled";
@@ -4100,10 +4158,12 @@ function renderCsCaseItemEditor(row, itemNumber = 0) {
   const managementMemo2 = String(item.o_shop_memo2 ?? item.shop_memo2 ?? item.memo2 ?? "");
   const outboundConfirmedDate = String(item.sellpia_outbound_confirmed_date ?? "");
   const basisDate = caseRow?.basis_date || receiptDate;
-  const automaticCase = Boolean(virtualAutoCase || caseRow?.source === "auto");
-  const manualCase = Boolean(caseRow && !virtualAutoCase && caseRow.source === "manual");
+  const automaticCase = Boolean(virtualCase || caseRow?.source === "auto");
+  const manualCase = Boolean(caseRow && !virtualCase && caseRow.source === "manual");
   const hasCase = Boolean(caseRow);
-  const caseBadge = virtualAutoCase
+  const caseBadge = virtualTomorrowCase
+    ? '<span class="workflow-row-badge warn">내일출고 자동대상</span>'
+    : virtualAutoCase
     ? '<span class="workflow-row-badge danger">미송 자동대상</span>'
     : automaticCase
       ? `<span class="workflow-row-badge danger">${escapeHtml(csStatusLabel(caseRow.status))}</span><span class="workflow-row-badge danger">미송 CS</span>`
@@ -4111,13 +4171,15 @@ function renderCsCaseItemEditor(row, itemNumber = 0) {
         ? `<span class="workflow-row-badge manual">별도 CS</span><span class="workflow-row-badge ${caseRow.status === "pending" ? "danger" : caseRow.status === "excluded" ? "hold" : "done"}">${escapeHtml(csStatusLabel(caseRow.status))}</span>`
         : '<span class="workflow-row-badge neutral">CS 대상 아님</span>';
   const caseClassification = automaticCase
-    ? csTemplateSelect(row, allowWrites ? "" : "disabled")
+    ? csTemplateSelect(row, allowWrites && !virtualTomorrowCase ? "" : "disabled")
     : manualCase
       ? '<label class="cs-template-static"><span>CS 구분</span><strong>별도 CS</strong></label>'
       : csTemplateSelect(row, allowWrites ? "" : "disabled");
   const imageCode = item.sellpia_p_code || item.sellpia_product_code || item.p_code || "";
   const imageUrl = productImageUrl(imageCode);
-  const actionButtons = virtualAutoCase
+  const actionButtons = virtualTomorrowCase
+    ? '<span class="workflow-row-badge warn">관리메모1 표식으로 자동 판정</span>'
+    : virtualAutoCase
     ? `<button class="btn primary" data-cs-case-action="register-auto" data-cs-row-key="${escapeHtml(row.key)}" type="button" ${disabled}>미송 CS 저장</button>`
     : hasCase
       ? `<button class="btn primary" data-cs-case-action="save-all" data-cs-case-id="${caseRow.id}" data-cs-row-key="${escapeHtml(row.key)}" type="button" ${disabled}>저장</button>
