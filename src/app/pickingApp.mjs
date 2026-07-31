@@ -6,6 +6,7 @@ import { isGoldOwnCode } from "../domain/gold.mjs?v=20260728-gold-own-code1";
 import { alimtalkSendLogCode, alimtalkSendNaturalKey, appendAlimtalkSendLog, hasTomorrowShippingManagementMemo, resolveAlimtalkTemplate } from "../domain/alimtalk.mjs?v=20260731-memo1-markers2";
 import { receiptBusinessDayKeys, receiptBusinessDaysSince } from "../domain/businessDays.mjs?v=20260728-receipt-business-days1";
 import { inspectionHoldCsAction } from "../domain/csHoldTransition.mjs?v=20260731-inspection-hold-cs1";
+import { comparePickingRowsByRoute } from "../domain/pickingRowSort.mjs?v=20260731-route-row1";
 import {
   buildWorkflowState,
   completedInvoicesForInspection,
@@ -913,12 +914,6 @@ function sortPickingRows(rows) {
     const bItem = b.item;
     const aGold = invoiceHasGold(a.invoice);
     const bGold = invoiceHasGold(b.invoice);
-    if (String(a.invoice.orderGroupNo || "") === String(b.invoice.orderGroupNo || "")) {
-      return (
-        compareInvoiceItemsBySellpiaRow(aItem, bItem) ||
-        String(aItem.sellpiaItemNo || "").localeCompare(String(bItem.sellpiaItemNo || ""), "ko", { numeric: true })
-      );
-    }
     if (aGold && bGold) {
       return (
         (a.invoice.sortOrder ?? 999999) - (b.invoice.sortOrder ?? 999999) ||
@@ -932,13 +927,11 @@ function sortPickingRows(rows) {
         String(a.invoice.orderGroupNo).localeCompare(String(b.invoice.orderGroupNo), "ko")
       );
     }
-    return (
-      compareExportRouteCode(aItem.ownCode || aItem.sellpiaProductCode, bItem.ownCode || bItem.sellpiaProductCode) ||
-      visibleInvoiceSequenceNo(a.invoice, 999999) - visibleInvoiceSequenceNo(b.invoice, 999999) ||
-      compareInvoiceItemsBySellpiaRow(aItem, bItem) ||
-      (a.invoice.sortOrder ?? 999999) - (b.invoice.sortOrder ?? 999999) ||
-      String(a.invoice.orderGroupNo).localeCompare(String(b.invoice.orderGroupNo), "ko")
-    );
+    return comparePickingRowsByRoute(a, b, {
+      compareRouteCode: compareExportRouteCode,
+      invoiceSequenceNo: visibleInvoiceSequenceNo,
+      compareInvoiceItems: compareInvoiceItemsBySellpiaRow,
+    });
   });
 }
 
