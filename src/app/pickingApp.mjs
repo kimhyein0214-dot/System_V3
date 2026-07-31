@@ -6449,7 +6449,10 @@ function showPostOfficeEnrichmentStatus() {
   window.alert(message);
 }
 
-function exportToggleCsv() {
+async function exportToggleCsv() {
+  // Sellpia scraping runs outside this page, so the in-memory view can still
+  // contain pre-scrape rows. Refresh before building the frontend-ordered CSV.
+  await loadPickingData();
   if (!state.viewModel?.invoices?.length) {
     toast("토글 CSV 대상이 없습니다.");
     return;
@@ -8092,7 +8095,7 @@ function bindEvents() {
       reorderInvoicesByCurrentView().catch(showError);
     }
     if (button.dataset.dashboardAction === "toggle-csv") {
-      exportToggleCsv();
+      exportToggleCsv().catch(showError);
     }
     if (button.dataset.dashboardAction === "planned-print-csv") {
       exportPlannedPrintCsv();
