@@ -3,7 +3,7 @@ import { buildPickingViewModel } from "../workflows/picking/buildPickingViewMode
 import { createCsCaseAdapter, openShortageItemKeys } from "../adapters/csCaseAdapter.mjs?v=20260728-cs-cases3";
 import { createAlimtalkSendAdapter } from "../adapters/alimtalkSendAdapter.mjs?v=20260728-alimtalk-history2";
 import { isGoldOwnCode } from "../domain/gold.mjs?v=20260728-gold-own-code1";
-import { alimtalkSendLogCode, alimtalkSendNaturalKey, appendAlimtalkSendLog, resolveAlimtalkTemplate } from "../domain/alimtalk.mjs?v=20260729-alimtalk-template-override1";
+import { alimtalkSendLogCode, alimtalkSendNaturalKey, appendAlimtalkSendLog, hasTomorrowShippingManagementMemo, resolveAlimtalkTemplate } from "../domain/alimtalk.mjs?v=20260731-memo1-markers2";
 import { receiptBusinessDayKeys, receiptBusinessDaysSince } from "../domain/businessDays.mjs?v=20260728-receipt-business-days1";
 import { inspectionHoldCsAction } from "../domain/csHoldTransition.mjs?v=20260731-inspection-hold-cs1";
 import {
@@ -3078,11 +3078,11 @@ function csDayKeyForTemplate(templateKey) {
   return CS_DAYS.find((day) => CS_DAY_TEMPLATE[day.key] === templateKey)?.key || "";
 }
 
-function alimtalkRuleForRow(row, { isReady = false, selectedTemplate = "" } = {}) {
+function alimtalkRuleForRow(row, { selectedTemplate = "" } = {}) {
   return resolveAlimtalkTemplate({
     elapsedDays: row?.elapsedDays,
     isGold: isGoldItem(row?.item),
-    isReady,
+    isTomorrowShipping: hasTomorrowShippingManagementMemo(invoiceDrawerValue(row?.invoice)),
     isMakeshop: isCsMakeshopMethod(row),
     selectedTemplate,
   });
@@ -3090,22 +3090,12 @@ function alimtalkRuleForRow(row, { isReady = false, selectedTemplate = "" } = {}
 
 function classifyCsRowsByDay(rows) {
   const groups = Object.fromEntries(CS_DAYS.filter((day) => day.key !== "all").map((day) => [day.key, []]));
-  const invoiceRows = new Map();
   rows.forEach((row) => {
-    const key = row.invoice.orderGroupNo || row.invoice.invoiceNo || row.key;
-    if (!invoiceRows.has(key)) invoiceRows.set(key, []);
-    invoiceRows.get(key).push(row);
-  });
-  rows.forEach((row) => {
-    const key = row.invoice.orderGroupNo || row.invoice.invoiceNo || row.key;
-    const sameInvoiceRows = invoiceRows.get(key) || [];
-    const hasHoldRow = sameInvoiceRows.some((item) => item.csReason === "hold");
-    const allReady = sameInvoiceRows.length > 0 && !hasHoldRow && sameInvoiceRows.every((item) => Number(item.currentShortageQty || 0) === 0);
     const pushTemplate = (templateKey) => {
       const dayKey = csDayKeyForTemplate(templateKey);
       if (dayKey) groups[dayKey]?.push({ ...row, csDayKey: dayKey });
     };
-    const rule = alimtalkRuleForRow(row, { isReady: allReady });
+    const rule = alimtalkRuleForRow(row);
     if (rule.templateKey) pushTemplate(rule.templateKey);
   });
   return groups;
@@ -5985,15 +5975,6 @@ function alimtalkInvoiceShortageMetrics(invoice) {
   return { hasOpenShortage, shortageQtyTotal };
 }
 
-function alimtalkReadyState(invoice) {
-  const stats = invoiceStats(invoice);
-  const readyByPicking = invoiceReadyFromPicking(invoice) && stats.total > 0 && stats.picked === stats.total && stats.shortage === 0 && stats.hold === 0;
-  return {
-    allReady: readyByPicking,
-    readyReason: readyByPicking ? "invoiceReadyFromPicking_picked_all_no_shortage" : "not_ready",
-  };
-}
-
 function alimtalkDelayedItemsForInvoice(invoice) {
   return invoiceItemsInSellpiaRowOrder(invoice).filter((item) => {
     const itemState = workflowItemState(invoice, item);
@@ -6026,7 +6007,6 @@ function alimtalkBaseRow(row, item, extra = {}) {
   const date = dateKey(invoice.receiptDate);
   const shippingHold = alimtalkShippingHoldState(invoice);
   const shortageMetrics = alimtalkInvoiceShortageMetrics(invoice);
-  const readyState = alimtalkReadyState(invoice);
   return {
     key: item ? csRowKey(invoice, item) : row.key,
     invoice,
@@ -6045,8 +6025,6 @@ function alimtalkBaseRow(row, item, extra = {}) {
     systemShippingHoldSource: shippingHold.source,
     hasOpenShortage: shortageMetrics.hasOpenShortage,
     shortageQtyTotal: shortageMetrics.shortageQtyTotal,
-    allReady: readyState.allReady,
-    readyReason: readyState.readyReason,
     ...extra,
   };
 }
@@ -6056,10 +6034,15 @@ function buildAlimtalkRowsFromCsInvoices(csRows) {
   for (const row of csRows || []) {
     const invoice = row.invoice;
     const invoiceState = workflowInvoiceState(invoice);
+    if (invoiceState?.cancelled) continue;
+    if (hasTomorrowShippingManagementMemo(invoiceDrawerValue(invoice))) {
+      const item = invoiceItemsInSellpiaRowOrder(invoice)[0] || null;
+      rows.push(alimtalkBaseRow(row, item, { key: row.key, csReason: "tomorrow", currentShortageQty: 0, shortageQty: 0 }));
+      continue;
+    }
     const shippingHold = alimtalkShippingHoldState(invoice);
-    if (!shippingHold.on || !shippingHold.known || invoiceState?.cancelled) continue;
+    if (!shippingHold.on || !shippingHold.known) continue;
     const shortageMetrics = alimtalkInvoiceShortageMetrics(invoice);
-    const readyState = alimtalkReadyState(invoice);
     const delayedItems = alimtalkDelayedItemsForInvoice(invoice);
     if (shortageMetrics.hasOpenShortage || shortageMetrics.shortageQtyTotal > 0) {
       delayedItems.forEach((item) => {
@@ -6072,10 +6055,6 @@ function buildAlimtalkRowsFromCsInvoices(csRows) {
         );
       });
       continue;
-    }
-    if (readyState.allReady) {
-      const item = invoiceItemsInSellpiaRowOrder(invoice)[0] || null;
-      rows.push(alimtalkBaseRow(row, item, { key: row.key, csReason: "ready", currentShortageQty: 0, shortageQty: 0 }));
     }
   }
   return rows;
@@ -6100,14 +6079,17 @@ function classifyAlimtalkRowsByDay(rows) {
       const dayKey = csDayKeyForTemplate(templateKey);
       if (dayKey) groups[dayKey]?.push({ ...row, csDayKey: dayKey, alimtalkBucket: dayKey, alimtalkBucketReason: reason });
     };
-    if (row.csReason !== "ready" && !row.hasOpenShortage && !(Number(row.shortageQtyTotal || 0) > 0)) return;
+    if (row.csReason === "tomorrow") {
+      pushTemplate("d0", "management_memo1");
+      return;
+    }
+    if (!row.hasOpenShortage && !(Number(row.shortageQtyTotal || 0) > 0)) return;
     if (!isValidDateKey(row.delayBaseDate)) return;
     const caseRow = alimtalkCsCaseForRow(row);
     if (caseRow && caseRow.status !== "pending") return;
     const rule = resolveAlimtalkTemplate({
       elapsedDays: row.elapsedDays,
       isGold: isGoldItem(row.item),
-      isReady: row.csReason === "ready",
       isMakeshop: isCsMakeshopMethod(row),
       selectedTemplate: caseRow?.alimtalk_template || "",
     });

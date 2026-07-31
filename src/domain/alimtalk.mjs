@@ -31,6 +31,11 @@ export function appendAlimtalkSendLog(currentValue, nextCode) {
   return code ? [...existingCodes, code].join(",") : existingCodes.join(",");
 }
 
+export function hasTomorrowShippingManagementMemo(value) {
+  const memo = String(value ?? "").trim();
+  return memo === ".." || memo === "!!";
+}
+
 export function alimtalkElapsedLabel(value) {
   const days = nonNegativeInteger(value);
   return days >= 11 ? "11일차 이후" : `${days}일차`;
@@ -38,18 +43,31 @@ export function alimtalkElapsedLabel(value) {
 
 /**
  * Resolves whether a delayed item is eligible for an Alimtalk template today.
- * A template is never carried forward to a different day: the only exception is
- * the explicit ready-to-ship notice, which is not a delay-day notification.
+ * A delay template is never carried forward to a different day. The
+ * management-memo1 tomorrow-shipping notice is independent of elapsed days.
  */
 export function resolveAlimtalkTemplate({
   elapsedDays,
   isGold = false,
-  isReady = false,
+  isTomorrowShipping = false,
   isMakeshop = false,
   selectedTemplate = "",
 } = {}) {
   const days = nonNegativeInteger(elapsedDays);
   const selected = String(selectedTemplate || "").trim();
+
+  if (isTomorrowShipping) {
+    return {
+      elapsedDays: days,
+      dayKey: "내일출고",
+      label: "내일출고",
+      templateKey: "d0",
+      allowedTemplateKeys: ["d0"],
+      hasTemplate: true,
+      selectionRequired: false,
+      manuallySelected: false,
+    };
+  }
 
   // A user-selected template is an explicit CS decision.  It must not be
   // discarded merely because its normal automatic day has passed.
@@ -63,22 +81,6 @@ export function resolveAlimtalkTemplate({
       hasTemplate: true,
       selectionRequired: false,
       manuallySelected: true,
-    };
-  }
-
-  // elapsedDays is zero-based: a receipt made today has elapsedDays === 0.
-  // The operator-facing delay days are one-based.  The sole exception is
-  // the ready-to-ship notice: it is only for today's fully-ready held order.
-  if (isReady && days === 0) {
-    return {
-      elapsedDays: 0,
-      dayKey: "내일출고",
-      label: "내일출고",
-      templateKey: "d0",
-      allowedTemplateKeys: ["d0"],
-      hasTemplate: true,
-      selectionRequired: false,
-      manuallySelected: false,
     };
   }
 

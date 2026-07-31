@@ -1,12 +1,22 @@
 import assert from "node:assert/strict";
-import { alimtalkElapsedLabel, alimtalkSendLogCode, alimtalkSendNaturalKey, appendAlimtalkSendLog, resolveAlimtalkTemplate } from "../src/domain/alimtalk.mjs";
+import { alimtalkElapsedLabel, alimtalkSendLogCode, alimtalkSendNaturalKey, appendAlimtalkSendLog, hasTomorrowShippingManagementMemo, resolveAlimtalkTemplate } from "../src/domain/alimtalk.mjs";
 
 const normal = (elapsedDays, selectedTemplate = "") => resolveAlimtalkTemplate({ elapsedDays, selectedTemplate });
 const gold = (elapsedDays) => resolveAlimtalkTemplate({ elapsedDays, isGold: true });
 
 assert.equal(normal(0).templateKey, "d1");
-assert.equal(resolveAlimtalkTemplate({ elapsedDays: 0, isReady: true }).templateKey, "d0");
-assert.equal(resolveAlimtalkTemplate({ elapsedDays: 1, isReady: true }).templateKey, "");
+assert.equal(resolveAlimtalkTemplate({ elapsedDays: 0, isTomorrowShipping: true }).templateKey, "d0");
+assert.equal(resolveAlimtalkTemplate({ elapsedDays: 7, isTomorrowShipping: true }).templateKey, "d0");
+assert.equal(resolveAlimtalkTemplate({ elapsedDays: 0, isReady: true }).templateKey, "d1");
+assert.equal(hasTomorrowShippingManagementMemo("내일 출고"), false);
+assert.equal(hasTomorrowShippingManagementMemo(".."), true);
+assert.equal(hasTomorrowShippingManagementMemo("  ..  "), true);
+assert.equal(hasTomorrowShippingManagementMemo("  !!  "), true);
+assert.equal(hasTomorrowShippingManagementMemo("메모 .."), false);
+assert.equal(hasTomorrowShippingManagementMemo("!! 확인"), false);
+assert.equal(hasTomorrowShippingManagementMemo("!"), false);
+assert.equal(hasTomorrowShippingManagementMemo("   "), false);
+assert.equal(hasTomorrowShippingManagementMemo(null), false);
 assert.equal(normal(2).templateKey, "d3_pf");
 assert.equal(resolveAlimtalkTemplate({ elapsedDays: 2, isMakeshop: true }).templateKey, "d3_ms");
 assert.equal(normal(4).templateKey, "");
