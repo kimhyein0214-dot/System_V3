@@ -160,6 +160,63 @@ input {
   box-shadow: 0 0 0 2px rgba(37, 99, 235, 0.16);
 }
 
+.btn.cancel-preview,
+.btn.cancel-action {
+  border-color: #ef9a9a;
+  background: #fff7f7;
+  color: #b42318;
+  box-shadow: none;
+}
+
+.btn.cancel-preview:hover,
+.btn.cancel-action:hover {
+  border-color: #dc2626;
+  background: #fff0f0;
+}
+
+.btn.cancel-reopen {
+  border-color: #94a3b8;
+  background: #f1f5f9;
+  color: #334155;
+  box-shadow: none;
+}
+
+.btn.cancel-reopen:hover {
+  border-color: #64748b;
+  background: #e2e8f0;
+}
+
+.is-cancelled {
+  background-color: #f3f4f6 !important;
+  background-image: repeating-linear-gradient(
+    -45deg,
+    rgba(100, 116, 139, 0.11) 0,
+    rgba(100, 116, 139, 0.11) 1px,
+    transparent 1px,
+    transparent 8px
+  ) !important;
+  border-color: #cbd5e1 !important;
+}
+
+.is-cancelled img {
+  filter: grayscale(0.75);
+  opacity: 0.68;
+}
+
+.is-cancelled input,
+.is-cancelled textarea,
+.is-cancelled select {
+  background-color: rgba(241, 245, 249, 0.9);
+  color: #64748b;
+}
+
+.workflow-row-badge.cancelled,
+.tray-item.cancelled .tray-item-state {
+  border-color: #94a3b8;
+  background: #e2e8f0;
+  color: #475569;
+}
+
 .workflow-actions-row {
   display: flex;
   gap: 8px;
@@ -3533,6 +3590,7 @@ input {
   margin-bottom: 10px;
 }
 
+.cs-order-drawer-box,
 .cs-order-scheduled-date {
   display: grid;
   grid-template-columns: 1fr;
@@ -3540,6 +3598,8 @@ input {
   gap: 7px;
   min-width: 260px;
   max-width: 360px;
+  min-height: 104px;
+  flex: 1 1 260px;
   padding: 8px 10px;
   border: 1px solid #9db8e5;
   border-radius: 8px;
@@ -3549,22 +3609,26 @@ input {
   font-weight: 900;
 }
 
-.cs-order-drawer-box {
+.cs-order-action-stack {
   display: grid;
-  grid-template-columns: 1fr;
-  align-items: stretch;
-  gap: 7px;
-  min-width: 220px;
-  max-width: 280px;
-  padding: 8px 10px;
-  border: 1px solid #9db8e5;
-  border-radius: 8px;
-  background: #f7faff;
-  color: #1f3f94;
-  font-size: 12px;
-  font-weight: 900;
+  align-content: start;
+  gap: 5px;
+  width: 124px;
+  flex: 0 0 124px;
 }
 
+.cs-order-action-stack .btn,
+.cs-order-action-stack .workflow-row-badge {
+  width: 100%;
+  min-height: 32px;
+  display: grid;
+  place-items: center;
+  margin: 0;
+  padding: 5px 8px;
+  white-space: nowrap;
+}
+
+.cs-order-drawer-box em,
 .cs-order-scheduled-date em {
   color: #64748b;
   font-size: 11px;
@@ -3572,29 +3636,10 @@ input {
   font-weight: 800;
 }
 
-.cs-order-drawer-box em {
-  color: #64748b;
-  font-size: 11px;
-  font-style: normal;
-  font-weight: 800;
-}
-
+.cs-order-drawer-box textarea,
 .cs-order-scheduled-date textarea {
   min-width: 0;
   min-height: 64px;
-  resize: vertical;
-  padding: 5px 7px;
-  border: 1px solid #b9cae4;
-  border-radius: 6px;
-  background: #fff;
-  color: #132e60;
-  font: inherit;
-  font-weight: 900;
-}
-
-.cs-order-drawer-box textarea {
-  min-width: 0;
-  min-height: 42px;
   resize: vertical;
   padding: 5px 7px;
   border: 1px solid #b9cae4;
@@ -3924,6 +3969,13 @@ input {
   font-size: 12px;
 }
 
+.cs-cancel-action-slot {
+  display: grid;
+  margin-top: 3px;
+  padding-top: 7px;
+  border-top: 1px solid #fecaca;
+}
+
 @media (max-width: 1450px) {
   .cs-item-card {
     grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
@@ -3938,6 +3990,15 @@ input {
     grid-auto-flow: column;
     grid-template-columns: repeat(auto-fit, minmax(72px, max-content));
     justify-content: end;
+  }
+
+  .cs-cancel-action-slot {
+    margin-top: 0;
+    margin-left: 3px;
+    padding-top: 0;
+    padding-left: 8px;
+    border-top: 0;
+    border-left: 1px solid #fecaca;
   }
 }
 

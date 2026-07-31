@@ -1,4 +1,4 @@
-import { annotateShippingHoldState, loadWorkflowQueues } from "../adapters/workflowEventAdapter.mjs?v=20260714-shortage-baseline1";
+import { annotateShippingHoldState, loadWorkflowQueues } from "../adapters/workflowEventAdapter.mjs?v=20260731-cancellation3";
 import { buildPickingViewModel } from "../workflows/picking/buildPickingViewModel.mjs?v=20260706-memo2-text1";
 import { createCsCaseAdapter, openShortageItemKeys } from "../adapters/csCaseAdapter.mjs?v=20260728-cs-cases3";
 import { createAlimtalkSendAdapter } from "../adapters/alimtalkSendAdapter.mjs?v=20260728-alimtalk-history2";
@@ -11,7 +11,7 @@ import {
   completedInvoicesForInspection,
   openShortageItems,
   repickedInvoicesForInspection,
-} from "../workflows/workflowEvents.mjs";
+} from "../workflows/workflowEvents.mjs?v=20260731-cancellation3";
 
 const SUPABASE_URL = "https://vgxocngpykhlkosiaeew.supabase.co";
 const SUPABASE_KEY = "sb_publishable_XVnKGJo66GZiYTq5Ivu8dA_SjBVvX0g";
@@ -521,7 +521,7 @@ function cleanOptionName(optionName, ownCode) {
 }
 
 function invoiceStats(invoice) {
-  const items = invoice.items || [];
+  const items = activeWorkflowItems(invoice);
   const picked = items.filter(isPicked).length;
   const shortage = items.filter((item) => shortageQty(item) > 0).length;
   const hold = items.filter(isHold).length;
@@ -537,6 +537,7 @@ function invoiceStats(invoice) {
 }
 
 function itemHasOpenWorkflowShortage(invoice, item) {
+  if (itemIsEffectivelyCancelled(invoice, item)) return false;
   const itemState = workflowItemState(invoice, item);
   if (itemState?.cancelled || itemState?.shortageRepicked || itemState?.inspected) return false;
   if (itemState?.shortageOpen) return true;
@@ -1055,7 +1056,8 @@ function renderInvoiceSlots(invoiceIndex, item, itemIndex) {
   </div>`;
 }
 
-function itemStatusMeta(item) {
+function itemStatusMeta(item, invoice = null) {
+  if (invoice && itemIsEffectivelyCancelled(invoice, item)) return { label: "취소", className: "cancelled" };
   if (shortageQty(item) > 0) return { label: `미송 ${shortageQty(item)}`, className: "shortage" };
   if (isHold(item)) return { label: "보류", className: "hold" };
   if (isPicked(item)) return { label: "완료", className: "picked" };
@@ -1097,6 +1099,22 @@ function workflowAwareShortageQty(itemState, item) {
 
 function workflowInvoiceState(invoice) {
   return state.workflowQueues?.workflowState?.invoiceStateByKey?.get(invoice.orderGroupNo) || null;
+}
+
+function invoiceIsCancelled(invoice) {
+  return Boolean(invoice && workflowInvoiceState(invoice)?.cancelled);
+}
+
+function itemIsIndividuallyCancelled(invoice, item) {
+  return Boolean(invoice && item && workflowItemState(invoice, item)?.cancelled);
+}
+
+function itemIsEffectivelyCancelled(invoice, item) {
+  return invoiceIsCancelled(invoice) || itemIsIndividuallyCancelled(invoice, item);
+}
+
+function activeWorkflowItems(invoice) {
+  return (invoice?.items || []).filter((item) => !itemIsEffectivelyCancelled(invoice, item));
 }
 
 function shippingHoldUiState(invoice) {
@@ -1422,8 +1440,7 @@ function mergeInvoicesUnique(...lists) {
 }
 
 function isInspectionVisibleBaseInvoice(invoice) {
-  const invoiceState = workflowInvoiceState(invoice);
-  return !invoiceState?.cancelled;
+  return Boolean(invoice);
 }
 
 function inspectionSourceInvoices() {
@@ -1444,7 +1461,10 @@ function inspectionSourceInvoices() {
 function workflowSummary() {
   const queues = state.workflowQueues;
   const inspectionInvoices = inspectionSourceInvoices();
-  const pendingInspectionInvoices = inspectionInvoices.filter((invoice) => !workflowInvoiceState(invoice)?.inspected);
+  const pendingInspectionInvoices = inspectionInvoices.filter((invoice) => {
+    const invoiceState = workflowInvoiceState(invoice);
+    return !invoiceState?.inspected && !invoiceState?.cancelled;
+  });
   const repickedPendingInvoices = pendingInspectionInvoices.filter(invoiceHasRepickedShortage);
   const holdInvoices = inspectionInvoices.filter((invoice) => {
     const invoiceState = workflowInvoiceState(invoice);
@@ -1929,7 +1949,8 @@ function renderTray() {
   const rows = invoices.flatMap((invoice, invoiceIndex) =>
     invoiceItemsInSellpiaRowOrder(invoice).map((item) => ({ invoice, item, invoiceIndex })),
   );
-  const done = rows.filter(({ item }) => isPicked(item)).length;
+  const activeRows = rows.filter(({ invoice, item }) => !itemIsEffectivelyCancelled(invoice, item));
+  const done = activeRows.filter(({ item }) => isPicked(item)).length;
   const groupLabel =
     state.searchText || state.filterMode !== "all"
       ? filterLabel(state.filterMode)
@@ -1941,7 +1962,7 @@ function renderTray() {
   if (els.trayHandle) els.trayHandle.setAttribute("aria-expanded", String(state.trayOpen));
   if (els.trayLabel) els.trayLabel.textContent = `${groupLabel} 상품 슬롯`;
   if (els.trayTitle) els.trayTitle.textContent = `${groupLabel} 상품 슬롯`;
-  if (els.trayCount) els.trayCount.textContent = `${done}/${rows.length}`;
+  if (els.trayCount) els.trayCount.textContent = `${done}/${activeRows.length}`;
   if (els.trayExpandBtn) els.trayExpandBtn.textContent = state.trayExpanded ? "접기" : "펼치기";
 
   if (!rows.length) {
@@ -1956,8 +1977,9 @@ function renderTray() {
 
   els.trayBoard.innerHTML = slots
     .map((slotRows, index) => {
-      const picked = slotRows.filter(({ item }) => isPicked(item)).length;
-      const shortage = slotRows.filter(({ item }) => shortageQty(item) > 0).length;
+      const activeSlotRows = slotRows.filter(({ invoice, item }) => !itemIsEffectivelyCancelled(invoice, item));
+      const picked = activeSlotRows.filter(({ item }) => isPicked(item)).length;
+      const shortage = activeSlotRows.filter(({ item }) => shortageQty(item) > 0).length;
       const firstInvoice = slotRows[0]?.invoice;
       const title = firstInvoice
         ? `${invoiceSequenceWithGroupLabel(firstInvoice)} · ${firstInvoice.displayName || firstInvoice.csDisplayName || ""}`
@@ -1965,17 +1987,18 @@ function renderTray() {
       const body = slotRows.length
         ? slotRows
             .map(({ invoice, item }) => {
-              const meta = itemStatusMeta(item);
+              const meta = itemStatusMeta(item, invoice);
               const key = itemSlotKey(invoice, item);
               const classes = [
                 "tray-item",
                 meta.className,
                 key === state.currentTrayKey ? "selected" : "",
                 isGoldItem(item) ? "is-gold" : "",
+                itemIsEffectivelyCancelled(invoice, item) ? "is-cancelled" : "",
               ]
                 .filter(Boolean)
                 .join(" ");
-              return `<button class="${classes}" data-tray-key="${escapeHtml(key)}" type="button">
+              return `<button class="${classes}" data-tray-key="${escapeHtml(key)}" type="button" ${itemIsEffectivelyCancelled(invoice, item) ? "disabled" : ""}>
                 <span class="tray-item-check" data-tray-toggle>${isPicked(item) ? "✓" : ""}</span>
                 <span class="tray-item-main">
                   <span class="tray-item-seq">${escapeHtml(invoiceSequenceWithGroupLabel(invoice))}</span>
@@ -1991,7 +2014,7 @@ function renderTray() {
       return `<section class="tray-slot">
         <div class="tray-slot-head">
           <span>${escapeHtml(title)}</span>
-          <strong>${picked}/${slotRows.length}</strong>
+          <strong>${picked}/${activeSlotRows.length}</strong>
           ${shortage ? `<em>미송 ${shortage}</em>` : ""}
         </div>
         <div class="tray-slot-list">${body}</div>
@@ -2160,8 +2183,9 @@ function applySideShortcut(type, value) {
 }
 
 function renderProgress(invoices) {
-  const items = invoices.flatMap((invoice) => invoice.items || []);
-  const done = items.filter(isPicked).length;
+  const rows = invoices.flatMap((invoice) => activeWorkflowItems(invoice).map((item) => ({ invoice, item })));
+  const done = rows.filter(({ item }) => isPicked(item)).length;
+  const items = rows.map(({ item }) => item);
   const total = items.length;
   const pct = total ? Math.round((done / total) * 100) : 0;
   const groupLabel = state.groupInfos[state.currentGroup]?.label || `${state.currentGroup + 1}조`;
@@ -2174,7 +2198,7 @@ function renderProgress(invoices) {
 function groupBulkTargets(group = []) {
   return group.flatMap((invoice) =>
     (invoice.items || [])
-      .filter((item) => shortageQty(item) === 0 && !isHold(item))
+      .filter((item) => !itemIsEffectivelyCancelled(invoice, item) && shortageQty(item) === 0 && !isHold(item))
       .map((item) => ({ invoice, item })),
   );
 }
@@ -2218,11 +2242,12 @@ function sortedInvoiceItemsForPicking(invoice) {
 
 function renderGoldInvoiceCard(invoice, invoiceIndex = 0) {
   const items = sortedInvoiceItemsForPicking(invoice);
-  const picked = items.filter(isPicked).length;
-  const shortage = items.filter((item) => shortageQty(item) > 0).length;
-  const qty = items.reduce((sum, item) => sum + (Number(item.quantity) || 1), 0);
+  const activeItems = activeWorkflowItems(invoice);
+  const picked = activeItems.filter(isPicked).length;
+  const shortage = activeItems.filter((item) => shortageQty(item) > 0).length;
+  const qty = activeItems.reduce((sum, item) => sum + (Number(item.quantity) || 1), 0);
   const seller = sellerBadgeMeta(invoice.seller);
-  return `<article class="gold-invoice-card">
+  return `<article class="gold-invoice-card ${invoiceIsCancelled(invoice) ? "is-cancelled" : ""}">
     <div class="gold-invoice-head">
       <div>
         <strong>${escapeHtml(invoiceSequenceWithGroupLabel(invoice, invoiceIndex))}</strong>
@@ -2232,7 +2257,8 @@ function renderGoldInvoiceCard(invoice, invoiceIndex = 0) {
         ${seller ? `<span class="seller-badge ${seller.className}">${escapeHtml(seller.label)}</span>` : ""}
         <span class="gold-badge">골드송장</span>
         ${shortage ? `<span class="workflow-row-badge danger">미송 ${shortage}</span>` : ""}
-        <span class="workflow-row-badge done">${picked}/${items.length}</span>
+        ${invoiceIsCancelled(invoice) ? '<span class="workflow-row-badge cancelled">주문취소</span>' : ""}
+        <span class="workflow-row-badge done">${picked}/${activeItems.length}</span>
       </div>
     </div>
     <div class="gold-item-list">
@@ -2254,11 +2280,12 @@ function renderGoldInvoiceItem(invoice, item, invoiceIndex = 0, itemIndex = 0) {
     isHold(item) ? "has-hold" : "",
     isGoldItem(item) ? "is-gold" : "",
     key === state.currentTrayKey ? "is-selected" : "",
+    itemIsEffectivelyCancelled(invoice, item) ? "is-cancelled" : "",
   ]
     .filter(Boolean)
     .join(" ");
   return `<div class="${classes}" data-order-group="${escapeHtml(invoice.orderGroupNo)}" data-item-no="${escapeHtml(item.sellpiaItemNo)}" data-slot-key="${escapeHtml(key)}">
-    <button class="pick-check ${checked ? "checked" : ""}" data-action="toggle" data-order-group="${escapeHtml(invoice.orderGroupNo)}" data-item-no="${escapeHtml(item.sellpiaItemNo)}">${checked ? "✓" : ""}</button>
+    <button class="pick-check ${checked ? "checked" : ""}" data-action="toggle" data-order-group="${escapeHtml(invoice.orderGroupNo)}" data-item-no="${escapeHtml(item.sellpiaItemNo)}" ${itemIsEffectivelyCancelled(invoice, item) ? "disabled" : ""}>${checked ? "✓" : ""}</button>
     <div class="gold-item-photo">${imageUrl ? `<img src="${imageUrl}" ${photoImgAttrs(imageUrl, photoTitleForItem(item))} alt="" loading="lazy" onerror="this.style.visibility='hidden'">` : "사진"}</div>
     <div class="gold-item-main">
       <span class="workflow-row-order">상품순서 ${itemOrderNo(item, itemIndex)}번</span>
@@ -2284,6 +2311,7 @@ function shortageFilterLabel(filter = state.shortageFilter) {
       code: "자사코드별",
       drawer: "서랍입력",
       completed: "기존완료",
+      cancelled: "취소",
     }[filter] || "전체"
   );
 }
@@ -2600,13 +2628,16 @@ function shortageRowMatchesSearch(row) {
 
 function shortageRowsForCurrentFilter() {
   const openRows = sortShortageRowsByReceiptDate(state.workflowQueues?.shortageItems || []);
-  let rows = openRows;
+  const cancelledRows = sortShortageRowsByReceiptDate(cancelledShortageRows());
+  let rows = [...openRows, ...cancelledRows];
   if (state.shortageFilter === "completed") {
     rows = repickedShortageRows().sort((a, b) => workflowEventTime(b.state) - workflowEventTime(a.state));
+  } else if (state.shortageFilter === "cancelled") {
+    rows = cancelledRows;
   } else if (state.shortageFilter === "drawer") {
-    rows = openRows.filter(drawerMemoForShortageRow);
+    rows = rows.filter(drawerMemoForShortageRow);
   } else if (state.shortageFilter === "code") {
-    rows = [...openRows].sort(
+    rows = [...rows].sort(
       (a, b) =>
         String(a.item.ownCode || "").localeCompare(String(b.item.ownCode || ""), "ko") ||
         String(a.item.optionName || "").localeCompare(String(b.item.optionName || ""), "ko") ||
@@ -2632,13 +2663,13 @@ function shortageGroupStats(rows = []) {
   return [...groups.values()];
 }
 
-function renderShortageRow({ invoice, item, state: itemState, completed }) {
+function renderShortageRow({ invoice, item, state: itemState, completed, cancelled }) {
   const key = workflowItemKey(invoice, item);
   const orderNo = itemOrderNo(item, invoiceItemIndex(invoice, item));
   const receiptDate = String(invoice.receiptDate || "").slice(0, 10);
   const invoiceSeq = shortageInvoiceDisplayLabel(invoice);
   const receiving = receivingLabelEntryForItem(item);
-  return `<button class="workflow-row ${key === state.selectedShortageKey ? "selected" : ""} ${completed ? "is-completed" : ""} ${receiving ? "has-receiving" : ""}" data-shortage-key="${escapeHtml(key)}" type="button">
+  return `<button class="workflow-row ${key === state.selectedShortageKey ? "selected" : ""} ${completed ? "is-completed" : ""} ${cancelled ? "is-cancelled" : ""} ${receiving ? "has-receiving" : ""}" data-shortage-key="${escapeHtml(key)}" type="button">
     <span class="workflow-row-code">${escapeHtml(item.ownCode || "-")}</span>
     <span class="workflow-row-main">
       <strong>${escapeHtml(cleanOptionName(item.optionName, item.ownCode) || item.productName || "-")}</strong>
@@ -2647,7 +2678,7 @@ function renderShortageRow({ invoice, item, state: itemState, completed }) {
       ${receiptDate ? `<small class="workflow-row-receipt">접수 ${escapeHtml(receiptDate)}</small>` : ""}
       ${receiving ? `<small class="receiving-row-note">입고 ${escapeHtml(receiving.qty || "-")}개</small>` : ""}
     </span>
-    <span class="workflow-row-badge ${completed ? "done" : "danger"}">${completed ? "기존완료" : `미송 ${Number(itemState?.shortageQty || 0) || 1}`}</span>
+    <span class="workflow-row-badge ${cancelled ? "cancelled" : completed ? "done" : "danger"}">${cancelled ? "취소" : completed ? "기존완료" : `미송 ${Number(itemState?.shortageQty || 0) || 1}`}</span>
   </button>`;
 }
 
@@ -2674,15 +2705,16 @@ function renderShortageInvoiceItems(invoice) {
     ${invoiceItemsInSellpiaRowOrder(invoice)
       .map((item, index) => {
         const itemState = workflowItemState(invoice, item);
+        const itemCancelled = itemIsEffectivelyCancelled(invoice, item);
         const imageUrl = productImageUrl(item.sellpiaProductCode);
         const shortage = workflowAwareShortageQty(itemState, item);
-        return `<div class="workflow-item-row ${shortage > 0 ? "repicked" : ""}">
+        return `<div class="workflow-item-row ${shortage > 0 ? "repicked" : ""} ${itemCancelled ? "is-cancelled" : ""}">
           <span>${itemSequenceNo(item, index)}</span>
           <div class="workflow-item-photo">${imageUrl ? `<img src="${imageUrl}" ${photoImgAttrs(imageUrl, photoTitleForItem(item))} alt="" loading="lazy" onerror="this.style.visibility='hidden'">` : "?ъ쭊"}</div>
           <strong>${escapeHtml(item.ownCode || "-")}</strong>
           <em class="${optionHasBarChange(item) ? "option-change" : ""}">${escapeHtml(cleanOptionName(item.optionName, item.ownCode) || item.productName || "-")}</em>
           <b>${Number(item.quantity) || 1}개</b>
-          <small>${shortage > 0 ? `미송 ${shortage}` : "정상"}</small>
+          <small>${itemCancelled ? "취소" : shortage > 0 ? `미송 ${shortage}` : "정상"}</small>
         </div>`;
       })
       .join("")}
@@ -2694,6 +2726,7 @@ function renderShortagePanels() {
   const openCount = state.workflowQueues?.shortageItems?.length || 0;
   const openRows = state.workflowQueues?.shortageItems || [];
   const completedCount = repickedShortageRows().length;
+  const cancelledCount = cancelledShortageRows().length;
   const codeGroupCount = state.shortageFilter === "code" ? shortageGroupStats(rows).length : 0;
   updateShortageReceivingStatus(openRows);
   if (els.shortageSearchInput && els.shortageSearchInput.value !== state.shortageSearchText) {
@@ -2705,7 +2738,7 @@ function renderShortagePanels() {
   if (els.shortageListCount) {
     els.shortageListCount.textContent =
       state.shortageFilter === "all"
-        ? `${state.shortageSearchText.trim() ? "검색 " : ""}대기 ${openCount}개 · 표시 ${rows.length}개 · 완료 ${completedCount}개`
+        ? `${state.shortageSearchText.trim() ? "검색 " : ""}대기 ${openCount}개 · 취소 ${cancelledCount}개 · 표시 ${rows.length}개 · 완료 ${completedCount}개`
         : state.shortageFilter === "code"
           ? `자사코드 ${codeGroupCount}개 · 상품 ${rows.length}개`
           : `${shortageFilterLabel()} ${rows.length}개`;
@@ -2748,8 +2781,9 @@ function renderShortagePanels() {
   const repickDisabled = allowWorkflowEvents ? "" : "disabled";
   const selectedKey = workflowItemKey(selected.invoice, selected.item);
   const selectedCompleted = Boolean(selected.completed);
+  const selectedCancelled = Boolean(selected.cancelled || itemIsEffectivelyCancelled(selected.invoice, selected.item));
   const receiving = receivingLabelEntryForItem(selected.item);
-  els.shortageDetail.innerHTML = `<div class="workflow-detail-card">
+  els.shortageDetail.innerHTML = `<div class="workflow-detail-card ${selectedCancelled ? "is-cancelled" : ""}">
     <div class="workflow-detail-head">
       <div>
         <strong>${escapeHtml(selected.item.ownCode || "-")}</strong>
@@ -2757,7 +2791,7 @@ function renderShortagePanels() {
       </div>
       <div class="workflow-detail-actions">
         ${seller ? `<span class="seller-badge ${seller.className}">${escapeHtml(seller.label)}</span>` : ""}
-        <span class="workflow-row-badge warn">메모입력용</span>
+        <span class="workflow-row-badge ${selectedCancelled ? "cancelled" : "warn"}">${selectedCancelled ? "취소된 미송" : "메모입력용"}</span>
       </div>
     </div>
     <div class="workflow-detail-main">
@@ -2777,13 +2811,13 @@ function renderShortagePanels() {
         <div class="workflow-memo-editor">
           <label>
             <span>관리메모</span>
-            <input data-shortage-field="drawerMemo" value="${escapeHtml(drawerMemoForShortageRow(selected))}" placeholder="서랍번호/CS메모">
+            <input data-shortage-field="drawerMemo" value="${escapeHtml(drawerMemoForShortageRow(selected))}" placeholder="서랍번호/CS메모" ${selectedCancelled ? "disabled" : ""}>
           </label>
           <label>
             <span>관리메모2</span>
-            <textarea data-shortage-field="memo" rows="2" placeholder="상품별 미송 메모">${escapeHtml(selectedState?.memo || selected.item.sellpiaMemo2 || "")}</textarea>
+            <textarea data-shortage-field="memo" rows="2" placeholder="상품별 미송 메모" ${selectedCancelled ? "disabled" : ""}>${escapeHtml(selectedState?.memo || selected.item.sellpiaMemo2 || "")}</textarea>
           </label>
-          ${selectedCompleted ? '<small class="workflow-help-text">기존 완료 기록입니다. 미송피킹 대기 목록에는 표시되지 않습니다.</small>' : `<div class="workflow-actions-row"><button class="btn" data-action="shortage-memo-save" data-shortage-key="${escapeHtml(selectedKey)}" type="button" ${repickDisabled}>메모 저장</button><button class="btn primary" data-action="shortage-repicked" data-shortage-key="${escapeHtml(selectedKey)}" type="button" ${repickDisabled}>미송피킹완료</button></div>`}
+          ${selectedCancelled ? '<small class="workflow-help-text">취소된 미송입니다. CS 탭에서 취소를 해제하면 기존 미송 상태로 복원됩니다.</small>' : selectedCompleted ? '<small class="workflow-help-text">기존 완료 기록입니다. 미송피킹 대기 목록에는 표시되지 않습니다.</small>' : `<div class="workflow-actions-row"><button class="btn" data-action="shortage-memo-save" data-shortage-key="${escapeHtml(selectedKey)}" type="button" ${repickDisabled}>메모 저장</button><button class="btn primary" data-action="shortage-repicked" data-shortage-key="${escapeHtml(selectedKey)}" type="button" ${repickDisabled}>미송피킹완료</button></div>`}
         </div>
       </div>
     </div>
@@ -2874,6 +2908,7 @@ function renderInspectionPanels(options = {}) {
         const partialHoldCount = (invoice.items || []).filter((item) => isHold(item)).length;
         const invoiceState = workflowInvoiceState(invoice);
         const completed = Boolean(invoiceState?.inspected);
+        const cancelled = Boolean(invoiceState?.cancelled);
         const seller = sellerBadgeMeta(invoice.seller);
         const rowClasses = [
           "workflow-row",
@@ -2883,12 +2918,14 @@ function renderInspectionPanels(options = {}) {
           partialHoldCount ? "has-hold" : "",
           repicked ? "has-shortage" : "",
           invoiceHasGold(invoice) ? "is-gold" : "",
+          cancelled ? "is-cancelled" : "",
         ]
           .filter(Boolean)
           .join(" ");
         const badges = [
           seller ? `<span class="seller-badge ${seller.className}">${escapeHtml(seller.label)}</span>` : "",
           completed ? '<span class="workflow-row-badge done">완료</span>' : "",
+          cancelled ? '<span class="workflow-row-badge cancelled">주문취소</span>' : "",
           invoiceHasGold(invoice) ? '<span class="workflow-row-badge gold">골드</span>' : "",
           shippingHoldBadge(invoice),
           partialHoldCount ? `<span class="workflow-row-badge hold">부분보류 ${partialHoldCount}</span>` : "",
@@ -2921,8 +2958,9 @@ function renderInspectionPanels(options = {}) {
   const invoiceState = workflowInvoiceState(selected);
   const holdState = shippingHoldUiState(selected);
   const selectedCompleted = Boolean(invoiceState?.inspected);
-  const actionDisabled = allowWorkflowEvents ? "" : "disabled";
-  const partialHoldActionDisabled = allowWrites ? "" : "disabled";
+  const selectedCancelled = Boolean(invoiceState?.cancelled);
+  const actionDisabled = allowWorkflowEvents && !selectedCancelled ? "" : "disabled";
+  const partialHoldActionDisabled = allowWrites && !selectedCancelled ? "" : "disabled";
   const holdAction = holdState.action;
   const holdLabel = holdState.actionLabel;
   const selectedRepicked = (selected.items || []).filter((item) => {
@@ -2940,7 +2978,7 @@ function renderInspectionPanels(options = {}) {
   const holdNotice = holdState.needsAttention
     ? '<div class="workflow-note">관리메모/기존 보류 신호가 있어 배송보류 ON 확인이 필요합니다. 확인 전 업데이터는 배송보류 OFF를 계획하지 않습니다.</div>'
     : '<div class="workflow-note">셀피아 배송보류는 시스템 배송보류 current 값과 업데이터 실행 시 동기화됩니다.</div>';
-  els.inspectionDetail.innerHTML = `<div class="inspection-header-skeleton ${invoiceState?.systemShippingHold ? "is-hold" : ""} ${selectedCompleted ? "is-completed" : ""}">
+  els.inspectionDetail.innerHTML = `<div class="inspection-header-skeleton ${invoiceState?.systemShippingHold ? "is-hold" : ""} ${selectedCompleted ? "is-completed" : ""} ${selectedCancelled ? "is-cancelled" : ""}">
       <div class="inspection-title-block">
         <div class="inspection-title-line">
           <strong>${escapeHtml(invoicePrimaryWorkflowLabel(selected, selectedIndex >= 0 ? selectedIndex : 0))}</strong>
@@ -2961,6 +2999,7 @@ function renderInspectionPanels(options = {}) {
         <div class="inspection-actions">
           <span class="invoice-badge inspection-slot-badge">${escapeHtml(invoiceSecondaryWorkflowLabel(selected, selectedIndex >= 0 ? selectedIndex : 0))}</span>
           ${selectedCompleted ? '<span class="workflow-row-badge done">완료</span>' : ""}
+          ${selectedCancelled ? '<span class="workflow-row-badge cancelled">주문취소</span>' : ""}
           ${selectedGold ? '<span class="workflow-row-badge gold">골드</span>' : ""}
           ${selectedRepicked ? `<span class="workflow-row-badge warn">미송 ${selectedRepicked}</span>` : ""}
           ${selectedManualCsCount ? `<span class="workflow-row-badge manual">별도 CS ${selectedManualCsCount}</span>` : ""}
@@ -2975,20 +3014,21 @@ function renderInspectionPanels(options = {}) {
       ${invoiceItemsInSellpiaRowOrder(selected)
         .map((item, index) => {
           const itemState = workflowItemState(selected, item);
+          const itemCancelled = itemIsEffectivelyCancelled(selected, item);
           const itemRepicked = Boolean(itemState?.shortageRepicked && !itemState?.cancelled);
           const itemManualCsCount = manualPendingCsCasesForInspectionItem(selected, item).length;
           const itemPartialShippingHold = isHold(item);
-          const rowClass = [itemRepicked ? "repicked" : "", itemPartialShippingHold ? "has-hold" : "", selectedCompleted ? "inspected" : ""].filter(Boolean).join(" ");
+          const rowClass = [itemRepicked ? "repicked" : "", itemPartialShippingHold ? "has-hold" : "", selectedCompleted ? "inspected" : "", itemCancelled ? "is-cancelled" : ""].filter(Boolean).join(" ");
           const imageUrl = productImageUrl(item.sellpiaProductCode);
           const option = cleanOptionName(item.optionName, item.ownCode) || "-";
           const product = item.productName || "-";
           const labelNo = labelNoByItem.get(itemSlotKey(selected, item)) || "-";
           const shortage = workflowAwareShortageQty(itemState, item);
-          const statusText = selectedCompleted ? "검품완료" : itemRepicked ? "미송피킹 완료" : "전체상품";
+          const statusText = itemCancelled ? (selectedCancelled ? "주문취소" : "상품취소") : selectedCompleted ? "검품완료" : itemRepicked ? "미송피킹 완료" : "전체상품";
           const statusNotes = [itemState?.drawerMemo ? `서랍 ${itemState.drawerMemo}` : "", itemState?.memo ? itemState.memo : ""].filter(Boolean);
           const sellpiaOrderMemo = itemSellpiaOrderMemo(selected, item);
           const inspectionMemo = itemInspectionMemo(item);
-          const memoReadonly = allowWrites ? "" : "readonly";
+          const memoReadonly = allowWrites && !itemCancelled ? "" : "readonly";
           const memoHint = allowWrites ? "" : ' title="읽기전용입니다. URL에 write=1을 붙여야 저장할 수 있습니다."';
           const reopenButton =
             itemRepicked && !selectedCompleted
@@ -3563,6 +3603,7 @@ function renderPickingRow(invoice, item, invoiceIndex = 0, itemIndex = 0) {
     isHold(item) ? "has-hold" : "",
     goldItem ? "is-gold" : "",
     slotKey === state.currentTrayKey ? "is-selected" : "",
+    itemIsEffectivelyCancelled(invoice, item) ? "is-cancelled" : "",
   ]
     .filter(Boolean)
     .join(" ");
@@ -3571,7 +3612,7 @@ function renderPickingRow(invoice, item, invoiceIndex = 0, itemIndex = 0) {
 
   return `<article class="${classes}" data-order-group="${escapeHtml(invoice.orderGroupNo)}" data-item-no="${escapeHtml(item.sellpiaItemNo)}" data-slot-key="${escapeHtml(slotKey)}">
     <div class="thumb-wrap">
-      <button class="pick-check ${checked ? "checked" : ""}" data-action="toggle" data-order-group="${escapeHtml(invoice.orderGroupNo)}" data-item-no="${escapeHtml(item.sellpiaItemNo)}">${checked ? "✓" : ""}</button>
+      <button class="pick-check ${checked ? "checked" : ""}" data-action="toggle" data-order-group="${escapeHtml(invoice.orderGroupNo)}" data-item-no="${escapeHtml(item.sellpiaItemNo)}" ${itemIsEffectivelyCancelled(invoice, item) ? "disabled" : ""}>${checked ? "✓" : ""}</button>
       ${imageUrl ? `<img class="thumb" src="${imageUrl}" ${photoImgAttrs(imageUrl, photoTitleForItem(item))} alt="" loading="lazy" onerror="this.style.visibility='hidden'">` : '<div class="thumb"></div>'}
     </div>
     <div class="picking-body">
@@ -3580,6 +3621,7 @@ function renderPickingRow(invoice, item, invoiceIndex = 0, itemIndex = 0) {
           <span class="work-no own-code-display">${escapeHtml(item.ownCode || "-")}</span>
           ${goldItem ? '<span class="gold-badge">골드</span>' : goldInvoice ? '<span class="gold-badge soft">골드송장</span>' : ""}
           ${item.sellpiaLocation ? `<span class="small-badge">${escapeHtml(item.sellpiaLocation)}</span>` : ""}
+          ${itemIsEffectivelyCancelled(invoice, item) ? '<span class="workflow-row-badge cancelled">취소</span>' : ""}
         </div>
         <p class="${optionClass(item)}">${escapeHtml(option)}</p>
         <p class="product">${escapeHtml(product)}</p>
@@ -3593,9 +3635,9 @@ function renderPickingRow(invoice, item, invoiceIndex = 0, itemIndex = 0) {
         <div class="qty-tile">${Number(item.quantity) || 1}개</div>
         ${renderInvoiceSlots(invoiceIndex, item, itemIndex)}
         <div class="shortage-control">
-          <button data-action="shortage" data-delta="-1" data-order-group="${escapeHtml(invoice.orderGroupNo)}" data-item-no="${escapeHtml(item.sellpiaItemNo)}">−</button>
+          <button data-action="shortage" data-delta="-1" data-order-group="${escapeHtml(invoice.orderGroupNo)}" data-item-no="${escapeHtml(item.sellpiaItemNo)}" ${itemIsEffectivelyCancelled(invoice, item) ? "disabled" : ""}>−</button>
           ${shortageQtyInput(invoice, item, shortage)}
-          <button data-action="shortage" data-delta="1" data-order-group="${escapeHtml(invoice.orderGroupNo)}" data-item-no="${escapeHtml(item.sellpiaItemNo)}">+</button>
+          <button data-action="shortage" data-delta="1" data-order-group="${escapeHtml(invoice.orderGroupNo)}" data-item-no="${escapeHtml(item.sellpiaItemNo)}" ${itemIsEffectivelyCancelled(invoice, item) ? "disabled" : ""}>+</button>
         </div>
         <div class="drawer-box">
           <label>서랍</label>
@@ -3761,6 +3803,31 @@ function autoShortageCsRows() {
     }));
 }
 
+function cancelledShortageRows() {
+  return (state.workflowQueues?.viewModel?.invoices || []).flatMap((invoice) => {
+    const invoiceCancelled = invoiceIsCancelled(invoice);
+    return (invoice.items || [])
+      .map((item) => {
+        const itemState = workflowItemState(invoice, item);
+        return {
+          invoice,
+          item,
+          state: itemState,
+          cancelled: invoiceCancelled || Boolean(itemState?.cancelled),
+        };
+      })
+      .filter((row) => (
+        row.cancelled
+        && (
+          row.state?.shortageOpen
+          || Number(row.state?.shortageQty || 0) > 0
+          || shortageQty(row.item) > 0
+          || previousShortageQuantity(row.invoice, row.item) > 0
+        )
+      ));
+  });
+}
+
 function autoTomorrowShippingCsRows() {
   const tomorrowInvoiceByOrderNo = new Map();
   for (const invoice of allWorkflowInvoices()) {
@@ -3817,7 +3884,7 @@ function allCsDisplayRows() {
 function filteredCsCaseRows() {
   const search = state.csSearchText.trim().toLowerCase();
   return allCsDisplayRows()
-    .filter((row) => state.csStatusFilter === "all" || row.caseRow.status === state.csStatusFilter)
+    .filter((row) => state.csStatusFilter === "all" || csEffectiveStatus(row) === state.csStatusFilter)
     .filter((row) => !state.csTemplateOnly || csAutoTemplateKeys(row).length > 0)
     .filter((row) => {
       if (!state.csTypeFilter) return true;
@@ -4113,21 +4180,26 @@ function renderCsCaseFilters() {
 
 function renderCsCaseRow(group, selected) {
   const caseRows = group.items.filter((row) => row.caseRow);
+  const cancellation = csGroupCancellationState(group);
   const tomorrowShippingCount = caseRows.filter((row) => row.virtualTomorrowCase).length;
   const autoShortageCount = caseRows.filter((row) => (
     row.virtualAutoCase || (row.caseRow.source === "auto" && row.caseRow.case_type === "shortage")
   )).length;
-  const pendingCount = caseRows.filter((row) => row.caseRow.status === "pending").length;
+  const pendingCount = caseRows.filter((row) => csEffectiveStatus(row) === "pending").length;
   const goldCount = group.items.filter((row) => row.isGold).length;
-  const badgeClass = caseRows.length ? (pendingCount ? "danger" : caseRows.every((row) => row.caseRow.status === "excluded") ? "hold" : "done") : "manual";
-  const modeLabel = tomorrowShippingCount
+  const badgeClass = cancellation.invoiceCancelled || cancellation.cancelledItems ? "cancelled" : caseRows.length ? (pendingCount ? "danger" : caseRows.every((row) => csEffectiveStatus(row) === "excluded") ? "hold" : "done") : "manual";
+  const modeLabel = cancellation.invoiceCancelled
+    ? "주문취소"
+    : cancellation.cancelledItems
+      ? `상품취소 ${cancellation.cancelledItems}`
+      : tomorrowShippingCount
     ? `내일출고${autoShortageCount ? ` · 미송 ${autoShortageCount}` : ""}`
     : autoShortageCount
       ? `미송 ${autoShortageCount}`
       : caseRows.length ? (pendingCount ? `진행 ${pendingCount}` : "처리됨") : "수동 등록 가능";
   const receiver = group.order?.receiver || group.order?.receiver_name || group.order?.orderer || "-";
   const badges = csCaseBadges(group);
-  return `<button class="workflow-row cs-case-row ${caseRows.length ? "is-case" : "is-manual-source"} ${selected ? "selected" : ""}" data-cs-key="${escapeHtml(group.key)}" type="button">
+  return `<button class="workflow-row cs-case-row ${caseRows.length ? "is-case" : "is-manual-source"} ${cancellation.invoiceCancelled ? "is-cancelled" : ""} ${selected ? "selected" : ""}" data-cs-key="${escapeHtml(group.key)}" type="button">
     <span class="cs-case-row-main">
       <strong>송장 ${escapeHtml(group.invoiceNo || "-")} · ${escapeHtml(receiver)}</strong>
       <small>상품 ${group.items.length}건${caseRows.length ? ` · ${autoShortageCount ? `미송 ${autoShortageCount}건` : `CS ${caseRows.length}건`}` : ""}</small>
@@ -4147,12 +4219,13 @@ function renderCsCaseItemEditor(row, itemNumber = 0) {
   const virtualCase = virtualAutoCase || virtualTomorrowCase;
   const item = row.item || {};
   const order = row.order || {};
-  const workflowItem = findCsWorkflowItem(row).item;
+  const cancellation = csCancellationState(row);
+  const workflowItem = cancellation.item;
   const partialShippingHoldOn = Boolean(workflowItem && isHold(workflowItem));
-  const readonly = allowWrites && !virtualCase ? "" : "readonly";
-  const managementReadonly = allowWrites ? "" : "readonly";
-  const disabled = allowWrites ? "" : "disabled";
-  const partialHoldDisabled = allowWrites && workflowItem ? "" : "disabled";
+  const readonly = allowWrites && !virtualCase && !cancellation.cancelled ? "" : "readonly";
+  const managementReadonly = allowWrites && !cancellation.cancelled ? "" : "readonly";
+  const disabled = allowWrites && !cancellation.cancelled ? "" : "disabled";
+  const partialHoldDisabled = allowWrites && workflowItem && !cancellation.cancelled ? "" : "disabled";
   const receiptDate = caseRow?.receipt_date || order.receipt_date || item.receipt_date || "";
   const memo = String(item.order_memo ?? "");
   const managementMemo2 = String(item.o_shop_memo2 ?? item.shop_memo2 ?? item.memo2 ?? "");
@@ -4161,7 +4234,11 @@ function renderCsCaseItemEditor(row, itemNumber = 0) {
   const automaticCase = Boolean(virtualCase || caseRow?.source === "auto");
   const manualCase = Boolean(caseRow && !virtualCase && caseRow.source === "manual");
   const hasCase = Boolean(caseRow);
-  const caseBadge = virtualTomorrowCase
+  const caseBadge = cancellation.invoiceCancelled
+    ? '<span class="workflow-row-badge cancelled">주문취소</span>'
+    : cancellation.itemCancelled
+      ? '<span class="workflow-row-badge cancelled">상품취소</span>'
+      : virtualTomorrowCase
     ? '<span class="workflow-row-badge warn">내일출고 자동대상</span>'
     : virtualAutoCase
     ? '<span class="workflow-row-badge danger">미송 자동대상</span>'
@@ -4187,8 +4264,11 @@ function renderCsCaseItemEditor(row, itemNumber = 0) {
       : `<button class="btn" data-cs-case-action="save-template-override" data-cs-row-key="${escapeHtml(row.key)}" type="button" ${disabled}>템플릿 저장</button>
           <button class="btn primary" data-cs-case-action="create" data-cs-manual-item-no="${escapeHtml(item.item_no || "")}" data-cs-row-key="${escapeHtml(row.key)}" type="button" ${disabled}>별도 CS 추가</button>`;
   const partialHoldButton = `<button class="btn ${partialShippingHoldOn ? "" : "primary"}" data-cs-item-hold-action="${partialShippingHoldOn ? "off" : "on"}" data-cs-row-key="${escapeHtml(row.key)}" type="button" title="상품행 단위 부분 배송보류 (셀피아 동기화 전 System 테스트)" ${partialHoldDisabled}>${partialShippingHoldOn ? "부분보류 해제" : "부분보류 처리"}</button>`;
+  const cancelButton = cancellation.invoiceCancelled
+    ? '<div class="cs-cancel-action-slot"><span class="workflow-row-badge cancelled">주문 전체 취소 적용</span></div>'
+    : `<div class="cs-cancel-action-slot"><button class="btn ${cancellation.itemCancelled ? "cancel-reopen" : "cancel-action"}" data-cs-cancel-action="${cancellation.itemCancelled ? "item-reopen" : "item-cancel"}" data-cs-row-key="${escapeHtml(row.key)}" type="button" ${allowWorkflowEvents ? "" : "disabled"}>${cancellation.itemCancelled ? "취소 해제" : "이 상품 취소"}</button></div>`;
   const partialHoldBadge = partialShippingHoldOn ? '<span class="workflow-row-badge hold">부분보류 ON</span>' : "";
-  return `<article class="cs-item-card ${caseRow?.status === "pending" ? "is-cs-target" : ""} ${partialShippingHoldOn ? "has-partial-hold" : ""}" data-cs-row-key="${escapeHtml(row.key)}">
+  return `<article class="cs-item-card ${caseRow?.status === "pending" ? "is-cs-target" : ""} ${partialShippingHoldOn ? "has-partial-hold" : ""} ${cancellation.cancelled ? "is-cancelled" : ""}" data-cs-row-key="${escapeHtml(row.key)}">
     <section class="cs-item-overview">
       <span class="cs-item-line-number" title="상품행번호 ${escapeHtml(String(itemNumber || "-"))}">${escapeHtml(String(itemNumber || "-"))}</span>
       <div class="workflow-item-photo">${imageUrl ? `<img src="${imageUrl}" ${photoImgAttrs(imageUrl, `${row.ownCode || ""} · ${item.p_name || ""}`)} alt="" loading="lazy" onerror="this.style.visibility='hidden'">` : "사진"}</div>
@@ -4206,7 +4286,7 @@ function renderCsCaseItemEditor(row, itemNumber = 0) {
       <label><span>관리메모2</span><input data-cs-management-field="memo2" value="${escapeHtml(managementMemo2)}" ${managementReadonly}></label>
       <label class="inspection-memo-cell ${memo.trim() ? "has-value" : ""}"><span>주문메모 / CS메모</span><textarea data-cs-case-order-memo rows="2" ${readonly}>${escapeHtml(memo)}</textarea></label>
     </section>
-    <div class="cs-item-card-actions">${partialHoldButton}${actionButtons}</div>
+    <div class="cs-item-card-actions">${partialHoldButton}${actionButtons}${cancelButton}</div>
   </article>`;
 }
 
@@ -4218,22 +4298,26 @@ function renderCsCaseDetail(group) {
   const receiver = group.order?.receiver || group.order?.receiver_name || group.order?.orderer || "-";
   const caseCount = group.items.filter((row) => row.caseRow).length;
   const invoice = allWorkflowInvoices().find((candidate) => String(candidate?.orderGroupNo || "") === String(group.ordNo || "")) || null;
+  const invoiceCancelled = invoiceIsCancelled(invoice);
   const holdState = invoice ? shippingHoldUiState(invoice) : null;
   const holdAction = holdState?.action || "inspection-hold";
   const holdLabel = holdState?.actionLabel || "배송보류 처리";
-  const holdDisabled = invoice && allowWorkflowEvents ? "" : "disabled";
-  const managementReadonly = allowWrites ? "" : "readonly";
+  const holdDisabled = invoice && allowWorkflowEvents && !invoiceCancelled ? "" : "disabled";
+  const managementReadonly = allowWrites && !invoiceCancelled ? "" : "readonly";
   const scheduledHistory = String(group.order?.sellpia_outbound_scheduled_date || "");
   const headerBadges = csCaseBadges(group);
-  els.csDetail.innerHTML = `<div class="cs-detail-card cs-case-detail-card">
+  els.csDetail.innerHTML = `<div class="cs-detail-card cs-case-detail-card ${invoiceCancelled ? "is-cancelled" : ""}">
     <div class="workflow-detail-head cs-order-detail-head">
       <div class="cs-order-title-block"><strong>송장 ${escapeHtml(group.invoiceNo || "-")} · ${escapeHtml(receiver)}</strong>
         ${headerBadges ? `<div class="cs-case-row-meta cs-order-header-meta">${headerBadges}</div>` : ""}
       </div>
       <div class="inspection-actions">
         <span class="workflow-row-badge ${state.csMode === "manual" ? "manual" : ""}">${state.csMode === "manual" ? "수동 추가 대상" : `CS ${caseCount}건`}</span>
-        <button class="btn" data-cs-hold-action="${escapeHtml(holdAction)}" data-cs-order-group="${escapeHtml(group.ordNo || "")}" type="button" ${holdDisabled}>${escapeHtml(holdLabel)}</button>
-        ${invoice ? shippingHoldBadge(invoice) : ""}
+        <div class="cs-order-action-stack">
+          <button class="btn" data-cs-hold-action="${escapeHtml(holdAction)}" data-cs-order-group="${escapeHtml(group.ordNo || "")}" type="button" ${holdDisabled}>${escapeHtml(holdLabel)}</button>
+          <button class="btn ${invoiceCancelled ? "cancel-reopen" : "cancel-action"}" data-cs-cancel-action="${invoiceCancelled ? "order-reopen" : "order-cancel"}" data-cs-order-group="${escapeHtml(group.ordNo || "")}" type="button" ${invoice && allowWorkflowEvents ? "" : "disabled"}>${invoiceCancelled ? "주문 취소 해제" : "주문 전체 취소"}</button>
+          ${invoice ? shippingHoldBadge(invoice) : ""}
+        </div>
         <label class="cs-order-drawer-box"><span>관리메모1 <em>송장 공통</em></span><textarea class="drawer-input cs-order-drawer-input" data-cs-drawer data-order-group="${escapeHtml(group.ordNo || "")}" rows="2" placeholder="서랍번호 / 관리메모1" ${managementReadonly}>${escapeHtml(invoice ? invoiceDrawerValue(invoice) : "")}</textarea></label>
         <label class="cs-order-scheduled-date"><span>알림톡 발송로그 <em>송장 공통 · 코드 누적</em></span><textarea data-cs-order-sync-field="outbound_scheduled_date" data-cs-order-group="${escapeHtml(group.ordNo || "")}" rows="3" placeholder="예: 1,3,5ㅂ" title="0=내일출고, 1=일반 1일차, 1_14=14K 1일차, 3=일반 3일차 플랫폼, 3ㅁ=일반 3일차 메이크샵, 5ㅂ=5일차 부분출고, 5ㅊ=5일차 취소출고, 5_14k=14K 5일차 부분출고, 10=10일차 잔여취소, ㅂㅂ=별도 CS 처리" ${managementReadonly}>${escapeHtml(scheduledHistory)}</textarea></label>
       </div>
@@ -4472,6 +4556,32 @@ function findCsWorkflowItem(row) {
   return { invoice: null, item: null };
 }
 
+function csCancellationState(row) {
+  const { invoice, item } = findCsWorkflowItem(row);
+  const invoiceCancelled = invoiceIsCancelled(invoice);
+  const itemCancelled = itemIsIndividuallyCancelled(invoice, item);
+  return {
+    invoice,
+    item,
+    invoiceCancelled,
+    itemCancelled,
+    cancelled: invoiceCancelled || itemCancelled,
+  };
+}
+
+function csEffectiveStatus(row) {
+  return csCancellationState(row).cancelled ? "excluded" : row?.caseRow?.status;
+}
+
+function csGroupCancellationState(group) {
+  const invoice = allWorkflowInvoices().find(
+    (candidate) => String(candidate?.orderGroupNo || "") === String(group?.ordNo || ""),
+  ) || null;
+  const invoiceCancelled = invoiceIsCancelled(invoice);
+  const cancelledItems = (group?.items || []).filter((row) => csCancellationState(row).cancelled).length;
+  return { invoice, invoiceCancelled, cancelledItems };
+}
+
 async function toggleCsPartialShippingHold(row) {
   if (!allowWrites) {
     toast("읽기전용입니다. URL에 write=1을 붙여 부분보류를 저장할 수 있습니다.");
@@ -4506,6 +4616,10 @@ async function releaseInspectionPartialShippingHold(orderGroupNo, sellpiaItemNo)
   const item = invoice?.items?.find((candidate) => candidate.sellpiaItemNo === sellpiaItemNo);
   if (!invoice || !item) {
     throw new Error("부분보류를 해제할 정확한 상품행을 찾지 못했습니다.");
+  }
+  if (itemIsEffectivelyCancelled(invoice, item)) {
+    toast("취소된 상품은 CS 탭에서 취소 해제 후 수정할 수 있습니다.");
+    return;
   }
   if (!isHold(item)) return;
 
@@ -4924,8 +5038,8 @@ function paintPickingItemState(invoice, item) {
 
   const trayItem = els.trayBoard?.querySelector(`[data-tray-key="${itemSlotKey(invoice, item).replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"]`);
   if (trayItem) {
-    const meta = itemStatusMeta(item);
-    trayItem.classList.remove("picked", "shortage", "hold", "todo");
+    const meta = itemStatusMeta(item, invoice);
+    trayItem.classList.remove("picked", "shortage", "hold", "todo", "cancelled");
     trayItem.classList.add(meta.className);
     trayItem.querySelector(".tray-item-check")?.replaceChildren(document.createTextNode(picked ? "✓" : ""));
     const stateNode = trayItem.querySelector(".tray-item-state");
@@ -4953,7 +5067,7 @@ function buildItemEvent(invoice, item, eventType, overrides = {}) {
     memo: overrides.memo || null,
     drawer_memo: overrides.drawerMemo || item.pickingState?.drawerMemo || null,
     actor: "front",
-    source: "f_v1_picking",
+    source: overrides.source || "f_v1_picking",
     payload: {
       productName: item.productName || "",
       optionName: item.optionName || "",
@@ -5301,7 +5415,7 @@ function onShortageInputChange(event) {
 }
 
 function shortageQtyInput(invoice, item, value = shortageQty(item), extraClass = "") {
-  return `<input class="shortage-input ${extraClass}" data-shortage-input data-action="shortage-set" type="text" value="${escapeHtml(itemManagementMemo2(item, value))}" data-order-group="${escapeHtml(invoice.orderGroupNo)}" data-item-no="${escapeHtml(item.sellpiaItemNo)}" aria-label="관리메모2">`;
+  return `<input class="shortage-input ${extraClass}" data-shortage-input data-action="shortage-set" type="text" value="${escapeHtml(itemManagementMemo2(item, value))}" data-order-group="${escapeHtml(invoice.orderGroupNo)}" data-item-no="${escapeHtml(item.sellpiaItemNo)}" aria-label="관리메모2" ${itemIsEffectivelyCancelled(invoice, item) ? "disabled" : ""}>`;
 }
 
 function firstRawText(source, ...keys) {
@@ -5800,6 +5914,8 @@ function csWorkLogEventLabel(event = {}) {
     inspection_cancelled: "검품 완료취소",
     hold_created: "배송보류 ON",
     hold_cleared: "배송보류 OFF",
+    cancelled: "취소 처리",
+    cancel_reopened: "취소 해제",
   };
   const type = String(event.event_type || "").trim();
   const quantity = event.quantity === null || event.quantity === undefined || event.quantity === "" ? "" : ` · 수량 ${event.quantity}`;
@@ -5812,6 +5928,7 @@ function csWorkLogCategory(event = {}) {
   if (type.includes("shortage")) return "shortage";
   if (type.includes("inspection")) return "inspection";
   if (type.includes("pick")) return "picking";
+  if (type.includes("cancel")) return "cancellation";
   return "other";
 }
 
@@ -6025,7 +6142,7 @@ function alimtalkShippingHoldState(invoice) {
 }
 
 function alimtalkInvoiceShortageMetrics(invoice) {
-  const items = invoiceItemsInSellpiaRowOrder(invoice);
+  const items = invoiceItemsInSellpiaRowOrder(invoice).filter((item) => !itemIsEffectivelyCancelled(invoice, item));
   let shortageQtyTotal = 0;
   let hasOpenShortage = false;
   for (const item of items) {
@@ -6039,6 +6156,7 @@ function alimtalkInvoiceShortageMetrics(invoice) {
 
 function alimtalkDelayedItemsForInvoice(invoice) {
   return invoiceItemsInSellpiaRowOrder(invoice).filter((item) => {
+    if (itemIsEffectivelyCancelled(invoice, item)) return false;
     const itemState = workflowItemState(invoice, item);
     if (itemState?.inspected || itemState?.cancelled || itemState?.shortageRepicked) return false;
     return itemHasOpenWorkflowShortage(invoice, item) || workflowAwareShortageQty(itemState, item) > 0;
@@ -6098,7 +6216,8 @@ function buildAlimtalkRowsFromCsInvoices(csRows) {
     const invoiceState = workflowInvoiceState(invoice);
     if (invoiceState?.cancelled) continue;
     if (hasTomorrowShippingManagementMemo(invoiceDrawerValue(invoice))) {
-      const item = invoiceItemsInSellpiaRowOrder(invoice)[0] || null;
+      const item = invoiceItemsInSellpiaRowOrder(invoice).find((candidate) => !itemIsEffectivelyCancelled(invoice, candidate)) || null;
+      if (!item) continue;
       rows.push(alimtalkBaseRow(row, item, { key: row.key, csReason: "tomorrow", currentShortageQty: 0, shortageQty: 0 }));
       continue;
     }
@@ -7116,6 +7235,10 @@ async function completeSelectedInspection(orderGroupNo = state.selectedInspectio
     toast("검품 대기 송장을 찾지 못했습니다.");
     return;
   }
+  if (invoiceIsCancelled(invoice)) {
+    toast("취소된 주문은 CS 탭에서 취소 해제 후 검품할 수 있습니다.");
+    return;
+  }
   if (isSystemShippingHoldOn(invoice)) {
     toast("보류 송장은 보류 해제 후 완료 처리할 수 있습니다.");
     return;
@@ -7136,6 +7259,10 @@ async function reopenSelectedInspection(orderGroupNo = state.selectedInspectionG
     toast("검품 완료 송장을 찾지 못했습니다.");
     return;
   }
+  if (invoiceIsCancelled(invoice)) {
+    toast("취소된 주문은 CS 탭에서 취소 해제 후 수정할 수 있습니다.");
+    return;
+  }
   const ok = await saveWorkflowInvoiceEvent(invoice, "inspection_reopened", { memo: "inspection reopened" });
   if (!ok) return;
   state.activeTab = "inspection";
@@ -7149,6 +7276,10 @@ async function toggleSelectedInspectionHold(orderGroupNo = state.selectedInspect
   const invoice = selectedInspectionInvoice(orderGroupNo);
   if (!invoice) {
     toast("검품 대기 송장을 찾지 못했습니다.");
+    return;
+  }
+  if (invoiceIsCancelled(invoice)) {
+    toast("취소된 주문은 CS 탭에서 취소 해제 후 수정할 수 있습니다.");
     return;
   }
   const invoiceState = workflowInvoiceState(invoice);
@@ -7204,6 +7335,79 @@ async function toggleCsShippingHold(orderGroupNo) {
   toast(holdOn ? "배송보류를 해제했습니다." : "배송보류를 처리했습니다.");
 }
 
+function cancellationWarning(invoice, scopeLabel) {
+  const hasOutboundConfirmed = (invoice?.items || []).some((item) =>
+    Boolean(String(item?.raw?.sellpia_outbound_confirmed_date || item?.sellpiaOutboundConfirmedDate || "").trim()),
+  );
+  return hasOutboundConfirmed
+    ? `\n\n주의: 출고확정일이 입력된 상품이 있습니다. ${scopeLabel}를 계속할까요?`
+    : "";
+}
+
+async function toggleCsOrderCancellation(orderGroupNo, reopen = false) {
+  if (!allowWorkflowEvents) {
+    toast("취소 저장이 비활성화되어 있습니다. URL에 write=1&events=1을 붙여야 합니다.");
+    return;
+  }
+  const invoice = allWorkflowInvoices().find(
+    (candidate) => String(candidate?.orderGroupNo || "") === String(orderGroupNo || ""),
+  );
+  if (!invoice) throw new Error("취소할 주문을 찾지 못했습니다.");
+
+  const receiver = invoice.displayName || invoice.csDisplayName || invoice.invoiceNo || orderGroupNo;
+  const message = reopen
+    ? `${receiver} 주문의 취소를 해제하고 작업 대상으로 되돌릴까요?`
+    : `${receiver} 주문 전체를 취소 처리할까요?\n피킹·검품·CS 진행 대상에서 제외됩니다.${cancellationWarning(invoice, "주문 전체 취소")}`;
+  if (!window.confirm(message)) return;
+
+  const saved = await saveWorkflowInvoiceEvent(invoice, reopen ? "cancel_reopened" : "cancelled", {
+    memo: reopen ? "order cancellation reopened from cs" : "order cancelled from cs",
+    source: "f_v1_cs",
+  });
+  if (!saved) return;
+  render();
+  toast(reopen ? "주문 취소를 해제했습니다." : "주문 전체를 취소 처리했습니다.");
+}
+
+async function toggleCsItemCancellation(row, reopen = false) {
+  if (!allowWorkflowEvents) {
+    toast("취소 저장이 비활성화되어 있습니다. URL에 write=1&events=1을 붙여야 합니다.");
+    return;
+  }
+  const { invoice, item } = findCsWorkflowItem(row);
+  if (!invoice || !item) throw new Error("취소할 상품행을 찾지 못했습니다.");
+  if (invoiceIsCancelled(invoice)) {
+    toast("주문 전체가 취소되어 있습니다. 먼저 주문 취소를 해제해 주세요.");
+    return;
+  }
+
+  const productLabel = [item.ownCode, item.productName, item.optionName].filter(Boolean).join(" · ");
+  if (!reopen && activeWorkflowItems(invoice).length <= 1) {
+    const message = `마지막 남은 상품입니다.\n${productLabel || "이 상품"}을 취소하면 주문 전체 취소로 처리됩니다. 계속할까요?${cancellationWarning(invoice, "주문 전체 취소")}`;
+    if (!window.confirm(message)) return;
+    const saved = await saveWorkflowInvoiceEvent(invoice, "cancelled", {
+      memo: "last active item cancelled; order cancelled from cs",
+      source: "f_v1_cs",
+    });
+    if (!saved) return;
+    render();
+    toast("마지막 상품이어서 주문 전체를 취소 처리했습니다.");
+    return;
+  }
+
+  const message = reopen
+    ? `${productLabel || "이 상품"}의 취소를 해제하고 작업 대상으로 되돌릴까요?`
+    : `${productLabel || "이 상품"}만 취소 처리할까요?\n다른 상품은 기존 작업을 계속합니다.${cancellationWarning(invoice, "상품 취소")}`;
+  if (!window.confirm(message)) return;
+  const saved = await saveWorkflowItemEvent(invoice, item, reopen ? "cancel_reopened" : "cancelled", {
+    memo: reopen ? "item cancellation reopened from cs" : "item cancelled from cs",
+    source: "f_v1_cs",
+  });
+  if (!saved) return;
+  render();
+  toast(reopen ? "상품 취소를 해제했습니다." : "상품을 취소 처리했습니다.");
+}
+
 async function onOrderListClick(event) {
   const target = event.target.closest("[data-action]");
   if (!target) return;
@@ -7213,6 +7417,10 @@ async function onOrderListClick(event) {
   const sellpiaItemNo = target.dataset.itemNo;
   const { invoice, item } = findInvoiceAndItem(orderGroupNo, sellpiaItemNo);
   if (!invoice || !item) return;
+  if (itemIsEffectivelyCancelled(invoice, item)) {
+    toast("취소된 상품은 CS 탭에서 취소 해제 후 수정할 수 있습니다.");
+    return;
+  }
 
   if (action === "toggle") {
     patchLocalPickingState(invoice, item, { isPicked: !isPicked(item) });
@@ -7441,6 +7649,10 @@ async function onDrawerKeypadClick(event) {
 function onDrawerKeypadOpen(event) {
   const input = event.target.closest(".drawer-input[data-action='drawer']");
   if (!input) return;
+  if (input.closest(".is-cancelled")) {
+    toast("취소된 주문/상품은 CS 탭에서 취소 해제 후 수정할 수 있습니다.");
+    return;
+  }
   if (input.dataset.drawerNativeInput === "1") return;
   event.preventDefault();
   input.blur();
@@ -7780,6 +7992,10 @@ async function toggleSelectedItem() {
   const [orderGroupNo, sellpiaItemNo] = state.currentTrayKey.split("::");
   const { invoice, item } = findInvoiceAndItem(orderGroupNo, sellpiaItemNo);
   if (!invoice || !item) return;
+  if (itemIsEffectivelyCancelled(invoice, item)) {
+    toast("취소된 상품은 CS 탭에서 취소 해제 후 수정할 수 있습니다.");
+    return;
+  }
   patchLocalPickingState(invoice, item, { isPicked: !isPicked(item) });
   paintPickingItemState(invoice, item);
   schedulePickingSurfaces();
@@ -8082,6 +8298,17 @@ function bindEvents() {
     saveInspectionSellpiaOrderMemo(field.dataset.orderGroup || "", field.dataset.itemNo || "", field.value).catch(showError);
   });
   els.csDetail?.addEventListener("click", (event) => {
+    const cancelButton = event.target.closest("[data-cs-cancel-action]");
+    if (cancelButton) {
+      const action = cancelButton.dataset.csCancelAction || "";
+      if (action.startsWith("order-")) {
+        toggleCsOrderCancellation(cancelButton.dataset.csOrderGroup || "", action === "order-reopen").catch(showCsError);
+      } else {
+        const row = selectedCsItemRow(cancelButton.dataset.csRowKey || "");
+        toggleCsItemCancellation(row, action === "item-reopen").catch(showCsError);
+      }
+      return;
+    }
     const holdButton = event.target.closest("[data-cs-hold-action]");
     if (holdButton) {
       toggleCsShippingHold(holdButton.dataset.csOrderGroup || "").catch(showError);

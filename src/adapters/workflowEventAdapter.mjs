@@ -8,7 +8,7 @@ import {
   itemEventKey,
   openShortageItems,
   repickedInvoicesForInspection,
-} from "../workflows/workflowEvents.mjs";
+} from "../workflows/workflowEvents.mjs?v=20260731-cancellation3";
 
 function text(value) {
   return String(value ?? "").trim();

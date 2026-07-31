@@ -7,6 +7,7 @@ export const ITEM_EVENT = Object.freeze({
   INSPECTION_COMPLETED: "inspection_completed",
   INSPECTION_REOPENED: "inspection_reopened",
   CANCELLED: "cancelled",
+  CANCEL_REOPENED: "cancel_reopened",
 });
 
 export const INVOICE_EVENT = Object.freeze({
@@ -18,6 +19,7 @@ export const INVOICE_EVENT = Object.freeze({
   INSPECTION_COMPLETED: "inspection_completed",
   INSPECTION_REOPENED: "inspection_reopened",
   CANCELLED: "cancelled",
+  CANCEL_REOPENED: "cancel_reopened",
 });
 
 export const SYNC_ACTION = Object.freeze({
@@ -108,8 +110,9 @@ export function reduceItemEvents(events = []) {
         break;
       case ITEM_EVENT.CANCELLED:
         state.cancelled = true;
-        state.shortageOpen = false;
-        state.shortageQty = 0;
+        break;
+      case ITEM_EVENT.CANCEL_REOPENED:
+        state.cancelled = false;
         break;
       default:
         break;
@@ -183,6 +186,9 @@ export function reduceInvoiceEvents(events = []) {
       case INVOICE_EVENT.CANCELLED:
         state.cancelled = true;
         break;
+      case INVOICE_EVENT.CANCEL_REOPENED:
+        state.cancelled = false;
+        break;
       default:
         break;
     }
@@ -235,15 +241,17 @@ export function defaultInvoiceState() {
 }
 
 export function openShortageItems(viewModel, workflowState) {
-  return (viewModel?.invoices || []).flatMap((invoice) =>
-    (invoice.items || [])
+  return (viewModel?.invoices || []).flatMap((invoice) => {
+    const invoiceState = workflowState.invoiceStateByKey.get(invoice.orderGroupNo);
+    if (invoiceState?.cancelled) return [];
+    return (invoice.items || [])
       .map((item) => ({
         invoice,
         item,
         state: workflowState.itemStateByKey.get(`${invoice.orderGroupNo}::${item.sellpiaItemNo}`),
       }))
-      .filter((row) => row.state?.shortageOpen && !row.state?.shortageRepicked && !row.state?.cancelled),
-  );
+      .filter((row) => row.state?.shortageOpen && !row.state?.shortageRepicked && !row.state?.cancelled);
+  });
 }
 
 export function repickedInvoicesForInspection(viewModel, workflowState) {
