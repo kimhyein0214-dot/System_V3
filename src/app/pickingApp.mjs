@@ -5,6 +5,7 @@ import { createAlimtalkSendAdapter } from "../adapters/alimtalkSendAdapter.mjs?v
 import { isGoldOwnCode } from "../domain/gold.mjs?v=20260728-gold-own-code1";
 import { alimtalkSendLogCode, alimtalkSendNaturalKey, appendAlimtalkSendLog, resolveAlimtalkTemplate } from "../domain/alimtalk.mjs?v=20260729-alimtalk-template-override1";
 import { receiptBusinessDayKeys, receiptBusinessDaysSince } from "../domain/businessDays.mjs?v=20260728-receipt-business-days1";
+import { inspectionHoldCsAction } from "../domain/csHoldTransition.mjs?v=20260731-inspection-hold-cs1";
 import {
   buildWorkflowState,
   completedInvoicesForInspection,
@@ -4378,28 +4379,31 @@ async function recordAlimtalkSendScheduledDate(batchId) {
 async function excludeAutomaticCsAfterInspectionHoldRelease(invoice) {
   const ordNo = String(invoice?.orderGroupNo || "").trim();
   if (!ordNo) return 0;
+  const openShortageItems = (invoice.items || []).filter((item) => itemHasOpenWorkflowShortage(invoice, item));
+  if (openShortageItems.length) return 0;
   const pendingAutoCases = (state.csCases || []).filter((row) => (
     String(row?.ord_no || "") === ordNo && row?.source === "auto" && row?.status === "pending"
   ));
-  const excludedItemNos = new Set(pendingAutoCases.map((row) => String(row.item_no || "")).filter(Boolean));
   const operations = pendingAutoCases.map((row) => csCases.excludeCsCase(row.id));
-  for (const item of invoice.items || []) {
-    if (!itemHasOpenWorkflowShortage(invoice, item)) continue;
-    const itemNo = String(item?.raw?.item_no || item?.sellpiaItemNo || "").trim();
-    if (!itemNo || excludedItemNos.has(itemNo)) continue;
-    operations.push(csCases.excludeAutoShortageCsCase({
-      ordNo,
-      itemNo,
-      sellpiaOrderItemNo: String(item?.raw?.sellpia_order_item_no || "").trim(),
-      invNo: String(invoice?.invoiceNo || invoice?.raw?.inv_no || "").trim(),
-      receiptDate: String(invoice?.receiptDate || invoice?.raw?.receipt_date || "").trim(),
-      basisDate: String(invoice?.receiptDate || invoice?.raw?.receipt_date || "").trim(),
-    }));
-  }
   if (!operations.length) return 0;
   const results = await Promise.all(operations);
   await loadCsCaseData();
-  return results.filter((result) => result?.excluded !== false).length;
+  return results.length;
+}
+
+async function reopenAutomaticCsAfterInspectionHoldCreated(invoice) {
+  const ordNo = String(invoice?.orderGroupNo || "").trim();
+  if (!ordNo) return 0;
+  const openShortageItems = (invoice.items || []).filter((item) => itemHasOpenWorkflowShortage(invoice, item));
+  const operations = openShortageItems
+    .map((item) => String(item?.raw?.item_no || item?.sellpiaItemNo || "").trim())
+    .filter(Boolean)
+    .map((itemNo) => csCases.reopenExcludedAutoShortageCsCase({ ordNo, itemNo }));
+  if (!operations.length) return 0;
+  const results = await Promise.all(operations);
+  const reopenedCount = results.filter((result) => result?.reopened).length;
+  if (reopenedCount) await loadCsCaseData();
+  return reopenedCount;
 }
 
 function findCsWorkflowItem(row) {
@@ -7114,13 +7118,22 @@ async function toggleSelectedInspectionHold(orderGroupNo = state.selectedInspect
     { memo: holdOn ? "shipping hold released" : "shipping hold on" }
   );
   if (!ok) return;
+  const openShortageCount = (invoice.items || []).filter((item) => itemHasOpenWorkflowShortage(invoice, item)).length;
+  const csAction = inspectionHoldCsAction({ holdWasOn: holdOn, openShortageCount });
   let excludedCount = 0;
-  if (holdOn) {
+  if (csAction === "exclude") {
     try {
       excludedCount = await excludeAutomaticCsAfterInspectionHoldRelease(invoice);
     } catch (error) {
       console.warn("automatic CS exclusion after inspection hold release failed", error);
       toast("배송보류는 해제됐지만 자동 CS 제외 저장에 실패했습니다. CS 탭에서 다시 확인해주세요.");
+    }
+  } else if (csAction === "reopen") {
+    try {
+      await reopenAutomaticCsAfterInspectionHoldCreated(invoice);
+    } catch (error) {
+      console.warn("automatic CS reopen after inspection hold creation failed", error);
+      toast("배송보류 ON 처리됐지만 자동 CS 복구 저장에 실패했습니다. CS 탭에서 다시 확인해주세요.");
     }
   }
   state.selectedInspectionGroup = invoice.orderGroupNo;

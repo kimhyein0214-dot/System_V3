@@ -162,6 +162,19 @@ const autoExcluded = await adapter.excludeAutoShortageCsCase({
 });
 assert.equal(autoExcluded.excluded, true);
 assert.equal(autoExcluded.caseRow.status, "excluded");
+const autoReopened = await adapter.reopenExcludedAutoShortageCsCase({
+  ordNo: "order-a",
+  itemNo: "item-3",
+});
+assert.equal(autoReopened.reopened, true);
+assert.equal(autoReopened.caseRow.status, "pending");
+assert.equal((await adapter.resolveCsCase(automatic.caseRow.id)).status, "resolved");
+const resolvedAutoUntouched = await adapter.reopenExcludedAutoShortageCsCase({
+  ordNo: "order-a",
+  itemNo: "item-3",
+});
+assert.equal(resolvedAutoUntouched.reopened, false);
+assert.equal(resolvedAutoUntouched.caseRow.status, "resolved");
 const manualShortage = await adapter.createManualCsCase({
   ordNo: "order-a",
   itemNo: "item-1",
@@ -172,6 +185,13 @@ const manualUntouched = await adapter.excludeAutoShortageCsCase({ ordNo: "order-
 assert.equal(manualUntouched.excluded, false);
 assert.equal(manualUntouched.caseRow.id, manualShortage.caseRow.id);
 assert.equal(manualUntouched.caseRow.status, "pending");
+assert.equal((await adapter.excludeCsCase(manualShortage.caseRow.id)).status, "excluded");
+const excludedManualUntouched = await adapter.reopenExcludedAutoShortageCsCase({
+  ordNo: "order-a",
+  itemNo: "item-1",
+});
+assert.equal(excludedManualUntouched.reopened, false);
+assert.equal(excludedManualUntouched.caseRow.status, "excluded");
 const contexts = await adapter.loadCsCaseContexts(await adapter.loadCsCases());
 assert.equal(contexts.orders.get("order-a").inv_no, "invoice-a");
 assert.equal(contexts.items.get("item-2").sellpia_order_item_no, "sellpia-2");

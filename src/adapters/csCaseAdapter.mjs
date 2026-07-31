@@ -244,6 +244,16 @@ export function createCsCaseAdapter(db) {
     return { caseRow: await excludeCsCase(created.caseRow.id), excluded: true };
   }
 
+  async function reopenExcludedAutoShortageCsCase(input) {
+    const ordNo = nonEmpty(input.ordNo, "ord_no");
+    const itemNo = nonEmpty(input.itemNo, "item_no");
+    const existing = await findCsCase({ ordNo, itemNo, caseType: "shortage" });
+    if (!existing || existing.source !== "auto" || existing.status !== "excluded") {
+      return { caseRow: existing, reopened: false };
+    }
+    return { caseRow: await reopenCsCase(existing.id, text(input.updatedBy) || ""), reopened: true };
+  }
+
   async function reopenCsCase(caseId, updatedBy = "") {
     return updateCsCase(caseId, {
       status: "pending",
@@ -266,6 +276,7 @@ export function createCsCaseAdapter(db) {
     resolveCsCase,
     excludeCsCase,
     excludeAutoShortageCsCase,
+    reopenExcludedAutoShortageCsCase,
     reopenCsCase,
   };
 }
