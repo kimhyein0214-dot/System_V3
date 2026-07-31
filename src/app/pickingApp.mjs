@@ -3,7 +3,7 @@ import { buildPickingViewModel } from "../workflows/picking/buildPickingViewMode
 import { createCsCaseAdapter, openShortageItemKeys } from "../adapters/csCaseAdapter.mjs?v=20260728-cs-cases3";
 import { createAlimtalkSendAdapter } from "../adapters/alimtalkSendAdapter.mjs?v=20260728-alimtalk-history2";
 import { isGoldOwnCode } from "../domain/gold.mjs?v=20260728-gold-own-code1";
-import { alimtalkSendLogCode, alimtalkSendNaturalKey, appendAlimtalkSendLog, hasTomorrowShippingManagementMemo, resolveAlimtalkTemplate } from "../domain/alimtalk.mjs?v=20260731-memo1-markers2";
+import { alimtalkSendLogCode, alimtalkSendNaturalKey, appendAlimtalkSendLog, formatAlimtalkInboundExpectedDate, hasTomorrowShippingManagementMemo, resolveAlimtalkTemplate } from "../domain/alimtalk.mjs?v=20260731-inbound-date2";
 import { receiptBusinessDayKeys, receiptBusinessDaysSince } from "../domain/businessDays.mjs?v=20260728-receipt-business-days1";
 import { inspectionHoldCsAction } from "../domain/csHoldTransition.mjs?v=20260731-inspection-hold-cs1";
 import { comparePickingRowsByRoute } from "../domain/pickingRowSort.mjs?v=20260731-route-row1";
@@ -5843,9 +5843,9 @@ function alimtalkInboundExpectedDate(item) {
 
 function alimtalkOptionWithInboundExpectedDate(item) {
   const option = alimtalkOption(item);
-  const inboundExpectedDate = alimtalkInboundExpectedDate(item);
+  const inboundExpectedDate = formatAlimtalkInboundExpectedDate(alimtalkInboundExpectedDate(item));
   if (!inboundExpectedDate) return option;
-  return `${option}${option ? " " : ""}(입고예정일: ${inboundExpectedDate})`;
+  return `${option}${option ? " " : ""}${inboundExpectedDate}`;
 }
 
 function csWorkLogText(...values) {
@@ -6234,6 +6234,75 @@ function buildAlimtalkRowsFromCsInvoices(csRows) {
   return rows;
 }
 
+function buildAlimtalkRowsFromCurrentCsCases() {
+  const rows = [];
+  const seen = new Set();
+  const displayRows = allCsDisplayRows();
+  const tomorrowOrders = new Set(
+    displayRows
+      .filter((row) => row?.caseRow?.case_type === "tomorrow_shipping")
+      .map((row) => csRowOrderNo(row))
+      .filter(Boolean),
+  );
+
+  for (const displayRow of displayRows) {
+    if (csEffectiveStatus(displayRow) !== "pending") continue;
+    const caseType = String(displayRow?.caseRow?.case_type || "").trim();
+    if (!["shortage", "tomorrow_shipping"].includes(caseType)) continue;
+
+    const { invoice, item } = findCsWorkflowItem(displayRow);
+    if (!invoice || !item || itemIsEffectivelyCancelled(invoice, item)) continue;
+    const ordNo = String(invoice.orderGroupNo || "").trim();
+    if (caseType === "shortage" && tomorrowOrders.has(ordNo)) continue;
+
+    const reason = caseType === "tomorrow_shipping" ? "tomorrow" : "shortage";
+    const itemNo = String(item?.raw?.item_no || item?.sellpiaItemNo || "").trim();
+    const rowKey = `${ordNo}::${itemNo}::${reason}`;
+    if (seen.has(rowKey)) continue;
+
+    if (reason === "shortage") {
+      const shippingHold = alimtalkShippingHoldState(invoice);
+      if (!shippingHold.on || !shippingHold.known) continue;
+    }
+
+    const itemState = workflowItemState(invoice, item);
+    const shortageQty = reason === "shortage"
+      ? workflowAwareShortageQty(itemState, item) || previousShortageQuantity(invoice, item) || shortageQty(item) || 1
+      : 0;
+    rows.push(alimtalkBaseRow(
+      { key: displayRow.key, invoice },
+      item,
+      {
+        key: displayRow.key,
+        csReason: reason,
+        currentShortageQty: reason === "shortage" ? shortageQty : 0,
+        shortageQty: reason === "shortage" ? shortageQty : 0,
+        hasOpenShortage: reason === "shortage",
+        shortageQtyTotal: reason === "shortage" ? shortageQty : 0,
+        alimtalkCaseRow: displayRow.caseRow || null,
+      },
+    ));
+    seen.add(rowKey);
+  }
+
+  return rows;
+}
+
+function mergeAlimtalkSourceRows(...lists) {
+  const merged = [];
+  const seen = new Set();
+  for (const row of lists.flat()) {
+    const reason = String(row?.csReason || "").trim();
+    const ordNo = alimtalkOrderNo(row);
+    const itemNo = String(row?.item?.raw?.item_no || row?.item?.sellpiaItemNo || "").trim();
+    const key = `${ordNo}::${itemNo}::${reason}`;
+    if (!ordNo || seen.has(key)) continue;
+    seen.add(key);
+    merged.push(row);
+  }
+  return merged;
+}
+
 function alimtalkCsCaseForRow(row) {
   const ordNo = String(row?.invoice?.orderGroupNo || row?.invoice?.raw?.ord_no || "").trim();
   const itemNo = String(row?.item?.raw?.item_no || row?.item?.item_no || row?.item?.sellpiaItemNo || "").trim();
@@ -6259,7 +6328,7 @@ function classifyAlimtalkRowsByDay(rows) {
     }
     if (!row.hasOpenShortage && !(Number(row.shortageQtyTotal || 0) > 0)) return;
     if (!isValidDateKey(row.delayBaseDate)) return;
-    const caseRow = alimtalkCsCaseForRow(row);
+    const caseRow = row.alimtalkCaseRow || alimtalkCsCaseForRow(row);
     if (caseRow && caseRow.status !== "pending") return;
     const rule = resolveAlimtalkTemplate({
       elapsedDays: row.elapsedDays,
@@ -6300,7 +6369,10 @@ async function exportAlimtalkCsv() {
     toast("알림톡 내보내기 이력을 남기려면 URL에 write=1을 붙여야 합니다.");
     return;
   }
-  const allRows = buildAlimtalkRowsFromCsInvoices(allCsRows());
+  const allRows = mergeAlimtalkSourceRows(
+    buildAlimtalkRowsFromCurrentCsCases(),
+    buildAlimtalkRowsFromCsInvoices(allCsRows()),
+  );
   if (!allRows.length) {
     toast("알림톡 CSV 대상이 없습니다.");
     return;

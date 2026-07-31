@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { alimtalkElapsedLabel, alimtalkSendLogCode, alimtalkSendNaturalKey, appendAlimtalkSendLog, hasTomorrowShippingManagementMemo, resolveAlimtalkTemplate } from "../src/domain/alimtalk.mjs";
+import { alimtalkElapsedLabel, alimtalkSendLogCode, alimtalkSendNaturalKey, appendAlimtalkSendLog, formatAlimtalkInboundExpectedDate, hasTomorrowShippingManagementMemo, resolveAlimtalkTemplate } from "../src/domain/alimtalk.mjs";
 
 const normal = (elapsedDays, selectedTemplate = "") => resolveAlimtalkTemplate({ elapsedDays, selectedTemplate });
 const gold = (elapsedDays) => resolveAlimtalkTemplate({ elapsedDays, isGold: true });
@@ -52,5 +52,8 @@ assert.equal(alimtalkSendLogCode("manual"), "ㅂㅂ");
 assert.equal(appendAlimtalkSendLog("1\n3", "5ㅂ"), "1,3,5ㅂ");
 assert.equal(appendAlimtalkSendLog("1, 3, 5ㅂ", "10"), "1,3,5ㅂ,10");
 assert.equal(appendAlimtalkSendLog("1", "1"), "1,1");
+assert.equal(formatAlimtalkInboundExpectedDate("2026-08-03"), "(입고예정일 : 08-03)");
+assert.equal(formatAlimtalkInboundExpectedDate("2026. 8. 3."), "(입고예정일 : 08-03)");
+assert.equal(formatAlimtalkInboundExpectedDate(""), "");
 
 console.log("Alimtalk exact-day rules: passed");

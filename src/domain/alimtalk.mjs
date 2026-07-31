@@ -31,6 +31,14 @@ export function appendAlimtalkSendLog(currentValue, nextCode) {
   return code ? [...existingCodes, code].join(",") : existingCodes.join(",");
 }
 
+export function formatAlimtalkInboundExpectedDate(value) {
+  const raw = String(value ?? "").trim();
+  const match = raw.match(/^(\d{4})[-/.]\s*(\d{1,2})[-/.]\s*(\d{1,2})\.?$/);
+  if (!match) return raw;
+  const [, , month, day] = match;
+  return `(입고예정일 : ${month.padStart(2, "0")}-${day.padStart(2, "0")})`;
+}
+
 export function hasTomorrowShippingManagementMemo(value) {
   const memo = String(value ?? "").trim();
   return memo === ".." || memo === "!!";
