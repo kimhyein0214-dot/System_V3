@@ -3892,6 +3892,18 @@ input {
   box-shadow: 0 0 0 3px rgb(245 158 11 / 18%);
 }
 
+.cs-basis-date-display {
+  min-height: 32px;
+  padding: 7px 9px;
+  border: 1px solid #cbd5e1;
+  border-radius: 7px;
+  background: #ffffff;
+  color: #334155;
+  font-size: 12px;
+  font-weight: 900;
+  line-height: 1.4;
+}
+
 .cs-item-section label,
 .cs-item-section .cs-template-field {
   display: grid;

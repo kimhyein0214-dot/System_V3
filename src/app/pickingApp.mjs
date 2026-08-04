@@ -3088,11 +3088,13 @@ function isValidDateKey(key) {
   return !Number.isNaN(new Date(`${key}T00:00:00`).getTime());
 }
 
-function csBasisDateLabel(value) {
+function csBasisDateText(row, value) {
   const key = dateKey(value);
-  if (!isValidDateKey(key)) return "기준일 (영업일 기준 일차)";
+  if (!isValidDateKey(key)) return "기준일 | - (영업일 기준 -일차) |";
   const weekday = new Intl.DateTimeFormat("ko-KR", { weekday: "long" }).format(new Date(`${key}T12:00:00`));
-  return `기준일 · ${weekday} (영업일 기준 일차)`;
+  const businessDay = Number(csAlimtalkTemplateRule(row, key).elapsedDays || 0) + 1;
+  const [year, month, day] = key.split("-");
+  return `기준일 | ${year.slice(-2)}/${month}/${day}/${weekday} (영업일 기준 ${businessDay}일차) |`;
 }
 
 function csMethodText(invoice, item) {
@@ -4278,7 +4280,7 @@ function renderCsCaseItemEditor(row, itemNumber = 0) {
     <section class="cs-item-section cs-item-case-classification">
       <h4>CS 진행</h4>
       ${caseClassification}
-      <label><span>${escapeHtml(csBasisDateLabel(basisDate || receiptDate))}</span><input data-cs-case-field="basis_date" type="date" value="${escapeHtml(basisDate || receiptDate || "")}" ${readonly}></label>
+      <div class="cs-basis-date-display" data-cs-basis-date-text>${escapeHtml(csBasisDateText(row, basisDate || receiptDate))}</div>
       <label><span>출고확정일 / 입고예정</span><input data-cs-item-sync-field="outbound_confirmed_date" type="date" value="${escapeHtml(outboundConfirmedDate)}" ${managementReadonly}></label>
     </section>
     <section class="cs-item-section cs-item-memo-fields">
@@ -4795,7 +4797,14 @@ async function saveCsCaseFields(caseId, row, scope, { renderAfter = true } = {})
   const current = row?.caseRow;
   if (!current || Number(current.id) !== Number(caseId)) throw new Error("선택한 CS 케이스를 찾지 못했습니다.");
   const caseType = String(csDetailInput("case_type", scope)?.value || current.case_type || "general").trim();
-  const basisDate = String(csDetailInput("basis_date", scope)?.value || "").trim() || null;
+  const basisDate = String(
+    csDetailInput("basis_date", scope)?.value
+      || current.basis_date
+      || current.receipt_date
+      || row?.order?.receipt_date
+      || row?.item?.receipt_date
+      || "",
+  ).trim() || null;
   const assignedField = csDetailInput("assigned_to", scope);
   const assignedTo = assignedField ? String(assignedField.value || "").trim() || null : current.assigned_to || null;
   const templateField = csDetailInput("alimtalk_template", scope);
@@ -4835,7 +4844,7 @@ async function createManualCsCaseFromDetail(itemNo, row, scope) {
   await saveCsManagementFields(row, scope, { renderAfter: false });
   await saveCsCaseOrderMemo(row, scope);
   const receiptDate = String(row.order?.receipt_date || row.item?.receipt_date || "").trim();
-  const basisDate = String(csDetailInput("basis_date", scope)?.value || "").trim();
+  const basisDate = String(csDetailInput("basis_date", scope)?.value || receiptDate || "").trim();
   const result = await csCases.createManualCsCase({
     ordNo: row.order?.ord_no,
     itemNo: row.item?.item_no,
