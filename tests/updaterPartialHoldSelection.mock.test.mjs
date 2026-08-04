@@ -66,4 +66,39 @@ const genuineDuplicate = buildPartialHoldTargets(
 assert.equal(genuineDuplicate.targets.size, 0);
 assert.equal(genuineDuplicate.stats.ambiguous, 1);
 
-console.log("Updater partial hold prefers the current invoice and blocks real duplicates: passed");
+const carriedOrderItems = [
+  { item_no: "1_20260717053510-29185630884_[1]", sellpia_order_item_no: "20260717053510-29185630884_[1]" },
+  { item_no: "1_20260717053510-29185630884_[2]", sellpia_order_item_no: "20260717053510-29185630884_[2]" },
+  { item_no: "1_20260717053510-29185630884_[3]", sellpia_order_item_no: "20260717053510-29185630884_[3]" },
+];
+const carriedPartialHold = buildPartialHoldTargets(
+  "20260717053510-29185630884",
+  "6890155667516",
+  carriedOrderItems,
+  [
+    {
+      ord_no: "20260717053510-29185630884",
+      inv_no: "6890155667516",
+      item_no: "1_20260717053510-29185630884_[3]",
+      hold: true,
+    },
+  ],
+);
+const carriedOffKey = managementTargetKey(
+  "20260717053510-29185630884",
+  "1_20260717053510-29185630884_[1]",
+);
+const carriedOnKey = managementTargetKey(
+  "20260717053510-29185630884",
+  "1_20260717053510-29185630884_[3]",
+);
+assert.equal(carriedPartialHold.targets.get(carriedOffKey)?.hold, false);
+assert.equal(
+  carriedPartialHold.targets.get(carriedOffKey)?.matchMethod,
+  "picking_hold_absent_order_item_exact",
+);
+assert.equal(carriedPartialHold.targets.get(carriedOnKey)?.hold, true);
+assert.equal(carriedPartialHold.stats.holdOn, 1);
+assert.equal(carriedPartialHold.stats.defaultOff, 2);
+
+console.log("Updater partial hold handles current-invoice rows, real duplicates, and carried-order OFF siblings: passed");
