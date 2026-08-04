@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { alimtalkElapsedLabel, alimtalkSendLogCode, alimtalkSendNaturalKey, appendAlimtalkSendLog, formatAlimtalkInboundExpectedDate, hasTomorrowShippingManagementMemo, resolveAlimtalkTemplate } from "../src/domain/alimtalk.mjs";
+import { alimtalkElapsedLabel, alimtalkSendLogAnchor, alimtalkSendLogCode, alimtalkSendNaturalKey, appendAlimtalkSendLog, formatAlimtalkInboundExpectedDate, hasTomorrowShippingManagementMemo, normalizeAlimtalkSendLog, parseAlimtalkSendLog, resolveAlimtalkTemplate } from "../src/domain/alimtalk.mjs";
 
 const normal = (elapsedDays, selectedTemplate = "") => resolveAlimtalkTemplate({ elapsedDays, selectedTemplate });
 const gold = (elapsedDays) => resolveAlimtalkTemplate({ elapsedDays, isGold: true });
@@ -52,6 +52,27 @@ assert.equal(alimtalkSendLogCode("manual"), "ㅂㅂ");
 assert.equal(appendAlimtalkSendLog("1\n3", "5ㅂ"), "1,3,5ㅂ");
 assert.equal(appendAlimtalkSendLog("1, 3, 5ㅂ", "10"), "1,3,5ㅂ,10");
 assert.equal(appendAlimtalkSendLog("1", "1"), "1,1");
+assert.equal(appendAlimtalkSendLog("1,3\n08/01", "5ㅂ", "2026-08-04"), "1,3,5ㅂ\n08/04");
+assert.equal(normalizeAlimtalkSendLog("1, 3\n08/01", "2026-08-04"), "1,3\n08/04");
+assert.deepEqual(parseAlimtalkSendLog("1,3\n12/31", { referenceDate: "2027-01-02" }), {
+  codes: ["1", "3"],
+  dateText: "12/31",
+  dateKey: "2026-12-31",
+});
+assert.deepEqual(alimtalkSendLogAnchor("1,3ㅁ\n08/04", { referenceDate: "2026-08-06" }), {
+  codes: ["1", "3ㅁ"],
+  dateText: "08/04",
+  dateKey: "2026-08-04",
+  code: "3ㅁ",
+  day: 3,
+  templateKey: "d3_ms",
+  hasAnchor: true,
+});
+assert.equal(alimtalkSendLogAnchor("1_14\n08/04", { isGold: true, referenceDate: "2026-08-04" }).day, 1);
+assert.equal(alimtalkSendLogAnchor("5ㅂ\n08/04", { referenceDate: "2026-08-04" }).templateKey, "d5_hi");
+assert.equal(alimtalkSendLogAnchor("5ㅊ\n08/04", { referenceDate: "2026-08-04" }).templateKey, "d5_lo");
+assert.equal(alimtalkSendLogAnchor("1\n08/04", { isGold: true, referenceDate: "2026-08-04" }).hasAnchor, false);
+assert.equal(alimtalkSendLogAnchor("1,3", { referenceDate: "2026-08-04" }).hasAnchor, false);
 assert.equal(formatAlimtalkInboundExpectedDate("2026-08-03"), "(입고예정일 : 08-03)");
 assert.equal(formatAlimtalkInboundExpectedDate("2026. 8. 3."), "(입고예정일 : 08-03)");
 assert.equal(formatAlimtalkInboundExpectedDate(""), "");

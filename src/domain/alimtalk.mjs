@@ -22,13 +22,85 @@ export function alimtalkSendLogCode(templateKey) {
   return ALIMTALK_SEND_LOG_CODES[String(templateKey || "").trim()] || "";
 }
 
-export function appendAlimtalkSendLog(currentValue, nextCode) {
-  const code = String(nextCode || "").trim();
-  const existingCodes = String(currentValue || "")
-    .split(/[\r\n,]+/)
+function validDateKey(value) {
+  const key = String(value || "").trim();
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(key)) return false;
+  const [year, month, day] = key.split("-").map(Number);
+  const date = new Date(Date.UTC(year, month - 1, day));
+  return date.getUTCFullYear() === year && date.getUTCMonth() === month - 1 && date.getUTCDate() === day;
+}
+
+function inferLogDateKey(monthDay, referenceDate) {
+  const match = String(monthDay || "").trim().match(/^(\d{2})\/(\d{2})$/);
+  const referenceKey = validDateKey(referenceDate) ? String(referenceDate) : "";
+  if (!match || !referenceKey) return "";
+  const [, month, day] = match;
+  const referenceYear = Number(referenceKey.slice(0, 4));
+  let candidate = `${referenceYear}-${month}-${day}`;
+  if (!validDateKey(candidate)) return "";
+  if (candidate > referenceKey) candidate = `${referenceYear - 1}-${month}-${day}`;
+  return validDateKey(candidate) ? candidate : "";
+}
+
+export function parseAlimtalkSendLog(currentValue, { referenceDate = "" } = {}) {
+  const lines = String(currentValue || "")
+    .split(/\r?\n/)
     .map((value) => value.trim())
     .filter(Boolean);
-  return code ? [...existingCodes, code].join(",") : existingCodes.join(",");
+  const finalLine = lines.at(-1) || "";
+  const dateText = /^\d{2}\/\d{2}$/.test(finalLine) ? finalLine : "";
+  const codeLines = dateText ? lines.slice(0, -1) : lines;
+  const codes = codeLines
+    .join(",")
+    .split(/,+/)
+    .map((value) => value.trim())
+    .filter(Boolean);
+  return {
+    codes,
+    dateText,
+    dateKey: inferLogDateKey(dateText, referenceDate),
+  };
+}
+
+export function normalizeAlimtalkSendLog(currentValue, logDateKey = "") {
+  const referenceDate = validDateKey(logDateKey) ? String(logDateKey) : "";
+  const parsed = parseAlimtalkSendLog(currentValue, { referenceDate });
+  const codes = parsed.codes.join(",");
+  if (!codes) return "";
+  const dateText = referenceDate ? `${referenceDate.slice(5, 7)}/${referenceDate.slice(8, 10)}` : parsed.dateText;
+  return dateText ? `${codes}\n${dateText}` : codes;
+}
+
+export function appendAlimtalkSendLog(currentValue, nextCode, logDateKey = "") {
+  const existing = parseAlimtalkSendLog(currentValue, { referenceDate: logDateKey });
+  const additions = parseAlimtalkSendLog(nextCode, { referenceDate: logDateKey }).codes;
+  return normalizeAlimtalkSendLog([...existing.codes, ...additions].join(","), logDateKey);
+}
+
+export function alimtalkSendLogAnchor(currentValue, { isGold = false, referenceDate = "" } = {}) {
+  const parsed = parseAlimtalkSendLog(currentValue, { referenceDate });
+  const ruleByCode = isGold
+    ? {
+        "1_14": { day: 1, templateKey: "14k_1" },
+        "5_14k": { day: 5, templateKey: "14k_5" },
+      }
+    : {
+        1: { day: 1, templateKey: "d1" },
+        3: { day: 3, templateKey: "d3_pf" },
+        "3ㅁ": { day: 3, templateKey: "d3_ms" },
+        "5ㅂ": { day: 5, templateKey: "d5_hi" },
+        "5ㅊ": { day: 5, templateKey: "d5_lo" },
+        10: { day: 10, templateKey: "d10" },
+      };
+  const code = [...parsed.codes].reverse().find((candidate) => ruleByCode[candidate]) || "";
+  const rule = ruleByCode[code] || {};
+  return {
+    ...parsed,
+    code,
+    day: rule.day || 0,
+    templateKey: rule.templateKey || "",
+    hasAnchor: Boolean(code && parsed.dateKey),
+  };
 }
 
 export function formatAlimtalkInboundExpectedDate(value) {

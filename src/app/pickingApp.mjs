@@ -3,7 +3,7 @@ import { buildPickingViewModel } from "../workflows/picking/buildPickingViewMode
 import { createCsCaseAdapter, openShortageItemKeys } from "../adapters/csCaseAdapter.mjs?v=20260728-cs-cases3";
 import { createAlimtalkSendAdapter } from "../adapters/alimtalkSendAdapter.mjs?v=20260728-alimtalk-history2";
 import { isGoldOwnCode } from "../domain/gold.mjs?v=20260728-gold-own-code1";
-import { alimtalkSendLogCode, alimtalkSendNaturalKey, appendAlimtalkSendLog, formatAlimtalkInboundExpectedDate, hasTomorrowShippingManagementMemo, resolveAlimtalkTemplate } from "../domain/alimtalk.mjs?v=20260731-inbound-date2";
+import { alimtalkSendLogAnchor, alimtalkSendLogCode, alimtalkSendNaturalKey, appendAlimtalkSendLog, formatAlimtalkInboundExpectedDate, hasTomorrowShippingManagementMemo, normalizeAlimtalkSendLog, resolveAlimtalkTemplate } from "../domain/alimtalk.mjs?v=20260804-send-log-anchor2";
 import { receiptBusinessDayKeys, receiptBusinessDaysSince } from "../domain/businessDays.mjs?v=20260728-receipt-business-days1";
 import { inspectionHoldCsAction } from "../domain/csHoldTransition.mjs?v=20260731-inspection-hold-cs1";
 import { comparePickingRowsByRoute } from "../domain/pickingRowSort.mjs?v=20260731-route-row1";
@@ -3083,6 +3083,32 @@ function receiptBusinessDaysSinceDateKey(key) {
   return elapsed;
 }
 
+function alimtalkSendLogValueForRow(row) {
+  return String(
+    row?.alimtalkSendLog
+      || row?.order?.sellpia_outbound_scheduled_date
+      || row?.invoice?.raw?.sellpia_outbound_scheduled_date
+      || "",
+  ).trim();
+}
+
+function effectiveAlimtalkElapsedDays(row, { basisDate = "", isGold = false } = {}) {
+  const fallback = receiptBusinessDaysSinceDateKey(
+    basisDate || row?.delayBaseDate || row?.invoice?.receiptDate || row?.order?.receipt_date || row?.item?.receipt_date || "",
+  );
+  const anchor = alimtalkSendLogAnchor(alimtalkSendLogValueForRow(row), {
+    isGold,
+    referenceDate: todayDateString(),
+  });
+  if (!anchor.hasAnchor) return { elapsedDays: fallback, anchor };
+  const elapsedSinceAnchor = receiptBusinessDaysSinceDateKey(anchor.dateKey);
+  return {
+    elapsedDays: Math.max(0, anchor.day - 1 + elapsedSinceAnchor),
+    selectedTemplate: elapsedSinceAnchor === 0 ? anchor.templateKey : "",
+    anchor,
+  };
+}
+
 function isValidDateKey(key) {
   if (!/^\d{4}-\d{2}-\d{2}$/.test(String(key || ""))) return false;
   return !Number.isNaN(new Date(`${key}T00:00:00`).getTime());
@@ -3121,12 +3147,13 @@ function csDayKeyForTemplate(templateKey) {
 }
 
 function alimtalkRuleForRow(row, { selectedTemplate = "" } = {}) {
+  const effective = effectiveAlimtalkElapsedDays(row, { isGold: isGoldItem(row?.item) });
   return resolveAlimtalkTemplate({
-    elapsedDays: row?.elapsedDays,
+    elapsedDays: effective.elapsedDays,
     isGold: isGoldItem(row?.item),
     isTomorrowShipping: hasTomorrowShippingManagementMemo(invoiceDrawerValue(row?.invoice)),
     isMakeshop: isCsMakeshopMethod(row),
-    selectedTemplate,
+    selectedTemplate: effective.anchor.hasAnchor ? effective.selectedTemplate : selectedTemplate,
   });
 }
 
@@ -4071,14 +4098,18 @@ function csRecommendedTemplateKeys(row) {
 
 function csAlimtalkTemplateRule(row, basisDate = "") {
   const caseRow = row?.caseRow || {};
+  const effective = effectiveAlimtalkElapsedDays(row, {
+    basisDate: basisDate || caseRow.basis_date || caseRow.receipt_date || row?.order?.receipt_date || row?.item?.receipt_date || "",
+    isGold: Boolean(row?.isGold),
+  });
   return resolveAlimtalkTemplate({
-    elapsedDays: receiptBusinessDaysSinceDateKey(basisDate || caseRow.basis_date || caseRow.receipt_date || row?.order?.receipt_date || row?.item?.receipt_date || ""),
+    elapsedDays: effective.elapsedDays,
     isGold: Boolean(row?.isGold),
     isMakeshop: isCsMakeshopMethod({
       invoice: { seller: row?.order?.seller || row?.order?.provider_name || "" },
       csMethod: row?.csMethod || "",
     }),
-    selectedTemplate: caseRow.alimtalk_template || "",
+    selectedTemplate: effective.anchor.hasAnchor ? effective.selectedTemplate : caseRow.alimtalk_template || "",
   });
 }
 
@@ -4321,11 +4352,11 @@ function renderCsCaseDetail(group) {
           ${invoice ? shippingHoldBadge(invoice) : ""}
         </div>
         <label class="cs-order-drawer-box"><span>관리메모1 <em>송장 공통</em></span><textarea class="drawer-input cs-order-drawer-input" data-cs-drawer data-order-group="${escapeHtml(group.ordNo || "")}" rows="2" placeholder="서랍번호 / 관리메모1" ${managementReadonly}>${escapeHtml(invoice ? invoiceDrawerValue(invoice) : "")}</textarea></label>
-        <label class="cs-order-scheduled-date"><span>알림톡 발송로그 <em>송장 공통 · 코드 누적</em></span><textarea data-cs-order-sync-field="outbound_scheduled_date" data-cs-order-group="${escapeHtml(group.ordNo || "")}" rows="3" placeholder="예: 1,3,5ㅂ" title="0=내일출고, 1=일반 1일차, 1_14=14K 1일차, 3=일반 3일차 플랫폼, 3ㅁ=일반 3일차 메이크샵, 5ㅂ=5일차 부분출고, 5ㅊ=5일차 취소출고, 5_14k=14K 5일차 부분출고, 10=10일차 잔여취소, ㅂㅂ=별도 CS 처리" ${managementReadonly}>${escapeHtml(scheduledHistory)}</textarea></label>
+        <label class="cs-order-scheduled-date"><span>알림톡 발송로그 <em>송장 공통 · 코드 + 최종 입력일</em></span><textarea data-cs-order-sync-field="outbound_scheduled_date" data-cs-order-group="${escapeHtml(group.ordNo || "")}" rows="3" placeholder="예: 1,3,5ㅂ&#10;08/04" title="코드 다음 줄의 MM/DD를 기준으로 다음 영업일차를 자동 계산합니다. 0=내일출고, 1=일반 1일차, 1_14=14K 1일차, 3=일반 3일차 플랫폼, 3ㅁ=일반 3일차 메이크샵, 5ㅂ=5일차 부분출고, 5ㅊ=5일차 취소출고, 5_14k=14K 5일차 부분출고, 10=10일차 잔여취소, ㅂㅂ=별도 CS 처리" ${managementReadonly}>${escapeHtml(scheduledHistory)}</textarea></label>
       </div>
     </div>
     <p class="workflow-note">미송 자동대상과 별도 CS를 구분합니다. 관리메모1과 알림톡 발송로그는 송장 공통이며, 관리메모2·주문메모·기준일은 상품행별로 저장합니다. 배송보류는 주문 단위로 위 버튼에서 처리합니다.</p>
-    <div class="cs-sync-note"><strong>CS 백업·동기화 기준</strong><span>송장 단위의 <b>알림톡 발송로그</b>는 쉼표로 누적합니다. <b>0</b>=내일출고, <b>1</b>=일반1일차, <b>1_14</b>=14K1일차, <b>3</b>=플랫폼, <b>3ㅁ</b>=메이크샵, <b>5ㅂ</b>=부분출고, <b>5ㅊ</b>=취소출고, <b>5_14k</b>=14K5일차, <b>10</b>=잔여취소, <b>ㅂㅂ</b>=별도 CS 처리입니다. 상품행 입고예정일은 <b>출고확정일</b>에 기록합니다.</span></div>
+    <div class="cs-sync-note"><strong>CS 백업·동기화 기준</strong><span>송장 단위의 <b>알림톡 발송로그</b>는 첫 줄에 코드를 쉼표로 누적하고, 마지막 줄에 <b>MM/DD</b>를 기록합니다. 해당 상품에 적용되는 마지막 코드의 일차에서 날짜 이후 영업일을 다시 계산합니다. <b>0</b>=내일출고, <b>1</b>=일반1일차, <b>1_14</b>=14K1일차, <b>3</b>=플랫폼, <b>3ㅁ</b>=메이크샵, <b>5ㅂ</b>=부분출고, <b>5ㅊ</b>=취소출고, <b>5_14k</b>=14K5일차, <b>10</b>=잔여취소, <b>ㅂㅂ</b>=별도 CS 처리입니다.</span></div>
     <div class="cs-item-card-stack">${group.items.map((row, index) => renderCsCaseItemEditor(row, index + 1)).join("")}</div>
   </div>`;
 }
@@ -4439,7 +4470,7 @@ async function saveCsOrderScheduledDate(ordNo, value, { silent = false } = {}) {
   }
   const normalizedOrdNo = String(ordNo || "").trim();
   if (!normalizedOrdNo) throw new Error("Missing order number for outbound scheduled date.");
-  const scheduledHistory = appendAlimtalkSendLog("", value) || null;
+  const scheduledHistory = normalizeAlimtalkSendLog(value, todayDateString()) || null;
   const { data, error } = await db
     .from("orders")
     .update({ sellpia_outbound_scheduled_date: scheduledHistory })
@@ -4453,7 +4484,12 @@ async function saveCsOrderScheduledDate(ordNo, value, { silent = false } = {}) {
   for (const candidate of state.csManualCandidates || []) {
     if (String(candidate?.order?.ord_no || "") === normalizedOrdNo) candidate.order.sellpia_outbound_scheduled_date = nextValue;
   }
+  for (const invoice of allWorkflowInvoices()) {
+    if (String(invoice?.orderGroupNo || "") !== normalizedOrdNo || !invoice.raw) continue;
+    invoice.raw.sellpia_outbound_scheduled_date = nextValue;
+  }
   if (!silent) toast("알림톡 발송로그 저장");
+  return nextValue;
 }
 
 async function appendCsOrderScheduledHistory(ordNo, entry) {
@@ -4465,7 +4501,7 @@ async function appendCsOrderScheduledHistory(ordNo, entry) {
     .eq("ord_no", normalizedOrdNo);
   if (error) throw error;
   if (!data || data.length !== 1) throw new Error(`Order not found for outbound scheduled history (${normalizedOrdNo}).`);
-  const nextValue = appendAlimtalkSendLog(data[0].sellpia_outbound_scheduled_date, entry);
+  const nextValue = appendAlimtalkSendLog(data[0].sellpia_outbound_scheduled_date, entry, todayDateString());
   await saveCsOrderScheduledDate(normalizedOrdNo, nextValue, { silent: true });
   return nextValue;
 }
@@ -6209,6 +6245,7 @@ function alimtalkBaseRow(row, item, extra = {}) {
     receiptDate: date,
     delayBaseDate: date,
     delayBaseDateSource: "receiptDate",
+    alimtalkSendLog: String(invoice?.raw?.sellpia_outbound_scheduled_date || ""),
     systemShippingHold: shippingHold.label,
     systemShippingHoldKnown: shippingHold.known,
     systemShippingHoldSource: shippingHold.source,
@@ -6296,6 +6333,7 @@ function buildAlimtalkRowsFromCurrentCsCases() {
         hasOpenShortage: reason === "shortage",
         shortageQtyTotal: reason === "shortage" ? shortageQty : 0,
         alimtalkCaseRow: displayRow.caseRow || null,
+        alimtalkSendLog: String(displayRow?.order?.sellpia_outbound_scheduled_date || invoice?.raw?.sellpia_outbound_scheduled_date || ""),
       },
     ));
     seen.add(rowKey);
@@ -6346,11 +6384,15 @@ function classifyAlimtalkRowsByDay(rows) {
     if (!isValidDateKey(row.delayBaseDate)) return;
     const caseRow = row.alimtalkCaseRow || alimtalkCsCaseForRow(row);
     if (caseRow && caseRow.status !== "pending") return;
+    const effective = effectiveAlimtalkElapsedDays(row, {
+      basisDate: row.delayBaseDate,
+      isGold: isGoldItem(row.item),
+    });
     const rule = resolveAlimtalkTemplate({
-      elapsedDays: row.elapsedDays,
+      elapsedDays: effective.elapsedDays,
       isGold: isGoldItem(row.item),
       isMakeshop: isCsMakeshopMethod(row),
-      selectedTemplate: caseRow?.alimtalk_template || "",
+      selectedTemplate: effective.anchor.hasAnchor ? effective.selectedTemplate : caseRow?.alimtalk_template || "",
     });
     if (!rule.templateKey) return;
     pushTemplate(rule.templateKey, `exact_day_${rule.elapsedDays}`);
@@ -8239,7 +8281,9 @@ function bindEvents() {
     }
     const orderSyncField = event.target.closest("[data-cs-order-sync-field]");
     if (orderSyncField) {
-      saveCsOrderScheduledDate(orderSyncField.dataset.csOrderGroup || "", orderSyncField.value).catch(showCsError);
+      saveCsOrderScheduledDate(orderSyncField.dataset.csOrderGroup || "", orderSyncField.value)
+        .then(() => renderCsPanels())
+        .catch(showCsError);
       return;
     }
     const itemSyncField = event.target.closest("[data-cs-item-sync-field]");

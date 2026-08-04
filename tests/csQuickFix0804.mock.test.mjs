@@ -35,7 +35,14 @@ assert.match(
 assert.doesNotMatch(
   source,
   /alimtalkTemplateFromSendLog|csOrderAlimtalkSendLog/,
-  "send-log text must not participate in template classification in this change",
+  "obsolete send-log helper names must not be reintroduced",
 );
+assert.match(source, /function effectiveAlimtalkElapsedDays/, "template classification must support a dated send-log anchor");
+assert.match(source, /anchor\.day - 1 \+ elapsedSinceAnchor/, "the next template day must continue from the logged day and date");
+assert.match(source, /elapsedSinceAnchor === 0 \? anchor\.templateKey : ""/, "the exact logged template variant must be restored on its input date");
+assert.match(source, /effective\.anchor\.hasAnchor \? effective\.selectedTemplate : caseRow\?\.alimtalk_template/, "a dated log must replace the previously stored template override");
+assert.match(source, /normalizeAlimtalkSendLog\(value, todayDateString\(\)\)/, "manual log saves must stamp the final input date");
+assert.match(source, /appendAlimtalkSendLog\(data\[0\]\.sellpia_outbound_scheduled_date, entry, todayDateString\(\)\)/, "CSV exports must stamp the final input date");
+assert.match(source, /invoice\.raw\.sellpia_outbound_scheduled_date = nextValue/, "saved logs must update the live invoice model before the next CSV export");
 
 console.log("CS quick fixes 1-3: passed");
