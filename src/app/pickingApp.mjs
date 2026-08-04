@@ -3090,11 +3090,11 @@ function isValidDateKey(key) {
 
 function csBasisDateText(row, value) {
   const key = dateKey(value);
-  if (!isValidDateKey(key)) return "기준일 | - (영업일 기준 -일차) |";
+  if (!isValidDateKey(key)) return "- (영업일 기준 -일차)";
   const weekday = new Intl.DateTimeFormat("ko-KR", { weekday: "long" }).format(new Date(`${key}T12:00:00`));
   const businessDay = Number(csAlimtalkTemplateRule(row, key).elapsedDays || 0) + 1;
   const [year, month, day] = key.split("-");
-  return `기준일 | ${year.slice(-2)}/${month}/${day}/${weekday} (영업일 기준 ${businessDay}일차) |`;
+  return `${year.slice(-2)}/${month}/${day}/${weekday} (영업일 기준 ${businessDay}일차)`;
 }
 
 function csMethodText(invoice, item) {
@@ -4280,7 +4280,7 @@ function renderCsCaseItemEditor(row, itemNumber = 0) {
     <section class="cs-item-section cs-item-case-classification">
       <h4>CS 진행</h4>
       ${caseClassification}
-      <div class="cs-basis-date-display" data-cs-basis-date-text>${escapeHtml(csBasisDateText(row, basisDate || receiptDate))}</div>
+      <label><span>기준일</span><output class="cs-basis-date-display" data-cs-basis-date-text>${escapeHtml(csBasisDateText(row, basisDate || receiptDate))}</output></label>
       <label><span>출고확정일 / 입고예정</span><input data-cs-item-sync-field="outbound_confirmed_date" type="date" value="${escapeHtml(outboundConfirmedDate)}" ${managementReadonly}></label>
     </section>
     <section class="cs-item-section cs-item-memo-fields">

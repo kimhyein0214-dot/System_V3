@@ -12,10 +12,14 @@ assert.match(source, /<span>주문메모<\/span>/, "CS item editor must label th
 assert.doesNotMatch(source, /주문메모 \/ CS메모/, "legacy combined order/CS memo label must be removed");
 assert.match(
   source,
-  /return `기준일 \| \$\{year\.slice\(-2\)\}\/\$\{month\}\/\$\{day\}\/\$\{weekday\} \(영업일 기준 \$\{businessDay\}일차\) \|`;/,
+  /return `\$\{year\.slice\(-2\)\}\/\$\{month\}\/\$\{day\}\/\$\{weekday\} \(영업일 기준 \$\{businessDay\}일차\)`;/,
   "basis date text must include YY/MM/DD, weekday, and the calculated business-day number",
 );
-assert.match(source, /data-cs-basis-date-text/, "basis date must render as text");
+assert.match(
+  source,
+  /<label><span>기준일<\/span><output class="cs-basis-date-display" data-cs-basis-date-text>/,
+  "basis date text must preserve the existing label-and-field layout",
+);
 assert.doesNotMatch(source, /data-cs-case-field="basis_date" type="date"/, "basis date must no longer render as a date input");
 assert.match(
   source,

@@ -3893,15 +3893,16 @@ input {
 }
 
 .cs-basis-date-display {
+  display: flex;
+  align-items: center;
   min-height: 32px;
-  padding: 7px 9px;
+  padding: 4px 7px;
   border: 1px solid #cbd5e1;
   border-radius: 7px;
   background: #ffffff;
-  color: #334155;
-  font-size: 12px;
-  font-weight: 900;
-  line-height: 1.4;
+  color: #1e293b;
+  font-size: 13px;
+  font-weight: 800;
 }
 
 .cs-item-section label,
