@@ -94,9 +94,9 @@ const CS_DAY_TEMPLATE = {
 };
 
 const params = new URLSearchParams(location.search);
-const allowWrites = params.get("write") === "1";
+const allowWrites = params.get("write") !== "0";
 const allowOrderReorder = allowWrites && params.get("reorder") === "1";
-const allowWorkflowEvents = allowWrites && params.get("events") === "1";
+const allowWorkflowEvents = allowWrites && params.get("events") !== "0";
 const db = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
 const csCases = createCsCaseAdapter(db);
 const alimtalkSends = createAlimtalkSendAdapter(db);

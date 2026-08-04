@@ -3,7 +3,7 @@
   "name": "System V3 피킹",
   "short_name": "System V3",
   "description": "System V3 피킹 및 검품 작업 화면",
-  "start_url": "./?source=pwa",
+  "start_url": "./?source=pwa&write=1&events=1",
   "scope": "./",
   "display": "standalone",
   "background_color": "#f4f7fb",
