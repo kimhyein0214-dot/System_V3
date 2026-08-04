@@ -3088,6 +3088,13 @@ function isValidDateKey(key) {
   return !Number.isNaN(new Date(`${key}T00:00:00`).getTime());
 }
 
+function csBasisDateLabel(value) {
+  const key = dateKey(value);
+  if (!isValidDateKey(key)) return "기준일 (영업일 기준 일차)";
+  const weekday = new Intl.DateTimeFormat("ko-KR", { weekday: "long" }).format(new Date(`${key}T12:00:00`));
+  return `기준일 · ${weekday} (영업일 기준 일차)`;
+}
+
 function csMethodText(invoice, item) {
   return firstRawText(
     invoice?.raw,
@@ -4167,7 +4174,6 @@ function renderCsCaseFilters() {
     </select>
     <button class="filter-chip ${state.csMode === "manual" ? "active" : ""}" data-cs-mode="manual" type="button">수동 CS 추가</button>
     <button class="filter-chip" data-cs-alimtalk-action="export" type="button" ${allowWrites ? "" : "disabled"}>알림톡 CSV</button>
-    <button class="filter-chip" data-cs-alimtalk-action="history" type="button" ${allowWrites ? "" : "disabled"}>CSV 발송확정</button>
     <span class="cs-mode-indicator ${state.csMode === "manual" ? "manual" : ""}">${state.csMode === "manual" ? "수동 CS 추가 모드 · 검색 후 상품행의 ‘별도 CS 추가’를 누르세요" : "CS 케이스 목록"}</span>`;
 }
 
@@ -4216,6 +4222,7 @@ function renderCsCaseItemEditor(row, itemNumber = 0) {
   const workflowItem = cancellation.item;
   const partialShippingHoldOn = Boolean(workflowItem && isHold(workflowItem));
   const readonly = allowWrites && !virtualCase && !cancellation.cancelled ? "" : "readonly";
+  const orderMemoReadonly = allowWrites && !cancellation.cancelled ? "" : "readonly";
   const managementReadonly = allowWrites && !cancellation.cancelled ? "" : "readonly";
   const disabled = allowWrites && !cancellation.cancelled ? "" : "disabled";
   const partialHoldDisabled = allowWrites && workflowItem && !cancellation.cancelled ? "" : "disabled";
@@ -4271,13 +4278,13 @@ function renderCsCaseItemEditor(row, itemNumber = 0) {
     <section class="cs-item-section cs-item-case-classification">
       <h4>CS 진행</h4>
       ${caseClassification}
-      <label><span>기준일</span><input data-cs-case-field="basis_date" type="date" value="${escapeHtml(basisDate || receiptDate || "")}" ${readonly}></label>
+      <label><span>${escapeHtml(csBasisDateLabel(basisDate || receiptDate))}</span><input data-cs-case-field="basis_date" type="date" value="${escapeHtml(basisDate || receiptDate || "")}" ${readonly}></label>
       <label><span>출고확정일 / 입고예정</span><input data-cs-item-sync-field="outbound_confirmed_date" type="date" value="${escapeHtml(outboundConfirmedDate)}" ${managementReadonly}></label>
     </section>
     <section class="cs-item-section cs-item-memo-fields">
       <h4>상품 메모</h4>
       <label><span>관리메모2</span><input data-cs-management-field="memo2" value="${escapeHtml(managementMemo2)}" ${managementReadonly}></label>
-      <label class="inspection-memo-cell ${memo.trim() ? "has-value" : ""}"><span>주문메모 / CS메모</span><textarea data-cs-case-order-memo rows="2" ${readonly}>${escapeHtml(memo)}</textarea></label>
+      <label class="inspection-memo-cell ${memo.trim() ? "has-value" : ""}"><span>주문메모</span><textarea data-cs-case-order-memo rows="2" ${orderMemoReadonly}>${escapeHtml(memo)}</textarea></label>
     </section>
     <div class="cs-item-card-actions">${partialHoldButton}${actionButtons}${cancelButton}</div>
   </article>`;
@@ -4423,7 +4430,7 @@ function csItemIdentity(row) {
   };
 }
 
-async function saveCsOrderScheduledDate(ordNo, value) {
+async function saveCsOrderScheduledDate(ordNo, value, { silent = false } = {}) {
   if (!allowWrites) {
     toast("Read-only mode: add write=1 to save the outbound scheduled date.");
     return;
@@ -4444,7 +4451,7 @@ async function saveCsOrderScheduledDate(ordNo, value) {
   for (const candidate of state.csManualCandidates || []) {
     if (String(candidate?.order?.ord_no || "") === normalizedOrdNo) candidate.order.sellpia_outbound_scheduled_date = nextValue;
   }
-  toast("출고예정일 기록 저장");
+  if (!silent) toast("알림톡 발송로그 저장");
 }
 
 async function appendCsOrderScheduledHistory(ordNo, entry) {
@@ -4457,7 +4464,7 @@ async function appendCsOrderScheduledHistory(ordNo, entry) {
   if (error) throw error;
   if (!data || data.length !== 1) throw new Error(`Order not found for outbound scheduled history (${normalizedOrdNo}).`);
   const nextValue = appendAlimtalkSendLog(data[0].sellpia_outbound_scheduled_date, entry);
-  await saveCsOrderScheduledDate(normalizedOrdNo, nextValue);
+  await saveCsOrderScheduledDate(normalizedOrdNo, nextValue, { silent: true });
   return nextValue;
 }
 
@@ -6416,119 +6423,10 @@ async function exportAlimtalkCsv() {
     return;
   }
   const batch = await alimtalkSends.createExportBatch({ items: [...sendTargets.values()] });
+  const syncedOrders = await recordAlimtalkSendScheduledDate(batch.id);
+  await alimtalkSends.confirmExportBatch(batch.id);
   downloadBlob(`${monthDayForFilename()}알림톡.zip`, buildZipBlob(files));
-  toast(`알림톡 ZIP ${fileCount}개 파일 · ${rowCount}행을 내보냈습니다. 발송 후 배치 #${batch.id}를 발송확정하세요.`);
-}
-
-function formatAlimtalkBatchTime(value) {
-  if (!value) return "-";
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return String(value);
-  return new Intl.DateTimeFormat("ko-KR", {
-    timeZone: "Asia/Seoul",
-    month: "2-digit",
-    day: "2-digit",
-    hour: "2-digit",
-    minute: "2-digit",
-    hour12: false,
-  }).format(date);
-}
-
-async function openLatestAlimtalkSendConfirmModal() {
-  const [batch] = await alimtalkSends.loadUnconfirmedBatches();
-  if (!batch) {
-    toast("발송확정할 알림톡 CSV 내보내기 기록이 없습니다.");
-    return;
-  }
-
-  let modal = document.getElementById("alimtalk-send-confirm-modal");
-  if (!modal) {
-    modal = document.createElement("div");
-    modal.id = "alimtalk-send-confirm-modal";
-    modal.className = "order-list-modal-overlay";
-    document.body.append(modal);
-  }
-  modal.innerHTML = `<div class="order-list-modal cs-list-modal" role="dialog" aria-modal="true" aria-label="알림톡 CSV 발송확정">
-    <div class="order-list-modal-head">
-      <h3>알림톡 CSV 발송확정</h3>
-      <div class="order-list-modal-tools"><button type="button" class="order-list-modal-close" data-alimtalk-confirm-action="close">×</button></div>
-    </div>
-    <div class="cs-work-log-note"><b>가장 최근에 내보낸 알림톡 ZIP 전체</b>를 발송확정합니다. ZIP 안의 모든 템플릿·주문 대상이 함께 확정되고, 주문별 발송로그도 템플릿 코드로 누적됩니다. 같은 주문·템플릿도 다시 CSV로 내보낼 수 있으며 다시 확정하면 코드가 한 번 더 누적됩니다.</div>
-    <div class="order-list-modal-table-wrap"><table class="order-list-modal-table"><thead><tr><th>내보낸 시각</th><th>확정 대상</th><th>처리</th></tr></thead><tbody>
-      <tr><td>${escapeHtml(formatAlimtalkBatchTime(batch.created_at))}</td><td>${escapeHtml(batch.target_count)} 주문·템플릿</td><td><button class="btn primary" data-alimtalk-confirm-action="confirm" data-alimtalk-batch-id="${escapeHtml(batch.id)}" type="button">전체 발송확정</button></td></tr>
-    </tbody></table></div>
-  </div>`;
-  modal.hidden = false;
-  modal.onclick = (event) => {
-    if (event.target === modal || event.target.closest("[data-alimtalk-confirm-action='close']")) {
-      modal.hidden = true;
-      return;
-    }
-    const confirmButton = event.target.closest("[data-alimtalk-confirm-action='confirm']");
-    if (!confirmButton) return;
-    const id = Number(confirmButton.dataset.alimtalkBatchId || 0);
-    if (!window.confirm(`가장 최근에 내보낸 알림톡 ZIP 전체(${batch.target_count} 주문·템플릿)를 실제 발송완료로 확정할까요?\n같은 주문·템플릿을 다시 내보내고 확정하면 발송로그 코드가 횟수만큼 누적됩니다.`)) return;
-    confirmButton.disabled = true;
-    alimtalkSends.confirmExportBatch(id)
-      .then(async () => {
-        let syncedOrders = 0;
-        try {
-          syncedOrders = await recordAlimtalkSendScheduledDate(id);
-        } catch (error) {
-          console.warn("failed to record Alimtalk scheduled date", error);
-          toast("알림톡 발송은 확정됐지만 출고예정일 기록 저장에 실패했습니다.");
-        }
-        modal.hidden = true;
-        toast(`알림톡 ZIP 전체를 발송확정했습니다.${syncedOrders ? ` 출고예정일 ${syncedOrders}건 기록` : ""}`);
-      })
-      .catch(showCsError);
-  };
-}
-
-async function openAlimtalkSendHistoryModal() {
-  const batches = await alimtalkSends.loadUnconfirmedBatches();
-  let modal = document.getElementById("alimtalk-send-history-modal");
-  if (!modal) {
-    modal = document.createElement("div");
-    modal.id = "alimtalk-send-history-modal";
-    modal.className = "order-list-modal-overlay";
-    document.body.append(modal);
-  }
-  modal.innerHTML = `<div class="order-list-modal cs-list-modal" role="dialog" aria-modal="true" aria-label="알림톡 CSV 발송확정">
-    <div class="order-list-modal-head">
-      <h3>알림톡 CSV 발송확정</h3>
-      <div class="order-list-modal-tools"><button type="button" class="order-list-modal-close" data-alimtalk-history-action="close">×</button></div>
-    </div>
-    <div class="cs-work-log-note">CSV 다운로드는 <b>내보냄</b>만 기록합니다. 외부 알림톡 발송을 끝낸 배치만 확정하세요. <b>배치 1건을 확정하면 그 CSV에 포함된 주문·템플릿 전체가 함께 발송확정</b>됩니다. 같은 주문·템플릿도 다시 내보내고 확정할 수 있으며 발송로그 코드는 횟수만큼 누적됩니다.</div>
-    <div class="order-list-modal-table-wrap"><table class="order-list-modal-table"><thead><tr><th>배치</th><th>내보낸 시각</th><th>대상</th><th>상태</th><th>처리</th></tr></thead><tbody>
-      ${batches.length ? batches.map((batch) => `<tr><td>#${escapeHtml(batch.id)}</td><td>${escapeHtml(formatAlimtalkBatchTime(batch.created_at))}</td><td>${escapeHtml(batch.target_count)} 주문·템플릿</td><td>내보냄</td><td><button class="btn primary" data-alimtalk-history-action="confirm" data-alimtalk-batch-id="${escapeHtml(batch.id)}" type="button">발송확정</button></td></tr>`).join("") : '<tr><td colspan="5" class="order-list-modal-empty">발송확정할 내보냄 기록이 없습니다.</td></tr>'}
-    </tbody></table></div>
-  </div>`;
-  modal.hidden = false;
-  modal.onclick = (event) => {
-    if (event.target === modal || event.target.closest("[data-alimtalk-history-action='close']")) {
-      modal.hidden = true;
-      return;
-    }
-    const confirmButton = event.target.closest("[data-alimtalk-history-action='confirm']");
-    if (!confirmButton) return;
-    const id = Number(confirmButton.dataset.alimtalkBatchId || 0);
-    if (!window.confirm(`배치 #${id}의 알림톡 발송이 실제로 완료되었습니까?\n같은 주문·템플릿을 다시 내보내고 확정하면 발송로그 코드가 횟수만큼 누적됩니다.`)) return;
-    confirmButton.disabled = true;
-    alimtalkSends.confirmExportBatch(id)
-      .then(async () => {
-        let syncedOrders = 0;
-        try {
-          syncedOrders = await recordAlimtalkSendScheduledDate(id);
-        } catch (error) {
-          console.warn("failed to record Alimtalk scheduled date", error);
-          toast("알림톡 발송은 확정됐지만 출고예정일 기록 저장에 실패했습니다.");
-        }
-        toast(`알림톡 배치 #${id}를 발송확정했습니다.${syncedOrders ? ` 출고예정일 ${syncedOrders}건 기록` : ""}`);
-        return openAlimtalkSendHistoryModal();
-      })
-      .catch(showCsError);
-  };
+  toast(`알림톡 ZIP ${fileCount}개 파일 · ${rowCount}행을 내보내고 발송로그 ${syncedOrders}건을 기록했습니다.`);
 }
 
 function invoiceReceiverTel(invoice) {
@@ -8254,7 +8152,6 @@ function bindEvents() {
     const alimtalkAction = event.target.closest("[data-cs-alimtalk-action]");
     if (alimtalkAction) {
       if (alimtalkAction.dataset.csAlimtalkAction === "export") exportAlimtalkCsv().catch(showCsError);
-      if (alimtalkAction.dataset.csAlimtalkAction === "history") openLatestAlimtalkSendConfirmModal().catch(showCsError);
       return;
     }
     const statusButton = event.target.closest("[data-cs-case-status]");
