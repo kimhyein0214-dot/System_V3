@@ -70,10 +70,11 @@ function createMemoryDb(seed) {
   const clone = (value) => JSON.parse(JSON.stringify(value));
 
   function builder(table) {
-    const state = { table, filters: [], mode: "select", payload: null };
+    const state = { table, filters: [], mode: "select", payload: null, range: null };
     const api = {
       select() { return api; },
       order() { return api; },
+      range(from, to) { state.range = [from, to]; return api; },
       eq(column, value) { state.filters.push((row) => row[column] === value); return api; },
       in(column, values) { const allowed = new Set(values); state.filters.push((row) => allowed.has(row[column])); return api; },
       insert(payload) { state.mode = "insert"; state.payload = payload; return api; },
@@ -89,6 +90,7 @@ function createMemoryDb(seed) {
           if (state.mode === "update") {
             rows = rows.map((row) => Object.assign(row, state.payload, { updated_at: "now" }));
           }
+          if (state.range) rows = rows.slice(state.range[0], state.range[1] + 1);
           resolve({ data: clone(rows), error: null });
         } catch (error) {
           reject(error);
@@ -195,5 +197,19 @@ assert.equal(excludedManualUntouched.caseRow.status, "excluded");
 const contexts = await adapter.loadCsCaseContexts(await adapter.loadCsCases());
 assert.equal(contexts.orders.get("order-a").inv_no, "invoice-a");
 assert.equal(contexts.items.get("item-2").sellpia_order_item_no, "sellpia-2");
+
+// Manual CS search must not silently lose product rows after Supabase's
+// default 1,000-row response limit.
+const pagedItemCount = 1127;
+const pagedDb = createMemoryDb({
+  orders: [{ ord_no: "paged-order", inv_no: "paged-invoice", receiver: "이소윤" }],
+  order_items: Array.from({ length: pagedItemCount }, (_, index) => ({
+    ord_no: "paged-order",
+    item_no: `paged-item-${String(index + 1).padStart(4, "0")}`,
+  })),
+});
+const pagedCandidates = await createCsCaseAdapter(pagedDb).loadManualCsCandidates();
+assert.equal(pagedCandidates.length, pagedItemCount);
+assert.equal(pagedCandidates.at(-1).item.item_no, "paged-item-1127");
 
 console.log("CS 1-A local mock: passed");

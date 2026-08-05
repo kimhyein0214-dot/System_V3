@@ -51,6 +51,21 @@ export function openShortageItemKeys({ candidates = [], shortageRows = [] } = {}
 export function createCsCaseAdapter(db) {
   if (!db?.from) throw new Error("A Supabase client is required.");
 
+  async function loadAllRows(table, orderColumn, pageSize = 1000) {
+    const rows = [];
+    for (let offset = 0; ; offset += pageSize) {
+      const { data, error } = await db
+        .from(table)
+        .select("*")
+        .order(orderColumn, { ascending: true })
+        .range(offset, offset + pageSize - 1);
+      if (error) throw error;
+      const page = data || [];
+      rows.push(...page);
+      if (page.length < pageSize) return rows;
+    }
+  }
+
   async function loadCsCases() {
     const { data, error } = await db
       .from("cs_cases")
@@ -77,11 +92,12 @@ export function createCsCaseAdapter(db) {
   }
 
   async function loadManualCsCandidates() {
-    const [orderResult, itemResult] = await Promise.all([db.from("orders").select("*"), db.from("order_items").select("*")]);
-    if (orderResult.error) throw orderResult.error;
-    if (itemResult.error) throw itemResult.error;
-    const orderByNo = new Map((orderResult.data || []).map((row) => [text(row.ord_no), row]));
-    return (itemResult.data || [])
+    const [orders, items] = await Promise.all([
+      loadAllRows("orders", "ord_no"),
+      loadAllRows("order_items", "item_no"),
+    ]);
+    const orderByNo = new Map(orders.map((row) => [text(row.ord_no), row]));
+    return items
       .map((item) => ({ order: orderByNo.get(text(item.ord_no)) || null, item }))
       .filter((row) => row.order && text(row.item?.item_no));
   }
