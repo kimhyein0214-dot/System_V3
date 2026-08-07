@@ -1118,16 +1118,30 @@
       };
     }
 
-    // Management memo targets are deliberately item-scoped. System V3's
-    // order_items values are the source of truth; picking is workflow state,
-    // never a replacement source for the management memo target.
+    // Management memo1 is invoice-scoped; management memo2 remains item-scoped.
+    // Refuse a live write when legacy rows disagree instead of spreading an
+    // arbitrary first value across the invoice.
     function buildManagementMemoTargets(ordNo, orderItemRows, pickingRows) {
       const targets = new Map();
       const ambiguousTargets = new Set();
-      const stats = { matchedByItemNo: 0, matchedBySellpiaOrderItemNo: 0, skipped: 0, ambiguous: 0 };
+      const memo1Values = [...new Set((orderItemRows || []).map(row => normal(row.o_shop_memo)).filter(Boolean))];
+      const pickingMemo1Values = [...new Set((pickingRows || [])
+        .map(row => normal(row.drawer_no))
+        .filter(value => value && value !== 'EMPTY'))];
+      const memo1SourceValues = (orderItemRows || []).length ? memo1Values : pickingMemo1Values;
+      const memo1Conflict = memo1SourceValues.length > 1;
+      const invoiceMemo1 = memo1Conflict ? '' : (memo1SourceValues[0] || '');
+      const stats = {
+        matchedByItemNo: 0,
+        matchedBySellpiaOrderItemNo: 0,
+        skipped: 0,
+        ambiguous: 0,
+        memo1Conflict,
+        memo1Values: memo1SourceValues,
+      };
       for (const row of orderItemRows || []) {
         const target = {
-          memo1: normal(row.o_shop_memo),
+          memo1: invoiceMemo1,
           memo2: normal(row.o_shop_memo2),
           dbMemo1: normal(row.o_shop_memo),
           dbMemo2: normal(row.o_shop_memo2),
@@ -1141,7 +1155,7 @@
         stats.matchedByItemNo++;
       }
       stats.ambiguous = ambiguousTargets.size;
-      return { targets, ambiguousTargets, stats };
+      return { targets, ambiguousTargets, stats, memo1Conflict, memo1Values: memo1SourceValues };
     }
 
     function managementTargetForGridRow(task, row, index) {
@@ -1401,6 +1415,12 @@
       task.managementMemoTargets = managementTargets.targets;
       task.managementMemoAmbiguous = managementTargets.ambiguousTargets;
       task.managementMemoStats = managementTargets.stats;
+      if (managementTargets.memo1Conflict) {
+        task.skip = true;
+        task.reason = '관리메모1 송장 전체값 충돌: ' + managementTargets.memo1Values.join(' / ');
+        task.dbMatchStatus += '+memo1_conflict';
+        return task;
+      }
       const partialHoldTargets = buildPartialHoldTargets(task.ordNo, task.invNo, orderItemRows, pickingRows);
       task.partialHoldTargets = partialHoldTargets.targets;
       task.partialHoldAmbiguous = partialHoldTargets.ambiguous;
