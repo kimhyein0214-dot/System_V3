@@ -6,6 +6,7 @@ import { isGoldOwnCode } from "../domain/gold.mjs?v=20260728-gold-own-code1";
 import { alimtalkSendLogAnchor, alimtalkSendLogCode, alimtalkSendNaturalKey, appendAlimtalkSendLog, formatAlimtalkInboundExpectedDate, hasTomorrowShippingManagementMemo, normalizeAlimtalkSendLog, resolveAlimtalkTemplate } from "../domain/alimtalk.mjs?v=20260804-send-log-anchor2";
 import { receiptBusinessDayKeys, receiptBusinessDaysSince } from "../domain/businessDays.mjs?v=20260728-receipt-business-days1";
 import { inspectionHoldCsAction } from "../domain/csHoldTransition.mjs?v=20260731-inspection-hold-cs1";
+import { preferredPickingRow } from "../domain/pickingPersistence.mjs?v=20260807-picking-dedupe1";
 import { comparePickingRowsByRoute } from "../domain/pickingRowSort.mjs?v=20260731-route-row1";
 import {
   buildWorkflowState,
@@ -4676,23 +4677,6 @@ async function releaseInspectionPartialShippingHold(orderGroupNo, sellpiaItemNo)
   }
 }
 
-async function findCsPickingRowExact(row) {
-  const { ordNo, itemNo, sellpiaOrderItemNo } = csItemIdentity(row);
-  const itemKeys = [...new Set([itemNo, sellpiaOrderItemNo].filter(Boolean))];
-  if (!ordNo || !itemKeys.length) throw new Error("관리메모 저장에 필요한 주문번호 또는 상품행키가 없습니다.");
-  const { data, error } = await db
-    .from("picking")
-    .select("id,item_no")
-    .eq("ord_no", ordNo)
-    .in("item_no", itemKeys);
-  if (error) throw error;
-  if (!data || data.length === 0) return null;
-  if (data.length !== 1) {
-    throw new Error(`picking exact 행을 찾지 못했습니다 (${ordNo} / ${itemNo || sellpiaOrderItemNo}).`);
-  }
-  return data[0];
-}
-
 async function saveCsManagementFields(row, scope = els.csDetail, { renderAfter = true } = {}) {
   if (!allowWrites) {
     toast("읽기전용입니다. URL에 write=1을 붙여야 관리메모를 저장할 수 있습니다.");
@@ -4715,18 +4699,10 @@ async function saveCsManagementFields(row, scope = els.csDetail, { renderAfter =
     return;
   }
 
+  const { invoice, item } = findCsWorkflowItem(row);
   if (memo1Changed) {
-    await updateOrderItemOrderMemoExact({
-      ordNo,
-      itemNo,
-      sellpiaOrderItemNo,
-      patch: { o_shop_memo: memo1 },
-    });
-    const pickingRow = await findCsPickingRowExact(row);
-    if (pickingRow) {
-      const { error } = await db.from("picking").update({ drawer_no: memo1 }).eq("id", pickingRow.id);
-      if (error) throw error;
-    }
+    if (!invoice) throw new Error("관리메모1을 송장 전체에 저장할 작업 데이터를 찾지 못했습니다.");
+    await saveDrawerForInvoice(invoice, memo1);
     row.item.o_shop_memo = memo1;
     row.item.shop_memo = memo1;
     row.item.memo1 = memo1;
@@ -4744,14 +4720,12 @@ async function saveCsManagementFields(row, scope = els.csDetail, { renderAfter =
     row.item.memo2 = memo2;
   }
 
-  const { invoice, item } = findCsWorkflowItem(row);
   if (invoice && item) {
     patchLocalItemManagementMemos(invoice.orderGroupNo, item.sellpiaItemNo, {
-      ...(memo1Changed ? { memo1 } : {}),
       ...(memo2Changed ? { memo2 } : {}),
     });
   }
-  toast("상품행 관리메모 저장");
+  toast("관리메모1은 송장 전체에, 관리메모2는 상품행에 저장했습니다.");
   if (renderAfter) renderCsPanels();
 }
 
@@ -5345,19 +5319,20 @@ async function savePickingRow(invoice, item, eventType = null, eventOverrides = 
   };
 
   try {
-    // picking의 실제 유니크 키는 inv_no + item_no입니다. 같은 주문/상품에 예전
-    // 빈 송장 행이 남아 있을 수 있으므로 ord_no + item_no로 첫 행을 고르면 현재
-    // 송장 행의 inv_no를 덮어쓰며 유니크 충돌이 납니다.
+    // 초기 피킹행은 송장번호가 비어 있을 수 있습니다. 현재 송장번호로만 찾으면
+    // 같은 주문/상품을 다시 INSERT하므로 주문+상품 범위에서 현재 송장 행,
+    // 빈 송장 행 순으로 재사용합니다.
     const { data: existing, error: findError } = await db
       .from("picking")
-      .select("id")
-      .eq("inv_no", row.inv_no)
+      .select("id,inv_no")
+      .eq("ord_no", row.ord_no)
       .eq("item_no", row.item_no)
-      .limit(1);
+      .order("id", { ascending: false });
     if (findError) throw findError;
 
-    if (existing && existing[0]?.id) {
-      const { error } = await db.from("picking").update(row).eq("id", existing[0].id);
+    const existingRow = preferredPickingRow(existing, row.inv_no);
+    if (existingRow?.id) {
+      const { error } = await db.from("picking").update(row).eq("id", existingRow.id);
       if (error) throw error;
     } else {
       const { error } = await db.from("picking").insert(row);
@@ -7130,14 +7105,16 @@ async function saveSelectedShortageMemo(shortageKey = state.selectedShortageKey)
   const drawerMemo = els.shortageDetail?.querySelector("[data-shortage-field='drawerMemo']")?.value?.trim() || "";
   const memo = els.shortageDetail?.querySelector("[data-shortage-field='memo']")?.value?.trim() || "";
   const qty = Number(row.state?.shortageQty || 0) || 1;
-  await updateOrderItemMemoFields(row.invoice.orderGroupNo, row.item.sellpiaItemNo, { o_shop_memo: drawerMemo, o_shop_memo2: memo });
+  // 관리메모1(서랍번호)은 송장 전체 공통값이고 관리메모2만 상품행 값입니다.
+  await saveDrawerForInvoice(row.invoice, drawerMemo);
+  await updateOrderItemMemoFields(row.invoice.orderGroupNo, row.item.sellpiaItemNo, { o_shop_memo2: memo });
   const ok = await saveWorkflowItemEvent(row.invoice, row.item, "shortage_qty_changed", {
     quantity: qty,
     memo,
     drawerMemo,
   });
   if (!ok) return;
-  patchLocalItemManagementMemos(row.invoice.orderGroupNo, row.item.sellpiaItemNo, { memo1: drawerMemo, memo2: memo });
+  patchLocalItemManagementMemos(row.invoice.orderGroupNo, row.item.sellpiaItemNo, { memo2: memo });
   await ensureShippingHoldOnAfterMemoSave(row.invoice, `${drawerMemo}\n${memo}`);
   state.selectedShortageKey = shortageKey;
   renderWorkflowSurfaces();

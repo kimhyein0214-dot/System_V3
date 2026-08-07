@@ -4,6 +4,7 @@ import {
   normalizeCurrentDbOrder,
   normalizePickingState,
 } from "../../adapters/currentDbPickingAdapter.mjs?v=20260706-memo2-text1";
+import { preferredPickingRow } from "../../domain/pickingPersistence.mjs?v=20260807-picking-dedupe1";
 
 function compareNullableNumbers(a, b) {
   if (a === null && b === null) return 0;
@@ -50,8 +51,14 @@ export function buildPickingViewModel({
   const pickingStateByKey = new Map();
   const shortageStateByKey = new Map();
 
+  const pickingRowsByKey = new Map();
   for (const row of pickingRows) {
     const state = normalizePickingState(row);
+    if (!pickingRowsByKey.has(state.key)) pickingRowsByKey.set(state.key, []);
+    pickingRowsByKey.get(state.key).push(row);
+  }
+  for (const rows of pickingRowsByKey.values()) {
+    const state = normalizePickingState(preferredPickingRow(rows));
     pickingStateByKey.set(state.key, state);
   }
 
