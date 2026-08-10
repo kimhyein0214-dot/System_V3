@@ -2592,6 +2592,12 @@ function drawerMemoForShortageRow(row) {
   return String(row?.state?.drawerMemo || itemManagementMemo(row?.item) || invoiceDrawerValue(row?.invoice) || "").trim();
 }
 
+function shortageDelayDisplayLabel(invoice) {
+  const receiptDate = dateKey(invoice?.receiptDate);
+  if (!receiptDate) return "지연 -일차";
+  return `지연 ${receiptBusinessDaysSinceDateKey(receiptDate)}일차`;
+}
+
 function shortageRowMatchesSearch(row) {
   const search = state.shortageSearchText.trim().toLowerCase();
   if (!search) return true;
@@ -2657,18 +2663,21 @@ function shortageGroupStats(rows = []) {
   return [...groups.values()];
 }
 
-function renderShortageRow({ invoice, item, state: itemState, completed, cancelled }) {
+function renderShortageRow({ invoice, item, state: itemState, completed, cancelled }, visibleSequenceNo = 0) {
   const key = workflowItemKey(invoice, item);
   const orderNo = itemOrderNo(item, invoiceItemIndex(invoice, item));
   const receiptDate = String(invoice.receiptDate || "").slice(0, 10);
-  const invoiceSeq = shortageInvoiceDisplayLabel(invoice);
+  const delayLabel = shortageDelayDisplayLabel(invoice);
+  const drawerNo = drawerMemoForShortageRow({ invoice, item, state: itemState });
+  const drawerOrderLabel = `${drawerNo || "미입력"}-${orderNo}`;
   const receiving = receivingLabelEntryForItem(item);
-  return `<button class="workflow-row ${key === state.selectedShortageKey ? "selected" : ""} ${completed ? "is-completed" : ""} ${cancelled ? "is-cancelled" : ""} ${receiving ? "has-receiving" : ""}" data-shortage-key="${escapeHtml(key)}" type="button">
+  return `<button class="workflow-row shortage-workflow-row ${key === state.selectedShortageKey ? "selected" : ""} ${completed ? "is-completed" : ""} ${cancelled ? "is-cancelled" : ""} ${receiving ? "has-receiving" : ""}" data-shortage-key="${escapeHtml(key)}" data-visible-sequence="${visibleSequenceNo}" type="button">
+    <span class="workflow-row-sequence" aria-label="현재 정렬 순번">${visibleSequenceNo || "-"}</span>
     <span class="workflow-row-code">${escapeHtml(item.ownCode || "-")}</span>
     <span class="workflow-row-main">
       <strong>${escapeHtml(cleanOptionName(item.optionName, item.ownCode) || item.productName || "-")}</strong>
-      <span class="workflow-row-order">상품순서 ${orderNo}번</span>
-      <small>${escapeHtml(invoice.displayName || invoice.csDisplayName || "-")} · ${escapeHtml(invoiceSeq)}</small>
+      <span class="workflow-row-order" title="서랍번호-상품순서">${escapeHtml(drawerOrderLabel)}</span>
+      <small>${escapeHtml(invoice.displayName || invoice.csDisplayName || "-")} · ${escapeHtml(delayLabel)}</small>
       ${receiptDate ? `<small class="workflow-row-receipt">접수 ${escapeHtml(receiptDate)}</small>` : ""}
       ${receiving ? `<small class="receiving-row-note">입고 ${escapeHtml(receiving.qty || "-")}개</small>` : ""}
     </span>
@@ -2677,7 +2686,9 @@ function renderShortageRow({ invoice, item, state: itemState, completed, cancell
 }
 
 function renderShortageRows(rows) {
-  if (state.shortageFilter !== "code") return rows.map(renderShortageRow).join("");
+  const visibleSequenceByRow = new Map(rows.map((row, index) => [row, index + 1]));
+  const renderVisibleRow = (row) => renderShortageRow(row, visibleSequenceByRow.get(row) || 0);
+  if (state.shortageFilter !== "code") return rows.map(renderVisibleRow).join("");
   return shortageGroupStats(rows)
     .map((group) => {
       const sample = group.rows[0]?.item;
@@ -2688,7 +2699,7 @@ function renderShortageRows(rows) {
           <span>${group.rows.length}건 · 미송 ${group.qty}개</span>
           ${sampleName ? `<small>${escapeHtml(sampleName)}</small>` : ""}
         </div>
-        ${group.rows.map(renderShortageRow).join("")}
+        ${group.rows.map(renderVisibleRow).join("")}
       </section>`;
     })
     .join("");

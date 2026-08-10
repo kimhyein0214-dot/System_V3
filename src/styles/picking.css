@@ -1577,6 +1577,10 @@ input {
   overflow: hidden;
 }
 
+.shortage-layout {
+  grid-template-columns: 384px minmax(0, 1fr);
+}
+
 .inspection-layout {
   grid-template-columns: 360px minmax(0, 1fr);
 }
@@ -1672,6 +1676,24 @@ input {
   padding: 8px;
   text-align: left;
   cursor: pointer;
+}
+
+.workflow-row.shortage-workflow-row {
+  grid-template-columns: 30px 84px minmax(0, 1fr) auto;
+}
+
+.workflow-row-sequence {
+  width: 28px;
+  height: 28px;
+  border: 1px solid #bfdbfe;
+  border-radius: 7px;
+  background: #eff6ff;
+  color: #1d4ed8;
+  display: grid;
+  place-items: center;
+  font-size: 14px;
+  font-weight: 1000;
+  font-variant-numeric: tabular-nums;
 }
 
 .workflow-row:hover,
