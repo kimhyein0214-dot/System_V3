@@ -911,6 +911,21 @@ function sortShortageRowsByReceiptDate(rows = []) {
   return [...rows].sort(compareShortageRowsByReceiptDate);
 }
 
+function compareShortageRouteCode(a, b) {
+  return (
+    compareExportRouteCode(a, b) ||
+    String(a || "").localeCompare(String(b || ""), "en", { numeric: true, sensitivity: "base" })
+  );
+}
+
+function compareShortageRowsByPickingRoute(a, b) {
+  return comparePickingRowsByRoute(a, b, {
+    compareRouteCode: compareShortageRouteCode,
+    invoiceSequenceNo: visibleInvoiceSequenceNo,
+    compareInvoiceItems: compareInvoiceItemsBySellpiaRow,
+  });
+}
+
 function sortPickingRows(rows) {
   if (!state.workSortMode) return rows;
   return [...rows].sort((a, b) => {
@@ -2640,12 +2655,7 @@ function shortageRowsForCurrentFilter() {
   } else if (state.shortageFilter === "drawer") {
     rows = rows.filter(drawerMemoForShortageRow);
   } else if (state.shortageFilter === "code") {
-    rows = [...rows].sort(
-      (a, b) =>
-        String(a.item.ownCode || "").localeCompare(String(b.item.ownCode || ""), "ko") ||
-        String(a.item.optionName || "").localeCompare(String(b.item.optionName || ""), "ko") ||
-        visibleInvoiceSequenceNo(a.invoice) - visibleInvoiceSequenceNo(b.invoice),
-    );
+    rows = [...rows].sort(compareShortageRowsByPickingRoute);
   }
   return rows.filter(shortageRowMatchesReceiving).filter(shortageRowMatchesSearch);
 }
