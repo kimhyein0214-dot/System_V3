@@ -125,6 +125,8 @@ const state = {
   workflowQueues: null,
   workflowQueueError: "",
   selectedShortageKey: "",
+  shortageBulkSelectedKeys: new Set(),
+  shortageBulkSaving: false,
   shortageFilter: "all",
   shortageSearchText: "",
   receivingLabel: {
@@ -225,6 +227,7 @@ const els = {
   csPanel: document.getElementById("cs-panel"),
   completedPanel: document.getElementById("completed-panel"),
   shortageListCount: document.getElementById("shortage-list-count"),
+  shortageBulkCompleteBtn: document.getElementById("shortage-bulk-complete-btn"),
   shortageListBody: document.getElementById("shortage-list-body"),
   shortageDetail: document.getElementById("shortage-detail"),
   shortageFilterBar: document.getElementById("shortage-filter-bar"),
@@ -2671,18 +2674,25 @@ function renderShortageRow({ invoice, item, state: itemState, completed, cancell
   const drawerNo = drawerMemoForShortageRow({ invoice, item, state: itemState });
   const drawerOrderLabel = `${drawerNo || "미입력"}-${orderNo}`;
   const receiving = receivingLabelEntryForItem(item);
-  return `<button class="workflow-row shortage-workflow-row ${key === state.selectedShortageKey ? "selected" : ""} ${completed ? "is-completed" : ""} ${cancelled ? "is-cancelled" : ""} ${receiving ? "has-receiving" : ""}" data-shortage-key="${escapeHtml(key)}" data-visible-sequence="${visibleSequenceNo}" type="button">
-    <span class="workflow-row-sequence" aria-label="현재 정렬 순번">${visibleSequenceNo || "-"}</span>
-    <span class="workflow-row-code">${escapeHtml(item.ownCode || "-")}</span>
-    <span class="workflow-row-main">
-      <strong>${escapeHtml(cleanOptionName(item.optionName, item.ownCode) || item.productName || "-")}</strong>
-      <span class="workflow-row-order" title="서랍번호-상품순서">${escapeHtml(drawerOrderLabel)}</span>
-      <small>${escapeHtml(invoice.displayName || invoice.csDisplayName || "-")} · ${escapeHtml(delayLabel)}</small>
-      ${receiptDate ? `<small class="workflow-row-receipt">접수 ${escapeHtml(receiptDate)}</small>` : ""}
-      ${receiving ? `<small class="receiving-row-note">입고 ${escapeHtml(receiving.qty || "-")}개</small>` : ""}
-    </span>
-    <span class="workflow-row-badge ${cancelled ? "cancelled" : completed ? "done" : "danger"}">${cancelled ? "취소" : completed ? "기존완료" : `미송 ${Number(itemState?.shortageQty || 0) || 1}`}</span>
-  </button>`;
+  const bulkChecked = state.shortageBulkSelectedKeys.has(key);
+  const bulkDisabled = completed || cancelled || state.shortageBulkSaving || !allowWorkflowEvents;
+  return `<div class="shortage-row-shell">
+    <label class="shortage-row-select" title="미송피킹 일괄완료 대상 선택">
+      <input type="checkbox" data-shortage-select="${escapeHtml(key)}" aria-label="${escapeHtml(item.ownCode || "미송 상품")} 선택" ${bulkChecked ? "checked" : ""} ${bulkDisabled ? "disabled" : ""}>
+    </label>
+    <button class="workflow-row shortage-workflow-row ${key === state.selectedShortageKey ? "selected" : ""} ${completed ? "is-completed" : ""} ${cancelled ? "is-cancelled" : ""} ${receiving ? "has-receiving" : ""}" data-shortage-key="${escapeHtml(key)}" data-visible-sequence="${visibleSequenceNo}" type="button">
+      <span class="workflow-row-sequence" aria-label="현재 정렬 순번">${visibleSequenceNo || "-"}</span>
+      <span class="workflow-row-code">${escapeHtml(item.ownCode || "-")}</span>
+      <span class="workflow-row-main">
+        <strong>${escapeHtml(cleanOptionName(item.optionName, item.ownCode) || item.productName || "-")}</strong>
+        <span class="workflow-row-order" title="서랍번호-상품순서">${escapeHtml(drawerOrderLabel)}</span>
+        <small>${escapeHtml(invoice.displayName || invoice.csDisplayName || "-")} · ${escapeHtml(delayLabel)}</small>
+        ${receiptDate ? `<small class="workflow-row-receipt">접수 ${escapeHtml(receiptDate)}</small>` : ""}
+        ${receiving ? `<small class="receiving-row-note">입고 ${escapeHtml(receiving.qty || "-")}개</small>` : ""}
+      </span>
+      <span class="workflow-row-badge ${cancelled ? "cancelled" : completed ? "done" : "danger"}">${cancelled ? "취소" : completed ? "기존완료" : `미송 ${Number(itemState?.shortageQty || 0) || 1}`}</span>
+    </button>
+  </div>`;
 }
 
 function renderShortageRows(rows) {
@@ -2728,6 +2738,14 @@ function renderShortageInvoiceItems(invoice) {
 
 function renderShortagePanels() {
   const rows = shortageRowsForCurrentFilter();
+  const visibleOpenKeys = new Set(
+    rows
+      .filter((row) => !row.completed && !row.cancelled)
+      .map(({ invoice, item }) => workflowItemKey(invoice, item)),
+  );
+  for (const key of state.shortageBulkSelectedKeys) {
+    if (!visibleOpenKeys.has(key)) state.shortageBulkSelectedKeys.delete(key);
+  }
   const openCount = state.workflowQueues?.shortageItems?.length || 0;
   const openRows = state.workflowQueues?.shortageItems || [];
   const completedCount = repickedShortageRows().length;
@@ -2747,6 +2765,13 @@ function renderShortagePanels() {
         : state.shortageFilter === "code"
           ? `자사코드 ${codeGroupCount}개 · 상품 ${rows.length}개`
           : `${shortageFilterLabel()} ${rows.length}개`;
+  }
+  if (els.shortageBulkCompleteBtn) {
+    const selectedCount = state.shortageBulkSelectedKeys.size;
+    els.shortageBulkCompleteBtn.textContent = selectedCount
+      ? `미송피킹 일괄완료 (${selectedCount})`
+      : "미송피킹 일괄완료";
+    els.shortageBulkCompleteBtn.disabled = !allowWorkflowEvents || state.shortageBulkSaving || selectedCount === 0;
   }
 
   if (state.workflowQueueError) {
@@ -5190,7 +5215,7 @@ function applyWorkflowInvoiceEvent(row) {
   rebuildWorkflowQueuesFromLocalEvents();
 }
 
-async function saveWorkflowItemEvent(invoice, item, eventType, overrides = {}) {
+async function saveWorkflowItemEvent(invoice, item, eventType, overrides = {}, { render = true } = {}) {
   if (!allowWorkflowEvents) {
     toast("이벤트 저장이 비활성화되어 있습니다. URL에 write=1&events=1을 붙여야 저장할 수 있습니다.");
     return false;
@@ -5213,7 +5238,7 @@ async function saveWorkflowItemEvent(invoice, item, eventType, overrides = {}) {
     state.workflowEventsReady = true;
     const savedEvent = data || { ...eventRow, event_at: new Date().toISOString() };
     applyWorkflowItemEvent(savedEvent);
-    renderWorkflowSurfacesIfVisible();
+    if (render) renderWorkflowSurfacesIfVisible();
     return savedEvent;
   } finally {
     state.workflowSaving.delete(savingKey);
@@ -6997,21 +7022,14 @@ async function reorderInvoicesByCurrentView() {
   return reorderInvoiceSortOrder();
 }
 
-async function completeSelectedShortagePicking(shortageKey = state.selectedShortageKey) {
-  const row = (state.workflowQueues?.shortageItems || []).find(({ invoice, item }) => workflowItemKey(invoice, item) === shortageKey);
-  if (!row) {
-    toast("미송피킹 대상을 찾지 못했습니다.");
-    return;
-  }
-
+async function completeShortagePickingRow(row, { render = true } = {}) {
   const itemState = workflowItemState(row.invoice, row.item) || row.state;
   if (itemState?.shortageRepicked || itemState?.inspected || itemState?.cancelled) {
-    toast("이미 미송피킹 완료 상태입니다.");
-    return;
+    return false;
   }
 
   const operationKey = `shortage-complete::${workflowItemKey(row.invoice, row.item)}`;
-  if (state.saving.has(operationKey)) return;
+  if (state.saving.has(operationKey)) return false;
   state.saving.add(operationKey);
 
   const previousMemo2 = itemManagementMemo2(row.item);
@@ -7020,14 +7038,20 @@ async function completeSelectedShortagePicking(shortageKey = state.selectedShort
     await updateOrderItemMemoFields(row.invoice.orderGroupNo, row.item.sellpiaItemNo, { o_shop_memo2: "" });
     memo2Cleared = true;
 
-    const ok = await saveWorkflowItemEvent(row.invoice, row.item, "shortage_repick_completed", {
-      quantity: 0,
-      memo: "shortage repicked",
-      drawerMemo: row.state?.drawerMemo || row.item.pickingState?.drawerMemo || row.invoice.sellpiaMemo1 || null,
-    });
+    const ok = await saveWorkflowItemEvent(
+      row.invoice,
+      row.item,
+      "shortage_repick_completed",
+      {
+        quantity: 0,
+        memo: "shortage repicked",
+        drawerMemo: row.state?.drawerMemo || row.item.pickingState?.drawerMemo || row.invoice.sellpiaMemo1 || null,
+      },
+      { render },
+    );
     if (!ok) {
       await updateOrderItemMemoFields(row.invoice.orderGroupNo, row.item.sellpiaItemNo, { o_shop_memo2: previousMemo2 });
-      return;
+      return false;
     }
 
     patchLocalItemManagementMemos(row.invoice.orderGroupNo, row.item.sellpiaItemNo, { memo2: "" });
@@ -7044,10 +7068,85 @@ async function completeSelectedShortagePicking(shortageKey = state.selectedShort
     state.saving.delete(operationKey);
   }
 
+  return true;
+}
+
+async function completeSelectedShortagePicking(shortageKey = state.selectedShortageKey) {
+  const row = (state.workflowQueues?.shortageItems || []).find(({ invoice, item }) => workflowItemKey(invoice, item) === shortageKey);
+  if (!row) {
+    toast("미송피킹 대상을 찾지 못했습니다.");
+    return false;
+  }
+
+  const completed = await completeShortagePickingRow(row);
+  if (!completed) {
+    toast("이미 완료됐거나 저장하지 못한 미송피킹입니다.");
+    return false;
+  }
+
   state.selectedInspectionGroup = row.invoice.orderGroupNo;
   state.selectedShortageKey = "";
   renderWorkflowSurfaces();
   toast("미송피킹 완료: 관리메모2를 비우고 검품탭에 송장 전체가 표시됩니다.");
+  return true;
+}
+
+async function completeCheckedShortagePickings() {
+  if (state.shortageBulkSaving) return;
+  const selectedKeys = new Set(state.shortageBulkSelectedKeys);
+  const targets = (state.workflowQueues?.shortageItems || []).filter(({ invoice, item }) =>
+    selectedKeys.has(workflowItemKey(invoice, item)),
+  );
+  if (!targets.length) {
+    state.shortageBulkSelectedKeys.clear();
+    renderShortagePanels();
+    toast("미송피킹 완료 대상을 체크해 주세요.");
+    return;
+  }
+
+  const confirmed = window.confirm(`미송피킹 체크 내역 ${targets.length}건을 일괄 완료처리 하시겠습니까?`);
+  if (!confirmed) return;
+
+  state.shortageBulkSaving = true;
+  renderShortagePanels();
+  let successCount = 0;
+  const failedKeys = [];
+  let firstCompletedInvoice = null;
+  try {
+    for (const row of targets) {
+      const key = workflowItemKey(row.invoice, row.item);
+      try {
+        const completed = await completeShortagePickingRow(row, { render: false });
+        if (!completed) {
+          failedKeys.push(key);
+          continue;
+        }
+        if (!firstCompletedInvoice) firstCompletedInvoice = row.invoice;
+        state.shortageBulkSelectedKeys.delete(key);
+        successCount += 1;
+      } catch (error) {
+        console.warn("bulk shortage repick failed", key, error);
+        failedKeys.push(key);
+      }
+    }
+  } finally {
+    state.shortageBulkSaving = false;
+  }
+
+  if (firstCompletedInvoice) state.selectedInspectionGroup = firstCompletedInvoice.orderGroupNo;
+  if (
+    successCount &&
+    selectedKeys.has(state.selectedShortageKey) &&
+    !state.shortageBulkSelectedKeys.has(state.selectedShortageKey)
+  ) {
+    state.selectedShortageKey = "";
+  }
+  renderWorkflowSurfaces();
+  if (!failedKeys.length) {
+    toast(`미송피킹 일괄완료: ${successCount}건`);
+    return;
+  }
+  toast(`미송피킹 일괄완료: 성공 ${successCount}건 · 실패 ${failedKeys.length}건 (실패 항목은 체크 유지)`);
 }
 
 function findWorkflowInvoiceItem(orderGroupNo, sellpiaItemNo) {
@@ -8479,10 +8578,22 @@ function bindEvents() {
     renderSideShortcuts();
   });
   els.shortageListBody?.addEventListener("click", (event) => {
+    if (event.target.closest("[data-shortage-select]")) return;
     const button = event.target.closest("[data-shortage-key]");
     if (!button) return;
     state.selectedShortageKey = button.dataset.shortageKey;
     renderShortagePanels();
+  });
+  els.shortageListBody?.addEventListener("change", (event) => {
+    const checkbox = event.target.closest("[data-shortage-select]");
+    if (!checkbox) return;
+    const key = checkbox.dataset.shortageSelect;
+    if (checkbox.checked) state.shortageBulkSelectedKeys.add(key);
+    else state.shortageBulkSelectedKeys.delete(key);
+    renderShortagePanels();
+  });
+  els.shortageBulkCompleteBtn?.addEventListener("click", () => {
+    completeCheckedShortagePickings().catch(showError);
   });
   els.shortageDetail?.addEventListener("click", (event) => {
     const button = event.target.closest("[data-action]");
