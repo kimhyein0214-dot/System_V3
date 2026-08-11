@@ -191,9 +191,18 @@
       return normal(row.sellpia_order_item_no || row.c_order_item_no || row.c_ord_item_no || row.c_item_no || row.item_no);
     }
 
+    function sourceOrderNoFromItemNo(itemNo) {
+      const match = normal(itemNo).match(/^(\d{8,}-\d+)_\[\d+\]$/);
+      return match ? normal(match[1]) : '';
+    }
+
+    function rowSourceOrdNo(row) {
+      return sourceOrderNoFromItemNo(rowItemNoStrict(row) || normal(row?.c_prv_item_no)) || rowOrdNo(row);
+    }
+
     function rowsForTask(task) {
       return gridItems().filter(({ item }) => {
-        const ord = rowOrdNo(item);
+        const ord = rowSourceOrdNo(item);
         const inv = rowInvNo(item);
         // 주문번호가 확인된 작업은 반드시 그 주문의 상품행만 처리한다.
         // 같은 송장을 공유하는 합배송 주문까지 OR 조건으로 섞으면 각 주문 작업이
@@ -1566,14 +1575,14 @@
         const singleLoadMeta = await ensureAllGridRowsLoaded();
         const target = targetToken(invFilter);
         const allSingleRows = gridItems();
-        const exactOrderRows = allSingleRows.filter(({ item }) => rowOrdNo(item) === target);
+        const exactOrderRows = allSingleRows.filter(({ item }) => rowSourceOrdNo(item) === target);
         const matchedGridRows = exactOrderRows.length
           ? exactOrderRows
           : allSingleRows.filter(({ item }) => rowInvNo(item) === target);
         const hit = matchedGridRows[0];
         if (hit) {
           const gridTargets = matchedGridRows.map(({ item }) => ({
-            ordNo: rowOrdNo(item),
+            ordNo: rowSourceOrdNo(item),
             invNo: rowInvNo(item) || target
           })).filter(row => row.ordNo);
           lastBuildMeta = {
@@ -1583,7 +1592,7 @@
             gridRowsAfterAll: singleLoadMeta.after,
             clickedAllRows: singleLoadMeta.clickedAll,
             uniqueOrdNos: new Set(gridTargets.map(row => row.ordNo)).size,
-            missingOrdRows: matchedGridRows.filter(({ item }) => !rowOrdNo(item)).length,
+            missingOrdRows: matchedGridRows.filter(({ item }) => !rowSourceOrdNo(item)).length,
             multiInvOrdNos: [],
             dbMissingOrdNos: []
           };
@@ -1632,7 +1641,7 @@
           lastBuildMeta.pickingDrawerRows = (pickingRows || []).filter(row => normal(row.drawer_no) && normal(row.drawer_no) !== 'EMPTY').length;
           return [buildTask(invNoFromDb, ordNoFromDb, shortageRows, pickingRows, orderRows || [], orderItemRows || [], workflowDoneMap.get(ordNoFromDb), workflowItemDoneMap.get(ordNoFromDb))];
         }
-        const ordNo = rowOrdNo(hit.item);
+        const ordNo = rowSourceOrdNo(hit.item);
         const invNo = rowInvNo(hit.item) || target;
         lastBuildMeta = { mode: 'single', gridRows: gridItems().length, gridRowsBeforeAll: singleLoadMeta.before, gridRowsAfterAll: singleLoadMeta.after, clickedAllRows: singleLoadMeta.clickedAll, uniqueOrdNos: ordNo ? 1 : 0, missingOrdRows: ordNo ? 0 : 1, multiInvOrdNos: [], dbMissingOrdNos: [] };
         const [shortageRows, pickingRows, orderRows, orderItemRows, workflowRows, workflowItemRows] = await Promise.all([
@@ -1660,7 +1669,7 @@
       const invsByOrd = new Map();
       let missingOrdRows = 0;
       for (const { item } of gridRows) {
-        const ordNo = rowOrdNo(item);
+        const ordNo = rowSourceOrdNo(item);
         const invNo = rowInvNo(item);
         if (!ordNo) {
           missingOrdRows++;
@@ -1977,9 +1986,17 @@
       return { status: 'UPDATED', patch };
     }
 
+    function testLogSummary(rowResult) {
+      if (rowResult?.liveWriteAllowed === 'Y') return rowResult.actionSummary || '변경 없음';
+      const decision = rowResult?.liveWriteAllowed === 'REVIEW' ? '검토 필요' : '차단';
+      return decision
+        + ': live_write_allowed=' + (rowResult?.liveWriteAllowed || 'N')
+        + (rowResult?.currentStateWarning ? ' / ' + rowResult.currentStateWarning : '');
+    }
+
     async function setPopupValues(root, rowResult, testMode) {
       if (testMode) {
-        return { ...rowResult, dbSync: rowResult.dbSync || (rowResult.managementOrderItemNo ? 'NO_CHANGE' : 'SKIP_NO_ITEM_MATCH'), log: 'TEST: ' + rowResult.invNo + ' / ' + rowResult.actionSummary };
+        return { ...rowResult, dbSync: rowResult.dbSync || (rowResult.managementOrderItemNo ? 'NO_CHANGE' : 'SKIP_NO_ITEM_MATCH'), log: 'TEST: ' + rowResult.invNo + ' / ' + testLogSummary(rowResult) };
       }
       if (rowResult.liveWriteAllowed !== 'Y') {
         return {
@@ -2434,7 +2451,7 @@
               };
             }
           }
-          if (!pendingResult) pendingResult = { ...rowResult, ...testGuard, log: 'TEST: ' + rowResult.invNo + ' / ' + rowResult.actionSummary };
+          if (!pendingResult) pendingResult = { ...rowResult, ...testGuard, log: 'TEST: ' + rowResult.invNo + ' / ' + testLogSummary(rowResult) };
         } else {
           if (!actionParts.length) {
             pendingResult = { ...rowResult, log: 'LIVE SKIP: ' + rowResult.invNo + ' / 변경 없음' };
