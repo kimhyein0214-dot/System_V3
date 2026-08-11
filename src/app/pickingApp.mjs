@@ -7217,26 +7217,56 @@ async function reopenShortageRepick(orderGroupNo, sellpiaItemNo) {
   const { invoice, item } = findWorkflowInvoiceItem(orderGroupNo, sellpiaItemNo);
   if (!invoice || !item) {
     toast("미송피킹 완료취소 대상을 찾지 못했습니다.");
-    return;
+    return false;
   }
   const itemState = workflowItemState(invoice, item);
   if (!itemState?.shortageRepicked || itemState?.cancelled) {
     toast("이미 미송피킹 대기 상태입니다.");
-    return;
+    return false;
   }
 
-  const ok = await saveWorkflowItemEvent(invoice, item, "shortage_created", {
-    quantity: previousShortageQuantity(invoice, item),
-    memo: itemState?.memo || "shortage repick reopened",
-    drawerMemo: itemState?.drawerMemo || item.pickingState?.drawerMemo || invoice.sellpiaMemo1 || null,
-  });
-  if (!ok) return;
+  const operationKey = `shortage-reopen::${workflowItemKey(invoice, item)}`;
+  if (state.saving.has(operationKey)) return false;
+  state.saving.add(operationKey);
+
+  const previousMemo2 = itemManagementMemo2(item);
+  const restoredQuantity = previousShortageQuantity(invoice, item);
+  const restoredMemo2 = String(restoredQuantity);
+  let memo2Restored = false;
+  try {
+    await updateOrderItemMemoFields(orderGroupNo, sellpiaItemNo, { o_shop_memo2: restoredMemo2 });
+    memo2Restored = true;
+
+    const ok = await saveWorkflowItemEvent(invoice, item, "shortage_created", {
+      quantity: restoredQuantity,
+      memo: restoredMemo2,
+      drawerMemo: itemState?.drawerMemo || item.pickingState?.drawerMemo || invoice.sellpiaMemo1 || null,
+    });
+    if (!ok) {
+      await updateOrderItemMemoFields(orderGroupNo, sellpiaItemNo, { o_shop_memo2: previousMemo2 });
+      return false;
+    }
+
+    patchLocalItemManagementMemos(orderGroupNo, sellpiaItemNo, { memo2: restoredMemo2 });
+  } catch (error) {
+    if (memo2Restored) {
+      try {
+        await updateOrderItemMemoFields(orderGroupNo, sellpiaItemNo, { o_shop_memo2: previousMemo2 });
+      } catch (rollbackError) {
+        console.warn("shortage reopen memo2 rollback failed", rollbackError);
+      }
+    }
+    throw error;
+  } finally {
+    state.saving.delete(operationKey);
+  }
 
   state.activeTab = "shortage";
   state.selectedShortageKey = workflowItemKey(invoice, item);
   state.selectedInspectionGroup = "";
   renderWorkflowSurfaces();
-  toast("미송피킹 완료를 취소했습니다. 미송피킹 목록으로 돌아갑니다.");
+  toast(`미송피킹 완료를 취소했습니다. 관리메모2를 ${restoredMemo2}(으)로 복원했습니다.`);
+  return true;
 }
 
 async function saveSelectedShortageMemo(shortageKey = state.selectedShortageKey) {
