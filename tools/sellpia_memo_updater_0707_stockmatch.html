@@ -195,7 +195,11 @@
       return gridItems().filter(({ item }) => {
         const ord = rowOrdNo(item);
         const inv = rowInvNo(item);
-        return (task.ordNo && ord === task.ordNo) || (task.invNo && inv === task.invNo);
+        // 주문번호가 확인된 작업은 반드시 그 주문의 상품행만 처리한다.
+        // 같은 송장을 공유하는 합배송 주문까지 OR 조건으로 섞으면 각 주문 작업이
+        // 송장 전체 행을 반복 처리하여 2배 실행 및 item_key_match_failed가 발생한다.
+        if (task.ordNo) return ord === task.ordNo;
+        return !!(task.invNo && inv === task.invNo);
       });
     }
 
@@ -1501,15 +1505,92 @@
         return map;
       };
 
+      const buildTasksForOrderTargets = async targetRows => {
+        const targetMap = new Map();
+        for (const row of targetRows || []) {
+          const ordNo = normal(row.ordNo || row.ord_no);
+          if (!ordNo || targetMap.has(ordNo)) continue;
+          targetMap.set(ordNo, normal(row.invNo || row.inv_no));
+        }
+        const ordNos = [...targetMap.keys()];
+        if (!ordNos.length) return [];
+
+        const [shortageRows, pickingRows, orderRows, orderItemRows, workflowRows, workflowItemRows] = await Promise.all([
+          dbRequestIn('shortage', 'ord_no', ordNos, 'inv_no,ord_no,item_no,p_code,sellpia_p_code,status,memo2_val,drawer_no,updated_at'),
+          dbRequestIn('picking', 'ord_no', ordNos, 'inv_no,ord_no,item_no,p_code,sellpia_p_code,hold,drawer_no'),
+          dbRequestIn('orders', 'ord_no', ordNos, 'ord_no,inv_no,order_memo,o_memo,sellpia_outbound_scheduled_date,scraped_at,sellpia_shipping_hold_status,sellpia_shipping_hold_raw,sellpia_shipping_hold_scraped_at,system_shipping_hold_status,system_shipping_hold_source,system_shipping_hold_updated_at'),
+          dbRequestIn('order_items', 'ord_no', ordNos, 'ord_no,item_no,sellpia_order_item_no,p_code,o_shop_memo,o_shop_memo2,order_memo,sellpia_outbound_confirmed_date'),
+          safeDbRequestIn('workflow_invoice_events', 'order_group_no', ordNos, 'order_group_no,event_type,event_at,created_at,id,memo,source'),
+          safeDbRequestIn('workflow_item_events', 'order_group_no', ordNos, 'order_group_no,event_type,event_at,created_at,id,sellpia_item_no,sellpia_product_code')
+        ]);
+        const shortageMap = byOrd(shortageRows);
+        const pickingMap = byOrd(pickingRows);
+        const orderRowsMap = byOrd(orderRows);
+        const orderItemMap = byOrd(orderItemRows);
+        const orderMap = new Map((orderRows || []).map(row => [normal(row.ord_no), row]));
+        const workflowRowsAfterScrape = workflowEventsAfterOrderScrape(workflowRows, orderRows);
+        const workflowItemRowsAfterScrape = workflowEventsAfterOrderScrape(workflowItemRows, orderRows);
+        const workflowDoneMap = workflowDoneByOrdNo(workflowRowsAfterScrape);
+        const workflowItemDoneMap = workflowItemDoneByOrdNo(workflowItemRowsAfterScrape);
+        const dbMissingOrdNos = ordNos.filter(ordNo =>
+          !(shortageMap.get(ordNo) || []).length
+          && !(pickingMap.get(ordNo) || []).length
+          && !orderMap.has(ordNo)
+          && !(orderItemMap.get(ordNo) || []).length
+        );
+        lastBuildMeta = {
+          ...lastBuildMeta,
+          uniqueOrdNos: ordNos.length,
+          dbMissingOrdNos,
+          pickingMatchedOrders: [...new Set((pickingRows || []).map(row => normal(row.ord_no)).filter(Boolean))].length,
+          pickingHoldRows: (pickingRows || []).filter(row => !!row.hold).length,
+          pickingDrawerRows: (pickingRows || []).filter(row => normal(row.drawer_no) && normal(row.drawer_no) !== 'EMPTY').length,
+          optionalDbWarnings: lastBuildMeta.optionalDbWarnings || []
+        };
+        return ordNos.map(ordNo => buildTask(
+          normal(targetMap.get(ordNo) || (shortageMap.get(ordNo) || [])[0]?.inv_no || orderMap.get(ordNo)?.inv_no),
+          ordNo,
+          shortageMap.get(ordNo) || [],
+          pickingMap.get(ordNo) || [],
+          orderRowsMap.get(ordNo) || [],
+          orderItemMap.get(ordNo) || [],
+          workflowDoneMap.get(ordNo),
+          workflowItemDoneMap.get(ordNo)
+        ));
+      };
+
       if (invFilter) {
         // A single-invoice run must use the complete SlickGrid dataset too.
         // Large orders can otherwise have only a visible page of rows loaded,
         // which risks leaving later item rows without a hold update.
         const singleLoadMeta = await ensureAllGridRowsLoaded();
         const target = targetToken(invFilter);
-        const hit = gridItems().find(({ item }) => rowInvNo(item) === target || rowOrdNo(item) === target);
+        const allSingleRows = gridItems();
+        const exactOrderRows = allSingleRows.filter(({ item }) => rowOrdNo(item) === target);
+        const matchedGridRows = exactOrderRows.length
+          ? exactOrderRows
+          : allSingleRows.filter(({ item }) => rowInvNo(item) === target);
+        const hit = matchedGridRows[0];
+        if (hit) {
+          const gridTargets = matchedGridRows.map(({ item }) => ({
+            ordNo: rowOrdNo(item),
+            invNo: rowInvNo(item) || target
+          })).filter(row => row.ordNo);
+          lastBuildMeta = {
+            mode: 'single',
+            gridRows: allSingleRows.length,
+            gridRowsBeforeAll: singleLoadMeta.before,
+            gridRowsAfterAll: singleLoadMeta.after,
+            clickedAllRows: singleLoadMeta.clickedAll,
+            uniqueOrdNos: new Set(gridTargets.map(row => row.ordNo)).size,
+            missingOrdRows: matchedGridRows.filter(({ item }) => !rowOrdNo(item)).length,
+            multiInvOrdNos: [],
+            dbMissingOrdNos: []
+          };
+          return await buildTasksForOrderTargets(gridTargets);
+        }
         if (!hit) {
-          lastBuildMeta = { mode: 'single', gridRows: gridItems().length, gridRowsBeforeAll: singleLoadMeta.before, gridRowsAfterAll: singleLoadMeta.after, gridAllClicked: singleLoadMeta.clicked ? 'Y' : 'N', uniqueOrdNos: 0, missingOrdRows: 0, multiInvOrdNos: [], dbMissingOrdNos: [] };
+          lastBuildMeta = { mode: 'single', gridRows: gridItems().length, gridRowsBeforeAll: singleLoadMeta.before, gridRowsAfterAll: singleLoadMeta.after, clickedAllRows: singleLoadMeta.clickedAll, uniqueOrdNos: 0, missingOrdRows: 0, multiInvOrdNos: [], dbMissingOrdNos: [] };
           const [shortageByInv, pickingByInv, orderByInv, shortageByOrd, pickingByOrd, orderByOrd] = await Promise.all([
             safeDbRequestIn('shortage', 'inv_no', [target], 'inv_no,ord_no,item_no,p_code,sellpia_p_code,status,memo2_val,drawer_no,updated_at'),
             safeDbRequestIn('picking', 'inv_no', [target], 'inv_no,ord_no,item_no,p_code,sellpia_p_code,hold,drawer_no'),
@@ -1519,6 +1600,14 @@
             safeDbRequestIn('orders', 'ord_no', [target], 'ord_no,inv_no,order_memo,o_memo,sellpia_outbound_scheduled_date,scraped_at,sellpia_shipping_hold_status,sellpia_shipping_hold_raw,sellpia_shipping_hold_scraped_at,system_shipping_hold_status,system_shipping_hold_source,system_shipping_hold_updated_at')
           ]);
           const dbSeed = [...(shortageByInv || []), ...(pickingByInv || []), ...(orderByInv || []), ...(shortageByOrd || []), ...(pickingByOrd || []), ...(orderByOrd || [])];
+          const dbTargets = dbSeed.map(row => ({
+            ordNo: normal(row.ord_no),
+            invNo: normal(row.inv_no) || target
+          })).filter(row => row.ordNo);
+          if (dbTargets.length) {
+            lastBuildMeta.uniqueOrdNos = new Set(dbTargets.map(row => row.ordNo)).size;
+            return await buildTasksForOrderTargets(dbTargets);
+          }
           const ordNoFromDb = normal((dbSeed.find(row => normal(row.ord_no)) || {}).ord_no);
           if (!ordNoFromDb) {
             return [{ invNo: target, ordNo: '', skip: true, reason: '셀피아 그리드에서 송장/주문번호 매칭 실패', memo2Map: new Map() }];
@@ -1545,7 +1634,7 @@
         }
         const ordNo = rowOrdNo(hit.item);
         const invNo = rowInvNo(hit.item) || target;
-        lastBuildMeta = { mode: 'single', gridRows: gridItems().length, gridRowsBeforeAll: singleLoadMeta.before, gridRowsAfterAll: singleLoadMeta.after, gridAllClicked: singleLoadMeta.clicked ? 'Y' : 'N', uniqueOrdNos: ordNo ? 1 : 0, missingOrdRows: ordNo ? 0 : 1, multiInvOrdNos: [], dbMissingOrdNos: [] };
+        lastBuildMeta = { mode: 'single', gridRows: gridItems().length, gridRowsBeforeAll: singleLoadMeta.before, gridRowsAfterAll: singleLoadMeta.after, clickedAllRows: singleLoadMeta.clickedAll, uniqueOrdNos: ordNo ? 1 : 0, missingOrdRows: ordNo ? 0 : 1, multiInvOrdNos: [], dbMissingOrdNos: [] };
         const [shortageRows, pickingRows, orderRows, orderItemRows, workflowRows, workflowItemRows] = await Promise.all([
           dbRequestIn('shortage', 'ord_no', [ordNo], 'inv_no,ord_no,item_no,p_code,sellpia_p_code,status,memo2_val,drawer_no,updated_at'),
           dbRequestIn('picking', 'ord_no', [ordNo], 'inv_no,ord_no,item_no,p_code,sellpia_p_code,hold,drawer_no'),
