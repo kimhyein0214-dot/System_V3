@@ -140,7 +140,7 @@
               <p>입고/미송 대상 상품을 피킹하는 화면 뼈대입니다.</p>
             </div>
             <div id="shortage-filter-bar" class="panel-tools">
-              <button class="filter-chip active" data-shortage-filter="all" type="button">전체</button>
+              <button class="filter-chip active" data-shortage-filter="all" type="button">전체(지연일순)</button>
               <button class="filter-chip" data-shortage-filter="code" type="button">자사코드별</button>
               <button class="filter-chip" data-shortage-filter="drawer" type="button">서랍입력</button>
               <button class="filter-chip" data-shortage-filter="completed" type="button">피킹완료</button>
@@ -328,7 +328,7 @@
     <div id="toast" class="toast" hidden></div>
 
     <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
-    <script type="module" src="src/app/pickingApp.mjs?v=20260810-shortage-route-order1"></script>
+    <script type="module" src="src/app/pickingApp.mjs?v=20260811-shortage-gpa-sort1"></script>
     <script>
       if ("serviceWorker" in navigator) {
         window.addEventListener("load", () => {

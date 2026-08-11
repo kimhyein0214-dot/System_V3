@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { createCsCaseAdapter, csCaseNaturalKey, openShortageItemKeys } from "../src/adapters/csCaseAdapter.mjs";
-import { isGoldOwnCode } from "../src/domain/gold.mjs";
+import { isBareGpaOwnCode, isGoldOwnCode } from "../src/domain/gold.mjs";
 
 function resolveExactItem(items, { ordNo, itemNo, sellpiaOrderItemNo }) {
   if (itemNo) return items.filter((item) => item.ord_no === ordNo && item.item_no === itemNo);
@@ -45,6 +45,9 @@ assert.equal(isGoldOwnCode("GPA-12"), true);
 assert.equal(isGoldOwnCode("x-gpb-03"), true);
 assert.equal(isGoldOwnCode("14K 상품명만 있음"), false);
 assert.equal(isGoldOwnCode("CA-01"), false);
+assert.equal(isBareGpaOwnCode("[GPA]"), true);
+assert.equal(isBareGpaOwnCode(" [gpa] "), true);
+assert.equal(isBareGpaOwnCode("[GPA-01]"), false);
 
 // CS automatic candidates use the full current shortage baseline, not only
 // invoices loaded into the currently selected work-date tab.

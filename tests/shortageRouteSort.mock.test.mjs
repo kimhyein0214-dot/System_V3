@@ -3,6 +3,9 @@ import fs from "node:fs";
 import { comparePickingRowsByRoute } from "../src/domain/pickingRowSort.mjs";
 
 const source = fs.readFileSync(new URL("../src/app/pickingApp.mjs", import.meta.url), "utf8");
+const shortageComparatorStart = source.indexOf("function compareShortageRowsByPickingRoute");
+const shortageComparatorEnd = source.indexOf("function sortPickingRows", shortageComparatorStart);
+const shortageComparatorSource = source.slice(shortageComparatorStart, shortageComparatorEnd);
 const routeOrderMatch = source.match(/const EXPORT_ROUTE_ORDER = \[([\s\S]*?)\];/);
 assert.ok(routeOrderMatch, "the picking route order must remain available");
 const routeOrder = [...routeOrderMatch[1].matchAll(/"([A-Z]+)"/g)].map((match) => match[1]);
@@ -35,9 +38,28 @@ assert.deepEqual(
   ["[CA-10-01]", "[P] T-02-01 ]", "[P] T-14-02 ]", "[P] S-01-01 ]", "[P] A-01-01 ]", "[EA-01-01]", "[BA-01-01]"],
 );
 assert.match(
-  source,
-  /function compareShortageRowsByPickingRoute[\s\S]*?comparePickingRowsByRoute\(a, b,[\s\S]*?compareRouteCode: compareShortageRouteCode/,
-  "shortage code sorting must reuse the picking route comparator",
+  shortageComparatorSource,
+  /function compareShortageRowsByPickingRoute\(a, b\) \{[\s\S]*?const routeCompare = compareShortageRouteCode\(aCode, bCode\);[\s\S]*?if \(routeCompare\) return routeCompare;[\s\S]*?return compareShortageRowsByReceiptDate\(a, b\);/,
+  "shortage code sorting must use the picking route first and oldest receipt date within the same own code",
+);
+
+const compareShortageRowsByPickingRoute = Function(
+  "compareShortageRouteCode",
+  "compareShortageRowsByReceiptDate",
+  `"use strict"; ${shortageComparatorSource}; return compareShortageRowsByPickingRoute;`,
+)(
+  (a, b) => ["[CA-10-01]", "[EA-01-01]"].indexOf(a) - ["[CA-10-01]", "[EA-01-01]"].indexOf(b),
+  (a, b) => String(a.invoice.receiptDate).localeCompare(String(b.invoice.receiptDate)),
+);
+const sameCodeRows = [
+  { invoice: { receiptDate: "2026-08-10" }, item: { ownCode: "[CA-10-01]" } },
+  { invoice: { receiptDate: "2026-08-07" }, item: { ownCode: "[CA-10-01]" } },
+  { invoice: { receiptDate: "2026-08-06" }, item: { ownCode: "[EA-01-01]" } },
+];
+assert.deepEqual(
+  sameCodeRows.sort(compareShortageRowsByPickingRoute).map((row) => `${row.item.ownCode}:${row.invoice.receiptDate}`),
+  ["[CA-10-01]:2026-08-07", "[CA-10-01]:2026-08-10", "[EA-01-01]:2026-08-06"],
+  "route order stays primary while the oldest receipt date wins within one own code",
 );
 assert.match(
   source,
@@ -45,4 +67,4 @@ assert.match(
   "the own-code shortage view must use the shared picking route flow",
 );
 
-console.log("Shortage own-code groups follow the picking invoice route order: passed");
+console.log("Shortage own-code groups follow the picking route and oldest-delay order: passed");

@@ -2,7 +2,7 @@ import { annotateShippingHoldState, loadWorkflowQueues } from "../adapters/workf
 import { buildPickingViewModel } from "../workflows/picking/buildPickingViewModel.mjs?v=20260706-memo2-text1";
 import { createCsCaseAdapter, openShortageItemKeys } from "../adapters/csCaseAdapter.mjs?v=20260728-cs-cases3";
 import { createAlimtalkSendAdapter } from "../adapters/alimtalkSendAdapter.mjs?v=20260728-alimtalk-history2";
-import { isGoldOwnCode } from "../domain/gold.mjs?v=20260728-gold-own-code1";
+import { isBareGpaOwnCode, isGoldOwnCode } from "../domain/gold.mjs?v=20260811-bare-gpa-label1";
 import { alimtalkSendLogAnchor, alimtalkSendLogCode, alimtalkSendNaturalKey, appendAlimtalkSendLog, formatAlimtalkInboundExpectedDate, hasTomorrowShippingManagementMemo, normalizeAlimtalkSendLog, resolveAlimtalkTemplate } from "../domain/alimtalk.mjs?v=20260804-send-log-anchor2";
 import { receiptBusinessDayKeys, receiptBusinessDaysSince } from "../domain/businessDays.mjs?v=20260728-receipt-business-days1";
 import { inspectionHoldCsAction } from "../domain/csHoldTransition.mjs?v=20260731-inspection-hold-cs1";
@@ -464,7 +464,9 @@ function invoiceHasGold(invoice) {
 }
 
 function itemHasLabelTarget(item) {
-  return isGoldItem(item) || isLabelTarget({ privateCode: item?.ownCode || "" });
+  const ownCode = item?.ownCode || "";
+  if (isBareGpaOwnCode(ownCode)) return false;
+  return isGoldItem(item) || isLabelTarget({ privateCode: ownCode });
 }
 
 function invoiceHasLabelTarget(invoice) {
@@ -919,11 +921,11 @@ function compareShortageRouteCode(a, b) {
 }
 
 function compareShortageRowsByPickingRoute(a, b) {
-  return comparePickingRowsByRoute(a, b, {
-    compareRouteCode: compareShortageRouteCode,
-    invoiceSequenceNo: visibleInvoiceSequenceNo,
-    compareInvoiceItems: compareInvoiceItemsBySellpiaRow,
-  });
+  const aCode = a?.item?.ownCode || a?.item?.sellpiaProductCode || "";
+  const bCode = b?.item?.ownCode || b?.item?.sellpiaProductCode || "";
+  const routeCompare = compareShortageRouteCode(aCode, bCode);
+  if (routeCompare) return routeCompare;
+  return compareShortageRowsByReceiptDate(a, b);
 }
 
 function sortPickingRows(rows) {
@@ -2095,7 +2097,7 @@ function sideShortcutConfig() {
     return {
       title: "미송 보기",
       items: [
-        ["shortage", "all", "전체"],
+        ["shortage", "all", "전체(지연일순)"],
         ["shortage", "code", "자사코드별"],
         ["shortage", "drawer", "서랍입력"],
         ["shortage", "completed", "기존완료"],
@@ -2319,7 +2321,7 @@ function renderWorkflowEmpty(target, message) {
 function shortageFilterLabel(filter = state.shortageFilter) {
   return (
     {
-      all: "전체",
+      all: "전체(지연일순)",
       code: "자사코드별",
       drawer: "서랍입력",
       completed: "기존완료",
@@ -6683,6 +6685,7 @@ function createLabelExportStats() {
     invalidQtyDefaulted: 0,
     skipped: {
       noPrivateCode: 0,
+      bareGpa: 0,
       caExcluded: 0,
       notGp: 0,
       optionFailed: 0,
@@ -6708,6 +6711,10 @@ function getLabelTargetResult(row, stats) {
   const raw = String(row?.privateCode ?? row?.prodCode ?? row?.code ?? "").trim();
   if (!raw) {
     addLabelSkip(stats, "noPrivateCode");
+    return { ok: false, code: "" };
+  }
+  if (isBareGpaOwnCode(raw)) {
+    addLabelSkip(stats, "bareGpa");
     return { ok: false, code: "" };
   }
   const normalized = normalizePrivateCode(raw);
