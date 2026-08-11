@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 
-const sql = await readFile(new URL("../supabase/migrations/20260811132803_create_shipment_groups.sql", import.meta.url), "utf8");
+const sql = await readFile(new URL("../supabase/migrations/20260811140611_create_shipment_groups.sql", import.meta.url), "utf8");
 
 for (const token of [
   "create table if not exists public.shipment_groups",
