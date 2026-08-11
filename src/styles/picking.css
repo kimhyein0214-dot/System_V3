@@ -2562,6 +2562,40 @@ input {
   font-weight: 800;
 }
 
+.cs-source-order-section {
+  margin-top: 14px;
+  padding: 12px;
+  border: 1px solid #cbd8f0;
+  border-radius: 12px;
+  background: #f8fbff;
+}
+
+.cs-source-order-section.is-cancelled {
+  border-color: #f3c5c5;
+  background: #fff8f8;
+}
+
+.cs-source-order-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 10px;
+  padding-bottom: 10px;
+  border-bottom: 1px solid #dce5f5;
+}
+
+.cs-source-order-head > div:first-child {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.cs-source-order-head small {
+  color: #667085;
+}
+
 .shipment-group-notice > p {
   margin: 0;
 }

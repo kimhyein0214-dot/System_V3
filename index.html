@@ -10,7 +10,7 @@
     <link rel="apple-touch-icon" href="assets/system-v3-icon.svg">
     <link rel="preconnect" href="https://cdnjs.cloudflare.com" crossorigin>
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/pretendard/1.3.9/static/pretendard.css">
-  <link rel="stylesheet" href="src/styles/picking.css?v=20260811-shipment-groups1">
+  <link rel="stylesheet" href="src/styles/picking.css?v=20260811-auto-combined2">
     <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
   </head>
   <body>
@@ -199,11 +199,7 @@
           <div class="workflow-layout inspection-layout">
             <aside class="workflow-list">
               <div class="workflow-list-head">
-                <div class="shipment-list-title">
-                  <strong>송장 목록</strong>
-                  <span id="shipment-selection-count">합배송 선택 0건</span>
-                </div>
-                <button id="shipment-create-btn" class="btn shipment-create-btn" type="button" disabled>선택 합배송</button>
+                <strong>송장 목록</strong>
                 <span id="inspection-list-count">대기</span>
               </div>
               <div id="inspection-list-body" class="workflow-list-body">
@@ -332,7 +328,7 @@
     <div id="toast" class="toast" hidden></div>
 
     <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
-    <script type="module" src="src/app/pickingApp.mjs?v=20260811-shipment-groups1"></script>
+    <script type="module" src="src/app/pickingApp.mjs?v=20260811-auto-combined2"></script>
     <script>
       if ("serviceWorker" in navigator) {
         window.addEventListener("load", () => {

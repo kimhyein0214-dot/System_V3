@@ -2,7 +2,6 @@ import { annotateShippingHoldState, loadWorkflowQueues } from "../adapters/workf
 import { buildPickingViewModel } from "../workflows/picking/buildPickingViewModel.mjs?v=20260706-memo2-text1";
 import { createCsCaseAdapter, openShortageItemKeys } from "../adapters/csCaseAdapter.mjs?v=20260728-cs-cases3";
 import { createAlimtalkSendAdapter } from "../adapters/alimtalkSendAdapter.mjs?v=20260728-alimtalk-history2";
-import { createShipmentGroupAdapter } from "../adapters/shipmentGroupAdapter.mjs?v=20260811-shipment-groups1";
 import { isBareGpaOwnCode, isGoldOwnCode } from "../domain/gold.mjs?v=20260811-bare-gpa-label1";
 import { alimtalkSendLogAnchor, alimtalkSendLogCode, alimtalkSendNaturalKey, appendAlimtalkSendLog, formatAlimtalkInboundExpectedDate, hasTomorrowShippingManagementMemo, normalizeAlimtalkSendLog, resolveAlimtalkTemplate } from "../domain/alimtalk.mjs?v=20260804-send-log-anchor2";
 import { receiptBusinessDayKeys, receiptBusinessDaysSince } from "../domain/businessDays.mjs?v=20260728-receipt-business-days1";
@@ -10,11 +9,9 @@ import { inspectionHoldCsAction } from "../domain/csHoldTransition.mjs?v=2026073
 import { preferredPickingRow } from "../domain/pickingPersistence.mjs?v=20260807-picking-dedupe1";
 import { comparePickingRowsByRoute } from "../domain/pickingRowSort.mjs?v=20260731-route-row1";
 import {
-  combineInvoicesWithShipmentGroups,
-  shipmentGroupKey,
-  shipmentSyncLabel,
+  combineInvoicesBySharedInvoice,
   sourceOrderGroupNo,
-} from "../domain/shipmentGroups.mjs?v=20260811-shipment-groups1";
+} from "../domain/shipmentGroups.mjs?v=20260811-auto-combined2";
 import {
   buildWorkflowState,
   completedInvoicesForInspection,
@@ -108,7 +105,6 @@ const allowWorkflowEvents = allowWrites && params.get("events") !== "0";
 const db = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
 const csCases = createCsCaseAdapter(db);
 const alimtalkSends = createAlimtalkSendAdapter(db);
-const shipmentGroups = createShipmentGroupAdapter(db);
 
 function todayDateString() {
   const date = new Date();
@@ -151,11 +147,6 @@ const state = {
   },
   selectedInspectionGroup: "",
   selectedInspectionItemKey: "",
-  shipmentGroups: [],
-  shipmentGroupsLoaded: false,
-  shipmentGroupError: "",
-  shipmentSelectedOrders: new Set(),
-  shipmentSaving: false,
   selectedCompletedGroup: "",
   completedDateMode: "receipt",
   inspectionFilter: "all",
@@ -252,8 +243,6 @@ const els = {
   inspectionListCount: document.getElementById("inspection-list-count"),
   inspectionListBody: document.getElementById("inspection-list-body"),
   inspectionDetail: document.getElementById("inspection-detail"),
-  shipmentSelectionCount: document.getElementById("shipment-selection-count"),
-  shipmentCreateBtn: document.getElementById("shipment-create-btn"),
   csDateTabs: document.getElementById("cs-date-tabs"),
   csSearchInput: document.getElementById("cs-search-input"),
   csListCount: document.getElementById("cs-list-count"),
@@ -2946,53 +2935,26 @@ function manualPendingCsCountForInspectionInvoice(invoice) {
   return caseIds.size;
 }
 
-function activeShipmentMemberOrderNos() {
-  return new Set(state.shipmentGroups.flatMap((group) => group.members.map((member) => member.orderGroupNo)));
-}
-
-function renderShipmentSelectionControls() {
-  const activeMembers = activeShipmentMemberOrderNos();
-  for (const ordNo of [...state.shipmentSelectedOrders]) {
-    if (activeMembers.has(ordNo)) state.shipmentSelectedOrders.delete(ordNo);
-  }
-  const count = state.shipmentSelectedOrders.size;
-  if (els.shipmentSelectionCount) {
-    els.shipmentSelectionCount.textContent = state.shipmentGroupError
-      ? "합배송 DB 미적용"
-      : `합배송 선택 ${count}건`;
-    els.shipmentSelectionCount.title = state.shipmentGroupError || "선택한 송장 중 현재 선택 송장이 대표가 됩니다.";
-  }
-  if (els.shipmentCreateBtn) {
-    els.shipmentCreateBtn.disabled = !allowWrites || Boolean(state.shipmentGroupError) || state.shipmentSaving || count < 2;
-    els.shipmentCreateBtn.textContent = state.shipmentSaving ? "합배송 저장 중" : "선택 합배송";
-  }
-}
-
 function shipmentGroupNotice(invoice) {
   const group = invoice?.shipmentGroup;
   if (!group) return "";
-  const syncClass = group.syncStatus === "synced" ? "is-synced" : group.syncStatus === "failed" ? "is-failed" : "is-pending";
-  const members = group.members.map((member, index) => {
-    const representative = member.orderGroupNo === group.representativeOrderGroupNo;
-    return `<div class="shipment-member ${representative ? "is-representative" : ""}">
+  const members = group.members.map((member, index) => (
+    `<div class="shipment-member">
       <span class="shipment-source-badge">주문 ${index + 1}</span>
-      <span><strong>${escapeHtml(member.invoiceNo || "송장없음")}</strong><small>${escapeHtml(member.orderGroupNo)}</small></span>
-      <button class="btn" data-shipment-representative="${escapeHtml(member.orderGroupNo)}" data-shipment-group-id="${escapeHtml(group.id)}" data-shipment-version="${group.version}" type="button" ${representative || state.shipmentSaving ? "disabled" : ""}>${representative ? "대표 송장" : "대표로 변경"}</button>
-    </div>`;
-  }).join("");
-  return `<section class="shipment-group-notice ${syncClass}">
+      <span><strong>${escapeHtml(member.displayName || member.orderGroupNo)}</strong><small>${escapeHtml(member.orderGroupNo)} · 상품 ${member.itemCount}종</small></span>
+    </div>`
+  )).join("");
+  return `<section class="shipment-group-notice is-synced">
     <div class="shipment-group-summary">
-      <div><strong>합배송 ${group.members.length}주문</strong><span>${escapeHtml(shipmentSyncLabel(group.syncStatus))}</span></div>
-      <button class="btn shipment-release-btn" data-shipment-release="${escapeHtml(group.id)}" data-shipment-version="${group.version}" type="button" ${state.shipmentSaving ? "disabled" : ""}>합배송 해제</button>
+      <div><strong>합배송 ${group.members.length}주문</strong><span>셀피아 동일 송장 자동 인식</span></div>
     </div>
     <div class="shipment-member-list">${members}</div>
-    <p>원주문·상품번호는 그대로 유지합니다. 서랍번호는 구성 주문 전체에, 관리메모2·미송 완료취소는 해당 원상품에 저장됩니다. 송장 전체 검품·보류 변경은 아직 잠겨 있습니다.</p>
+    <p>검품에서는 실제 포장 송장 1건으로 표시합니다. 원주문별 CS와 상품행 메모는 각각의 원주문에 저장됩니다.</p>
   </section>`;
 }
 
 function renderInspectionPanels(options = {}) {
   ensureInspectionFilterButtons();
-  renderShipmentSelectionControls();
   const renderList = options.list !== false;
   const allInvoices = inspectionSourceInvoices();
   const completedCount = allInvoices.filter((invoice) => workflowInvoiceState(invoice)?.inspected).length;
@@ -3074,13 +3036,9 @@ function renderInspectionPanels(options = {}) {
           .join("");
         const shipmentGroup = invoice.shipmentGroup;
         const shipmentBadges = shipmentGroup
-          ? `<span class="workflow-row-badge shipment">합배송 ${shipmentGroup.members.length}주문</span><span class="workflow-row-badge shipment-sync ${shipmentGroup.syncStatus}">${escapeHtml(shipmentSyncLabel(shipmentGroup.syncStatus))}</span>`
+          ? `<span class="workflow-row-badge shipment">합배송 ${shipmentGroup.members.length}주문</span>`
           : "";
-        const selectableOrder = !shipmentGroup;
-        const selectedForShipment = selectableOrder && state.shipmentSelectedOrders.has(invoice.orderGroupNo);
-        return `<div class="shipment-inspection-row ${shipmentGroup ? "is-grouped" : ""}">
-          ${selectableOrder ? `<label class="shipment-select-box" title="합배송할 송장 선택"><input data-shipment-select="${escapeHtml(invoice.orderGroupNo)}" type="checkbox" ${selectedForShipment ? "checked" : ""}></label>` : '<span class="shipment-select-placeholder">묶음</span>'}
-          <button class="${rowClasses}" data-inspection-group="${escapeHtml(invoice.orderGroupNo)}" type="button">
+        return `<button class="${rowClasses} ${shipmentGroup ? "is-grouped" : ""}" data-inspection-group="${escapeHtml(invoice.orderGroupNo)}" type="button">
           <span class="workflow-row-code seq-with-slot">
             <strong>${escapeHtml(invoicePrimaryWorkflowLabel(invoice, index))}</strong>
             <small>${escapeHtml(invoiceSecondaryWorkflowLabel(invoice, index))}</small>
@@ -3090,7 +3048,7 @@ function renderInspectionPanels(options = {}) {
             <small>상품 ${invoice.items.length}종 · 접수 ${escapeHtml(invoice.receiptDate || "-")}</small>
           </span>
           <span class="workflow-row-badges">${shipmentBadges}${badges}</span>
-        </button></div>`;
+        </button>`;
       })
       .join("");
   } else {
@@ -3110,8 +3068,8 @@ function renderInspectionPanels(options = {}) {
   if (state.selectedInspectionItemKey && !selectableInspectionItemKeys.includes(state.selectedInspectionItemKey)) {
     state.selectedInspectionItemKey = "";
   }
-  const actionDisabled = allowWorkflowEvents && !selectedCancelled && !selectedShipmentGroup ? "" : "disabled";
-  const partialHoldActionDisabled = allowWrites && !selectedCancelled && !selectedShipmentGroup ? "" : "disabled";
+  const actionDisabled = allowWorkflowEvents && !selectedCancelled ? "" : "disabled";
+  const partialHoldActionDisabled = allowWrites && !selectedCancelled ? "" : "disabled";
   const holdAction = holdState.action;
   const holdLabel = holdState.actionLabel;
   const selectedRepicked = (selected.items || []).filter((item) => {
@@ -4144,18 +4102,20 @@ function groupedCsRows(rows) {
   for (const row of rows) {
     const ordNo = csRowOrderNo(row);
     const invoiceNo = csRowInvoiceNo(row);
-    const key = `order:${ordNo || invoiceNo || row.key}`;
+    const key = invoiceNo ? `invoice:${invoiceNo}` : `order:${ordNo || row.key}`;
     if (!groups.has(key)) {
       groups.set(key, {
         key,
         ordNo,
         invoiceNo,
         order: row.order || null,
+        sourceOrderNos: [],
         items: [],
       });
     }
     const group = groups.get(key);
     group.items.push(row);
+    if (ordNo && !group.sourceOrderNos.includes(ordNo)) group.sourceOrderNos.push(ordNo);
     if (!group.order && row.order) group.order = row.order;
   }
   return [...groups.values()].sort((left, right) => {
@@ -4180,9 +4140,10 @@ function groupedCsRows(rows) {
 function manualCsRowsForMatchedOrders() {
   const matchedRows = filteredManualCsCandidates();
   const matchedOrderNos = new Set(matchedRows.map(csRowOrderNo).filter(Boolean));
-  if (!matchedOrderNos.size) return [];
+  const matchedInvoiceNos = new Set(matchedRows.map(csRowInvoiceNo).filter(Boolean));
+  if (!matchedOrderNos.size && !matchedInvoiceNos.size) return [];
   return state.csManualCandidates
-    .filter((row) => matchedOrderNos.has(csRowOrderNo(row)))
+    .filter((row) => matchedOrderNos.has(csRowOrderNo(row)) || matchedInvoiceNos.has(csRowInvoiceNo(row)))
     .map(manualCsCandidateRow);
 }
 
@@ -4190,7 +4151,8 @@ function caseRowsForMatchedOrders() {
   const matchedCaseRows = filteredCsCaseRows();
   if (!state.csManualCandidates.length) return matchedCaseRows;
   const matchedOrderNos = new Set(matchedCaseRows.map(csRowOrderNo).filter(Boolean));
-  if (!matchedOrderNos.size) return [];
+  const matchedInvoiceNos = new Set(matchedCaseRows.map(csRowInvoiceNo).filter(Boolean));
+  if (!matchedOrderNos.size && !matchedInvoiceNos.size) return [];
   const allCaseByItemKey = new Map();
   for (const row of allCsDisplayRows()) {
     const caseRow = row.caseRow;
@@ -4199,7 +4161,7 @@ function caseRowsForMatchedOrders() {
     allCaseByItemKey.set(itemKey, row);
   }
   const expandedRows = state.csManualCandidates
-    .filter((row) => matchedOrderNos.has(csRowOrderNo(row)))
+    .filter((row) => matchedOrderNos.has(csRowOrderNo(row)) || matchedInvoiceNos.has(csRowInvoiceNo(row)))
     .map((row) => {
       const normalized = manualCsCandidateRow(row);
       const orderNo = csRowOrderNo(normalized);
@@ -4401,11 +4363,14 @@ function renderCsCaseRow(group, selected) {
       : caseRows.length ? (pendingCount ? `진행 ${pendingCount}` : "처리됨") : "수동 등록 가능";
   const receiver = group.order?.receiver || group.order?.receiver_name || group.order?.orderer || "-";
   const badges = csCaseBadges(group);
+  const combinedBadge = group.sourceOrderNos?.length > 1
+    ? `<span class="workflow-row-badge shipment">합배송 ${group.sourceOrderNos.length}주문</span>`
+    : "";
   return `<button class="workflow-row cs-case-row ${caseRows.length ? "is-case" : "is-manual-source"} ${cancellation.invoiceCancelled ? "is-cancelled" : ""} ${selected ? "selected" : ""}" data-cs-key="${escapeHtml(group.key)}" type="button">
     <span class="cs-case-row-main">
       <strong>송장 ${escapeHtml(group.invoiceNo || "-")} · ${escapeHtml(receiver)}</strong>
       <small>상품 ${group.items.length}건${caseRows.length ? ` · ${autoShortageCount ? `미송 ${autoShortageCount}건` : `CS ${caseRows.length}건`}` : ""}</small>
-      ${badges ? `<span class="cs-case-row-meta">${badges}</span>` : ""}
+      ${badges || combinedBadge ? `<span class="cs-case-row-meta">${combinedBadge}${badges}</span>` : ""}
     </span>
     <span class="cs-case-row-side">
       <span class="workflow-row-badge ${badgeClass}">${escapeHtml(modeLabel)}</span>
@@ -4493,6 +4458,47 @@ function renderCsCaseItemEditor(row, itemNumber = 0) {
   </article>`;
 }
 
+function csGroupSourceInvoices(group) {
+  const orderNos = group?.sourceOrderNos?.length ? group.sourceOrderNos : [group?.ordNo].filter(Boolean);
+  const byOrder = new Map();
+  for (const invoice of allWorkflowInvoices()) {
+    const orderGroupNo = String(invoice?.orderGroupNo || "").trim();
+    if (orderNos.includes(orderGroupNo) && !byOrder.has(orderGroupNo)) byOrder.set(orderGroupNo, invoice);
+  }
+  return orderNos.map((orderGroupNo) => byOrder.get(orderGroupNo)).filter(Boolean);
+}
+
+function csGroupWorkflowInvoice(group) {
+  const sourceInvoices = csGroupSourceInvoices(group);
+  if (sourceInvoices.length < 2) return sourceInvoices[0] || null;
+  return combineInvoicesBySharedInvoice(sourceInvoices)[0] || sourceInvoices[0];
+}
+
+function renderCsCombinedOrderSections(group) {
+  let itemNumber = 0;
+  return (group.sourceOrderNos || []).map((orderGroupNo, orderIndex) => {
+    const rows = group.items.filter((row) => csRowOrderNo(row) === orderGroupNo);
+    const sourceInvoice = csGroupSourceInvoices(group).find((invoice) => invoice.orderGroupNo === orderGroupNo) || null;
+    const order = rows.find((row) => row.order)?.order || {};
+    const receiver = order.receiver || order.receiver_name || order.orderer || "-";
+    const cancelled = invoiceIsCancelled(sourceInvoice);
+    const holdState = sourceInvoice ? shippingHoldUiState(sourceInvoice) : null;
+    const holdDisabled = sourceInvoice && allowWorkflowEvents && !cancelled ? "" : "disabled";
+    const cards = rows.map((row) => renderCsCaseItemEditor(row, ++itemNumber)).join("");
+    return `<section class="cs-source-order-section ${cancelled ? "is-cancelled" : ""}">
+      <div class="cs-source-order-head">
+        <div><span class="shipment-source-badge">원주문 ${orderIndex + 1}</span><strong>${escapeHtml(orderGroupNo)}</strong><small>${escapeHtml(receiver)} · 상품 ${rows.length}종</small></div>
+        <div class="cs-order-action-stack">
+          <button class="btn" data-cs-hold-action="${escapeHtml(holdState?.action || "inspection-hold")}" data-cs-order-group="${escapeHtml(orderGroupNo)}" type="button" ${holdDisabled}>${escapeHtml(holdState?.actionLabel || "배송보류 처리")}</button>
+          <button class="btn ${cancelled ? "cancel-reopen" : "cancel-action"}" data-cs-cancel-action="${cancelled ? "order-reopen" : "order-cancel"}" data-cs-order-group="${escapeHtml(orderGroupNo)}" type="button" ${sourceInvoice && allowWorkflowEvents ? "" : "disabled"}>${cancelled ? "주문 취소 해제" : "주문 전체 취소"}</button>
+          ${sourceInvoice ? shippingHoldBadge(sourceInvoice) : ""}
+        </div>
+      </div>
+      <div class="cs-item-card-stack">${cards}</div>
+    </section>`;
+  }).join("");
+}
+
 function renderCsCaseDetail(group) {
   if (!group) {
     renderWorkflowEmpty(els.csDetail, state.csMode === "manual" ? "검색어를 입력해 주문을 찾으세요." : "CS 케이스를 선택하세요.");
@@ -4500,7 +4506,8 @@ function renderCsCaseDetail(group) {
   }
   const receiver = group.order?.receiver || group.order?.receiver_name || group.order?.orderer || "-";
   const caseCount = group.items.filter((row) => row.caseRow).length;
-  const invoice = allWorkflowInvoices().find((candidate) => String(candidate?.orderGroupNo || "") === String(group.ordNo || "")) || null;
+  const invoice = csGroupWorkflowInvoice(group);
+  const combinedShipment = Boolean(invoice?.shipmentGroup && group.sourceOrderNos?.length > 1);
   const invoiceCancelled = invoiceIsCancelled(invoice);
   const holdState = invoice ? shippingHoldUiState(invoice) : null;
   const holdAction = holdState?.action || "inspection-hold";
@@ -4516,18 +4523,19 @@ function renderCsCaseDetail(group) {
       </div>
       <div class="inspection-actions">
         <span class="workflow-row-badge ${state.csMode === "manual" ? "manual" : ""}">${state.csMode === "manual" ? "수동 추가 대상" : `CS ${caseCount}건`}</span>
-        <div class="cs-order-action-stack">
+        ${combinedShipment ? "" : `<div class="cs-order-action-stack">
           <button class="btn" data-cs-hold-action="${escapeHtml(holdAction)}" data-cs-order-group="${escapeHtml(group.ordNo || "")}" type="button" ${holdDisabled}>${escapeHtml(holdLabel)}</button>
           <button class="btn ${invoiceCancelled ? "cancel-reopen" : "cancel-action"}" data-cs-cancel-action="${invoiceCancelled ? "order-reopen" : "order-cancel"}" data-cs-order-group="${escapeHtml(group.ordNo || "")}" type="button" ${invoice && allowWorkflowEvents ? "" : "disabled"}>${invoiceCancelled ? "주문 취소 해제" : "주문 전체 취소"}</button>
           ${invoice ? shippingHoldBadge(invoice) : ""}
-        </div>
-        <label class="cs-order-drawer-box"><span>관리메모1 <em>송장 공통</em></span><textarea class="drawer-input cs-order-drawer-input" data-cs-drawer data-order-group="${escapeHtml(group.ordNo || "")}" rows="2" placeholder="서랍번호 / 관리메모1" ${managementReadonly}>${escapeHtml(invoice ? invoiceDrawerValue(invoice) : "")}</textarea></label>
+        </div>`}
+        ${combinedShipment ? `<span class="workflow-row-badge shipment">합배송 ${group.sourceOrderNos.length}주문 · 원주문별 처리</span>` : ""}
+        <label class="cs-order-drawer-box"><span>관리메모1 <em>송장 전체</em></span><textarea class="drawer-input cs-order-drawer-input" data-cs-drawer data-order-group="${escapeHtml(invoice?.orderGroupNo || group.ordNo || "")}" rows="2" placeholder="서랍번호 / 관리메모1" ${managementReadonly}>${escapeHtml(invoice ? invoiceDrawerValue(invoice) : "")}</textarea></label>
         <label class="cs-order-scheduled-date"><span>알림톡 발송로그 <em>송장 공통 · 코드 + 최종 입력일</em></span><textarea data-cs-order-sync-field="outbound_scheduled_date" data-cs-order-group="${escapeHtml(group.ordNo || "")}" rows="3" placeholder="예: 1,3,5ㅂ&#10;08/04" title="코드 다음 줄의 MM/DD를 기준으로 다음 영업일차를 자동 계산합니다. 0=내일출고, 1=일반 1일차, 1_14=14K 1일차, 3=일반 3일차 플랫폼, 3ㅁ=일반 3일차 메이크샵, 5ㅂ=5일차 부분출고, 5ㅊ=5일차 취소출고, 5_14k=14K 5일차 부분출고, 10=10일차 잔여취소, ㅂㅂ=별도 CS 처리" ${managementReadonly}>${escapeHtml(scheduledHistory)}</textarea></label>
       </div>
     </div>
     <p class="workflow-note">미송 자동대상과 별도 CS를 구분합니다. 관리메모1과 알림톡 발송로그는 송장 공통이며, 관리메모2·주문메모·기준일은 상품행별로 저장합니다. 배송보류는 주문 단위로 위 버튼에서 처리합니다.</p>
     <div class="cs-sync-note"><strong>CS 백업·동기화 기준</strong><span>송장 단위의 <b>알림톡 발송로그</b>는 첫 줄에 코드를 쉼표로 누적하고, 마지막 줄에 <b>MM/DD</b>를 기록합니다. 해당 상품에 적용되는 마지막 코드의 일차에서 날짜 이후 영업일을 다시 계산합니다. <b>0</b>=내일출고, <b>1</b>=일반1일차, <b>1_14</b>=14K1일차, <b>3</b>=플랫폼, <b>3ㅁ</b>=메이크샵, <b>5ㅂ</b>=부분출고, <b>5ㅊ</b>=취소출고, <b>5_14k</b>=14K5일차, <b>10</b>=잔여취소, <b>ㅂㅂ</b>=별도 CS 처리입니다.</span></div>
-    <div class="cs-item-card-stack">${group.items.map((row, index) => renderCsCaseItemEditor(row, index + 1)).join("")}</div>
+    ${combinedShipment ? renderCsCombinedOrderSections(group) : `<div class="cs-item-card-stack">${group.items.map((row, index) => renderCsCaseItemEditor(row, index + 1)).join("")}</div>`}
   </div>`;
 }
 
@@ -5513,26 +5521,8 @@ async function savePickingRow(invoice, item, eventType = null, eventOverrides = 
   }
 }
 
-function activeShipmentGroupForOrder(orderGroupNo) {
-  const target = String(orderGroupNo || "").trim();
-  if (!target) return null;
-  return (state.shipmentGroups || []).find((group) => (
-    group.status === "active"
-    && group.members.some((member) => member.orderGroupNo === target)
-  )) || null;
-}
-
-function applyShipmentHeldOrders(orderGroupNos = []) {
-  const heldAt = new Date().toISOString();
-  for (const orderGroupNo of orderGroupNos) {
-    const invoice = allWorkflowInvoices().find((candidate) => candidate?.orderGroupNo === orderGroupNo);
-    if (!invoice) continue;
-    applyLocalSystemShippingHoldCurrent(invoice, {
-      status: "ON",
-      source: "shipment_memo_auto_hold",
-      updatedAt: heldAt,
-    });
-  }
+function sourceInvoicesForShipment(invoice) {
+  return invoice?.shipmentGroup ? (invoice.sourceInvoices || []) : invoice ? [invoice] : [];
 }
 
 async function saveDrawerForInvoice(invoice, drawerMemo) {
@@ -5540,36 +5530,17 @@ async function saveDrawerForInvoice(invoice, drawerMemo) {
     toast("읽기전용입니다. URL에 write=1을 붙여야 저장할 수 있습니다.");
     return;
   }
-  if (invoice.shipmentGroup) {
-    const result = await shipmentGroups.saveDrawerMemo({
-      groupId: invoice.shipmentGroup.id,
-      drawerMemo,
-      expectedVersion: invoice.shipmentGroup.version,
-      autoHold: allowWorkflowEvents,
-    });
-    for (const member of invoice.shipmentGroup.members || []) {
-      const sourceInvoice = allWorkflowInvoices().find((candidate) => candidate?.orderGroupNo === member.orderGroupNo);
-      for (const item of sourceInvoice?.items || []) {
-        patchLocalItemManagementMemos(member.orderGroupNo, item.sellpiaItemNo, { memo1: drawerMemo });
-      }
+  for (const sourceInvoice of sourceInvoicesForShipment(invoice)) {
+    for (const item of sourceInvoice.items || []) {
+      await updateOrderItemMemoFields(sourceInvoice.orderGroupNo, item.sellpiaItemNo, { o_shop_memo: drawerMemo });
     }
-    for (const item of invoice.items || []) {
-      item.sellpiaMemo1 = drawerMemo;
-      if (item.raw) item.raw.o_shop_memo = drawerMemo;
-      if (item.pickingState) item.pickingState.drawerMemo = drawerMemo;
+    for (const item of sourceInvoice.items || []) {
+      patchLocalPickingState(sourceInvoice, item, { drawerMemo });
+      await savePickingRow(sourceInvoice, item, null, { drawerMemo });
+      patchLocalItemManagementMemos(sourceInvoice.orderGroupNo, item.sellpiaItemNo, { memo1: drawerMemo });
     }
-    applyShipmentHeldOrders(result.heldOrderGroupNos);
-    return;
+    await ensureShippingHoldOnAfterMemoSave(sourceInvoice, drawerMemo);
   }
-  for (const item of invoice.items || []) {
-    await updateOrderItemMemoFields(invoice.orderGroupNo, item.sellpiaItemNo, { o_shop_memo: drawerMemo });
-  }
-  for (const item of invoice.items || []) {
-    patchLocalPickingState(invoice, item, { drawerMemo });
-    await savePickingRow(invoice, item, null, { drawerMemo });
-    patchLocalItemManagementMemos(invoice.orderGroupNo, item.sellpiaItemNo, { memo1: drawerMemo });
-  }
-  await ensureShippingHoldOnAfterMemoSave(invoice, drawerMemo);
 }
 
 async function setShortageQty(orderGroupNo, sellpiaItemNo, nextValue) {
@@ -5584,7 +5555,6 @@ async function setShortageQty(orderGroupNo, sellpiaItemNo, nextValue) {
   const next = normalizedShortageQty(nextText);
   if (prev === next && prevText === nextText) return;
   const eventType = shortageEventType(prev, next);
-  const shipmentGroup = activeShipmentGroupForOrder(orderGroupNo);
   patchLocalPickingState(invoice, item, { shortageQty: next, shortageMemo2: nextText });
   item.sellpiaMemo2 = nextText;
   if (item.raw) {
@@ -5606,33 +5576,16 @@ async function setShortageQty(orderGroupNo, sellpiaItemNo, nextValue) {
         throw new Error("미송 상태 이벤트 저장이 필요합니다. URL에 write=1&events=1을 붙여 다시 시도하세요.");
       }
       await savePickingRow(invoice, item);
-      if (shipmentGroup) {
-        const result = await shipmentGroups.saveItemMemo2({
-          groupId: shipmentGroup.id,
-          orderGroupNo,
-          sellpiaItemNo,
-          memo2: nextText,
-          eventType,
-          quantity: next,
-          drawerMemo: item.pickingState?.drawerMemo || invoice.sellpiaMemo1 || null,
-          expectedVersion: shipmentGroup.version,
-          autoHold: allowWorkflowEvents,
-        });
-        if (eventType && !result.event) throw new Error("합배송 미송 상태 이벤트가 저장되지 않았습니다.");
-        if (result.event) applyWorkflowItemEvent(result.event);
-        applyShipmentHeldOrders(result.heldOrderGroupNos);
-      } else {
-        await updateOrderItemMemoFields(invoice.orderGroupNo, item.sellpiaItemNo, { o_shop_memo2: nextText });
-        if (eventType) {
-          const savedEvent = await saveWorkflowItemEvent(invoice, item, eventType, { quantity: next, memo: nextText || null });
-          if (!savedEvent) {
-            await updateOrderItemMemoFields(invoice.orderGroupNo, item.sellpiaItemNo, { o_shop_memo2: prevText });
-            throw new Error("미송 상태 이벤트가 저장되지 않아 관리메모2 변경을 취소했습니다. URL에 write=1&events=1을 붙여 다시 시도하세요.");
-          }
+      await updateOrderItemMemoFields(invoice.orderGroupNo, item.sellpiaItemNo, { o_shop_memo2: nextText });
+      if (eventType) {
+        const savedEvent = await saveWorkflowItemEvent(invoice, item, eventType, { quantity: next, memo: nextText || null });
+        if (!savedEvent) {
+          await updateOrderItemMemoFields(invoice.orderGroupNo, item.sellpiaItemNo, { o_shop_memo2: prevText });
+          throw new Error("미송 상태 이벤트가 저장되지 않아 관리메모2 변경을 취소했습니다. URL에 write=1&events=1을 붙여 다시 시도하세요.");
         }
       }
       patchLocalItemManagementMemos(invoice.orderGroupNo, item.sellpiaItemNo, { memo2: nextText });
-      if (!shipmentGroup) await ensureShippingHoldOnAfterMemoSave(invoice, nextText);
+      await ensureShippingHoldOnAfterMemoSave(invoice, nextText);
       renderWorkflowSurfacesIfVisible();
       toast("관리메모2 저장");
     } catch (error) {
@@ -7402,42 +7355,25 @@ async function reopenShortageRepick(orderGroupNo, sellpiaItemNo) {
   const previousMemo2 = itemManagementMemo2(item);
   const restoredQuantity = previousShortageQuantity(invoice, item);
   const restoredMemo2 = String(restoredQuantity);
-  const shipmentGroup = activeShipmentGroupForOrder(orderGroupNo);
   let memo2Restored = false;
   try {
-    if (shipmentGroup) {
-      const result = await shipmentGroups.saveItemMemo2({
-        groupId: shipmentGroup.id,
-        orderGroupNo,
-        sellpiaItemNo,
-        memo2: restoredMemo2,
-        eventType: "shortage_created",
-        quantity: restoredQuantity,
-        drawerMemo: itemState?.drawerMemo || item.pickingState?.drawerMemo || invoice.sellpiaMemo1 || null,
-        expectedVersion: shipmentGroup.version,
-        autoHold: true,
-      });
-      if (!result.event) throw new Error("합배송 미송 완료취소 이벤트가 저장되지 않았습니다.");
-      applyWorkflowItemEvent(result.event);
-      applyShipmentHeldOrders(result.heldOrderGroupNos);
-    } else {
-      await updateOrderItemMemoFields(orderGroupNo, sellpiaItemNo, { o_shop_memo2: restoredMemo2 });
-      memo2Restored = true;
+    await updateOrderItemMemoFields(orderGroupNo, sellpiaItemNo, { o_shop_memo2: restoredMemo2 });
+    memo2Restored = true;
 
-      const ok = await saveWorkflowItemEvent(invoice, item, "shortage_created", {
-        quantity: restoredQuantity,
-        memo: restoredMemo2,
-        drawerMemo: itemState?.drawerMemo || item.pickingState?.drawerMemo || invoice.sellpiaMemo1 || null,
-      });
-      if (!ok) {
-        await updateOrderItemMemoFields(orderGroupNo, sellpiaItemNo, { o_shop_memo2: previousMemo2 });
-        return false;
-      }
+    const ok = await saveWorkflowItemEvent(invoice, item, "shortage_created", {
+      quantity: restoredQuantity,
+      memo: restoredMemo2,
+      drawerMemo: itemState?.drawerMemo || item.pickingState?.drawerMemo || invoice.sellpiaMemo1 || null,
+    });
+    if (!ok) {
+      await updateOrderItemMemoFields(orderGroupNo, sellpiaItemNo, { o_shop_memo2: previousMemo2 });
+      return false;
     }
 
     patchLocalItemManagementMemos(orderGroupNo, sellpiaItemNo, { memo2: restoredMemo2 });
+    await ensureShippingHoldOnAfterMemoSave(invoice, restoredMemo2);
   } catch (error) {
-    if (!shipmentGroup && memo2Restored) {
+    if (memo2Restored) {
       try {
         await updateOrderItemMemoFields(orderGroupNo, sellpiaItemNo, { o_shop_memo2: previousMemo2 });
       } catch (rollbackError) {
@@ -7581,7 +7517,7 @@ function selectedInspectionInvoice(orderGroupNo = state.selectedInspectionGroup)
 }
 
 function inspectionSourceInvoices() {
-  return combineInvoicesWithShipmentGroups(inspectionBaseInvoices(), state.shipmentGroups);
+  return combineInvoicesBySharedInvoice(inspectionBaseInvoices());
 }
 
 function shipmentMemberBadge(item) {
@@ -7642,8 +7578,10 @@ async function completeSelectedInspection(orderGroupNo = state.selectedInspectio
     toast("보류 송장은 보류 해제 후 완료 처리할 수 있습니다.");
     return;
   }
-  const ok = await saveWorkflowInvoiceEvent(invoice, "inspection_completed", { memo: "inspection completed" });
-  if (!ok) return;
+  for (const sourceInvoice of sourceInvoicesForShipment(invoice)) {
+    const ok = await saveWorkflowInvoiceEvent(sourceInvoice, "inspection_completed", { memo: "inspection completed" });
+    if (!ok) return;
+  }
   state.activeTab = "inspection";
   state.selectedInspectionGroup = invoice.orderGroupNo;
   state.selectedCompletedGroup = invoice.orderGroupNo;
@@ -7662,8 +7600,10 @@ async function reopenSelectedInspection(orderGroupNo = state.selectedInspectionG
     toast("취소된 주문은 CS 탭에서 취소 해제 후 수정할 수 있습니다.");
     return;
   }
-  const ok = await saveWorkflowInvoiceEvent(invoice, "inspection_reopened", { memo: "inspection reopened" });
-  if (!ok) return;
+  for (const sourceInvoice of sourceInvoicesForShipment(invoice)) {
+    const ok = await saveWorkflowInvoiceEvent(sourceInvoice, "inspection_reopened", { memo: "inspection reopened" });
+    if (!ok) return;
+  }
   state.activeTab = "inspection";
   state.selectedInspectionGroup = invoice.orderGroupNo;
   state.selectedCompletedGroup = "";
@@ -7684,30 +7624,35 @@ async function toggleSelectedInspectionHold(orderGroupNo = state.selectedInspect
   const invoiceState = workflowInvoiceState(invoice);
   const holdOn = Boolean(invoiceState?.systemShippingHold);
   const eventType = holdOn ? "hold_released" : "hold_created";
-  const ok = await saveShippingHoldCurrentThenEvent(
-    invoice,
-    holdOn ? "OFF" : "ON",
-    holdOn ? "inspection_hold_off" : "inspection_hold_on",
-    eventType,
-    { memo: holdOn ? "shipping hold released" : "shipping hold on" }
-  );
-  if (!ok) return;
-  const openShortageCount = (invoice.items || []).filter((item) => itemHasOpenWorkflowShortage(invoice, item)).length;
-  const csAction = inspectionHoldCsAction({ holdWasOn: holdOn, openShortageCount });
+  const sourceInvoices = sourceInvoicesForShipment(invoice);
+  for (const sourceInvoice of sourceInvoices) {
+    const ok = await saveShippingHoldCurrentThenEvent(
+      sourceInvoice,
+      holdOn ? "OFF" : "ON",
+      holdOn ? "inspection_hold_off" : "inspection_hold_on",
+      eventType,
+      { memo: holdOn ? "shipping hold released" : "shipping hold on" }
+    );
+    if (!ok) return;
+  }
   let excludedCount = 0;
-  if (csAction === "exclude") {
-    try {
-      excludedCount = await excludeAutomaticCsAfterInspectionHoldRelease(invoice);
-    } catch (error) {
-      console.warn("automatic CS exclusion after inspection hold release failed", error);
-      toast("배송보류는 해제됐지만 자동 CS 제외 저장에 실패했습니다. CS 탭에서 다시 확인해주세요.");
-    }
-  } else if (csAction === "reopen") {
-    try {
-      await reopenAutomaticCsAfterInspectionHoldCreated(invoice);
-    } catch (error) {
-      console.warn("automatic CS reopen after inspection hold creation failed", error);
-      toast("배송보류 ON 처리됐지만 자동 CS 복구 저장에 실패했습니다. CS 탭에서 다시 확인해주세요.");
+  for (const sourceInvoice of sourceInvoices) {
+    const openShortageCount = (sourceInvoice.items || []).filter((item) => itemHasOpenWorkflowShortage(sourceInvoice, item)).length;
+    const csAction = inspectionHoldCsAction({ holdWasOn: holdOn, openShortageCount });
+    if (csAction === "exclude") {
+      try {
+        excludedCount += await excludeAutomaticCsAfterInspectionHoldRelease(sourceInvoice);
+      } catch (error) {
+        console.warn("automatic CS exclusion after inspection hold release failed", error);
+        toast("배송보류는 해제됐지만 자동 CS 제외 저장에 실패했습니다. CS 탭에서 다시 확인해주세요.");
+      }
+    } else if (csAction === "reopen") {
+      try {
+        await reopenAutomaticCsAfterInspectionHoldCreated(sourceInvoice);
+      } catch (error) {
+        console.warn("automatic CS reopen after inspection hold creation failed", error);
+        toast("배송보류 ON 처리됐지만 자동 CS 복구 저장에 실패했습니다. CS 탭에서 다시 확인해주세요.");
+      }
     }
   }
   state.selectedInspectionGroup = invoice.orderGroupNo;
@@ -8175,150 +8120,6 @@ function applyInspectionMemos(items, memoRows) {
   });
 }
 
-function shipmentErrorMessage(error) {
-  const code = String(error?.code || "").trim();
-  const message = String(error?.message || error || "").trim();
-  if (code === "42P01" || code === "PGRST205" || /shipment_groups.*(not find|does not exist|schema cache)/i.test(message)) {
-    return "합배송 DB 마이그레이션이 아직 적용되지 않았습니다.";
-  }
-  const known = {
-    shipment_group_requires_at_least_two_orders: "합배송은 주문 2건 이상을 선택해야 합니다.",
-    representative_order_must_be_a_member: "대표 주문은 합배송 구성원이어야 합니다.",
-    shipment_group_order_not_found: "선택한 주문 중 DB에서 찾을 수 없는 주문이 있습니다.",
-    shipment_group_order_already_active: "선택한 주문 중 이미 다른 합배송에 포함된 주문이 있습니다.",
-    shipment_group_receiver_mismatch: "수취인이 다른 주문은 합배송할 수 없습니다.",
-    shipment_group_phone_mismatch: "수취인 연락처가 다른 주문은 합배송할 수 없습니다.",
-    shipment_group_address_mismatch: "배송지가 다른 주문은 합배송할 수 없습니다.",
-    representative_order_invoice_required: "대표 주문에 송장번호가 없습니다.",
-    shipment_group_version_conflict: "다른 화면에서 합배송 정보가 변경되었습니다. 새로고침 후 다시 시도하세요.",
-    shipment_group_not_active: "이미 해제된 합배송입니다.",
-    shipment_group_item_order_not_member: "선택한 상품의 원주문이 현재 합배송 구성원이 아닙니다.",
-    shipment_group_item_not_found: "선택한 원상품 행을 DB에서 찾지 못했습니다.",
-    shipment_group_item_event_not_allowed: "합배송 상품에 허용되지 않은 상태 변경입니다.",
-    shipment_group_item_order_not_found: "선택한 원주문을 DB에서 찾지 못했습니다.",
-  };
-  const match = Object.keys(known).find((key) => message.includes(key));
-  return match ? known[match] : message || "합배송 처리 중 오류가 발생했습니다.";
-}
-
-async function loadShipmentGroupData() {
-  try {
-    state.shipmentGroups = await shipmentGroups.loadActiveGroups();
-    state.shipmentGroupsLoaded = true;
-    state.shipmentGroupError = "";
-  } catch (error) {
-    state.shipmentGroups = [];
-    state.shipmentGroupsLoaded = false;
-    state.shipmentGroupError = shipmentErrorMessage(error);
-    console.warn("shipment groups load skipped", error);
-  }
-}
-
-function selectedShipmentCandidateInvoices() {
-  const selected = state.shipmentSelectedOrders;
-  return inspectionBaseInvoices().filter((invoice) => selected.has(invoice.orderGroupNo));
-}
-
-async function createSelectedShipmentGroup() {
-  if (!allowWrites || state.shipmentSaving) return;
-  const candidates = selectedShipmentCandidateInvoices();
-  if (candidates.length < 2) {
-    toast("합배송할 송장을 2건 이상 선택해 주세요.");
-    return;
-  }
-  const selectedOrderNos = candidates.map((invoice) => invoice.orderGroupNo);
-  const representativeOrderGroupNo = selectedOrderNos.includes(state.selectedInspectionGroup)
-    ? state.selectedInspectionGroup
-    : selectedOrderNos[0];
-  const representative = candidates.find((invoice) => invoice.orderGroupNo === representativeOrderGroupNo) || candidates[0];
-  const details = candidates.map((invoice, index) => (
-    `${index + 1}. ${invoice.invoiceNo || "송장없음"} · ${invoice.displayName || invoice.orderGroupNo}`
-  )).join("\n");
-  const confirmed = window.confirm(
-    `선택한 ${candidates.length}건을 합배송으로 묶을까요?\n\n${details}\n\n대표 송장: ${representative.invoiceNo || "송장없음"}\n대표를 바꾸려면 원하는 송장을 먼저 클릭한 뒤 다시 실행하세요.`,
-  );
-  if (!confirmed) return;
-
-  state.shipmentSaving = true;
-  renderShipmentSelectionControls();
-  try {
-    const created = await shipmentGroups.createGroup({
-      orderGroupNos: selectedOrderNos,
-      representativeOrderGroupNo,
-    });
-    state.shipmentSelectedOrders.clear();
-    await loadShipmentGroupData();
-    state.selectedInspectionGroup = shipmentGroupKey(created.id);
-    state.selectedInspectionItemKey = "";
-    renderInspectionPanels();
-    toast(`합배송 ${created.members.length}주문을 저장했습니다.`);
-  } catch (error) {
-    toast(shipmentErrorMessage(error));
-  } finally {
-    state.shipmentSaving = false;
-    renderInspectionPanels();
-  }
-}
-
-async function changeSelectedShipmentRepresentative(groupId, representativeOrderGroupNo, expectedVersion) {
-  if (!allowWrites || state.shipmentSaving) return;
-  const group = state.shipmentGroups.find((row) => row.id === groupId);
-  if (!group) {
-    toast("합배송 정보를 다시 불러온 뒤 시도해 주세요.");
-    return;
-  }
-  const member = group.members.find((row) => row.orderGroupNo === representativeOrderGroupNo);
-  const sourceInvoice = inspectionBaseInvoices().find((row) => row.orderGroupNo === representativeOrderGroupNo);
-  if (!member || !sourceInvoice) return;
-  if (!window.confirm(`${sourceInvoice.invoiceNo || "송장없음"}을(를) 합배송 대표 송장으로 변경할까요?`)) return;
-
-  state.shipmentSaving = true;
-  renderInspectionPanels();
-  try {
-    await shipmentGroups.changeRepresentative({
-      groupId,
-      representativeOrderGroupNo,
-      expectedVersion,
-    });
-    await loadShipmentGroupData();
-    state.selectedInspectionGroup = shipmentGroupKey(groupId);
-    renderInspectionPanels();
-    toast("대표 송장을 변경했습니다.");
-  } catch (error) {
-    toast(shipmentErrorMessage(error));
-  } finally {
-    state.shipmentSaving = false;
-    renderInspectionPanels();
-  }
-}
-
-async function releaseSelectedShipmentGroup(groupId, expectedVersion) {
-  if (!allowWrites || state.shipmentSaving) return;
-  const group = state.shipmentGroups.find((row) => row.id === groupId);
-  if (!group) {
-    toast("합배송 정보를 다시 불러온 뒤 시도해 주세요.");
-    return;
-  }
-  if (!window.confirm(`합배송 ${group.members.length}주문을 해제할까요?\n원주문과 상품 데이터는 삭제되지 않습니다.`)) return;
-
-  state.shipmentSaving = true;
-  renderInspectionPanels();
-  try {
-    await shipmentGroups.releaseGroup({ groupId, expectedVersion });
-    const nextSelectedOrder = group.representativeOrderGroupNo || group.members[0]?.orderGroupNo || "";
-    await loadShipmentGroupData();
-    state.selectedInspectionGroup = nextSelectedOrder;
-    state.selectedInspectionItemKey = "";
-    renderInspectionPanels();
-    toast("합배송을 해제했습니다. 원주문을 다시 분리해 표시합니다.");
-  } catch (error) {
-    toast(shipmentErrorMessage(error));
-  } finally {
-    state.shipmentSaving = false;
-    renderInspectionPanels();
-  }
-}
-
 async function loadWorkflowData() {
   state.workflowQueueError = "";
   try {
@@ -8332,7 +8133,6 @@ async function loadWorkflowData() {
     state.workflowQueueError = `workflow event 읽기 실패: ${error.message || error}`;
     console.warn("workflow queue load failed", error);
   }
-  await loadShipmentGroupData();
   render();
 }
 
@@ -9061,19 +8861,7 @@ function bindEvents() {
     }
   });
   els.shortageDetail?.addEventListener("change", onShortageInputChange);
-  els.shipmentCreateBtn?.addEventListener("click", () => {
-    createSelectedShipmentGroup().catch(showError);
-  });
-  els.inspectionListBody?.addEventListener("change", (event) => {
-    const checkbox = event.target.closest("[data-shipment-select]");
-    if (!checkbox) return;
-    const ordNo = checkbox.dataset.shipmentSelect || "";
-    if (checkbox.checked) state.shipmentSelectedOrders.add(ordNo);
-    else state.shipmentSelectedOrders.delete(ordNo);
-    renderShipmentSelectionControls();
-  });
   els.inspectionListBody?.addEventListener("click", (event) => {
-    if (event.target.closest("[data-shipment-select]")) return;
     const button = event.target.closest("[data-inspection-group]");
     if (!button) return;
     state.selectedInspectionGroup = button.dataset.inspectionGroup;
@@ -9106,23 +8894,6 @@ function bindEvents() {
     }
   });
   els.inspectionDetail?.addEventListener("click", (event) => {
-    const representativeButton = event.target.closest("[data-shipment-representative]");
-    if (representativeButton) {
-      changeSelectedShipmentRepresentative(
-        representativeButton.dataset.shipmentGroupId || "",
-        representativeButton.dataset.shipmentRepresentative || "",
-        Number(representativeButton.dataset.shipmentVersion || 0),
-      ).catch(showError);
-      return;
-    }
-    const releaseButton = event.target.closest("[data-shipment-release]");
-    if (releaseButton) {
-      releaseSelectedShipmentGroup(
-        releaseButton.dataset.shipmentRelease || "",
-        Number(releaseButton.dataset.shipmentVersion || 0),
-      ).catch(showError);
-      return;
-    }
     const itemRow = event.target.closest("[data-inspection-item-key].is-selectable");
     if (itemRow) selectInspectionItem(itemRow.dataset.inspectionItemKey);
     const button = event.target.closest("[data-action]");

@@ -1,15 +1,14 @@
 import assert from "node:assert/strict";
 import {
-  combineInvoicesWithShipmentGroups,
-  normalizeShipmentGroup,
-  shipmentGroupKey,
+  automaticShipmentKey,
+  combineInvoicesBySharedInvoice,
   sourceOrderGroupNo,
 } from "../src/domain/shipmentGroups.mjs";
 
 const invoices = [
   {
     orderGroupNo: "order-a",
-    invoiceNo: "invoice-a",
+    invoiceNo: "6890162126199",
     displayName: "이지민",
     seller: "makeshop",
     receiptDate: "2026-08-10",
@@ -21,7 +20,7 @@ const invoices = [
   },
   {
     orderGroupNo: "order-b",
-    invoiceNo: "invoice-b",
+    invoiceNo: "6890162126199",
     displayName: "이지민",
     seller: "makeshop",
     receiptDate: "2026-08-10",
@@ -33,27 +32,15 @@ const invoices = [
     ],
   },
   { orderGroupNo: "order-c", invoiceNo: "invoice-c", items: [] },
+  { orderGroupNo: "order-d", invoiceNo: "", items: [] },
 ];
 
-const group = normalizeShipmentGroup(
-  {
-    id: "00000000-0000-4000-8000-000000000001",
-    representative_ord_no: "order-b",
-    target_inv_no: "invoice-b",
-    status: "active",
-    sync_status: "pending",
-    version: 2,
-  },
-  [
-    { group_id: "00000000-0000-4000-8000-000000000001", ord_no: "order-a", original_inv_no: "invoice-a", member_order: 1, active: true },
-    { group_id: "00000000-0000-4000-8000-000000000001", ord_no: "order-b", original_inv_no: "invoice-b", member_order: 2, active: true },
-  ],
-);
-
-const combined = combineInvoicesWithShipmentGroups(invoices, [group]);
-assert.equal(combined.length, 2, "two source orders must render as one combined card");
-assert.equal(combined[0].orderGroupNo, shipmentGroupKey(group.id));
-assert.equal(combined[0].invoiceNo, "invoice-b");
+const combined = combineInvoicesBySharedInvoice(invoices);
+assert.equal(combined.length, 3, "two source orders sharing one invoice must render as one physical card");
+assert.equal(combined[0].orderGroupNo, automaticShipmentKey("6890162126199"));
+assert.equal(combined[0].invoiceNo, "6890162126199");
+assert.equal(combined[0].shipmentGroup.automatic, true);
+assert.equal(combined[0].shipmentGroup.members.length, 2);
 assert.equal(combined[0].items.length, 5);
 assert.deepEqual(combined[0].items.map((item) => item.sourceOrderGroupNo), [
   "order-a",
@@ -63,18 +50,14 @@ assert.deepEqual(combined[0].items.map((item) => item.sourceOrderGroupNo), [
   "order-b",
 ]);
 assert.equal(sourceOrderGroupNo(combined[0], combined[0].items[4]), "order-b");
-assert.equal(combined[1], invoices[2], "unrelated invoices must remain untouched");
+assert.equal(combined[1], invoices[2], "an unrelated invoice must remain untouched");
+assert.equal(combined[2], invoices[3], "an empty invoice number must never auto-combine");
 assert.equal(invoices[0].items[0].sourceOrderGroupNo, undefined, "source view models must not be mutated");
 
-const incompleteGroup = { ...group, members: [...group.members, { orderGroupNo: "missing", active: true }] };
-assert.deepEqual(
-  combineInvoicesWithShipmentGroups(invoices, [incompleteGroup]),
-  invoices,
-  "a group must not partially merge when one source order is absent",
-);
+const sameOrderDuplicate = combineInvoicesBySharedInvoice([
+  { orderGroupNo: "order-a", invoiceNo: "same", items: [] },
+  { orderGroupNo: "order-a", invoiceNo: "same", items: [] },
+]);
+assert.equal(sameOrderDuplicate.length, 2, "duplicate rows from one order are not combined shipment orders");
 
-const releasedGroup = { ...group, status: "released" };
-assert.deepEqual(combineInvoicesWithShipmentGroups(invoices, [releasedGroup]), invoices);
-
-console.log("Shipment group domain regression: passed");
-
+console.log("Automatic shared-invoice shipment domain regression: passed");

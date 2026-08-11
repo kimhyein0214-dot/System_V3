@@ -20,6 +20,11 @@ export function sourceInvoiceNo(invoice, item = null) {
   return text(item?.sourceInvoiceNo || invoice?.invoiceNo);
 }
 
+export function automaticShipmentKey(invoiceNo) {
+  const normalizedInvoiceNo = text(invoiceNo);
+  return normalizedInvoiceNo ? `invoice:${normalizedInvoiceNo}` : "";
+}
+
 export function normalizeShipmentGroup(group = {}, members = []) {
   const id = text(group.id);
   const normalizedMembers = [...members]
@@ -129,9 +134,75 @@ export function combineInvoicesWithShipmentGroups(invoices = [], shipmentGroups 
   return result;
 }
 
+export function combineInvoicesBySharedInvoice(invoices = []) {
+  const invoiceGroups = new Map();
+
+  invoices.forEach((invoice, sourceIndex) => {
+    const invoiceNo = text(invoice?.invoiceNo);
+    const orderGroupNo = text(invoice?.orderGroupNo);
+    if (!invoiceNo || !orderGroupNo) return;
+    if (!invoiceGroups.has(invoiceNo)) invoiceGroups.set(invoiceNo, []);
+    invoiceGroups.get(invoiceNo).push({ invoice, sourceIndex, orderGroupNo });
+  });
+
+  const combinedByFirstIndex = new Map();
+  const consumedIndexes = new Set();
+
+  for (const [invoiceNo, rows] of invoiceGroups) {
+    const distinctOrders = [...new Set(rows.map((row) => row.orderGroupNo))];
+    if (distinctOrders.length < 2) continue;
+
+    const sourceInvoices = rows.map((row) => row.invoice);
+    const members = rows.map(({ invoice, orderGroupNo }, memberIndex) => ({
+      orderGroupNo,
+      invoiceNo,
+      displayName: text(invoice.displayName || invoice.csDisplayName),
+      itemCount: invoice.items?.length || 0,
+      memberIndex,
+    }));
+    const items = rows.flatMap(({ invoice, orderGroupNo }, memberIndex) => (
+      (invoice.items || []).map((item, sourceItemIndex) => ({
+        ...item,
+        sourceOrderGroupNo: orderGroupNo,
+        sourceInvoiceNo: invoiceNo,
+        sourceMemberIndex: memberIndex,
+        sourceItemIndex,
+        shipmentItemOrderIndex: memberIndex * 100000 + sourceItemIndex,
+      }))
+    ));
+    const firstRow = rows[0];
+    const firstIndex = Math.min(...rows.map((row) => row.sourceIndex));
+    combinedByFirstIndex.set(firstIndex, {
+      ...firstRow.invoice,
+      orderGroupNo: automaticShipmentKey(invoiceNo),
+      invoiceNo,
+      seller: combinedSeller(sourceInvoices),
+      receiptDate: earliestReceiptDate(sourceInvoices),
+      sortOrder: minimumSortOrder(sourceInvoices),
+      items,
+      shipmentGroup: {
+        id: automaticShipmentKey(invoiceNo),
+        key: automaticShipmentKey(invoiceNo),
+        automatic: true,
+        targetInvoiceNo: invoiceNo,
+        syncStatus: "synced",
+        members,
+      },
+      sourceInvoices,
+    });
+    rows.forEach((row) => consumedIndexes.add(row.sourceIndex));
+  }
+
+  const result = [];
+  invoices.forEach((invoice, index) => {
+    if (combinedByFirstIndex.has(index)) result.push(combinedByFirstIndex.get(index));
+    if (!consumedIndexes.has(index)) result.push(invoice);
+  });
+  return result;
+}
+
 export function shipmentSyncLabel(syncStatus) {
   if (syncStatus === "synced") return "셀피아 동기화 완료";
   if (syncStatus === "failed") return "셀피아 동기화 오류";
   return "셀피아 동기화 대기";
 }
-

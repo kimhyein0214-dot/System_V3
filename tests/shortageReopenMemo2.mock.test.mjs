@@ -36,10 +36,6 @@ function buildReopenHarness(overrides = {}) {
     state,
     itemManagementMemo2: () => "",
     previousShortageQuantity: () => 3,
-    activeShipmentGroupForOrder: () => null,
-    shipmentGroups: { saveItemMemo2: async () => ({ event: null, heldOrderGroupNos: [] }) },
-    applyWorkflowItemEvent: () => {},
-    applyShipmentHeldOrders: () => {},
     updateOrderItemMemoFields: async (orderGroupNo, sellpiaItemNo, patch) => {
       calls.push({ type: "memo2", orderGroupNo, sellpiaItemNo, patch });
     },
@@ -50,6 +46,7 @@ function buildReopenHarness(overrides = {}) {
     patchLocalItemManagementMemos: (orderGroupNo, sellpiaItemNo, patch) => {
       calls.push({ type: "local", orderGroupNo, sellpiaItemNo, patch });
     },
+    ensureShippingHoldOnAfterMemoSave: async () => false,
     renderWorkflowSurfaces: () => calls.push({ type: "render" }),
     ...overrides,
   };
@@ -89,34 +86,6 @@ function buildReopenHarness(overrides = {}) {
   ]);
   assert.equal(harness.state.activeTab, "inspection");
   assert.equal(harness.state.saving.size, 0);
-}
-
-{
-  const rpcCalls = [];
-  const harness = buildReopenHarness({
-    activeShipmentGroupForOrder: () => ({ id: "group-1", version: 4 }),
-    shipmentGroups: {
-      saveItemMemo2: async (payload) => {
-        rpcCalls.push(payload);
-        return {
-          event: { id: 9, event_type: "shortage_created", order_group_no: "order-1", sellpia_item_no: "item-3" },
-          heldOrderGroupNos: ["order-1", "order-2"],
-        };
-      },
-    },
-    applyWorkflowItemEvent: (event) => rpcCalls.push({ appliedEvent: event.id }),
-    applyShipmentHeldOrders: (ordNos) => rpcCalls.push({ held: ordNos }),
-  });
-  const result = await harness.reopen("order-1", "item-3");
-
-  assert.equal(result, true);
-  assert.equal(rpcCalls[0].groupId, "group-1");
-  assert.equal(rpcCalls[0].orderGroupNo, "order-1");
-  assert.equal(rpcCalls[0].sellpiaItemNo, "item-3");
-  assert.equal(rpcCalls[0].memo2, "3");
-  assert.equal(rpcCalls[0].eventType, "shortage_created");
-  assert.deepEqual(rpcCalls.slice(1), [{ appliedEvent: 9 }, { held: ["order-1", "order-2"] }]);
-  assert.equal(harness.calls.some((call) => call.type === "memo2"), false, "group reopen must be atomic in the RPC");
 }
 
 console.log("Shortage completion reopen restores memo2 and rolls back on event failure: passed");
