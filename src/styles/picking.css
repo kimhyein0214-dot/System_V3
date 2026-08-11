@@ -2408,6 +2408,24 @@ input {
   background: #f0fdf4;
 }
 
+.inspection-item-table .workflow-item-row.is-selectable {
+  cursor: pointer;
+}
+
+.inspection-item-table .workflow-item-row.is-selectable:hover {
+  outline: 2px solid rgba(37, 99, 235, 0.24);
+  outline-offset: -2px;
+}
+
+.inspection-item-table .workflow-item-row.is-selected,
+.inspection-item-table .workflow-item-row.is-selectable.is-selected:hover {
+  position: relative;
+  z-index: 1;
+  outline: 3px solid rgba(37, 99, 235, 0.58);
+  outline-offset: -3px;
+  box-shadow: 0 0 0 2px rgba(37, 99, 235, 0.16);
+}
+
 .workflow-item-row span {
   color: var(--muted);
   font-weight: 1000;

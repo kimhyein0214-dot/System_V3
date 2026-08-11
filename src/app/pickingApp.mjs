@@ -142,6 +142,7 @@ const state = {
     syncError: "",
   },
   selectedInspectionGroup: "",
+  selectedInspectionItemKey: "",
   selectedCompletedGroup: "",
   completedDateMode: "receipt",
   inspectionFilter: "all",
@@ -2931,6 +2932,7 @@ function renderInspectionPanels(options = {}) {
   }
 
   if (!invoices.length) {
+    state.selectedInspectionItemKey = "";
     const emptyText = allInvoices.length ? "현재 필터/검색에 맞는 검품 송장이 없습니다." : "현재 검품 송장이 없습니다.";
     renderWorkflowEmpty(els.inspectionListBody, emptyText);
     renderWorkflowEmpty(els.inspectionDetail, `${emptyText} 완료제거가 켜져 있으면 완료보기로 전환하세요.`);
@@ -3001,6 +3003,10 @@ function renderInspectionPanels(options = {}) {
   const holdState = shippingHoldUiState(selected);
   const selectedCompleted = Boolean(invoiceState?.inspected);
   const selectedCancelled = Boolean(invoiceState?.cancelled);
+  const selectableInspectionItemKeys = inspectionSelectableItems(selected).map((item) => itemSlotKey(selected, item));
+  if (state.selectedInspectionItemKey && !selectableInspectionItemKeys.includes(state.selectedInspectionItemKey)) {
+    state.selectedInspectionItemKey = "";
+  }
   const actionDisabled = allowWorkflowEvents && !selectedCancelled ? "" : "disabled";
   const partialHoldActionDisabled = allowWrites && !selectedCancelled ? "" : "disabled";
   const holdAction = holdState.action;
@@ -3060,7 +3066,16 @@ function renderInspectionPanels(options = {}) {
           const itemRepicked = Boolean(itemState?.shortageRepicked && !itemState?.cancelled);
           const itemManualCsCount = manualPendingCsCasesForInspectionItem(selected, item).length;
           const itemPartialShippingHold = isHold(item);
-          const rowClass = [itemRepicked ? "repicked" : "", itemPartialShippingHold ? "has-hold" : "", selectedCompleted ? "inspected" : "", itemCancelled ? "is-cancelled" : ""].filter(Boolean).join(" ");
+          const itemKey = itemSlotKey(selected, item);
+          const itemSelectable = inspectionItemIsSelectable(selected, item);
+          const rowClass = [
+            itemRepicked ? "repicked" : "",
+            itemPartialShippingHold ? "has-hold" : "",
+            selectedCompleted ? "inspected" : "",
+            itemCancelled ? "is-cancelled" : "",
+            itemSelectable ? "is-selectable" : "",
+            itemSelectable && itemKey === state.selectedInspectionItemKey ? "is-selected" : "",
+          ].filter(Boolean).join(" ");
           const imageUrl = productImageUrl(item.sellpiaProductCode);
           const option = cleanOptionName(item.optionName, item.ownCode) || "-";
           const product = item.productName || "-";
@@ -3079,7 +3094,7 @@ function renderInspectionPanels(options = {}) {
           const partialHoldReleaseButton = itemPartialShippingHold
             ? `<button class="workflow-inline-btn danger" data-action="inspection-partial-hold-release" data-order-group="${escapeHtml(selected.orderGroupNo)}" data-item-no="${escapeHtml(item.sellpiaItemNo)}" type="button" ${partialHoldActionDisabled}>부분보류 해제</button>`
             : "";
-          return `<div class="workflow-item-row ${rowClass}">
+          return `<div class="workflow-item-row ${rowClass}" data-inspection-item-key="${escapeHtml(itemKey)}">
             <span class="workflow-seq-cell">${itemSequenceNo(item, index)}</span>
             ${selectedLabelTarget ? `<span class="workflow-label-cell">${escapeHtml(labelNo)}</span>` : ""}
             <div class="workflow-item-photo">${imageUrl ? `<img src="${imageUrl}" ${photoImgAttrs(imageUrl, photoTitleForItem(item))} alt="" loading="lazy" onerror="this.style.visibility='hidden'">` : "사진"}</div>
@@ -7102,6 +7117,7 @@ async function completeSelectedShortagePicking(shortageKey = state.selectedShort
   }
 
   state.selectedInspectionGroup = row.invoice.orderGroupNo;
+  state.selectedInspectionItemKey = itemSlotKey(row.invoice, row.item);
   state.selectedShortageKey = "";
   renderWorkflowSurfaces();
   toast("미송피킹 완료: 관리메모2를 비우고 검품탭에 송장 전체가 표시됩니다.");
@@ -7344,6 +7360,44 @@ function selectedInspectionInvoice(orderGroupNo = state.selectedInspectionGroup)
     [...inspectionSourceInvoices(), ...(state.workflowQueues?.inspectionCompletedInvoices || [])].find((invoice) => invoice.orderGroupNo === orderGroupNo) ||
     null
   );
+}
+
+function inspectionItemIsSelectable(invoice, item) {
+  const invoiceState = workflowInvoiceState(invoice);
+  const itemState = workflowItemState(invoice, item);
+  return Boolean(
+    invoice &&
+      item &&
+      !invoiceState?.inspected &&
+      !invoiceState?.cancelled &&
+      !itemState?.inspected &&
+      !itemIsEffectivelyCancelled(invoice, item),
+  );
+}
+
+function inspectionSelectableItems(invoice = selectedInspectionInvoice()) {
+  return invoiceItemsInSellpiaRowOrder(invoice).filter((item) => inspectionItemIsSelectable(invoice, item));
+}
+
+function selectInspectionItem(key, { scroll = false } = {}) {
+  const targetKey = String(key || "");
+  state.selectedInspectionItemKey = targetKey;
+  els.inspectionDetail?.querySelectorAll("[data-inspection-item-key].is-selected").forEach((row) => row.classList.remove("is-selected"));
+  if (!targetKey) return;
+  const selectorKey = window.CSS?.escape ? CSS.escape(targetKey) : targetKey.replace(/"/g, '\\"');
+  const target = els.inspectionDetail?.querySelector(`[data-inspection-item-key="${selectorKey}"].is-selectable`);
+  target?.classList.add("is-selected");
+  if (scroll) target?.scrollIntoView({ block: "nearest", behavior: "smooth" });
+}
+
+function moveInspectionItemSelection(delta) {
+  const invoice = selectedInspectionInvoice();
+  const keys = inspectionSelectableItems(invoice).map((item) => itemSlotKey(invoice, item));
+  if (!keys.length) return;
+  const current = keys.indexOf(state.selectedInspectionItemKey);
+  const start = current >= 0 ? current : delta < 0 ? keys.length : -1;
+  const next = Math.max(0, Math.min(keys.length - 1, start + delta));
+  selectInspectionItem(keys[next], { scroll: true });
 }
 
 async function completeSelectedInspection(orderGroupNo = state.selectedInspectionGroup) {
@@ -8150,6 +8204,7 @@ function moveWorkflowSelection(delta) {
     const keys = rows.map((invoice) => invoice.orderGroupNo);
     const current = keys.indexOf(state.selectedInspectionGroup);
     state.selectedInspectionGroup = keys[Math.max(0, Math.min(keys.length - 1, (current >= 0 ? current : 0) + delta))];
+    state.selectedInspectionItemKey = "";
     renderInspectionPanels({ list: false });
     return;
   }
@@ -8200,6 +8255,11 @@ function onGlobalKeydown(event) {
   if (event.key.toLowerCase() === "q" && !isTypingTarget(event.target)) {
     event.preventDefault();
     focusActiveSearch();
+    return;
+  }
+  if ((event.key === "ArrowLeft" || event.key === "ArrowRight") && state.activeTab === "inspection" && !isTypingTarget(event.target)) {
+    event.preventDefault();
+    moveInspectionItemSelection(event.key === "ArrowLeft" ? -1 : 1);
     return;
   }
   if ((event.key === "Tab" || event.key === "ArrowDown" || event.key === "ArrowUp") && !isTypingTarget(event.target)) {
@@ -8630,6 +8690,7 @@ function bindEvents() {
     const button = event.target.closest("[data-inspection-group]");
     if (!button) return;
     state.selectedInspectionGroup = button.dataset.inspectionGroup;
+    state.selectedInspectionItemKey = "";
     renderInspectionPanels({ list: false });
   });
   els.inspectionDetail?.addEventListener("input", (event) => {
@@ -8658,6 +8719,8 @@ function bindEvents() {
     }
   });
   els.inspectionDetail?.addEventListener("click", (event) => {
+    const itemRow = event.target.closest("[data-inspection-item-key].is-selectable");
+    if (itemRow) selectInspectionItem(itemRow.dataset.inspectionItemKey);
     const button = event.target.closest("[data-action]");
     if (!button) return;
     if (button.dataset.action === "inspection-complete") {
