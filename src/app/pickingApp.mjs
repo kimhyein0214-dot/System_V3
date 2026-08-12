@@ -8,6 +8,7 @@ import { receiptBusinessDayKeys, receiptBusinessDaysSince } from "../domain/busi
 import { inspectionHoldCsAction } from "../domain/csHoldTransition.mjs?v=20260731-inspection-hold-cs1";
 import { preferredPickingRow } from "../domain/pickingPersistence.mjs?v=20260807-picking-dedupe1";
 import { comparePickingRowsByRoute } from "../domain/pickingRowSort.mjs?v=20260731-route-row1";
+import { buildCurrentShortageExport, buildInventorySurveyExport } from "../domain/inventorySurveyExport.mjs?v=20260812-inventory-count-export-local2";
 import {
   combineInvoicesBySharedInvoice,
   sourceOrderGroupNo,
@@ -212,6 +213,7 @@ const state = {
     running: false,
     versions: new Map(),
   },
+  inventoryCountExportRunning: false,
 };
 
 const els = {
@@ -266,6 +268,7 @@ const els = {
   dashboardPhotoDropzone: document.getElementById("dashboard-photo-dropzone"),
   dashboardPhotoUploadBtn: document.getElementById("dashboard-photo-upload-btn"),
   dashboardPhotoUploadStatus: document.getElementById("dashboard-photo-upload-status"),
+  dashboardInventoryCountExportBtn: document.getElementById("dashboard-inventory-count-export-btn"),
   orderList: document.getElementById("order-list"),
   panelSubtitle: document.getElementById("panel-subtitle"),
   currentGroupLabel: document.getElementById("current-group-label"),
@@ -5916,6 +5919,83 @@ function downloadCsv(filename, rows) {
   downloadBlob(filename, new Blob([csvRowsToText(rows)], { type: "text/csv;charset=utf-8;" }));
 }
 
+function setInventoryCountExportBusy(running) {
+  state.inventoryCountExportRunning = running;
+  if (!els.dashboardInventoryCountExportBtn) return;
+  els.dashboardInventoryCountExportBtn.disabled = running;
+  els.dashboardInventoryCountExportBtn.textContent = running ? "재고수량 집계 중..." : "재고반영 수량";
+}
+
+function downloadInventoryCountWorkbook(filename, inventoryRows, shortageRows) {
+  if (!window.XLSX) {
+    toast("XLSX 라이브러리 로드 실패: 시트별 CSV로 저장합니다.");
+    const baseName = filename.replace(/\.xlsx$/i, "");
+    downloadCsv(`${baseName}_재고반영.csv`, inventoryRows);
+    downloadCsv(`${baseName}_현재미송.csv`, shortageRows);
+    return;
+  }
+
+  const workbook = window.XLSX.utils.book_new();
+  const worksheet = window.XLSX.utils.aoa_to_sheet(inventoryRows || []);
+  worksheet["!cols"] = [{ wch: 18 }, { wch: 24 }, { wch: 20 }, { wch: 20 }, { wch: 16 }, { wch: 22 }];
+  worksheet["!autofilter"] = { ref: `A1:F${Math.max(1, inventoryRows?.length || 1)}` };
+  const range = window.XLSX.utils.decode_range(worksheet["!ref"] || "A1:F1");
+  for (let row = 1; row <= range.e.r; row += 1) {
+    for (const column of ["A", "B"]) {
+      const cell = worksheet[`${column}${row + 1}`];
+      if (!cell) continue;
+      cell.t = "s";
+      cell.z = "@";
+    }
+  }
+  window.XLSX.utils.book_append_sheet(workbook, worksheet, "재고반영 수량");
+
+  const shortageWorksheet = window.XLSX.utils.aoa_to_sheet(shortageRows || []);
+  shortageWorksheet["!cols"] = [{ wch: 18 }, { wch: 24 }, { wch: 12 }];
+  shortageWorksheet["!autofilter"] = { ref: `A1:C${Math.max(1, shortageRows?.length || 1)}` };
+  const shortageRange = window.XLSX.utils.decode_range(shortageWorksheet["!ref"] || "A1:C1");
+  for (let row = 1; row <= shortageRange.e.r; row += 1) {
+    for (const column of ["A", "B"]) {
+      const cell = shortageWorksheet[`${column}${row + 1}`];
+      if (!cell) continue;
+      cell.t = "s";
+      cell.z = "@";
+    }
+  }
+  window.XLSX.utils.book_append_sheet(workbook, shortageWorksheet, "현재 미송 상품");
+  window.XLSX.writeFile(workbook, filename, { bookType: "xlsx" });
+}
+
+async function exportInventoryCountWorkbook() {
+  if (state.inventoryCountExportRunning) return;
+  setInventoryCountExportBusy(true);
+  try {
+    const { data, error } = await db.rpc("get_inventory_survey_live_counts");
+    if (error) throw error;
+    const result = buildInventorySurveyExport({
+      countRows: data || [],
+      invoices: allWorkflowInvoices(),
+    });
+    const currentShortage = buildCurrentShortageExport(state.workflowQueues?.shortageItems || []);
+    if (!result.itemCount) {
+      toast("현재 재고에 반영할 피킹·미송서랍 수량이 없습니다.");
+      return;
+    }
+
+    downloadInventoryCountWorkbook(
+      `재고반영_피킹미송_${timestampForFilename()}.xlsx`,
+      result.rows,
+      currentShortage.rows,
+    );
+    const missingOwnCode = result.missingOwnCodeCount ? ` · 자사코드 미확인 ${result.missingOwnCodeCount}종` : "";
+    toast(
+      `재고반영 ${result.itemCount}종 · 일반 피킹 ${result.pickedTotal}개 · 미송서랍 ${result.shortageDrawerTotal}개 · 현재 미송 ${currentShortage.itemCount}종 ${currentShortage.shortageTotal}개${missingOwnCode}`,
+    );
+  } finally {
+    setInventoryCountExportBusy(false);
+  }
+}
+
 function zipCrc32(bytes) {
   if (!zipCrc32.table) {
     zipCrc32.table = Array.from({ length: 256 }, (_, index) => {
@@ -9010,6 +9090,9 @@ function bindEvents() {
     }
     if (button.dataset.dashboardAction === "gold-label") {
       exportGoldLabelXlsx().catch(showError);
+    }
+    if (button.dataset.dashboardAction === "inventory-count-export") {
+      exportInventoryCountWorkbook().catch(showError);
     }
     if (button.dataset.dashboardAction === "postoffice-status") {
       showPostOfficeEnrichmentStatus();
