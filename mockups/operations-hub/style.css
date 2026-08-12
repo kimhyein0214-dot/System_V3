@@ -22,13 +22,13 @@
 .matrix-toolbar select:disabled,.filter-toggle:disabled{cursor:not-allowed;opacity:.55;background:#f3f5f8;color:#7c8796}
 .sub-code{display:block;margin-top:3px;color:#64748b;font-size:7px;font-style:normal}.review-tag{background:#fff3cd;color:#996c05}.drawer-link-btn:disabled{cursor:not-allowed;color:#a0aaba}.form-grid input:disabled,.form-grid select:disabled,.wide-label input:disabled{background:#f3f5f8;color:#64748b}
 
-/* Frozen Sellpia reference pane: seller columns scroll beneath the red boundary. */
+/* Frozen Sellpia reference pane: seller columns scroll beneath the blue boundary. */
 .matrix-table .sku-col{left:92px;width:82px;min-width:82px;box-shadow:none}
 .matrix-table .own-code-col{left:174px;width:102px;min-width:102px}
 .matrix-table .sellpia-name-col{left:276px;width:340px;min-width:340px;max-width:340px}
 .matrix-table .sellpia-stock-col{left:616px;width:80px;min-width:80px}
-.matrix-table .sellpia-price-col{left:696px;width:80px;min-width:80px;box-shadow:4px 0 0 #ef4444,12px 0 18px rgba(15,23,42,.12)}
-.matrix-table .sellpia-group{left:92px;width:684px;min-width:684px;box-shadow:4px 0 0 #ef4444,12px 0 18px rgba(15,23,42,.12)}
+.matrix-table .sellpia-price-col{left:696px;width:80px;min-width:80px;box-shadow:3px 0 0 var(--blue),12px 0 18px rgba(15,23,42,.12)}
+.matrix-table .sellpia-group{left:92px;width:684px;min-width:684px;box-shadow:3px 0 0 var(--blue),12px 0 18px rgba(15,23,42,.12)}
 .matrix-table .name-column,.matrix-table .product-cell{width:340px;min-width:340px;max-width:340px}
 .matrix-table .product-cell b,.matrix-table .product-cell em{max-width:325px}
 
