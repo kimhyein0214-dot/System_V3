@@ -16,8 +16,11 @@ assert.match(shortageSave, /updateOrderItemMemoFields\([^;]+\{ o_shop_memo2: mem
 assert.doesNotMatch(shortageSave, /\{ o_shop_memo: drawerMemo, o_shop_memo2: memo \}/);
 
 const csSave = functionSlice("saveCsManagementFields", "async function saveCsCaseOrderMemo");
-assert.match(csSave, /await saveDrawerForInvoice\(invoice, memo1\)/);
-assert.match(csSave, /patch: \{ o_shop_memo2: memo2 \}/);
+assert.match(csSave, /const shipmentInvoice = shipmentScopeForInvoice\(invoice\)/);
+assert.match(csSave, /await saveDrawerForInvoice\(shipmentInvoice, memo1\)/);
+assert.match(csSave, /setShortageQty\(invoice\.orderGroupNo, item\.sellpiaItemNo, memo2/);
+assert.match(csSave, /shippingHoldInvoice: shipmentInvoice/);
+assert.doesNotMatch(csSave, /patch: \{ o_shop_memo2: memo2 \}/);
 assert.doesNotMatch(csSave, /patch: \{ o_shop_memo: memo1 \}/);
 
 console.log("Front invoice-wide management memo regression: passed");

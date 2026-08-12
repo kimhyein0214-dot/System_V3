@@ -4213,7 +4213,9 @@ function csRowDisplayName(row) {
 }
 
 function csRowInvoiceNo(row) {
-  return row.caseRow?.inv_no || row.order?.inv_no || row.item?.inv_no || "-";
+  // 송장번호가 없는 주문은 주문번호 단위로 유지한다. 표시용 "-"를 여기서
+  // 반환하면 모든 미출고 주문이 invoice:- 한 건으로 잘못 합배송 그룹화된다.
+  return row.caseRow?.inv_no || row.order?.inv_no || row.item?.inv_no || "";
 }
 
 function csSellerMeta(group) {
@@ -4474,6 +4476,16 @@ function csGroupWorkflowInvoice(group) {
   return combineInvoicesBySharedInvoice(sourceInvoices)[0] || sourceInvoices[0];
 }
 
+function selectedCsWorkflowInvoice(orderGroupNo = "") {
+  const invoice = csGroupWorkflowInvoice(selectedCsRenderedGroup());
+  if (!invoice) return null;
+  const target = String(orderGroupNo || "").trim();
+  if (!target || String(invoice.orderGroupNo || "") === target) return invoice;
+  return sourceInvoicesForShipment(invoice).some((sourceInvoice) => String(sourceInvoice.orderGroupNo || "") === target)
+    ? invoice
+    : null;
+}
+
 function renderCsCombinedOrderSections(group) {
   let itemNumber = 0;
   return (group.sourceOrderNos || []).map((orderGroupNo, orderIndex) => {
@@ -4482,14 +4494,11 @@ function renderCsCombinedOrderSections(group) {
     const order = rows.find((row) => row.order)?.order || {};
     const receiver = order.receiver || order.receiver_name || order.orderer || "-";
     const cancelled = invoiceIsCancelled(sourceInvoice);
-    const holdState = sourceInvoice ? shippingHoldUiState(sourceInvoice) : null;
-    const holdDisabled = sourceInvoice && allowWorkflowEvents && !cancelled ? "" : "disabled";
     const cards = rows.map((row) => renderCsCaseItemEditor(row, ++itemNumber)).join("");
     return `<section class="cs-source-order-section ${cancelled ? "is-cancelled" : ""}">
       <div class="cs-source-order-head">
         <div><span class="shipment-source-badge">원주문 ${orderIndex + 1}</span><strong>${escapeHtml(orderGroupNo)}</strong><small>${escapeHtml(receiver)} · 상품 ${rows.length}종</small></div>
         <div class="cs-order-action-stack">
-          <button class="btn" data-cs-hold-action="${escapeHtml(holdState?.action || "inspection-hold")}" data-cs-order-group="${escapeHtml(orderGroupNo)}" type="button" ${holdDisabled}>${escapeHtml(holdState?.actionLabel || "배송보류 처리")}</button>
           <button class="btn ${cancelled ? "cancel-reopen" : "cancel-action"}" data-cs-cancel-action="${cancelled ? "order-reopen" : "order-cancel"}" data-cs-order-group="${escapeHtml(orderGroupNo)}" type="button" ${sourceInvoice && allowWorkflowEvents ? "" : "disabled"}>${cancelled ? "주문 취소 해제" : "주문 전체 취소"}</button>
           ${sourceInvoice ? shippingHoldBadge(sourceInvoice) : ""}
         </div>
@@ -4523,17 +4532,17 @@ function renderCsCaseDetail(group) {
       </div>
       <div class="inspection-actions">
         <span class="workflow-row-badge ${state.csMode === "manual" ? "manual" : ""}">${state.csMode === "manual" ? "수동 추가 대상" : `CS ${caseCount}건`}</span>
-        ${combinedShipment ? "" : `<div class="cs-order-action-stack">
+        <div class="cs-order-action-stack">
           <button class="btn" data-cs-hold-action="${escapeHtml(holdAction)}" data-cs-order-group="${escapeHtml(group.ordNo || "")}" type="button" ${holdDisabled}>${escapeHtml(holdLabel)}</button>
-          <button class="btn ${invoiceCancelled ? "cancel-reopen" : "cancel-action"}" data-cs-cancel-action="${invoiceCancelled ? "order-reopen" : "order-cancel"}" data-cs-order-group="${escapeHtml(group.ordNo || "")}" type="button" ${invoice && allowWorkflowEvents ? "" : "disabled"}>${invoiceCancelled ? "주문 취소 해제" : "주문 전체 취소"}</button>
+          ${combinedShipment ? "" : `<button class="btn ${invoiceCancelled ? "cancel-reopen" : "cancel-action"}" data-cs-cancel-action="${invoiceCancelled ? "order-reopen" : "order-cancel"}" data-cs-order-group="${escapeHtml(group.ordNo || "")}" type="button" ${invoice && allowWorkflowEvents ? "" : "disabled"}>${invoiceCancelled ? "주문 취소 해제" : "주문 전체 취소"}</button>`}
           ${invoice ? shippingHoldBadge(invoice) : ""}
-        </div>`}
-        ${combinedShipment ? `<span class="workflow-row-badge shipment">합배송 ${group.sourceOrderNos.length}주문 · 원주문별 처리</span>` : ""}
+        </div>
+        ${combinedShipment ? `<span class="workflow-row-badge shipment">합배송 ${group.sourceOrderNos.length}주문 · 관리메모1·배송보류 송장 전체</span>` : ""}
         <label class="cs-order-drawer-box"><span>관리메모1 <em>송장 전체</em></span><textarea class="drawer-input cs-order-drawer-input" data-cs-drawer data-order-group="${escapeHtml(invoice?.orderGroupNo || group.ordNo || "")}" rows="2" placeholder="서랍번호 / 관리메모1" ${managementReadonly}>${escapeHtml(invoice ? invoiceDrawerValue(invoice) : "")}</textarea></label>
         <label class="cs-order-scheduled-date"><span>알림톡 발송로그 <em>송장 공통 · 코드 + 최종 입력일</em></span><textarea data-cs-order-sync-field="outbound_scheduled_date" data-cs-order-group="${escapeHtml(group.ordNo || "")}" rows="3" placeholder="예: 1,3,5ㅂ&#10;08/04" title="코드 다음 줄의 MM/DD를 기준으로 다음 영업일차를 자동 계산합니다. 0=내일출고, 1=일반 1일차, 1_14=14K 1일차, 3=일반 3일차 플랫폼, 3ㅁ=일반 3일차 메이크샵, 5ㅂ=5일차 부분출고, 5ㅊ=5일차 취소출고, 5_14k=14K 5일차 부분출고, 10=10일차 잔여취소, ㅂㅂ=별도 CS 처리" ${managementReadonly}>${escapeHtml(scheduledHistory)}</textarea></label>
       </div>
     </div>
-    <p class="workflow-note">미송 자동대상과 별도 CS를 구분합니다. 관리메모1과 알림톡 발송로그는 송장 공통이며, 관리메모2·주문메모·기준일은 상품행별로 저장합니다. 배송보류는 주문 단위로 위 버튼에서 처리합니다.</p>
+    <p class="workflow-note">미송 자동대상과 별도 CS를 구분합니다. 관리메모1과 배송보류는 같은 송장 전체에 적용하고, 관리메모2는 상품행별 미송 상태와 연결합니다. 주문메모·기준일은 상품행별로 저장합니다.</p>
     <div class="cs-sync-note"><strong>CS 백업·동기화 기준</strong><span>송장 단위의 <b>알림톡 발송로그</b>는 첫 줄에 코드를 쉼표로 누적하고, 마지막 줄에 <b>MM/DD</b>를 기록합니다. 해당 상품에 적용되는 마지막 코드의 일차에서 날짜 이후 영업일을 다시 계산합니다. <b>0</b>=내일출고, <b>1</b>=일반1일차, <b>1_14</b>=14K1일차, <b>3</b>=플랫폼, <b>3ㅁ</b>=메이크샵, <b>5ㅂ</b>=부분출고, <b>5ㅊ</b>=취소출고, <b>5_14k</b>=14K5일차, <b>10</b>=잔여취소, <b>ㅂㅂ</b>=별도 CS 처리입니다.</span></div>
     ${combinedShipment ? renderCsCombinedOrderSections(group) : `<div class="cs-item-card-stack">${group.items.map((row, index) => renderCsCaseItemEditor(row, index + 1)).join("")}</div>`}
   </div>`;
@@ -4877,21 +4886,22 @@ async function saveCsManagementFields(row, scope = els.csDetail, { renderAfter =
   }
 
   const { invoice, item } = findCsWorkflowItem(row);
+  const shipmentInvoice = shipmentScopeForInvoice(invoice);
   if (memo1Changed) {
     if (!invoice) throw new Error("관리메모1을 송장 전체에 저장할 작업 데이터를 찾지 못했습니다.");
-    await saveDrawerForInvoice(invoice, memo1);
+    await saveDrawerForInvoice(shipmentInvoice, memo1);
     row.item.o_shop_memo = memo1;
     row.item.shop_memo = memo1;
     row.item.memo1 = memo1;
   }
 
   if (memo2Changed) {
-    await updateOrderItemOrderMemoExact({
-      ordNo,
-      itemNo,
-      sellpiaOrderItemNo,
-      patch: { o_shop_memo2: memo2 },
+    if (!invoice || !item) throw new Error("관리메모2를 미송 상태에 연결할 작업 데이터를 찾지 못했습니다.");
+    const saved = await setShortageQty(invoice.orderGroupNo, item.sellpiaItemNo, memo2, {
+      shippingHoldInvoice: shipmentInvoice,
+      throwOnError: true,
     });
+    if (!saved) throw new Error("관리메모2와 미송 상태를 저장하지 못했습니다.");
     row.item.o_shop_memo2 = memo2;
     row.item.shop_memo2 = memo2;
     row.item.memo2 = memo2;
@@ -5525,6 +5535,33 @@ function sourceInvoicesForShipment(invoice) {
   return invoice?.shipmentGroup ? (invoice.sourceInvoices || []) : invoice ? [invoice] : [];
 }
 
+function shipmentScopeForInvoice(invoice) {
+  if (!invoice || invoice.shipmentGroup) return invoice || null;
+  const invoiceNo = String(invoice.invoiceNo || "").trim();
+  if (!invoiceNo) return invoice;
+  const byOrder = new Map();
+  for (const candidate of allWorkflowInvoices()) {
+    if (!candidate || candidate.shipmentGroup || String(candidate.invoiceNo || "").trim() !== invoiceNo) continue;
+    const orderGroupNo = String(candidate.orderGroupNo || "").trim();
+    if (orderGroupNo && !byOrder.has(orderGroupNo)) byOrder.set(orderGroupNo, candidate);
+  }
+  const invoiceOrderGroupNo = String(invoice.orderGroupNo || "").trim();
+  if (invoiceOrderGroupNo && !byOrder.has(invoiceOrderGroupNo)) byOrder.set(invoiceOrderGroupNo, invoice);
+  const sourceInvoices = [...byOrder.values()];
+  if (sourceInvoices.length < 2) return invoice;
+  return combineInvoicesBySharedInvoice(sourceInvoices)[0] || invoice;
+}
+
+async function ensureShippingHoldOnForShipment(invoice, memoValue) {
+  if (!String(memoValue || "").trim()) return true;
+  for (const sourceInvoice of sourceInvoicesForShipment(invoice)) {
+    if (isSystemShippingHoldOn(sourceInvoice)) continue;
+    const saved = await ensureShippingHoldOnAfterMemoSave(sourceInvoice, memoValue);
+    if (!saved) throw new Error(`배송보류 ON 저장에 실패했습니다: ${sourceInvoice.orderGroupNo}`);
+  }
+  return true;
+}
+
 async function saveDrawerForInvoice(invoice, drawerMemo) {
   if (!allowWrites) {
     toast("읽기전용입니다. URL에 write=1을 붙여야 저장할 수 있습니다.");
@@ -5543,17 +5580,17 @@ async function saveDrawerForInvoice(invoice, drawerMemo) {
   }
 }
 
-async function setShortageQty(orderGroupNo, sellpiaItemNo, nextValue) {
+async function setShortageQty(orderGroupNo, sellpiaItemNo, nextValue, { shippingHoldInvoice = null, throwOnError = false } = {}) {
   const { invoice, item } = findInvoiceAndItem(orderGroupNo, sellpiaItemNo);
   if (!invoice || !item) {
     toast("부족수량 대상을 찾지 못했습니다.");
-    return;
+    return false;
   }
   const prevText = itemManagementMemo2(item);
   const nextText = normalizedShortageMemo2(nextValue);
   const prev = shortageQty(item);
   const next = normalizedShortageQty(nextText);
-  if (prev === next && prevText === nextText) return;
+  if (prev === next && prevText === nextText) return true;
   const eventType = shortageEventType(prev, next);
   patchLocalPickingState(invoice, item, { shortageQty: next, shortageMemo2: nextText });
   item.sellpiaMemo2 = nextText;
@@ -5585,9 +5622,10 @@ async function setShortageQty(orderGroupNo, sellpiaItemNo, nextValue) {
         }
       }
       patchLocalItemManagementMemos(invoice.orderGroupNo, item.sellpiaItemNo, { memo2: nextText });
-      await ensureShippingHoldOnAfterMemoSave(invoice, nextText);
+      await ensureShippingHoldOnForShipment(shippingHoldInvoice || invoice, nextText);
       renderWorkflowSurfacesIfVisible();
       toast("관리메모2 저장");
+      return true;
     } catch (error) {
       // A newer input is already visible and queued; do not roll it back to an older value.
       if (itemManagementMemo2(item) === nextText) {
@@ -5601,11 +5639,13 @@ async function setShortageQty(orderGroupNo, sellpiaItemNo, nextValue) {
         render();
       }
       toast(`관리메모2 저장 실패: ${error.message}`);
+      if (throwOnError) throw error;
+      return false;
     }
   });
   state.shortageSaveQueues.set(queueKey, queuedSave);
   try {
-    await queuedSave;
+    return await queuedSave;
   } finally {
     if (state.shortageSaveQueues.get(queueKey) === queuedSave) {
       state.shortageSaveQueues.delete(queueKey);
@@ -7661,22 +7701,27 @@ async function toggleSelectedInspectionHold(orderGroupNo = state.selectedInspect
 }
 
 async function toggleCsShippingHold(orderGroupNo) {
-  const invoice = allWorkflowInvoices().find((candidate) => String(candidate?.orderGroupNo || "") === String(orderGroupNo || ""));
+  const sourceInvoice = allWorkflowInvoices().find((candidate) => String(candidate?.orderGroupNo || "") === String(orderGroupNo || "")) || null;
+  const invoice = selectedCsWorkflowInvoice(orderGroupNo) || shipmentScopeForInvoice(sourceInvoice);
   if (!invoice) {
     toast("CS 주문의 배송보류 대상을 찾지 못했습니다.");
     return;
   }
   const holdOn = Boolean(workflowInvoiceState(invoice)?.systemShippingHold);
-  const event = await saveShippingHoldCurrentThenEvent(
-    invoice,
-    holdOn ? "OFF" : "ON",
-    holdOn ? "cs_hold_off" : "cs_hold_on",
-    holdOn ? "hold_released" : "hold_created",
-    { memo: holdOn ? "shipping hold released from cs" : "shipping hold on from cs", source: "f_v1_cs" },
-  );
-  if (!event) return;
+  const sourceInvoices = sourceInvoicesForShipment(invoice);
+  for (const memberInvoice of sourceInvoices) {
+    const event = await saveShippingHoldCurrentThenEvent(
+      memberInvoice,
+      holdOn ? "OFF" : "ON",
+      holdOn ? "cs_hold_off" : "cs_hold_on",
+      holdOn ? "hold_released" : "hold_created",
+      { memo: holdOn ? "shipping hold released from cs" : "shipping hold on from cs", source: "f_v1_cs" },
+    );
+    if (!event) return;
+  }
   renderWorkflowSurfaces();
-  toast(holdOn ? "배송보류를 해제했습니다." : "배송보류를 처리했습니다.");
+  const scopeLabel = sourceInvoices.length > 1 ? `합배송 ${sourceInvoices.length}주문 전체` : "주문";
+  toast(holdOn ? `${scopeLabel} 배송보류를 해제했습니다.` : `${scopeLabel} 배송보류를 처리했습니다.`);
 }
 
 function cancellationWarning(invoice, scopeLabel) {
@@ -7793,6 +7838,7 @@ function onDrawerChange(event) {
   if (!input) return;
   const invoice = findInvoiceAndItem(input.dataset.orderGroup, "")?.invoice
     || selectedInspectionInvoice(input.dataset.orderGroup)
+    || selectedCsWorkflowInvoice(input.dataset.orderGroup)
     || (state.viewModel?.invoices || []).find((row) => row.orderGroupNo === input.dataset.orderGroup);
   if (!invoice) return;
   const value = input.value.trim();
