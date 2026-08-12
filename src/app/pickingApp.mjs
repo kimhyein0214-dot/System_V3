@@ -2766,6 +2766,16 @@ function renderShortageRows(rows) {
     .join("");
 }
 
+function openShortageRowForInvoiceItem(invoice, item) {
+  const targetKey = workflowItemKey(invoice, item);
+  return (state.workflowQueues?.shortageItems || []).find((row) => (
+    workflowItemKey(row.invoice, row.item) === targetKey
+    && !row.completed
+    && !row.cancelled
+    && !itemIsEffectivelyCancelled(row.invoice, row.item)
+  )) || null;
+}
+
 function renderShortageInvoiceItems(invoice) {
   return `<div class="workflow-item-table shortage-invoice-table">
     ${invoiceItemsInSellpiaRowOrder(invoice)
@@ -2774,6 +2784,11 @@ function renderShortageInvoiceItems(invoice) {
         const itemCancelled = itemIsEffectivelyCancelled(invoice, item);
         const imageUrl = productImageUrl(item.sellpiaProductCode);
         const shortage = workflowAwareShortageQty(itemState, item);
+        const openShortageRow = openShortageRowForInvoiceItem(invoice, item);
+        const openShortageKey = openShortageRow
+          ? workflowItemKey(openShortageRow.invoice, openShortageRow.item)
+          : "";
+        const completeDisabled = allowWorkflowEvents ? "" : "disabled";
         return `<div class="workflow-item-row ${shortage > 0 ? "repicked" : ""} ${itemCancelled ? "is-cancelled" : ""}">
           <span>${itemSequenceNo(item, index)}</span>
           <div class="workflow-item-photo">${imageUrl ? `<img src="${imageUrl}" ${photoImgAttrs(imageUrl, photoTitleForItem(item))} alt="" loading="lazy" onerror="this.style.visibility='hidden'">` : "?ъ쭊"}</div>
@@ -2781,6 +2796,7 @@ function renderShortageInvoiceItems(invoice) {
           <em class="${optionHasBarChange(item) ? "option-change" : ""}">${escapeHtml(cleanOptionName(item.optionName, item.ownCode) || item.productName || "-")}</em>
           <b>${Number(item.quantity) || 1}개</b>
           <small>${itemCancelled ? "취소" : shortage > 0 ? `미송 ${shortage}` : "정상"}</small>
+          <span class="shortage-invoice-action">${openShortageRow ? `<button class="btn primary mini shortage-invoice-complete-btn" data-action="shortage-repicked" data-shortage-inline-complete data-shortage-key="${escapeHtml(openShortageKey)}" type="button" ${completeDisabled}>미송피킹완료</button>` : ""}</span>
         </div>`;
       })
       .join("")}
@@ -7266,14 +7282,31 @@ async function completeShortagePickingRow(row, { render = true } = {}) {
   return true;
 }
 
-async function completeSelectedShortagePicking(shortageKey = state.selectedShortageKey) {
+function nextOpenShortageKeyInSameOrder(completedRow) {
+  const completedKey = workflowItemKey(completedRow.invoice, completedRow.item);
+  const sourceOrderNo = sourceOrderGroupNo(completedRow.invoice, completedRow.item);
+  const nextRow = (state.workflowQueues?.shortageItems || []).find((row) => (
+    workflowItemKey(row.invoice, row.item) !== completedKey
+    && sourceOrderGroupNo(row.invoice, row.item) === sourceOrderNo
+    && !row.completed
+    && !row.cancelled
+    && !itemIsEffectivelyCancelled(row.invoice, row.item)
+  ));
+  return nextRow ? workflowItemKey(nextRow.invoice, nextRow.item) : "";
+}
+
+async function completeSelectedShortagePicking(
+  shortageKey = state.selectedShortageKey,
+  { keepSameOrder = false } = {},
+) {
   const row = (state.workflowQueues?.shortageItems || []).find(({ invoice, item }) => workflowItemKey(invoice, item) === shortageKey);
   if (!row) {
     toast("미송피킹 대상을 찾지 못했습니다.");
     return false;
   }
 
-  const completed = await completeShortagePickingRow(row);
+  const nextSameOrderKey = keepSameOrder ? nextOpenShortageKeyInSameOrder(row) : "";
+  const completed = await completeShortagePickingRow(row, { render: false });
   if (!completed) {
     toast("이미 완료됐거나 저장하지 못한 미송피킹입니다.");
     return false;
@@ -7281,7 +7314,7 @@ async function completeSelectedShortagePicking(shortageKey = state.selectedShort
 
   state.selectedInspectionGroup = row.invoice.orderGroupNo;
   state.selectedInspectionItemKey = itemSlotKey(row.invoice, row.item);
-  state.selectedShortageKey = "";
+  state.selectedShortageKey = nextSameOrderKey;
   renderWorkflowSurfaces();
   toast("미송피킹 완료: 관리메모2를 비우고 검품탭에 송장 전체가 표시됩니다.");
   return true;
@@ -8897,7 +8930,9 @@ function bindEvents() {
     const button = event.target.closest("[data-action]");
     if (!button) return;
     if (button.dataset.action === "shortage-repicked") {
-      completeSelectedShortagePicking(button.dataset.shortageKey).catch(showError);
+      completeSelectedShortagePicking(button.dataset.shortageKey, {
+        keepSameOrder: button.hasAttribute("data-shortage-inline-complete"),
+      }).catch(showError);
     }
     if (button.dataset.action === "shortage-memo-save") {
       saveSelectedShortageMemo(button.dataset.shortageKey).catch(showError);

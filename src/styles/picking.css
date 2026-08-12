@@ -2371,6 +2371,21 @@ input {
   border-bottom: 1px solid var(--line-soft);
 }
 
+.shortage-invoice-table .workflow-item-row {
+  min-width: 760px;
+  grid-template-columns: 34px 72px 120px minmax(0, 1fr) 64px 104px 132px;
+}
+
+.shortage-invoice-action {
+  min-width: 0;
+  display: flex;
+  justify-content: center;
+}
+
+.shortage-invoice-complete-btn {
+  white-space: nowrap;
+}
+
 .inspection-item-table .workflow-item-row {
   min-width: 1880px;
   min-height: 154px;
