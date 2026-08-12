@@ -77,6 +77,29 @@ const pendingChanges = [];
 const liveData = window.SystemV3Data;
 const matrixState = {page:1, search:'', total:0, loading:false, requestId:0};
 const matrixRowsBySku = new Map();
+const matrixTable = document.querySelector('.matrix-table');
+const matrixZoomOut = document.getElementById('matrix-zoom-out');
+const matrixZoomValue = document.getElementById('matrix-zoom-value');
+const matrixZoomIn = document.getElementById('matrix-zoom-in');
+const MATRIX_ZOOM_KEY = 'system-v3-matrix-zoom';
+const MATRIX_ZOOM_MIN = 80;
+const MATRIX_ZOOM_MAX = 140;
+const MATRIX_ZOOM_STEP = 10;
+let matrixZoom = Math.max(MATRIX_ZOOM_MIN, Math.min(MATRIX_ZOOM_MAX, Number(localStorage.getItem(MATRIX_ZOOM_KEY)) || 100));
+
+function applyMatrixZoom(value, {persist = true} = {}) {
+  matrixZoom = Math.max(MATRIX_ZOOM_MIN, Math.min(MATRIX_ZOOM_MAX, Number(value) || 100));
+  matrixTable.style.setProperty('--matrix-zoom', String(matrixZoom / 100));
+  matrixZoomValue.textContent = `${matrixZoom}%`;
+  matrixZoomOut.disabled = matrixZoom <= MATRIX_ZOOM_MIN;
+  matrixZoomIn.disabled = matrixZoom >= MATRIX_ZOOM_MAX;
+  if (persist) localStorage.setItem(MATRIX_ZOOM_KEY, String(matrixZoom));
+}
+
+matrixZoomOut.addEventListener('click', () => applyMatrixZoom(matrixZoom - MATRIX_ZOOM_STEP));
+matrixZoomIn.addEventListener('click', () => applyMatrixZoom(matrixZoom + MATRIX_ZOOM_STEP));
+matrixZoomValue.addEventListener('click', () => applyMatrixZoom(100));
+applyMatrixZoom(matrixZoom, {persist:false});
 
 function escapeHtml(value) {
   return String(value ?? '').replace(/[&<>'"]/g, character => ({
@@ -86,6 +109,12 @@ function escapeHtml(value) {
 
 function formatNumber(value) {
   return Number(value || 0).toLocaleString('ko-KR');
+}
+
+function formatNullableNumber(value) {
+  if (value === null || value === undefined || value === '') return '-';
+  const number = Number(value);
+  return Number.isFinite(number) ? number.toLocaleString('ko-KR') : '-';
 }
 
 function formatLiveTime(value) {
@@ -109,17 +138,29 @@ function matchState(tier) {
   return {key:'connected', label:'연결 완료'};
 }
 
-function channelCells(product, prefix, hasSeparateOption = true) {
+function channelInventoryCells(product, prefix, label, hasSeparateOption = true) {
   const tier = product[`${prefix}_match_tier`];
   const state = matchState(tier);
   const productCode = escapeHtml(product[`${prefix}_product_code`] || '-');
   const optionCode = escapeHtml(product[`${prefix}_option_code`] || '-');
   const listingCount = Number(product[`${prefix}_listing_count`] || 0);
-  const title = listingCount > 1 ? ` title="이 SKU에 ${listingCount}개의 판매처 행이 연결되어 있습니다."` : '';
+  const title = listingCount > 1 ? ` title="이 SKU에는 ${listingCount}개의 판매처 행이 연결되어 있습니다."` : '';
   const codeCells = hasSeparateOption
     ? `<td${title}>${productCode}</td><td>${optionCode}</td>`
     : `<td${title}>${productCode}${optionCode !== '-' ? `<em class="sub-code">${optionCode}</em>` : ''}</td>`;
-  return `<td><span class="matrix-status ${state.key}">${state.label}</span></td>${codeCells}<td class="data-gap">-</td><td class="data-gap">-</td>`;
+  const stock = product[`${prefix}_stock`];
+  const price = product[`${prefix}_price`];
+  const sellpiaStock = product.sellpia_current_stock;
+  const sellpiaPrice = product.sellpia_sale_price;
+  const stockDiff = stock !== null && stock !== undefined && sellpiaStock !== null && sellpiaStock !== undefined && Number(stock) !== Number(sellpiaStock);
+  const priceDiff = price !== null && price !== undefined && sellpiaPrice !== null && sellpiaPrice !== undefined && Number(price) !== Number(sellpiaPrice);
+  const stockCell = stock === null || stock === undefined
+    ? '<td class="data-gap">-</td>'
+    : `<td><button class="editable-cell${stockDiff ? ' diff' : ''}" data-field="${label} 재고">${formatNullableNumber(stock)}</button></td>`;
+  const priceCell = price === null || price === undefined
+    ? '<td class="data-gap">-</td>'
+    : `<td><button class="editable-cell${priceDiff ? ' diff' : ''}" data-field="${label} 가격">${formatNullableNumber(price)}</button></td>`;
+  return `<td><span class="matrix-status ${state.key}">${state.label}</span></td>${codeCells}${stockCell}${priceCell}`;
 }
 
 function renderLiveMatrixRows(products) {
@@ -131,23 +172,27 @@ function renderLiveMatrixRows(products) {
   matrixBody.innerHTML = products.map(product => {
     matrixRowsBySku.set(product.sellpia_sku_code, product);
     const sku = escapeHtml(product.sellpia_sku_code);
-    const ownCode = escapeHtml(product.own_code || '-');
+    const ownCode = escapeHtml(product.sellpia_own_code || product.own_code || '-');
     const imageUrl = escapeHtml(product.image_url || '');
     const tiers = [product.smartstore_match_tier, product.makeshop_match_tier, product.ably_match_tier];
     const connectedCount = tiers.filter(Boolean).length;
     const overallState = connectedCount === 0 ? 'unmatched' : tiers.includes('FAST_REVIEW') ? 'review' : 'connected';
-    const displayName = escapeHtml(product.display_name || '상품명 원본 적재 대기');
+    const displayName = escapeHtml(product.sellpia_product_name || product.display_name || '상품명 원본 적재 대기');
+    const optionName = escapeHtml(product.sellpia_option_name || '셀피아 옵션명 적재 대기');
+    const sellpiaStock = formatNullableNumber(product.sellpia_current_stock);
+    const sellpiaPrice = formatNullableNumber(product.sellpia_sale_price);
     const mappingTag = overallState === 'review' ? '<span class="tag review-tag">검토 필요</span>' : `<span class="tag">${connectedCount}처 연결</span>`;
     return `<tr data-sku="${sku}" data-own-code="${ownCode}" data-image="${imageUrl}" data-status="${overallState}">
       <td class="sticky-col select-col"><input class="row-check" type="checkbox" aria-label="${sku} 선택"></td>
       <td class="sticky-col image-col">${matrixImage(product)}</td>
       <td class="sticky-col sku-col code-cell">${sku}</td>
-      <td>${ownCode}</td>
-      <td class="product-cell"><b title="${displayName}">${displayName}</b><em>매칭 DB 기준 대표 상품명</em></td>
-      <td class="number-cell data-gap">-</td><td class="number-cell data-gap">-</td>
-      ${channelCells(product, 'smartstore')}
-      ${channelCells(product, 'makeshop')}
-      ${channelCells(product, 'ably', false)}
+      <td class="sticky-col own-code-col">${ownCode}</td>
+      <td class="sticky-col sellpia-name-col product-cell"><b title="${displayName}">${displayName}</b><em>${optionName}</em></td>
+      <td class="sticky-col sellpia-stock-col number-cell${sellpiaStock === '-' ? ' data-gap' : ''}">${sellpiaStock}</td>
+      <td class="sticky-col sellpia-price-col number-cell${sellpiaPrice === '-' ? ' data-gap' : ''}">${sellpiaPrice}</td>
+      ${channelInventoryCells(product, 'smartstore', '스마트스토어')}
+      ${channelInventoryCells(product, 'makeshop', '메이크샵')}
+      ${channelInventoryCells(product, 'ably', '에이블리', false)}
       <td class="data-gap">-</td><td class="data-gap">-</td><td>${mappingTag}</td><td>${formatLiveTime(product.updated_at)}</td>
     </tr>`;
   }).join('');
@@ -237,7 +282,7 @@ function matrixRowName(row) {
   };
 }
 
-function fillDrawerChannel(sectionKey, dataKey, product) {
+function fillDrawerChannel(sectionKey, dataKey, label, product) {
   const section = document.getElementById(`drawer-${sectionKey}`);
   const state = matchState(product?.[`${dataKey}_match_tier`]);
   const status = section.querySelector('.matrix-status');
@@ -245,6 +290,10 @@ function fillDrawerChannel(sectionKey, dataKey, product) {
   status.textContent = state.label;
   document.getElementById(`drawer-${sectionKey}-product`).value = product?.[`${dataKey}_product_code`] || '';
   document.getElementById(`drawer-${sectionKey}-option`).value = product?.[`${dataKey}_option_code`] || '';
+  const stockInput = section.querySelector(`[data-drawer-field="${label} 재고"]`);
+  const priceInput = section.querySelector(`[data-drawer-field="${label} 가격"]`);
+  stockInput.value = formatNullableNumber(product?.[`${dataKey}_stock`]);
+  priceInput.value = formatNullableNumber(product?.[`${dataKey}_price`]);
 }
 
 function openProductDrawer(row) {
@@ -261,12 +310,12 @@ function openProductDrawer(row) {
     input.placeholder = '판매처 DB 적재 후 표시';
     input.disabled = true;
   });
-  fillDrawerChannel('smart', 'smartstore', liveProduct);
-  fillDrawerChannel('make', 'makeshop', liveProduct);
-  fillDrawerChannel('ably', 'ably', liveProduct);
+  fillDrawerChannel('smart', 'smartstore', '스마트스토어', liveProduct);
+  fillDrawerChannel('make', 'makeshop', '메이크샵', liveProduct);
+  fillDrawerChannel('ably', 'ably', '에이블리', liveProduct);
   const connectedCount = ['smartstore','makeshop','ably'].filter(channel => liveProduct[`${channel}_match_tier`]).length;
-  document.getElementById('drawer-stock').textContent = '-';
-  document.getElementById('drawer-price').textContent = '-';
+  document.getElementById('drawer-stock').textContent = formatNullableNumber(liveProduct.sellpia_current_stock);
+  document.getElementById('drawer-price').textContent = formatNullableNumber(liveProduct.sellpia_sale_price);
   document.getElementById('drawer-channel-count').textContent = `${connectedCount}곳`;
   const attributeSection = document.querySelector('.compact-section');
   attributeSection.querySelectorAll('select,input').forEach(input => { input.disabled = true; });
@@ -453,11 +502,25 @@ const sourceSelect = document.getElementById('source-select');
 const sourceInfo = document.getElementById('source-info');
 const fileGuide = document.getElementById('file-guide');
 const fileSlots = document.getElementById('file-slots');
+const uploadButton = document.getElementById('mock-upload-btn');
+const uploadCapabilityBadge = document.getElementById('upload-capability-badge');
+let selectedFiles = [];
+
+function setUploadCapability() {
+  const supported = sourceSelect.value === 'sellpia';
+  uploadButton.disabled = !supported;
+  uploadButton.textContent = supported ? 'DB 업로드 시작' : '판매처 업로드 연결 예정';
+  uploadCapabilityBadge.textContent = supported ? '셀피아 실데이터 업로드 연결' : '파서 확인 완료 · DB 적재 연결 예정';
+}
+
 function updateSource() {
   const config = sourceConfig[sourceSelect.value];
+  selectedFiles = [];
+  document.getElementById('mock-file').value = '';
   sourceInfo.innerHTML = `<span class="channel-logo ${config.cls}">${config.initial}</span><div><b>${config.name}</b><p>${config.detail}</p></div><em>필수</em>`;
   fileGuide.textContent = config.guide;
   fileSlots.innerHTML = Array.from({length:config.files},(_,i)=>`<div><i>${i+1}</i><span><b>파일 ${i+1}</b><em>선택된 파일 없음</em></span><button type="button" class="slot-button">파일 선택</button></div>`).join('');
+  setUploadCapability();
 }
 sourceSelect.addEventListener('change', updateSource);
 
@@ -471,13 +534,68 @@ fileSlots.addEventListener('click', event => { if (event.target.closest('.slot-b
 fileInput.addEventListener('change', () => renderFiles(fileInput.files));
 function renderFiles(files) {
   const config = sourceConfig[sourceSelect.value];
+  selectedFiles = Array.from(files || []).slice(0, config.files);
   fileSlots.innerHTML = Array.from({length:config.files},(_,i)=>{
-    const file = files[i];
+    const file = selectedFiles[i];
     return `<div><i>${file?'✓':i+1}</i><span><b>${file?file.name:`파일 ${i+1}`}</b><em>${file?`${(file.size/1024/1024).toFixed(1)}MB · 업로드 준비됨`:'선택된 파일 없음'}</em></span><button type="button" class="slot-button">${file?'교체':'파일 선택'}</button></div>`;
   }).join('');
 }
 
-document.getElementById('mock-upload-btn').addEventListener('click', () => showToast('목업이므로 실제 파일은 업로드되지 않습니다.'));
+function showUploadProgress({percent = 0, title = '처리 중', detail = ''} = {}) {
+  const progress = document.getElementById('upload-progress');
+  progress.hidden = false;
+  const safePercent = Math.max(0, Math.min(100, Math.round(percent)));
+  document.getElementById('upload-progress-title').textContent = title;
+  document.getElementById('upload-progress-percent').textContent = `${safePercent}%`;
+  document.getElementById('upload-progress-bar').style.width = `${safePercent}%`;
+  document.getElementById('upload-progress-detail').textContent = detail;
+}
+
+uploadButton.addEventListener('click', async () => {
+  const config = sourceConfig[sourceSelect.value];
+  if (sourceSelect.value !== 'sellpia') {
+    showToast('현재는 셀피아 기준 원본부터 DB 업로드가 연결되어 있습니다.');
+    return;
+  }
+  if (selectedFiles.length !== config.files) {
+    showToast(`셀피아 분할 파일 ${config.files}개를 모두 선택해주세요.`);
+    return;
+  }
+  if (!liveData?.uploadSellpiaSnapshot) {
+    showToast('업로드 모듈을 불러오지 못했습니다. 새로고침 후 다시 시도해주세요.');
+    return;
+  }
+  const fields = {
+    inventory: document.getElementById('upload-field-inventory').checked,
+    price: document.getElementById('upload-field-price').checked,
+    basic: document.getElementById('upload-field-basic').checked,
+    status: document.getElementById('upload-field-status').checked
+  };
+  if (!Object.values(fields).some(Boolean)) {
+    showToast('갱신할 항목을 하나 이상 선택해주세요.');
+    return;
+  }
+  uploadButton.disabled = true;
+  sourceSelect.disabled = true;
+  fileInput.disabled = true;
+  uploadButton.textContent = '업로드 진행 중…';
+  showUploadProgress({percent:1, title:'파일 확인 중', detail:'헤더, 행번호, SKU 중복을 검사합니다.'});
+  try {
+    const result = await liveData.uploadSellpiaSnapshot(selectedFiles, fields, showUploadProgress);
+    showUploadProgress({percent:100, title:'DB 업로드 완료', detail:`${formatNumber(result.rowCount)}개 SKU를 새 스냅샷으로 저장했습니다.`});
+    showToast(`셀피아 ${formatNumber(result.rowCount)}개 SKU 업로드 완료`);
+    await refreshLiveData({resetPage:true});
+    window.setTimeout(() => showPage('matching'), 500);
+  } catch (error) {
+    console.error('sellpia snapshot upload failed', error);
+    showUploadProgress({percent:0, title:'업로드 실패', detail:error?.message || '원본 파일을 다시 확인해주세요.'});
+    showToast('셀피아 업로드에 실패했습니다. 진행상황의 오류 내용을 확인해주세요.');
+  } finally {
+    sourceSelect.disabled = false;
+    fileInput.disabled = false;
+    setUploadCapability();
+  }
+});
 let toastTimer;
 function showToast(message) {
   const toast = document.getElementById('toast');

@@ -21,3 +21,28 @@
 .matrix-footer button:disabled,.drawer-foot button:disabled{cursor:not-allowed;opacity:.45}.drawer-product .live-thumb{margin:0;width:44px;height:44px}.drawer-foot button:disabled{background:#94a3b8;border-color:#94a3b8}
 .matrix-toolbar select:disabled,.filter-toggle:disabled{cursor:not-allowed;opacity:.55;background:#f3f5f8;color:#7c8796}
 .sub-code{display:block;margin-top:3px;color:#64748b;font-size:7px;font-style:normal}.review-tag{background:#fff3cd;color:#996c05}.drawer-link-btn:disabled{cursor:not-allowed;color:#a0aaba}.form-grid input:disabled,.form-grid select:disabled,.wide-label input:disabled{background:#f3f5f8;color:#64748b}
+
+/* Frozen Sellpia reference pane: seller columns scroll beneath the red boundary. */
+.matrix-table .sku-col{left:92px;width:82px;min-width:82px;box-shadow:none}
+.matrix-table .own-code-col{left:174px;width:102px;min-width:102px}
+.matrix-table .sellpia-name-col{left:276px;width:340px;min-width:340px;max-width:340px}
+.matrix-table .sellpia-stock-col{left:616px;width:80px;min-width:80px}
+.matrix-table .sellpia-price-col{left:696px;width:80px;min-width:80px;box-shadow:4px 0 0 #ef4444,12px 0 18px rgba(15,23,42,.12)}
+.matrix-table .sellpia-group{left:92px;width:684px;min-width:684px;box-shadow:4px 0 0 #ef4444,12px 0 18px rgba(15,23,42,.12)}
+.matrix-table .name-column,.matrix-table .product-cell{width:340px;min-width:340px;max-width:340px}
+.matrix-table .product-cell b,.matrix-table .product-cell em{max-width:325px}
+
+.upload-progress{margin-top:12px;padding:11px;border:1px solid #b9d2ff;border-radius:7px;background:#f4f8ff}
+.upload-progress[hidden]{display:none}
+.upload-progress>div:first-child{display:flex;justify-content:space-between;align-items:center;font-size:10px}
+.upload-progress>div:first-child span{color:var(--blue);font-weight:1000}
+.upload-progress .progress{margin-top:8px}
+.upload-progress p{margin:7px 0 0;color:#64748b;font-size:9px}
+.matrix-zoom-control{height:31px;display:inline-flex;align-items:center;border:1px solid var(--line);border-radius:6px;overflow:hidden;background:#fff;white-space:nowrap}
+.matrix-zoom-control button{width:28px;height:29px;border:0;border-right:1px solid var(--line-soft);background:#fff;color:#475569;font-size:13px;font-weight:900;cursor:pointer}
+.matrix-zoom-control button:last-child{border-right:0}
+.matrix-zoom-control #matrix-zoom-value{width:48px;color:var(--blue);font-size:9px}
+.matrix-zoom-control button:hover{background:#f3f7ff;color:var(--blue)}
+.matrix-zoom-control button:disabled{background:#f8fafc;color:#cbd5e1;cursor:not-allowed}
+.matrix-table{zoom:var(--matrix-zoom,1)}
+.upload-footer .btn:disabled{cursor:not-allowed;background:#94a3b8;border-color:#94a3b8}

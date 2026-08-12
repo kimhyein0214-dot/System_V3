@@ -110,7 +110,7 @@
           <div id="upload" class="page">
             <div class="page-head">
               <div><h2>원본 업로드</h2><p>원본 종류를 먼저 선택하면 필요한 파일 수와 형식을 자동으로 안내합니다.</p></div>
-              <div class="mock-badge">화면 목업 · 실제 업로드 안 됨</div>
+              <div class="mock-badge" id="upload-capability-badge">셀피아 실데이터 업로드 연결</div>
             </div>
             <div class="upload-layout">
               <section class="panel upload-card">
@@ -131,9 +131,10 @@
                 </div>
                 <div class="upload-options">
                   <p><b>갱신할 항목</b><small>필요한 데이터만 선택하면 처리시간을 줄일 수 있습니다.</small></p>
-                  <label><input type="checkbox" checked> 재고</label><label><input type="checkbox" checked> 가격</label><label><input type="checkbox"> 상품 기본정보</label><label><input type="checkbox"> 판매상태</label>
+                  <label><input id="upload-field-inventory" type="checkbox" checked> 재고</label><label><input id="upload-field-price" type="checkbox" checked> 가격</label><label><input id="upload-field-basic" type="checkbox"> 상품 기본정보</label><label><input id="upload-field-status" type="checkbox"> 판매상태</label>
                 </div>
                 <div class="upload-footer"><p><span>✓</span> 원본 파일은 별도 보관하고 DB에는 정규화한 데이터만 저장합니다.</p><button id="mock-upload-btn" class="btn primary large" type="button">업로드 작업 시작</button></div>
+                <div id="upload-progress" class="upload-progress" hidden><div><b id="upload-progress-title">파일 확인 중</b><span id="upload-progress-percent">0%</span></div><div class="progress"><i id="upload-progress-bar" style="width:0%"></i></div><p id="upload-progress-detail">원본 헤더와 행번호를 검사합니다.</p></div>
               </section>
 
               <aside class="panel upload-history">
@@ -166,6 +167,11 @@
               <button class="filter-toggle" disabled>재고 차이 <b>-</b></button>
               <button class="filter-toggle" disabled>가격 차이 <b>-</b></button>
               <button class="btn compact">표시 열 설정</button>
+              <div class="matrix-zoom-control" aria-label="매트릭스 확대 축소">
+                <button type="button" id="matrix-zoom-out" aria-label="매트릭스 축소">−</button>
+                <button type="button" id="matrix-zoom-value" title="100%로 초기화">100%</button>
+                <button type="button" id="matrix-zoom-in" aria-label="매트릭스 확대">＋</button>
+              </div>
               <div class="matrix-result"><b id="matrix-total-count">-</b>개 SKU <span>·</span> 선택 <strong id="selected-count">0</strong></div>
             </div>
 
@@ -179,14 +185,14 @@
                   <tr class="group-row">
                     <th class="sticky-col select-col" rowspan="2"><input id="select-all-matrix" type="checkbox" aria-label="전체 선택"></th>
                     <th class="sticky-col image-col" rowspan="2">이미지</th>
-                    <th class="sticky-col sku-col" colspan="5">셀피아 기준</th>
+                    <th class="sticky-col sellpia-group" colspan="5">셀피아 기준</th>
                     <th class="smart-group" colspan="5">스마트스토어</th>
                     <th class="make-group" colspan="5">메이크샵</th>
                     <th class="ably-group" colspan="4">에이블리</th>
                     <th class="ops-group" colspan="4">운영정보</th>
                   </tr>
                   <tr class="column-row">
-                    <th class="sticky-col sku-col">셀피아 SKU</th><th>자사코드</th><th class="name-column">상품명 / 옵션명</th><th>현재재고</th><th>판매가</th>
+                    <th class="sticky-col sku-col">셀피아 SKU</th><th class="sticky-col own-code-col">자사코드</th><th class="sticky-col sellpia-name-col name-column">상품명 / 옵션명</th><th class="sticky-col sellpia-stock-col">현재재고</th><th class="sticky-col sellpia-price-col">판매가</th>
                     <th>연결상태</th><th>상품코드</th><th>옵션코드</th><th>판매처재고</th><th>판매가격</th>
                     <th>연결상태</th><th>상품코드</th><th>옵션코드</th><th>판매처재고</th><th>판매가격</th>
                     <th>연결상태</th><th>상품코드</th><th>판매처재고</th><th>판매가격</th>
@@ -231,7 +237,8 @@
       <section class="change-modal"><div class="modal-head"><div><span>변경사항 미리보기</span><h3>판매처 반영 전 최종 확인</h3></div><button id="close-change-modal">×</button></div><div class="modal-summary"><div><span>변경 상품</span><b id="modal-products">1개</b></div><div><span>변경 항목</span><b id="modal-count">1건</b></div><div><span>영향 판매처</span><b>3곳</b></div></div><div id="change-list" class="change-list"></div><div class="modal-notice"><b>DB 운영값은 즉시 저장</b><span>판매처 반영값은 작업 대기에 등록되고 성공 후 최종값으로 표시됩니다.</span></div><div class="modal-foot"><button class="btn" id="modal-back">돌아가기</button><button class="btn primary" id="apply-mock-changes">선택 변경사항 반영</button></div></section>
     </div>
     <div id="toast" class="toast" role="status"></div>
-    <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+    <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.112.3/dist/umd/supabase.js"></script>
     <script src="./data-service.js"></script>
     <script src="./app.js"></script>
   </body>
