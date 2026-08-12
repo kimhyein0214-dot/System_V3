@@ -67,6 +67,26 @@ grant select on public.operations_hub_source_status to anon, authenticated;
 
 notify pgrst, 'reload schema';
 
+alter table review.final_excel_mapping_import enable row level security;
+
+drop policy if exists "operations hub final mappings readable" on review.final_excel_mapping_import;
+create policy "operations hub final mappings readable"
+on review.final_excel_mapping_import
+for select
+to anon, authenticated
+using (nullif(btrim(sellpia_sku), '') is not null);
+
+alter table review.review_user_allowlist enable row level security;
+
+drop policy if exists "review users can read own allowlist row" on review.review_user_allowlist;
+create policy "review users can read own allowlist row"
+on review.review_user_allowlist
+for select
+to authenticated
+using ((select auth.uid()) = user_id);
+
+notify pgrst, 'reload schema';
+
 create index if not exists final_excel_mapping_import_channel_sku_idx
 on review.final_excel_mapping_import (source_channel, sellpia_sku, import_id desc)
 where sellpia_sku is not null;
