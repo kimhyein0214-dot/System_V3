@@ -19,9 +19,9 @@
 <body>
 <div class="card">
   <h1>0812-합배송오류수정</h1>
-  <div class="sub">재고매칭(order_stockmatch.html) 전용 / TEST MODE 기본 ON</div>
+  <div class="sub">재고매칭(order_stockmatch.html) 전용 / 테스트 모드 기본 ON</div>
   <div class="note">
-    <b>TEST MODE (NO WRITE)</b><br>
+    <b>테스트 모드(저장 안 함)</b><br>
     셀피아 화면에서는 검색, 대상 행 찾기, 상세 열기, 현재값 읽기만 수행합니다.<br>
     관리메모/관리메모2/주문메모 저장, 배송보류 설정/해제, DB PATCH는 테스트모드에서 실행하지 않습니다.<br>
     결과 CSV에는 현재 셀피아 값, 시스템 예정값, 변경 필요 여부, 매칭 실패/상세없음 예외, 상태 사유가 들어갑니다.
@@ -49,8 +49,19 @@
     const normal = value => String(value == null ? '' : value).replace(/\s+/g, ' ').trim();
     const targetToken = value => {
       const text = normal(value);
-      const match = text.match(/\d{6,}/);
+      const match = text.match(/\d{8,}-\d+|\d{6,}/);
       return match ? match[0] : text;
+    };
+    const targetTokens = value => [...new Set(
+      String(value == null ? '' : value)
+        .split(/[\s,;]+/)
+        .map(targetToken)
+        .filter(Boolean)
+    )];
+    const targetRangeLabel = value => {
+      const targets = targetTokens(value);
+      if (!targets.length) return '';
+      return targets.length === 1 ? '개별 대상 1건' : '입력 대상 ' + targets.length + '건';
     };
     const today = () => new Date().toISOString().slice(0, 10);
     const $ = id => document.getElementById(id);
@@ -200,6 +211,29 @@
       return sourceOrderNoFromItemNo(rowItemNoStrict(row) || normal(row?.c_prv_item_no)) || rowOrdNo(row);
     }
 
+    function collectGridTargetsForInputs(requestedTargets, rows) {
+      const targets = [];
+      const matchedInputs = new Set();
+      let missingOrdRows = 0;
+      for (const target of requestedTargets || []) {
+        const exactOrderRows = (rows || []).filter(({ item }) => rowSourceOrdNo(item) === target);
+        const matchedRows = exactOrderRows.length
+          ? exactOrderRows
+          : (rows || []).filter(({ item }) => rowInvNo(item) === target);
+        if (!matchedRows.length) continue;
+        matchedInputs.add(target);
+        for (const { item } of matchedRows) {
+          const ordNo = rowSourceOrdNo(item);
+          if (!ordNo) {
+            missingOrdRows++;
+            continue;
+          }
+          targets.push({ ordNo, invNo: rowInvNo(item) || target });
+        }
+      }
+      return { targets, matchedInputs, missingOrdRows };
+    }
+
     function rowsForTask(task) {
       return gridItems().filter(({ item }) => {
         const ord = rowSourceOrdNo(item);
@@ -326,21 +360,21 @@
       const expected = plannedHoldBool(rowResult);
       const closed = await closeDetail();
       if (!closed.closed) {
-        throw new Error('Shipping hold verification could not close the saved detail popup.');
+        throw new Error('배송보류 저장 검증 중 상세 팝업을 닫지 못했습니다.');
       }
       await sleep(280);
       const reopened = await openDetail(rowResult.gridRowIndex);
       const root = reopened && reopened.root;
       if (!root) {
-        throw new Error('Shipping hold verification could not reopen the exact Sellpia item row.');
+        throw new Error('배송보류 저장 검증 중 해당 셀피아 상품행을 다시 열지 못했습니다.');
       }
       try {
         assertPopupTargetMatches(root, rowResult);
         const checkbox = holdCheckbox(root);
-        if (!checkbox) throw new Error('Shipping hold verification could not find the checkbox after reopen.');
+        if (!checkbox) throw new Error('배송보류 저장 검증 중 다시 연 팝업에서 체크박스를 찾지 못했습니다.');
         const actual = !!checkbox.checked;
         if (actual !== expected) {
-          throw new Error('Shipping hold persistence verification failed: expected=' + (expected ? 'ON' : 'OFF') + ', actual=' + (actual ? 'ON' : 'OFF'));
+          throw new Error('배송보류 저장 검증 실패: 예정=' + (expected ? 'ON' : 'OFF') + ', 실제=' + (actual ? 'ON' : 'OFF'));
         }
         return { expected: expected ? 'ON' : 'OFF', actual: actual ? 'ON' : 'OFF', rootKind: rootKind(root) };
       } finally {
@@ -1219,6 +1253,11 @@
       return currentOrderMemo;
     }
 
+    function shippingHoldNeedsReview(planned = {}) {
+      return !!planned.holdWriteRequested
+        && (planned.holdSyncAction === 'UNKNOWN' || planned.holdSyncAction === 'REVIEW_SKIP');
+    }
+
     function currentWarningsForGridRow(task, row, index, planned) {
       const match = gridItemMatchInfo(task, row, index);
       const keys = gridItemAliasKeys(task, row, index);
@@ -1229,7 +1268,7 @@
       const plannedOrderMemo = normal(planned?.plannedOrderMemo);
       const orderMemoTarget = normal(planned?.orderMemoTarget);
       if (match.failed) warnings.push(match.warning || 'item_key_match_failed');
-      if (task.systemShippingHold === 'UNKNOWN') warnings.push('shipping_hold_unknown');
+      if (shippingHoldNeedsReview(planned)) warnings.push('shipping_hold_unknown');
       if (keys.some(key => task.memo2ConflictMap?.has(key))) warnings.push('memo2_event_conflict');
       if (task.clear && memo2Target) warnings.push('completed_but_memo2_exists');
       if (task.clear && memo2Target) warnings.push('inspection_completed_with_shortage_open');
@@ -1498,7 +1537,7 @@
           ? '미송피킹완료(workflow_item) 포함: 관리메모2 clear + 잔여 메모 대상 반영'
           : '잔여 메모 대상: 서랍번호 또는 주문메모 반영';
       } else {
-        task.reason = '시스템 반영값 없음: 현재 셀피아 값 CSV 확인만, LIVE write 제외';
+        task.reason = '시스템 반영값 없음: 현재 셀피아 값은 CSV로만 확인하며 실제 저장에서 제외';
       }
       return task;
     }
@@ -1567,6 +1606,68 @@
           workflowItemDoneMap.get(ordNo)
         ));
       };
+
+      const requestedTargets = targetTokens(invFilter);
+      if (requestedTargets.length > 1) {
+        const loadMeta = await ensureAllGridRowsLoaded();
+        const allRows = gridItems();
+        const gridSelection = collectGridTargetsForInputs(requestedTargets, allRows);
+        const gridTargets = gridSelection.targets;
+        const matchedInputTargets = gridSelection.matchedInputs;
+        const missingOrdRows = gridSelection.missingOrdRows;
+
+        const unresolvedTargets = requestedTargets.filter(target => !matchedInputTargets.has(target));
+        lastBuildMeta = {
+          mode: 'multi',
+          inputTargetCount: requestedTargets.length,
+          matchedInputTargetCount: matchedInputTargets.size,
+          unmatchedInputTargets: [],
+          gridRowsBeforeAll: loadMeta.before,
+          gridRowsAfterAll: loadMeta.after,
+          clickedAllRows: loadMeta.clickedAll,
+          gridRows: allRows.length,
+          uniqueOrdNos: new Set(gridTargets.map(row => row.ordNo)).size,
+          missingOrdRows,
+          multiInvOrdNos: [],
+          dbMissingOrdNos: [],
+          optionalDbWarnings: []
+        };
+
+        let dbTargets = [];
+        if (unresolvedTargets.length) {
+          const [shortageByInv, pickingByInv, orderByInv, shortageByOrd, pickingByOrd, orderByOrd] = await Promise.all([
+            safeDbRequestIn('shortage', 'inv_no', unresolvedTargets, 'inv_no,ord_no,item_no,p_code,sellpia_p_code,status,memo2_val,drawer_no,updated_at'),
+            safeDbRequestIn('picking', 'inv_no', unresolvedTargets, 'inv_no,ord_no,item_no,p_code,sellpia_p_code,hold,drawer_no'),
+            safeDbRequestIn('orders', 'inv_no', unresolvedTargets, 'ord_no,inv_no,order_memo,o_memo,sellpia_outbound_scheduled_date,scraped_at,sellpia_shipping_hold_status,sellpia_shipping_hold_raw,sellpia_shipping_hold_scraped_at,system_shipping_hold_status,system_shipping_hold_source,system_shipping_hold_updated_at'),
+            safeDbRequestIn('shortage', 'ord_no', unresolvedTargets, 'inv_no,ord_no,item_no,p_code,sellpia_p_code,status,memo2_val,drawer_no,updated_at'),
+            safeDbRequestIn('picking', 'ord_no', unresolvedTargets, 'inv_no,ord_no,item_no,p_code,sellpia_p_code,hold,drawer_no'),
+            safeDbRequestIn('orders', 'ord_no', unresolvedTargets, 'ord_no,inv_no,order_memo,o_memo,sellpia_outbound_scheduled_date,scraped_at,sellpia_shipping_hold_status,sellpia_shipping_hold_raw,sellpia_shipping_hold_scraped_at,system_shipping_hold_status,system_shipping_hold_source,system_shipping_hold_updated_at')
+          ]);
+          const dbSeed = [...(shortageByInv || []), ...(pickingByInv || []), ...(orderByInv || []), ...(shortageByOrd || []), ...(pickingByOrd || []), ...(orderByOrd || [])];
+          dbTargets = dbSeed.map(row => ({
+            ordNo: normal(row.ord_no),
+            invNo: normal(row.inv_no)
+          })).filter(row => row.ordNo);
+          for (const target of unresolvedTargets) {
+            if (dbSeed.some(row => normal(row.ord_no) === target || normal(row.inv_no) === target)) {
+              matchedInputTargets.add(target);
+            }
+          }
+        }
+
+        const unmatchedInputTargets = requestedTargets.filter(target => !matchedInputTargets.has(target));
+        lastBuildMeta.matchedInputTargetCount = matchedInputTargets.size;
+        lastBuildMeta.unmatchedInputTargets = unmatchedInputTargets;
+        const tasks = await buildTasksForOrderTargets([...gridTargets, ...dbTargets]);
+        const skipped = unmatchedInputTargets.map(target => ({
+          invNo: target,
+          ordNo: '',
+          skip: true,
+          reason: '입력한 송장/주문번호를 셀피아 그리드와 DB에서 찾지 못했습니다.',
+          memo2Map: new Map()
+        }));
+        return [...tasks, ...skipped];
+      }
 
       if (invFilter) {
         // A single-invoice run must use the complete SlickGrid dataset too.
@@ -1778,6 +1879,7 @@
       $('smu0707-download').disabled = !results.length;
       const issueBtn = $('smu0707-issue-download');
       if (issueBtn) issueBtn.disabled = !results.some(isIssueResult);
+      renderBlockedOrderPanel();
     }
 
     function perfNow() {
@@ -1911,18 +2013,20 @@
     function buildMetaLines(tasks) {
       const meta = lastBuildMeta || {};
       const lines = [
-        'Grid rows=' + (meta.gridRows ?? '?') + ', unique order targets=' + (meta.uniqueOrdNos ?? tasks.length) + ', tasks=' + tasks.length,
-        'Grid all-load: before=' + (meta.gridRowsBeforeAll ?? meta.gridRows ?? '?') + ', after=' + (meta.gridRows ?? '?') + ', clickedAll=' + (meta.clickedAllRows ? 'Y' : 'N'),
-        'Target basis: grid rows can differ from unique order targets when one order has multiple rows/items.',
-        'Picking matches=' + (meta.pickingMatchedOrders ?? 0) + ', picking hold rows=' + (meta.pickingHoldRows ?? 0) + ', picking drawer rows=' + (meta.pickingDrawerRows ?? 0)
+        '그리드 행=' + (meta.gridRows ?? '?') + ', 고유 주문 대상=' + (meta.uniqueOrdNos ?? tasks.length) + ', 작업=' + tasks.length,
+        '전체 행 불러오기: 전=' + (meta.gridRowsBeforeAll ?? meta.gridRows ?? '?') + ', 후=' + (meta.gridRows ?? '?') + ', 전체버튼=' + (meta.clickedAllRows ? '사용' : '미사용'),
+        '안내: 주문 하나에 상품행이 여러 개면 그리드 행 수와 고유 주문 대상 수는 다를 수 있습니다.',
+        '피킹 매칭 주문=' + (meta.pickingMatchedOrders ?? 0) + ', 보류 행=' + (meta.pickingHoldRows ?? 0) + ', 서랍번호 행=' + (meta.pickingDrawerRows ?? 0)
       ];
-      if (meta.missingOrdRows) lines.push('WARN: grid rows with empty order number=' + meta.missingOrdRows);
-      if ((meta.multiInvOrdNos || []).length) lines.push('WARN: orders with multiple invoices=' + meta.multiInvOrdNos.length + ' [' + sampleList(meta.multiInvOrdNos) + ']');
-      if ((meta.dbMissingOrdNos || []).length) lines.push('WARN: no DB shortage/picking/orders match=' + meta.dbMissingOrdNos.length + ' [' + sampleList(meta.dbMissingOrdNos) + ']');
-      if ((meta.optionalDbWarnings || []).length) lines.push('WARN optional DB read: ' + meta.optionalDbWarnings.join(' / '));
+      if (meta.inputTargetCount) lines.push('입력 대상=' + meta.inputTargetCount + ', 매칭=' + (meta.matchedInputTargetCount ?? 0) + ', 미매칭=' + (meta.unmatchedInputTargets || []).length);
+      if ((meta.unmatchedInputTargets || []).length) lines.push('주의: 찾지 못한 입력=' + sampleList(meta.unmatchedInputTargets));
+      if (meta.missingOrdRows) lines.push('주의: 주문번호가 비어 있는 그리드 행=' + meta.missingOrdRows);
+      if ((meta.multiInvOrdNos || []).length) lines.push('주의: 송장번호가 여러 개인 주문=' + meta.multiInvOrdNos.length + ' [' + sampleList(meta.multiInvOrdNos) + ']');
+      if ((meta.dbMissingOrdNos || []).length) lines.push('주의: DB에서 현재 상태를 찾지 못한 주문=' + meta.dbMissingOrdNos.length + ' [' + sampleList(meta.dbMissingOrdNos) + ']');
+      if ((meta.optionalDbWarnings || []).length) lines.push('주의: 선택 DB 조회 실패: ' + meta.optionalDbWarnings.join(' / '));
       if (meta.batchEnabled) {
-        lines.push('Batch split: batch ' + meta.batchNo + '/' + meta.batchTotal + ', size=' + meta.batchSize + ', selected=' + meta.batchSelectedTargets + ', target index=' + meta.batchStart + '-' + meta.batchEnd + ' of ' + meta.batchTotalTargets);
-        lines.push('Batch targets: first=' + meta.batchFirstTarget + ', last=' + meta.batchLastTarget);
+        lines.push('분할 실행: ' + meta.batchNo + '/' + meta.batchTotal + '배치, 배치크기=' + meta.batchSize + ', 선택=' + meta.batchSelectedTargets + ', 전체 대상 순번=' + meta.batchStart + '-' + meta.batchEnd + '/' + meta.batchTotalTargets);
+        lines.push('배치 범위: 첫 대상=' + meta.batchFirstTarget + ', 마지막 대상=' + meta.batchLastTarget);
       }
       return lines;
     }
@@ -1959,14 +2063,14 @@
       clearOff = memo1Clear + memo2Clear + orderMemoClear + holdSyncOff;
       const blocking = !!(statusCounts.SKIP || statusCounts.DETAIL_FAIL || statusCounts.MATCH_FAIL || statusCounts.WRITE_FAIL || statusCounts.PARTIAL_FAIL || unknown);
       const lines = [
-        'Summary: ' + Object.keys(statusCounts).sort().map(key => key + '=' + statusCounts[key]).join(', '),
-        'live_write_allowed: ' + Object.keys(liveCounts).sort().map(key => (key || 'blank') + '=' + liveCounts[key]).join(', '),
-        'Issue rows (blocked/fail/warning/unknown)=' + issueCount,
-        'Memo clear / hold sync actions=' + clearOff + ' (memo1Clear=' + memo1Clear + ', memo2Clear=' + memo2Clear + ', orderMemoClear=' + orderMemoClear + ', holdSyncOff=' + holdSyncOff + ')',
-        'LIVE Y memo clear / hold sync actions=' + clearOffLiveY + ' (holdSyncOff=' + holdSyncOffLiveY + ')'
+        '결과 요약: ' + Object.keys(statusCounts).sort().map(key => key + '=' + statusCounts[key]).join(', '),
+        '실행 허용 상태: ' + Object.keys(liveCounts).sort().map(key => (key || '빈값') + '=' + liveCounts[key]).join(', '),
+        '확인 필요 행(차단/실패/경고/불명확)=' + issueCount,
+        '메모 삭제/보류 해제 예정=' + clearOff + ' (관리메모1=' + memo1Clear + ', 관리메모2=' + memo2Clear + ', 주문메모=' + orderMemoClear + ', 배송보류해제=' + holdSyncOff + ')',
+        '실행 허용(Y) 중 삭제/해제 예정=' + clearOffLiveY + ' (배송보류해제=' + holdSyncOffLiveY + ')'
       ];
-      if (blocking) lines.push('LIVE WRITE BLOCKED/PARTIAL: SKIP/DETAIL_FAIL/MATCH_FAIL/WRITE_FAIL/PARTIAL_FAIL/UNKNOWN exists.');
-      if (clearOff >= 10) lines.push('WARN: memo clear / hold sync actions are high. Review CSV before LIVE WRITE.');
+      if (blocking) lines.push('주의: 건너뜀/상세실패/매칭실패/저장실패/부분실패/불명확 항목이 있어 전체 또는 일부 실행이 차단됩니다.');
+      if (clearOff >= 10) lines.push('주의: 메모 삭제 또는 보류 해제 예정이 많습니다. 실제 실행 전에 CSV를 확인해주세요.');
       return { blocking, clearOff, lines };
     }
 
@@ -1996,7 +2100,7 @@
 
     async function setPopupValues(root, rowResult, testMode) {
       if (testMode) {
-        return { ...rowResult, dbSync: rowResult.dbSync || (rowResult.managementOrderItemNo ? 'NO_CHANGE' : 'SKIP_NO_ITEM_MATCH'), log: 'TEST: ' + rowResult.invNo + ' / ' + testLogSummary(rowResult) };
+        return { ...rowResult, dbSync: rowResult.dbSync || (rowResult.managementOrderItemNo ? 'NO_CHANGE' : 'SKIP_NO_ITEM_MATCH'), log: '테스트(TEST): ' + rowResult.invNo + ' / ' + testLogSummary(rowResult) };
       }
       if (rowResult.liveWriteAllowed !== 'Y') {
         return {
@@ -2004,7 +2108,7 @@
           status: rowResult.liveWriteAllowed === 'REVIEW' ? 'REVIEW_SKIP' : 'LIVE_BLOCKED',
           needsChange: rowResult.needsChange || 'N',
           reason: (rowResult.reason || '') + ' / live_write_allowed=' + (rowResult.liveWriteAllowed || 'N') + ' / ' + (rowResult.currentStateWarning || ''),
-          log: 'LIVE SKIP: ' + rowResult.invNo + ' / live_write_allowed=' + (rowResult.liveWriteAllowed || 'N')
+          log: '실행 건너뜀: ' + rowResult.invNo + ' / 실행 허용=' + (rowResult.liveWriteAllowed || 'N')
         };
       }
       let popupTarget = { orderNo: '', itemNo: '' };
@@ -2095,7 +2199,7 @@
           memo1InputBefore,
           memo1InputAfter,
           dbSync: dbSync.status,
-          log: 'LIVE DB SYNC: ' + rowResult.invNo + ' / ' + dbSync.status
+          log: '실행 DB 동기화: ' + rowResult.invNo + ' / ' + dbSync.status
         };
       }
       if (typeof window.updateOrder !== 'function') throw new Error('updateOrder 함수를 찾지 못했습니다.');
@@ -2129,7 +2233,7 @@
           status: 'PARTIAL_FAIL',
           dbSync: 'FAIL',
           reason: (rowResult.reason || '') + ' / DB 관리메모 동기화 실패: ' + ((error && error.message) || error),
-          log: 'LIVE PARTIAL: ' + rowResult.invNo + ' / Sellpia saved but DB memo sync failed'
+          log: '부분 실패: ' + rowResult.invNo + ' / 셀피아 저장 후 DB 메모 동기화 실패'
         };
       }
       return {
@@ -2142,7 +2246,7 @@
         dbSync: dbSync.status,
         status: rowResult.status,
         reason: rowResult.reason,
-        log: 'LIVE: ' + rowResult.invNo + ' / 저장 완료' + (holdVerification ? ' / 배송보류 검증 ' + holdVerification.actual : '')
+        log: '실행 완료: ' + rowResult.invNo + ' / 저장 완료' + (holdVerification ? ' / 배송보류 검증 ' + holdVerification.actual : '')
       };
     }
 
@@ -2168,7 +2272,7 @@
         dbMatchStatus: task.dbMatchStatus || '',
         clearOffReason: '',
         actionSummary: 'skip',
-        log: 'SKIP: ' + (task.invNo || task.ordNo || '-') + ' / ' + task.reason
+        log: '건너뜀(SKIP): ' + (task.invNo || task.ordNo || '-') + ' / ' + task.reason
       });
         return;
       }
@@ -2192,11 +2296,11 @@
           syncReason: holdSyncReason(task, 'REVIEW_SKIP'),
           needsChange: 'UNKNOWN',
           status: 'MATCH_FAIL',
-          reason: failReason('Sellpia grid row not found for this invoice/order in the currently loaded stockmatch list.', task),
+          reason: failReason('현재 셀피아 재고매칭 목록에서 이 송장/주문의 상품행을 찾지 못했습니다.', task),
           dbMatchStatus: task.dbMatchStatus || '',
           clearOffReason: '',
-          actionSummary: 'grid row not found',
-          log: 'MATCH_FAIL: ' + (task.invNo || task.ordNo || '-') + ' / grid row not found'
+          actionSummary: '그리드 행 없음',
+          log: '매칭 실패(MATCH_FAIL): ' + (task.invNo || task.ordNo || '-') + ' / 그리드 행 없음'
         });
         return;
       }
@@ -2207,8 +2311,13 @@
         if (canGridFastSkip(task, row)) {
           const current = gridCurrentValues(row);
           const plannedOrderMemo = plannedOrderMemoForGridRow(task, row, i, current.orderMemo);
-          const policy = buildRowPolicyMeta(task, row, i, { currentOrderMemo: current.orderMemo, plannedOrderMemo });
           const fastSyncAction = holdSyncAction(current.hold, systemShippingHoldForTask(task), task);
+          const policy = buildRowPolicyMeta(task, row, i, {
+            currentOrderMemo: current.orderMemo,
+            plannedOrderMemo,
+            holdWriteRequested: task.writeHold,
+            holdSyncAction: fastSyncAction
+          });
           addTaskPerfResult({
             invNo: task.invNo || rowInvNo(row),
             ordNo: task.ordNo || rowOrdNo(row),
@@ -2243,8 +2352,8 @@
             orderMemoSource: policy.orderMemoSource,
             memo2Target: policy.memo2Target,
             orderMemoTarget: policy.orderMemoTarget,
-            actionSummary: 'grid already clear; detail skipped',
-            log: 'GRID_FAST_SKIP: ' + (task.invNo || rowInvNo(row)) + ' / grid visible values already clear / 팝업 확인 생략'
+            actionSummary: '그리드 값이 이미 비어 있어 상세 확인 생략',
+            log: '상세 생략: ' + (task.invNo || rowInvNo(row)) + ' / 그리드 값이 이미 비어 있음'
           }, rowPerf);
           continue;
         }
@@ -2286,7 +2395,7 @@
             syncReason: holdSyncReason(task, 'REVIEW_SKIP'),
             needsChange: 'UNKNOWN',
             status: 'DETAIL_FAIL',
-            reason: failReason('Sellpia detail popup did not open for the matched row.', task),
+            reason: failReason('매칭된 셀피아 상품행의 상세 팝업이 열리지 않았습니다.', task),
             dbMatchStatus: task.dbMatchStatus || '',
             clearOffReason: '',
             liveWriteAllowed: 'N',
@@ -2297,8 +2406,8 @@
             orderMemoSource: policy.orderMemoSource,
             memo2Target: policy.memo2Target,
             orderMemoTarget: policy.orderMemoTarget,
-            actionSummary: 'detail open failed',
-            log: 'DETAIL_FAIL: ' + (task.invNo || rowInvNo(row)) + ' / detail open failed'
+            actionSummary: '상세 팝업 열기 실패',
+            log: '상세 열기 실패(DETAIL_FAIL): ' + (task.invNo || rowInvNo(row))
           }, rowPerf);
           continue;
         }
@@ -2327,7 +2436,12 @@
           const syncReason = holdPlan.syncReason;
           const plannedHoldStatus = holdPlan.status;
           const plannedHold = plannedHoldStatus === 'ON';
-          const policy = buildRowPolicyMeta(task, row, i, { currentOrderMemo: current.orderMemo, plannedOrderMemo });
+          const policy = buildRowPolicyMeta(task, row, i, {
+            currentOrderMemo: current.orderMemo,
+            plannedOrderMemo,
+            holdWriteRequested: task.writeHold,
+            holdSyncAction: syncAction
+          });
           const memo1Changed = (task.clear || memo1Target.found) && needsChange(current.memo1, plannedMemo1);
           const orderMemoChanged = task.writeOrderMemo && (task.clear || canWriteOrderMemo) && needsChange(current.orderMemo, plannedOrderMemo);
           const outboundScheduledDateChanged = task.writeOutboundDates && needsChange(current.outboundScheduledDate, plannedOutboundScheduledDate);
@@ -2431,7 +2545,7 @@
                 status: 'TEST_GUARD_FAIL',
                 needsChange: 'UNKNOWN',
                 reason: failReason((err && err.message) || String(err), task),
-                log: 'TEST_GUARD_FAIL: ' + rowResult.invNo + ' / ' + ((err && err.message) || String(err))
+                log: '테스트 안전검증 실패: ' + rowResult.invNo + ' / ' + ((err && err.message) || String(err))
               };
             }
           } else if (rowResult.writeMemo2 || rowResult.writeOrderMemo || rowResult.writeOutboundScheduledDate || rowResult.writeOutboundConfirmedDate || rowResult.writeHold) {
@@ -2447,14 +2561,14 @@
                 status: 'TEST_GUARD_FAIL',
                 needsChange: 'UNKNOWN',
                 reason: failReason((err && err.message) || String(err), task),
-                log: 'TEST_GUARD_FAIL: ' + rowResult.invNo + ' / ' + ((err && err.message) || String(err))
+                log: '테스트 안전검증 실패: ' + rowResult.invNo + ' / ' + ((err && err.message) || String(err))
               };
             }
           }
-          if (!pendingResult) pendingResult = { ...rowResult, ...testGuard, log: 'TEST: ' + rowResult.invNo + ' / ' + testLogSummary(rowResult) };
+          if (!pendingResult) pendingResult = { ...rowResult, ...testGuard, log: '테스트(TEST): ' + rowResult.invNo + ' / ' + testLogSummary(rowResult) };
         } else {
           if (!actionParts.length) {
-            pendingResult = { ...rowResult, log: 'LIVE SKIP: ' + rowResult.invNo + ' / 변경 없음' };
+            pendingResult = { ...rowResult, log: '실행 건너뜀: ' + rowResult.invNo + ' / 변경 없음' };
             continue;
           }
           if (rowResult.liveWriteAllowed !== 'Y') {
@@ -2462,7 +2576,7 @@
               ...rowResult,
               status: rowResult.liveWriteAllowed === 'REVIEW' ? 'REVIEW_SKIP' : 'LIVE_BLOCKED',
               needsChange: 'N',
-              log: 'LIVE SKIP: ' + rowResult.invNo + ' / live_write_allowed=' + rowResult.liveWriteAllowed
+              log: '실행 건너뜀: ' + rowResult.invNo + ' / 실행 허용=' + rowResult.liveWriteAllowed
             };
             continue;
           }
@@ -2477,7 +2591,7 @@
               status: 'WRITE_FAIL',
               needsChange: 'UNKNOWN',
               reason: failReason((err && err.message) || String(err), task),
-              log: 'WRITE_FAIL: ' + rowResult.invNo + ' / ' + ((err && err.message) || String(err))
+              log: '저장 실패(WRITE_FAIL): ' + rowResult.invNo + ' / ' + ((err && err.message) || String(err))
             };
           }
         }
@@ -2497,7 +2611,7 @@
                 status: 'CLOSE_FAIL',
                 needsChange: 'UNKNOWN',
                 reason: [pendingResult.reason, closeError].filter(Boolean).join(' / '),
-                log: (pendingResult.log || '') + ' / CLOSE_FAIL: next task stopped'
+                log: (pendingResult.log || '') + ' / 팝업 닫기 실패: 다음 작업 중단'
               };
             }
           }
@@ -2528,7 +2642,7 @@
           dbMatchStatus: task.dbMatchStatus || '',
           clearOffReason: '',
           actionSummary: 'snapshot grid row not found',
-          log: 'SNAPSHOT MATCH_FAIL: ' + (task.invNo || task.ordNo || '-')
+          log: '현재값 매칭 실패: ' + (task.invNo || task.ordNo || '-')
         });
         return;
       }
@@ -2552,11 +2666,11 @@
             plannedHold: '',
             needsChange: 'SNAPSHOT',
             status: 'DETAIL_FAIL',
-            reason: 'snapshot: detail popup did not open',
+            reason: '현재값 확인 중 상세 팝업이 열리지 않음',
             dbMatchStatus: task.dbMatchStatus || '',
             clearOffReason: '',
-            actionSummary: 'snapshot detail open failed',
-            log: 'SNAPSHOT DETAIL_FAIL: ' + (task.invNo || rowInvNo(row))
+            actionSummary: '현재값 상세 팝업 열기 실패',
+            log: '현재값 상세 열기 실패: ' + (task.invNo || rowInvNo(row))
           });
           continue;
         }
@@ -2591,31 +2705,32 @@
 
     async function snapshotCurrentValues(invFilter, startDate, endDate) {
       results.length = 0;
+      renderBlockedOrderPanel();
       stopped = false;
       csvMode = 'snapshot';
       $('smu0707-log').textContent = '';
       $('smu0707-download').disabled = true;
       $('smu0707-issue-download').disabled = true;
       $('smu0707-stop').style.display = 'block';
-      const range = invFilter ? 'single target' : dateRange(startDate, endDate).label;
-      $('smu0707-status').textContent = 'Building current-value snapshot targets...\nRange: ' + range;
+      const range = invFilter ? targetRangeLabel(invFilter) : dateRange(startDate, endDate).label;
+      $('smu0707-status').textContent = '현재값 확인 대상을 만드는 중...\n범위: ' + range;
       const tasks = await buildTasks(invFilter, startDate, endDate);
       const metaLines = buildMetaLines(tasks);
       $('smu0707-log').textContent += metaLines.join('\n') + '\n';
-      $('smu0707-status').textContent = 'Current snapshot reading ' + tasks.length + ' target(s)...\nRange: ' + range + '\n' + metaLines.join('\n') + '\nNO WRITE / NO updateOrder / NO hold click / NO save';
+      $('smu0707-status').textContent = '현재값 확인 중: ' + tasks.length + '개 작업\n범위: ' + range + '\n' + metaLines.join('\n') + '\n저장 없음 / updateOrder 없음 / 보류 클릭 없음';
       for (let i = 0; i < tasks.length; i++) {
         if (stopped) break;
         const task = tasks[i];
-        $('smu0707-status').textContent = '[' + (i + 1) + '/' + tasks.length + '] current snapshot ' + (task.invNo || task.ordNo || '-') + '\n' + task.reason;
+        $('smu0707-status').textContent = '[' + (i + 1) + '/' + tasks.length + '] 현재값 확인 ' + (task.invNo || task.ordNo || '-') + '\n' + task.reason;
         await snapshotTask(task);
         await sleep(120);
       }
       const summary = summarizeResults();
       $('smu0707-log').textContent += summary.lines.join('\n') + '\n';
-      $('smu0707-status').textContent = 'CURRENT SNAPSHOT DONE\nResult rows: ' + results.length + '\n' + summary.lines.join('\n');
+      $('smu0707-status').textContent = '현재값 확인 완료\n결과 행: ' + results.length + '\n' + summary.lines.join('\n');
       $('smu0707-stop').style.display = 'none';
       $('smu0707-stop').disabled = false;
-      $('smu0707-stop').textContent = 'Stop';
+      $('smu0707-stop').textContent = '중지';
     }
     function csvValue(value) {
       const s = String(value == null ? '' : value);
@@ -2630,6 +2745,114 @@
       if (r.liveWriteAllowed && r.liveWriteAllowed !== 'Y') return true;
       if (normal(r.currentStateWarning)) return true;
       return false;
+    }
+
+    const BLOCK_REASON_KO = {
+      item_key_match_failed: '상품 식별키를 DB 상품과 매칭하지 못함',
+      item_key_prefix_collision: '접두어를 제외한 상품 식별키가 여러 상품과 중복됨',
+      memo2_event_conflict: '관리메모2 이벤트 상태가 서로 충돌함',
+      completed_but_memo2_exists: '검품완료 상태인데 관리메모2가 남아 있음',
+      inspection_completed_with_shortage_open: '검품완료와 미송 미해결 상태가 동시에 존재함',
+      missing_current_source: '현재 상태를 판단할 DB 자료가 없음',
+      pre_inspection_order_memo_clear: '검품완료 전에 주문메모가 삭제될 가능성이 있음',
+      order_memo_clear_without_item_target: '상품별 대상 없이 기존 주문메모를 삭제하려 함',
+      invoice_level_order_memo_clear: '송장 전체 값을 근거로 상품별 주문메모를 삭제하려 함',
+      shipping_hold_unknown: '배송보류 변경 방향을 확정할 수 없음',
+      order_memo_fallback_invoice_level: '상품별 주문메모 대신 송장 단위 값을 사용하려 함',
+      memo1_conflict: '같은 주문의 관리메모1 값이 서로 충돌함',
+      completed_then_reopened: '완료 후 다시 열린 작업의 상태 확인이 필요함',
+      detail_open_failed: '셀피아 상세 팝업을 열지 못함'
+    };
+
+    const BLOCK_STATUS_KO = {
+      SKIP: '작업 건너뜀',
+      MATCH_FAIL: '셀피아 상품행 매칭 실패',
+      DETAIL_FAIL: '상세 팝업 열기 실패',
+      TEST_GUARD_FAIL: '팝업 대상 안전검증 실패',
+      LIVE_BLOCKED: '안전 정책에 따라 실제 저장 차단',
+      REVIEW_SKIP: '수동 확인이 필요하여 실행 보류',
+      WRITE_FAIL: '셀피아 저장 실패',
+      PARTIAL_FAIL: '셀피아 저장 후 DB 동기화 실패',
+      CLOSE_FAIL: '상세 팝업 닫기 실패',
+      UNKNOWN: '현재 상태를 확정하지 못함'
+    };
+
+    function koreanBlockReason(value) {
+      const source = normal(value);
+      if (!source) return '';
+      if (BLOCK_REASON_KO[source]) return BLOCK_REASON_KO[source];
+      let translated = source;
+      for (const [code, label] of Object.entries(BLOCK_REASON_KO)) {
+        translated = translated.replace(new RegExp('\\b' + code + '\\b', 'g'), label);
+      }
+      return translated
+        .replace(/Sellpia grid row not found[^/]*/gi, '셀피아 재고매칭 목록에서 해당 상품행을 찾지 못함')
+        .replace(/Sellpia detail popup did not open[^/]*/gi, '셀피아 상세 팝업을 열지 못함')
+        .replace(/DB management memo sync failed/gi, 'DB 관리메모 동기화 실패')
+        .replace(/DB read failed(?:\s*\[[^\]]*\])?/gi, 'DB 자료 조회 실패')
+        .replace(/grid visible values already clear/gi, '그리드 표시값이 이미 비어 있어 저장 생략')
+        .replace(/Outbound scheduled date input was not found\./gi, '출고예정일 입력 필드를 찾지 못함')
+        .replace(/Outbound scheduled date input verification failed\./gi, '출고예정일 입력값 검증 실패')
+        .replace(/Outbound confirmed date input was not found\./gi, '출고확정일 입력 필드를 찾지 못함')
+        .replace(/Outbound confirmed date input verification failed\./gi, '출고확정일 입력값 검증 실패')
+        .replace(/live_write_allowed=[A-Z]+/gi, '실행 안전조건 미충족')
+        .replace(/planned:/gi, '실행 예정:')
+        .replace(/expected=/gi, '예정=')
+        .replace(/actual=/gi, '실제=');
+    }
+
+    function isBlockedResultForPanel(result) {
+      const r = result || {};
+      if (r.needsChange === 'SNAPSHOT') return false;
+      if (r.liveWriteAllowed && r.liveWriteAllowed !== 'Y') return true;
+      if (r.needsChange === 'UNKNOWN') return true;
+      return ['SKIP', 'MATCH_FAIL', 'DETAIL_FAIL', 'TEST_GUARD_FAIL', 'LIVE_BLOCKED', 'REVIEW_SKIP', 'WRITE_FAIL', 'PARTIAL_FAIL', 'CLOSE_FAIL'].includes(r.status);
+    }
+
+    function blockedOrderGroups(rows = results) {
+      const groups = new Map();
+      for (const row of rows || []) {
+        if (!isBlockedResultForPanel(row)) continue;
+        const invNo = normal(row.invNo) || '-';
+        const ordNo = normal(row.ordNo) || '-';
+        const key = ordNo !== '-' ? 'ord:' + ordNo : 'inv:' + invNo;
+        if (!groups.has(key)) groups.set(key, { invNo, ordNo, rowCount: 0, reasons: new Set() });
+        const group = groups.get(key);
+        group.rowCount++;
+        if (group.invNo === '-' && invNo !== '-') group.invNo = invNo;
+        const warnings = normal(row.currentStateWarning).split('/').map(normal).filter(Boolean);
+        for (const warning of warnings) group.reasons.add(koreanBlockReason(warning));
+        if (BLOCK_STATUS_KO[row.status]) group.reasons.add(BLOCK_STATUS_KO[row.status]);
+        if (row.needsChange === 'UNKNOWN') group.reasons.add(BLOCK_STATUS_KO.UNKNOWN);
+        if (normal(row.reason)) group.reasons.add(koreanBlockReason(row.reason));
+        if (!group.reasons.size) group.reasons.add('안전조건을 충족하지 못해 실행하지 않음');
+      }
+      return [...groups.values()].map(group => ({ ...group, reasons: [...group.reasons].filter(Boolean) }));
+    }
+
+    function escapeBlockedPanelHtml(value) {
+      return String(value == null ? '' : value).replace(/[&<>"']/g, ch => ({
+        '&': '&amp;',
+        '<': '&lt;',
+        '>': '&gt;',
+        '"': '&quot;',
+        "'": '&#39;'
+      })[ch]);
+    }
+
+    function renderBlockedOrderPanel() {
+      const panel = $('smu0707-blocked-panel');
+      if (!panel) return;
+      const groups = blockedOrderGroups();
+      panel.innerHTML = '<div style="position:sticky;top:0;background:#180d12;padding:10px 10px 8px;border-bottom:1px solid #7f1d1d;font-weight:900;color:#fecaca">차단 주문 ' + groups.length + '건</div>'
+        + (groups.length
+          ? groups.map(group => '<div style="padding:10px;border-bottom:1px solid #3f1d2a">'
+            + '<div style="font-weight:800;color:#fff;word-break:break-all">송장 ' + group.invNo + '</div>'
+            + '<div style="margin-top:2px;color:#fda4af;word-break:break-all">주문 ' + group.ordNo + ' · 차단 행 ' + group.rowCount + '개</div>'
+            + '<ul style="margin:7px 0 0 17px;padding:0;color:#fecdd3;line-height:1.45">'
+            + group.reasons.map(reason => '<li style="margin-bottom:4px">' + escapeBlockedPanelHtml(reason) + '</li>').join('')
+            + '</ul></div>').join('')
+          : '<div style="padding:18px 12px;color:#86efac;text-align:center">차단된 주문이 없습니다.</div>');
     }
 
     function csvDisplayRow(result) {
@@ -2721,40 +2944,44 @@
       overlay.id = 'smu0707-overlay';
       overlay.style.cssText = 'position:fixed;right:16px;top:80px;left:auto;bottom:auto;max-width:94vw;max-height:calc(100vh - 96px);overflow:auto;background:transparent;z-index:999999;font-family:Arial,sans-serif;';
       overlay.innerHTML =
-        '<div style="width:560px;max-width:94vw;background:#111827;color:#fff;border:1px solid #334155;border-radius:12px;padding:22px;box-shadow:0 24px 80px rgba(0,0,0,.45)">' +
-        '<div style="font-size:18px;font-weight:900;margin-bottom:4px">0804-부분보류오류수정</div>' +
-        '<div style="font-size:12px;color:#93c5fd;margin-bottom:14px">TEST MODE (NO WRITE) is ON by default</div>' +
-        '<label style="font-size:12px;color:#cbd5e1">Invoice / order number (optional)</label>' +
-        '<input id="smu0707-inv" style="width:100%;height:38px;margin:5px 0 10px;padding:0 10px;border-radius:8px;border:1px solid #475569;background:#0f172a;color:#fff" placeholder="Blank = use date range">' +
+        '<div style="width:900px;max-width:94vw;background:#111827;color:#fff;border:1px solid #334155;border-radius:12px;padding:22px;box-shadow:0 24px 80px rgba(0,0,0,.45)">' +
+        '<div style="font-size:18px;font-weight:900;margin-bottom:4px">0812-합배송오류수정</div>' +
+        '<div style="font-size:12px;color:#93c5fd;margin-bottom:14px">기본값은 테스트 모드입니다. 테스트에서는 저장하지 않습니다.</div>' +
+        '<label style="font-size:12px;color:#cbd5e1">송장번호 / 주문번호 (선택, 여러 건 가능)</label>' +
+        '<textarea id="smu0707-inv" style="width:100%;height:76px;margin:5px 0 10px;padding:9px 10px;border-radius:8px;border:1px solid #475569;background:#0f172a;color:#fff;resize:vertical" placeholder="줄바꿈·쉼표·공백으로 여러 건 입력 / 비워두면 날짜 범위 전체"></textarea>' +
         '<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:12px">' +
-        '<div><label style="font-size:12px;color:#cbd5e1">Start date</label><input id="smu0707-date-start" type="date" value="' + defaultStartDate() + '" style="width:100%;height:38px;margin-top:5px;padding:0 10px;border-radius:8px;border:1px solid #475569;background:#0f172a;color:#fff"></div>' +
-        '<div><label style="font-size:12px;color:#cbd5e1">End date</label><input id="smu0707-date-end" type="date" value="' + defaultEndDate() + '" style="width:100%;height:38px;margin-top:5px;padding:0 10px;border-radius:8px;border:1px solid #475569;background:#0f172a;color:#fff"></div>' +
+        '<div><label style="font-size:12px;color:#cbd5e1">시작일</label><input id="smu0707-date-start" type="date" value="' + defaultStartDate() + '" style="width:100%;height:38px;margin-top:5px;padding:0 10px;border-radius:8px;border:1px solid #475569;background:#0f172a;color:#fff"></div>' +
+        '<div><label style="font-size:12px;color:#cbd5e1">종료일</label><input id="smu0707-date-end" type="date" value="' + defaultEndDate() + '" style="width:100%;height:38px;margin-top:5px;padding:0 10px;border-radius:8px;border:1px solid #475569;background:#0f172a;color:#fff"></div>' +
         '</div>' +
         '<div style="display:flex;gap:12px;flex-wrap:wrap;margin-bottom:12px;font-size:13px;color:#cbd5e1">' +
-        '<label><input id="smu0707-test" type="checkbox" checked> TEST MODE (NO WRITE)</label>' +
-        '<label><input id="smu0707-memo1" type="checkbox" checked> memo1</label>' +
-        '<label><input id="smu0707-memo2" type="checkbox" checked> memo2</label>' +
-        '<label><input id="smu0707-order-memo" type="checkbox" checked> order memo</label>' +
-        '<label><input id="smu0707-hold" type="checkbox" checked> delivery hold</label>' +
-        '<label title="Run the scraper first. This explicitly syncs Sellpia 출고예정일/출고확정일 from the DB."><input id="smu0707-outbound-dates" type="checkbox"> outbound dates</label>' +
-        '<label><input id="smu0707-split-batch" type="checkbox"> split 50 invoices</label>' +
+        '<label><input id="smu0707-test" type="checkbox" checked> 테스트 모드(저장 안 함)</label>' +
+        '<label><input id="smu0707-memo1" type="checkbox" checked> 관리메모1</label>' +
+        '<label><input id="smu0707-memo2" type="checkbox" checked> 관리메모2</label>' +
+        '<label><input id="smu0707-order-memo" type="checkbox" checked> 주문메모</label>' +
+        '<label><input id="smu0707-hold" type="checkbox" checked> 배송보류</label>' +
+        '<label title="먼저 스크래퍼를 실행하세요. DB 값을 기준으로 셀피아 출고예정일/출고확정일을 동기화합니다."><input id="smu0707-outbound-dates" type="checkbox"> 출고일자</label>' +
+        '<label><input id="smu0707-split-batch" type="checkbox"> 50개씩 분할 실행</label>' +
         '</div>' +
         '<div style="display:flex;gap:8px;margin-bottom:12px">' +
-        '<button id="smu0707-start" style="flex:1;height:40px;border:0;border-radius:8px;background:#2563eb;color:#fff;font-weight:900;cursor:pointer">Start read test</button>' +
-        '<button id="smu0707-snapshot" style="height:40px;border:1px solid #475569;border-radius:8px;background:#164e63;color:#e0f2fe;font-weight:800;cursor:pointer">Current CSV</button>' +
-        '<button id="smu0707-download" disabled style="height:40px;border:1px solid #475569;border-radius:8px;background:#0f172a;color:#cbd5e1;font-weight:800;cursor:pointer">Download CSV</button>' +
-        '<button id="smu0707-issue-download" disabled style="height:40px;border:1px solid #7f1d1d;border-radius:8px;background:#450a0a;color:#fecaca;font-weight:900;cursor:pointer">Blocked/Fail CSV</button>' +
+        '<button id="smu0707-start" style="flex:1;height:40px;border:0;border-radius:8px;background:#2563eb;color:#fff;font-weight:900;cursor:pointer">검사 시작</button>' +
+        '<button id="smu0707-snapshot" style="height:40px;border:1px solid #475569;border-radius:8px;background:#164e63;color:#e0f2fe;font-weight:800;cursor:pointer">현재값 확인</button>' +
+        '<button id="smu0707-download" disabled style="height:40px;border:1px solid #475569;border-radius:8px;background:#0f172a;color:#cbd5e1;font-weight:800;cursor:pointer">전체 CSV</button>' +
+        '<button id="smu0707-issue-download" disabled style="height:40px;border:1px solid #7f1d1d;border-radius:8px;background:#450a0a;color:#fecaca;font-weight:900;cursor:pointer">차단·실패 CSV</button>' +
         '</div>' +
         '<div id="smu0707-status" style="min-height:38px;white-space:pre-line;color:#d1d5db;font-size:13px;margin-bottom:8px"></div>' +
-        '<pre id="smu0707-log" style="height:210px;overflow:auto;background:#020617;color:#a7f3d0;border-radius:8px;padding:10px;font-size:11px;white-space:pre-wrap"></pre>' +
+        '<div style="display:grid;grid-template-columns:minmax(0,1.35fr) minmax(270px,.65fr);gap:8px;align-items:stretch">' +
+        '<pre id="smu0707-log" style="height:260px;overflow:auto;background:#020617;color:#a7f3d0;border-radius:8px;padding:10px;margin:0;font-size:11px;white-space:pre-wrap"></pre>' +
+        '<div id="smu0707-blocked-panel" style="height:260px;overflow:auto;background:#180d12;border:1px solid #7f1d1d;border-radius:8px;font-size:11px"></div>' +
+        '</div>' +
         '<div style="display:flex;gap:8px;margin-top:12px">' +
-        '<button id="smu0707-stop" style="display:none;flex:1;height:36px;border:0;border-radius:8px;background:#b91c1c;color:#fff;font-weight:800;cursor:pointer">Stop</button>' +
-        '<button id="smu0707-close" style="flex:1;height:36px;border:1px solid #475569;border-radius:8px;background:transparent;color:#cbd5e1;cursor:pointer">Close</button>' +
+        '<button id="smu0707-stop" style="display:none;flex:1;height:36px;border:0;border-radius:8px;background:#b91c1c;color:#fff;font-weight:800;cursor:pointer">중지</button>' +
+        '<button id="smu0707-close" style="flex:1;height:36px;border:1px solid #475569;border-radius:8px;background:transparent;color:#cbd5e1;cursor:pointer">닫기</button>' +
         '</div>' +
         '</div>';
       document.body.appendChild(overlay);
+      renderBlockedOrderPanel();
       $('smu0707-close').onclick = () => overlay.remove();
-      $('smu0707-stop').onclick = () => { stopped = true; $('smu0707-stop').disabled = true; $('smu0707-stop').textContent = 'Stopping'; };
+      $('smu0707-stop').onclick = () => { stopped = true; $('smu0707-stop').disabled = true; $('smu0707-stop').textContent = '중지 중'; };
       $('smu0707-download').onclick = downloadCsv;
       $('smu0707-issue-download').onclick = downloadIssueCsv;
       $('smu0707-start').onclick = run;
@@ -2763,24 +2990,25 @@
         const startDate = $('smu0707-date-start').value;
         const endDate = $('smu0707-date-end').value;
         if (!inv && (!startDate || !endDate)) {
-          alert('Enter an invoice/order number or a date range.');
+          alert('송장번호·주문번호를 입력하거나 날짜 범위를 선택해주세요.');
           return;
         }
         try {
           await snapshotCurrentValues(inv, startDate, endDate);
         } catch (err) {
-          $('smu0707-status').textContent = 'SNAPSHOT ERROR: ' + (err && err.message ? err.message : err);
+          $('smu0707-status').textContent = '현재값 확인 오류: ' + (err && err.message ? err.message : err);
           $('smu0707-log').textContent += ((err && err.stack) || (err && err.message) || err) + '\n';
         } finally {
           $('smu0707-stop').style.display = 'none';
           $('smu0707-stop').disabled = false;
-          $('smu0707-stop').textContent = 'Stop';
+          $('smu0707-stop').textContent = '중지';
         }
       };
     }
 
     async function run() {
       results.length = 0;
+      renderBlockedOrderPanel();
       stopped = false;
       const runStart = perfNow();
       $('smu0707-log').textContent = '';
@@ -2801,14 +3029,14 @@
         splitBatch: $('smu0707-split-batch').checked
       };
       if (!options.inv && (!options.startDate || !options.endDate)) {
-        alert('Enter an invoice/order number or a date range.');
+        alert('송장번호·주문번호를 입력하거나 날짜 범위를 선택해주세요.');
         return;
       }
-      if (!options.testMode && !confirm('LIVE WRITE mode. This will save to Sellpia. Continue?')) return;
+      if (!options.testMode && !confirm('실제 저장 모드입니다. 셀피아에 변경값을 저장하시겠습니까?')) return;
       try {
       csvMode = options.testMode ? 'test' : 'live';
-        const range = options.inv ? 'single target' : dateRange(options.startDate, options.endDate).label;
-        $('smu0707-status').textContent = 'Building planned updates from DB/F.v1...\nRange: ' + range;
+        const range = options.inv ? targetRangeLabel(options.inv) : dateRange(options.startDate, options.endDate).label;
+        $('smu0707-status').textContent = 'DB 기준 실행 계획을 만드는 중...\n범위: ' + range;
         const buildStart = perfNow();
         let tasks = await buildTasks(options.inv, options.startDate, options.endDate);
         const buildMs = perfMs(buildStart);
@@ -2821,15 +3049,15 @@
           if (!selectedBatch) return;
           tasks = selectedBatch.tasks;
           lastBuildMeta = { ...(lastBuildMeta || {}), ...selectedBatch.meta };
-          $('smu0707-log').textContent += 'Batch split selected: before=' + selectedBatch.meta.batchTotalTargets + ', after=' + selectedBatch.meta.batchSelectedTargets + ', batch=' + selectedBatch.meta.batchNo + '/' + selectedBatch.meta.batchTotal + ', target index=' + selectedBatch.meta.batchStart + '-' + selectedBatch.meta.batchEnd + ', first=' + selectedBatch.meta.batchFirstTarget + ', last=' + selectedBatch.meta.batchLastTarget + '\n';
+          $('smu0707-log').textContent += '분할 실행 선택: 전체=' + selectedBatch.meta.batchTotalTargets + ', 선택=' + selectedBatch.meta.batchSelectedTargets + ', 배치=' + selectedBatch.meta.batchNo + '/' + selectedBatch.meta.batchTotal + ', 대상 순번=' + selectedBatch.meta.batchStart + '-' + selectedBatch.meta.batchEnd + ', 첫 대상=' + selectedBatch.meta.batchFirstTarget + ', 마지막 대상=' + selectedBatch.meta.batchLastTarget + '\n';
           if (!tasks.length) {
             alert('선택한 배치에 실행 대상이 없습니다.');
             return;
           }
         }
         const metaLines = buildMetaLines(tasks);
-        $('smu0707-log').textContent += metaLines.join('\n') + '\n' + 'PERF buildTasks=' + buildMs + 'ms\n';
-        $('smu0707-status').textContent = 'Read-testing ' + tasks.length + ' target(s)...\nRange: ' + range + '\n' + metaLines.join('\n') + '\nTEST MODE=' + (options.testMode ? 'ON (NO WRITE / NO updateOrder / NO click / NO save)' : 'OFF (LIVE WRITE)');
+        $('smu0707-log').textContent += metaLines.join('\n') + '\n' + '작업 생성 시간=' + buildMs + 'ms\n';
+        $('smu0707-status').textContent = (options.testMode ? '테스트 검사' : '실제 저장') + ' 중: ' + tasks.length + '개 작업\n범위: ' + range + '\n' + metaLines.join('\n') + '\n모드=' + (options.testMode ? '테스트(저장·클릭 없음)' : '실제 저장');
         for (let i = 0; i < tasks.length; i++) {
           if (stopped) break;
           const task = tasks[i];
@@ -2839,7 +3067,7 @@
           if (!options.doHold) task.writeHold = false;
           task.writeOutboundDates = options.doOutboundDates;
           const batchLine = lastBuildMeta && lastBuildMeta.batchEnabled
-            ? 'Batch ' + lastBuildMeta.batchNo + '/' + lastBuildMeta.batchTotal + ', global target ' + (lastBuildMeta.batchStart + i) + '/' + lastBuildMeta.batchTotalTargets + '\n'
+            ? '배치 ' + lastBuildMeta.batchNo + '/' + lastBuildMeta.batchTotal + ', 전체 대상 ' + (lastBuildMeta.batchStart + i) + '/' + lastBuildMeta.batchTotalTargets + '\n'
             : '';
           $('smu0707-status').textContent = '[' + (i + 1) + '/' + tasks.length + '] ' + (task.invNo || task.ordNo || '-') + '\n' + batchLine + task.reason;
           await inspectTask(task, options);
@@ -2847,16 +3075,16 @@
         }
         const summary = summarizeResults();
         if (options.testMode) lastDryRunSummary = summary;
-        $('smu0707-log').textContent += summary.lines.join('\n') + '\n' + 'PERF runTotal=' + perfMs(runStart) + 'ms\n';
+        $('smu0707-log').textContent += summary.lines.join('\n') + '\n' + '전체 실행 시간=' + perfMs(runStart) + 'ms\n';
         const doneTitle = options.testMode
-          ? 'TEST MODE DONE: no Sellpia or DB changes\nNO updateOrder / NO click / NO save\n'
-          : (summary.blocking ? 'LIVE WRITE PARTIAL/FAILED\n' : 'LIVE WRITE DONE\n');
+          ? '테스트 완료: 셀피아와 DB를 변경하지 않았습니다.\n저장·클릭·updateOrder 없음\n'
+          : (summary.blocking ? '실제 저장 일부 차단/실패\n' : '실제 저장 완료\n');
         const doneBatchLine = lastBuildMeta && lastBuildMeta.batchEnabled
-          ? 'Batch ' + lastBuildMeta.batchNo + '/' + lastBuildMeta.batchTotal + ', target index=' + lastBuildMeta.batchStart + '-' + lastBuildMeta.batchEnd + ' of ' + lastBuildMeta.batchTotalTargets + '\n'
+          ? '배치 ' + lastBuildMeta.batchNo + '/' + lastBuildMeta.batchTotal + ', 대상 순번=' + lastBuildMeta.batchStart + '-' + lastBuildMeta.batchEnd + '/' + lastBuildMeta.batchTotalTargets + '\n'
           : '';
-        $('smu0707-status').textContent = doneTitle + doneBatchLine + 'Result rows: ' + results.length + '\n' + summary.lines.join('\n');
+        $('smu0707-status').textContent = doneTitle + doneBatchLine + '결과 행: ' + results.length + '\n' + summary.lines.join('\n');
       } catch (err) {
-        $('smu0707-status').textContent = 'Error: ' + err.message;
+        $('smu0707-status').textContent = '오류: ' + err.message;
         $('smu0707-log').textContent += (err.stack || err.message) + '\n';
       } finally {
         $('smu0707-stop').style.display = 'none';
@@ -2865,8 +3093,8 @@
 
     makeOverlay();
   })().catch(function(err){
-    console.error('[0804-부분보류오류수정]', err);
-    alert('0804-부분보류오류수정 error: ' + (err && err.message ? err.message : err));
+    console.error('[0812-합배송오류수정]', err);
+    alert('0812-합배송오류수정 오류: ' + (err && err.message ? err.message : err));
   });
 })();
 </script>

@@ -44,4 +44,17 @@ assert.equal(decideLiveWriteAllowed([]), "Y");
 assert.equal(decideLiveWriteAllowed(["informational_only"]), "Y");
 assert.equal(decideLiveWriteAllowed([reviewBlocks[0], hardBlocks[0]]), "N");
 
+const holdHelperStart = source.indexOf("function shippingHoldNeedsReview");
+const holdHelperEnd = source.indexOf("\n    function currentWarningsForGridRow", holdHelperStart);
+assert.notEqual(holdHelperStart, -1);
+assert.notEqual(holdHelperEnd, -1);
+const holdHelperSource = source.slice(holdHelperStart, holdHelperEnd);
+const { shippingHoldNeedsReview } = new Function(
+  `${holdHelperSource}; return { shippingHoldNeedsReview };`,
+)();
+assert.equal(shippingHoldNeedsReview({ holdWriteRequested: false, holdSyncAction: "UNKNOWN" }), false);
+assert.equal(shippingHoldNeedsReview({ holdWriteRequested: true, holdSyncAction: "UNKNOWN" }), true);
+assert.equal(shippingHoldNeedsReview({ holdWriteRequested: true, holdSyncAction: "REVIEW_SKIP" }), true);
+assert.equal(shippingHoldNeedsReview({ holdWriteRequested: true, holdSyncAction: "SET_ON" }), false);
+
 console.log("Updater live-write policy catalog: passed");
