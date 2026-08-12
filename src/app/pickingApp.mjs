@@ -22,7 +22,11 @@ import {
 const SUPABASE_URL = "https://vgxocngpykhlkosiaeew.supabase.co";
 const SUPABASE_KEY = "sb_publishable_XVnKGJo66GZiYTq5Ivu8dA_SjBVvX0g";
 const IMAGE_SUPABASE_URL = "https://bpgvqmtsjgegnrdzmpep.supabase.co";
+const IMAGE_SUPABASE_KEY = "sb_publishable__NVp6Ra227_e1TQqQE40oA_O2PVwv5C";
 const IMAGE_BUCKET = "product-images";
+const PRODUCT_PHOTO_FOLDER = "sellpia";
+const PRODUCT_PHOTO_MAX_DIMENSION = 2400;
+const PRODUCT_PHOTO_MAX_BYTES = 5 * 1024 * 1024;
 const RECEIVING_LABEL_BUCKET = "system-v3-shared";
 const RECEIVING_LABEL_PATH = "receiving-label/current.csv";
 const RECEIVING_LABEL_CSV_HEADER = ["product_code", "own_code", "option_name", "qty"];
@@ -103,6 +107,7 @@ const allowWrites = params.get("write") !== "0";
 const allowOrderReorder = allowWrites && params.get("reorder") === "1";
 const allowWorkflowEvents = allowWrites && params.get("events") !== "0";
 const db = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
+const imageDb = window.supabase.createClient(IMAGE_SUPABASE_URL, IMAGE_SUPABASE_KEY);
 const csCases = createCsCaseAdapter(db);
 const alimtalkSends = createAlimtalkSendAdapter(db);
 
@@ -203,6 +208,10 @@ const state = {
     src: "",
     title: "",
   },
+  productPhotoUpload: {
+    running: false,
+    versions: new Map(),
+  },
 };
 
 const els = {
@@ -253,6 +262,10 @@ const els = {
   completedListBody: document.getElementById("completed-list-body"),
   completedDetail: document.getElementById("completed-detail"),
   dashboardSummary: document.getElementById("dashboard-summary"),
+  dashboardPhotoInput: document.getElementById("dashboard-photo-input"),
+  dashboardPhotoDropzone: document.getElementById("dashboard-photo-dropzone"),
+  dashboardPhotoUploadBtn: document.getElementById("dashboard-photo-upload-btn"),
+  dashboardPhotoUploadStatus: document.getElementById("dashboard-photo-upload-status"),
   orderList: document.getElementById("order-list"),
   panelSubtitle: document.getElementById("panel-subtitle"),
   currentGroupLabel: document.getElementById("current-group-label"),
@@ -356,10 +369,189 @@ async function fetchAllRows(makeQuery, pageSize = 1000) {
   return rows;
 }
 
+function productPhotoVersionStorageKey(code) {
+  return `system-v3-product-photo-version::${code}`;
+}
+
+function productPhotoVersion(code) {
+  if (state.productPhotoUpload.versions.has(code)) return state.productPhotoUpload.versions.get(code);
+  let version = "";
+  try {
+    version = window.localStorage.getItem(productPhotoVersionStorageKey(code)) || "";
+  } catch {
+    version = "";
+  }
+  state.productPhotoUpload.versions.set(code, version);
+  return version;
+}
+
+function markProductPhotoUpdated(code) {
+  const version = String(Date.now());
+  state.productPhotoUpload.versions.set(code, version);
+  try {
+    window.localStorage.setItem(productPhotoVersionStorageKey(code), version);
+  } catch {
+    // Local storage can be unavailable in restricted browser modes. The in-memory nonce still refreshes this page.
+  }
+  return version;
+}
+
 function productImageUrl(sellpiaProductCode) {
   const code = String(sellpiaProductCode || "").trim();
   if (!code) return "";
-  return `${IMAGE_SUPABASE_URL}/storage/v1/object/public/${IMAGE_BUCKET}/sellpia/${encodeURIComponent(code)}.jpg`;
+  const base = `${IMAGE_SUPABASE_URL}/storage/v1/object/public/${IMAGE_BUCKET}/${PRODUCT_PHOTO_FOLDER}/${encodeURIComponent(code)}.jpg`;
+  const version = productPhotoVersion(code);
+  return version ? `${base}?v=${encodeURIComponent(version)}` : base;
+}
+
+function sellpiaSkuFromPhotoFileName(fileName) {
+  const name = String(fileName || "").trim();
+  const sku = name.replace(/\.[^.]+$/, "").trim();
+  if (!sku || sku === "." || sku === ".." || sku.length > 160 || /[\\/]/.test(sku)) return "";
+  return sku;
+}
+
+function productPhotoFileAllowed(file) {
+  const type = String(file?.type || "").toLowerCase();
+  const name = String(file?.name || "").toLowerCase();
+  return ["image/jpeg", "image/png", "image/webp"].includes(type) || /\.(jpe?g|png|webp)$/.test(name);
+}
+
+async function decodeProductPhoto(file) {
+  if (typeof window.createImageBitmap === "function") {
+    const bitmap = await window.createImageBitmap(file);
+    return {
+      source: bitmap,
+      width: bitmap.width,
+      height: bitmap.height,
+      release: () => bitmap.close(),
+    };
+  }
+
+  const objectUrl = URL.createObjectURL(file);
+  try {
+    const image = await new Promise((resolve, reject) => {
+      const next = new Image();
+      next.onload = () => resolve(next);
+      next.onerror = () => reject(new Error("이미지 파일을 읽지 못했습니다."));
+      next.src = objectUrl;
+    });
+    return {
+      source: image,
+      width: image.naturalWidth,
+      height: image.naturalHeight,
+      release: () => URL.revokeObjectURL(objectUrl),
+    };
+  } catch (error) {
+    URL.revokeObjectURL(objectUrl);
+    throw error;
+  }
+}
+
+function canvasJpegBlob(canvas, quality) {
+  return new Promise((resolve, reject) => {
+    canvas.toBlob((blob) => {
+      if (blob) resolve(blob);
+      else reject(new Error("JPG 변환에 실패했습니다."));
+    }, "image/jpeg", quality);
+  });
+}
+
+async function normalizeProductPhotoToJpeg(file) {
+  const decoded = await decodeProductPhoto(file);
+  try {
+    if (!decoded.width || !decoded.height) throw new Error("이미지 크기를 확인하지 못했습니다.");
+    const scale = Math.min(1, PRODUCT_PHOTO_MAX_DIMENSION / Math.max(decoded.width, decoded.height));
+    const canvas = document.createElement("canvas");
+    canvas.width = Math.max(1, Math.round(decoded.width * scale));
+    canvas.height = Math.max(1, Math.round(decoded.height * scale));
+    const context = canvas.getContext("2d", { alpha: false });
+    if (!context) throw new Error("이미지 변환 기능을 사용할 수 없습니다.");
+    context.fillStyle = "#ffffff";
+    context.fillRect(0, 0, canvas.width, canvas.height);
+    context.drawImage(decoded.source, 0, 0, canvas.width, canvas.height);
+
+    for (const quality of [0.9, 0.82, 0.72]) {
+      const blob = await canvasJpegBlob(canvas, quality);
+      if (blob.size <= PRODUCT_PHOTO_MAX_BYTES) return blob;
+    }
+    throw new Error("변환 후에도 사진이 5MB를 초과합니다.");
+  } finally {
+    decoded.release();
+  }
+}
+
+function renderProductPhotoUploadStatus({ message, tone = "", details = [] }) {
+  if (!els.dashboardPhotoUploadStatus) return;
+  els.dashboardPhotoUploadStatus.className = `dashboard-photo-upload-status ${tone}`.trim();
+  els.dashboardPhotoUploadStatus.innerHTML = `<strong>${escapeHtml(message)}</strong>${details.length ? `<ul>${details.map((detail) => `<li>${escapeHtml(detail)}</li>`).join("")}</ul>` : ""}`;
+}
+
+function setProductPhotoUploadBusy(running) {
+  state.productPhotoUpload.running = running;
+  if (els.dashboardPhotoUploadBtn) {
+    els.dashboardPhotoUploadBtn.disabled = running || !allowWrites;
+    els.dashboardPhotoUploadBtn.textContent = running ? "사진 저장 중..." : "사진 여러 장 선택";
+  }
+  els.dashboardPhotoDropzone?.classList.toggle("is-uploading", running);
+  els.dashboardPhotoDropzone?.setAttribute("aria-busy", running ? "true" : "false");
+}
+
+async function uploadProductPhotos(fileList) {
+  if (!allowWrites) {
+    toast("읽기전용입니다. URL에 write=1을 붙여 사진을 업로드할 수 있습니다.");
+    return;
+  }
+  if (state.productPhotoUpload.running) return;
+  const files = [...(fileList || [])];
+  if (!files.length) return;
+
+  setProductPhotoUploadBusy(true);
+  const successes = [];
+  const failures = [];
+  try {
+    for (let index = 0; index < files.length; index += 1) {
+      const file = files[index];
+      const sku = sellpiaSkuFromPhotoFileName(file.name);
+      renderProductPhotoUploadStatus({ message: `사진 저장 중 ${index + 1}/${files.length}: ${sku || file.name}` });
+      if (!sku) {
+        failures.push(`${file.name}: 파일명에서 셀피아 SKU를 확인할 수 없음`);
+        continue;
+      }
+      if (!productPhotoFileAllowed(file)) {
+        failures.push(`${file.name}: JPG, PNG, WEBP만 가능`);
+        continue;
+      }
+
+      try {
+        const jpeg = await normalizeProductPhotoToJpeg(file);
+        const objectPath = `${PRODUCT_PHOTO_FOLDER}/${sku}.jpg`;
+        const { error } = await imageDb.storage.from(IMAGE_BUCKET).upload(objectPath, jpeg, {
+          contentType: "image/jpeg",
+          cacheControl: "0",
+          upsert: true,
+        });
+        if (error) throw error;
+        markProductPhotoUpdated(sku);
+        successes.push(sku);
+      } catch (error) {
+        failures.push(`${file.name}: ${error?.message || error}`);
+      }
+    }
+  } finally {
+    setProductPhotoUploadBusy(false);
+    if (els.dashboardPhotoInput) els.dashboardPhotoInput.value = "";
+  }
+
+  const summary = failures.length
+    ? `사진 저장 완료 ${successes.length}개 · 실패 ${failures.length}개`
+    : `사진 ${successes.length}개 저장 완료`;
+  const details = [
+    ...(successes.length ? [`저장 SKU: ${successes.join(", ")}`] : []),
+    ...failures,
+  ];
+  renderProductPhotoUploadStatus({ message: summary, tone: failures.length ? "warn" : "success", details });
+  toast(summary);
 }
 
 function photoTitleForItem(item = {}) {
@@ -8828,6 +9020,46 @@ function bindEvents() {
     if (button.dataset.dashboardAction === "order-list") {
       openOrderListModal();
     }
+    if (button.dataset.dashboardAction === "photo-upload-select") {
+      if (!allowWrites) {
+        toast("읽기전용입니다. URL에 write=1을 붙여 사진을 업로드할 수 있습니다.");
+        return;
+      }
+      els.dashboardPhotoInput?.click();
+    }
+  });
+  els.dashboardPhotoInput?.addEventListener("change", () => {
+    uploadProductPhotos(els.dashboardPhotoInput.files).catch((error) => {
+      setProductPhotoUploadBusy(false);
+      renderProductPhotoUploadStatus({ message: `사진 업로드 실패: ${error?.message || error}`, tone: "error" });
+    });
+  });
+  els.dashboardPhotoDropzone?.addEventListener("click", () => {
+    if (!state.productPhotoUpload.running) els.dashboardPhotoInput?.click();
+  });
+  els.dashboardPhotoDropzone?.addEventListener("keydown", (event) => {
+    if (!["Enter", " "].includes(event.key) || state.productPhotoUpload.running) return;
+    event.preventDefault();
+    els.dashboardPhotoInput?.click();
+  });
+  for (const eventName of ["dragenter", "dragover"]) {
+    els.dashboardPhotoDropzone?.addEventListener(eventName, (event) => {
+      event.preventDefault();
+      if (!state.productPhotoUpload.running) els.dashboardPhotoDropzone.classList.add("is-dragging");
+    });
+  }
+  for (const eventName of ["dragleave", "drop"]) {
+    els.dashboardPhotoDropzone?.addEventListener(eventName, (event) => {
+      event.preventDefault();
+      els.dashboardPhotoDropzone.classList.remove("is-dragging");
+    });
+  }
+  els.dashboardPhotoDropzone?.addEventListener("drop", (event) => {
+    if (state.productPhotoUpload.running) return;
+    uploadProductPhotos(event.dataTransfer?.files).catch((error) => {
+      setProductPhotoUploadBusy(false);
+      renderProductPhotoUploadStatus({ message: `사진 업로드 실패: ${error?.message || error}`, tone: "error" });
+    });
   });
   els.groupList.addEventListener("click", (event) => {
     const bulkButton = event.target.closest("[data-bulk-group]");
