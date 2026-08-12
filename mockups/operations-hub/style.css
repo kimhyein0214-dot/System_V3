@@ -63,4 +63,16 @@
 .view-settings-note{margin:12px 0 0;padding:10px;border-radius:6px;background:#f3f7ff;color:#64748b;font-size:8px;line-height:1.55}
 .preset-modal-foot{align-items:center}.preset-modal-foot>span{flex:1}.btn.danger{border-color:#efb5b5;background:#fff5f5;color:#b42318}
 .matrix-view-tabs button[data-preset-id].custom-active{border-bottom-color:#7c3aed;color:#7c3aed}
+.seller-value{display:inline-flex;min-width:54px;height:25px;align-items:center;justify-content:flex-end;padding:0 7px;border:1px solid transparent;border-radius:4px;font-size:9px;font-weight:900}
+.seller-value.diff{border-color:#efb5b5;background:#fff1f1;color:#b42318}
+.sellpia-edit{cursor:text}
+.sellpia-text-compact{width:88px;overflow:hidden;text-overflow:ellipsis;text-align:left}
+.product-cell .sellpia-text-wide{display:block;width:100%;max-width:325px;height:18px;overflow:hidden;border:0;background:transparent;padding:0;text-align:left;text-overflow:ellipsis;white-space:nowrap;color:inherit}
+.product-cell .sellpia-text-wide:hover{background:#fff8d6;outline:1px solid #e8d88d}
+.inline-editor.text-editor{width:100%;min-width:90px;text-align:left;padding:0 5px}
+.image-drop-cell{position:sticky}
+.image-drop-hint{position:absolute;inset:auto 3px 2px;display:none;border-radius:3px;background:rgba(21,88,192,.9);color:#fff;font-size:6px;font-weight:1000;line-height:12px;text-align:center;pointer-events:none}
+.image-drop-cell:hover .image-drop-hint,.image-drop-cell.drag-over .image-drop-hint,.image-drop-cell.uploading .image-drop-hint{display:block}
+.image-drop-cell.drag-over{outline:3px solid var(--blue);outline-offset:-3px;background:#eaf2ff!important}
+.image-drop-cell.uploading{pointer-events:none;opacity:.72}
 @media(max-width:760px){.view-settings-grid,.view-settings-selects{grid-template-columns:1fr}.custom-preset-picker{display:none}}

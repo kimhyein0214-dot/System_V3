@@ -28,7 +28,7 @@
     const keyword = normalizedSearch(search);
     let query = db
       .from('operations_hub_matrix_live')
-      .select('sellpia_sku_code,own_code,image_url,display_name,smartstore_name,smartstore_product_code,smartstore_option_code,smartstore_match_tier,smartstore_match_score,smartstore_listing_count,makeshop_name,makeshop_product_code,makeshop_option_code,makeshop_match_tier,makeshop_match_score,makeshop_listing_count,ably_name,ably_product_code,ably_option_code,ably_match_tier,ably_match_score,ably_listing_count,updated_at,sellpia_product_name,sellpia_option_name,sellpia_own_code,sellpia_current_stock,sellpia_available_stock,sellpia_safety_stock,sellpia_sale_price,sellpia_inventory_at,smartstore_stock,smartstore_price,smartstore_inventory_at,makeshop_stock,makeshop_price,makeshop_inventory_at,ably_stock,ably_price,ably_inventory_at,overall_status', { count: 'exact' });
+      .select('sellpia_sku_code,own_code,image_url,display_name,smartstore_name,smartstore_product_code,smartstore_option_code,smartstore_match_tier,smartstore_match_score,smartstore_listing_count,makeshop_name,makeshop_product_code,makeshop_option_code,makeshop_match_tier,makeshop_match_score,makeshop_listing_count,ably_name,ably_product_code,ably_option_code,ably_match_tier,ably_match_score,ably_listing_count,updated_at,sellpia_product_name,sellpia_option_name,sellpia_own_code,sellpia_current_stock,sellpia_available_stock,sellpia_safety_stock,sellpia_sale_price,sellpia_inventory_at,smartstore_stock,smartstore_price,smartstore_inventory_at,makeshop_stock,makeshop_price,makeshop_inventory_at,ably_stock,ably_price,ably_inventory_at,overall_status,sellpia_override_image_url,sellpia_override_updated_at', { count: 'exact' });
 
     if (keyword) {
       query = query.or(`sellpia_sku_code.ilike.*${keyword}*,own_code.ilike.*${keyword}*,display_name.ilike.*${keyword}*,sellpia_own_code.ilike.*${keyword}*,sellpia_product_name.ilike.*${keyword}*`);
@@ -65,6 +65,93 @@
       if (!latest[event.source] && ['SOURCE_UPLOAD', 'INVENTORY_MATCH'].includes(event.event_type)) latest[event.source] = event;
     }
     return { events: data || [], latest };
+  }
+
+  async function loadDashboardMetrics() {
+    const {data, error} = await db
+      .from('operations_hub_dashboard_metrics')
+      .select('total_sku,connected_sku,unmatched_sku,inventory_mismatch_sku,latest_sync_at,today_picked,shortage_drawer_qty')
+      .single();
+    if (error) throw error;
+    return data;
+  }
+
+  async function saveSellpiaChanges(changes) {
+    const grouped = new Map();
+    for (const change of changes || []) {
+      if (!change?.sku || !change?.fieldKey) continue;
+      if (!grouped.has(change.sku)) grouped.set(change.sku, []);
+      grouped.get(change.sku).push({
+        field_key:change.fieldKey,
+        before:String(change.before ?? ''),
+        after:String(change.after ?? '')
+      });
+    }
+    let savedCount = 0;
+    let queuedCount = 0;
+    for (const [sku, items] of grouped) {
+      const {data, error} = await db.rpc('apply_operations_hub_sellpia_changes', {
+        p_sku:sku,
+        p_changes:items
+      });
+      if (error) throw error;
+      const result = Array.isArray(data) ? data[0] : data;
+      savedCount += Number(result?.saved_count || items.length);
+      queuedCount += Number(result?.queued_count || 0);
+    }
+    return {savedCount, queuedCount, productCount:grouped.size};
+  }
+
+  function decodeImage(file) {
+    return new Promise((resolve, reject) => {
+      const url = URL.createObjectURL(file);
+      const image = new Image();
+      image.onload = () => resolve({image, url});
+      image.onerror = () => { URL.revokeObjectURL(url); reject(new Error('이미지 파일을 읽지 못했습니다.')); };
+      image.src = url;
+    });
+  }
+
+  async function normalizeSellpiaImage(file) {
+    if (!file?.type?.startsWith('image/')) throw new Error('이미지 파일만 올릴 수 있습니다.');
+    if (file.size > 20 * 1024 * 1024) throw new Error('원본 이미지는 20MB 이하여야 합니다.');
+    const {image, url} = await decodeImage(file);
+    try {
+      const maxDimension = 2400;
+      const scale = Math.min(1, maxDimension / Math.max(image.naturalWidth, image.naturalHeight));
+      const canvas = document.createElement('canvas');
+      canvas.width = Math.max(1, Math.round(image.naturalWidth * scale));
+      canvas.height = Math.max(1, Math.round(image.naturalHeight * scale));
+      canvas.getContext('2d', {alpha:false}).drawImage(image, 0, 0, canvas.width, canvas.height);
+      const blob = await new Promise(resolve => canvas.toBlob(resolve, 'image/jpeg', 0.9));
+      if (!blob) throw new Error('이미지를 JPG로 변환하지 못했습니다.');
+      if (blob.size > 5 * 1024 * 1024) throw new Error('변환된 이미지가 5MB를 초과합니다.');
+      return blob;
+    } finally {
+      URL.revokeObjectURL(url);
+    }
+  }
+
+  async function uploadSellpiaImage(sku, file) {
+    const safeSku = cleanText(sku);
+    if (!/^[0-9A-Za-z._-]+$/.test(safeSku)) throw new Error('이미지 파일명으로 사용할 수 없는 SKU입니다.');
+    const imageBlob = await normalizeSellpiaImage(file);
+    const path = `sellpia/${safeSku}.jpg`;
+    const {error:uploadError} = await db.storage
+      .from('product-images')
+      .upload(path, imageBlob, {contentType:'image/jpeg', cacheControl:'3600', upsert:true});
+    if (uploadError) throw uploadError;
+    const {data:saveResult, error:saveError} = await db.rpc('apply_operations_hub_sellpia_changes', {
+      p_sku:safeSku,
+      p_changes:[{field_key:'sellpia_image', before:'', after:path}]
+    });
+    if (saveError) throw saveError;
+    const {data:publicData} = db.storage.from('product-images').getPublicUrl(path);
+    return {
+      path,
+      url:`${publicData.publicUrl}?v=${Date.now()}`,
+      saved:Array.isArray(saveResult) ? saveResult[0] : saveResult
+    };
   }
 
   async function loadTags() {
@@ -312,8 +399,11 @@
   global.SystemV3Data = Object.freeze({
     pageSize: PAGE_SIZE,
     loadProducts,
+    loadDashboardMetrics,
     loadSourceStatus,
     loadTags,
+    saveSellpiaChanges,
+    uploadSellpiaImage,
     uploadSellpiaSnapshot,
     uploadSellerSnapshot
   });
