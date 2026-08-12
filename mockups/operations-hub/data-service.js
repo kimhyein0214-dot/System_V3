@@ -20,20 +20,31 @@
     return String(value || '').trim().replace(/[^0-9A-Za-z가-힣ㄱ-ㅎㅏ-ㅣ_\-\[\]\s]/g, '');
   }
 
-  async function loadProducts({ page = 1, search = '' } = {}) {
+  async function loadProducts({ page = 1, search = '', status = 'all', sort = 'sku_asc' } = {}) {
     const safePage = Math.max(1, Number(page) || 1);
     const from = (safePage - 1) * PAGE_SIZE;
     const to = from + PAGE_SIZE - 1;
     const keyword = normalizedSearch(search);
     let query = db
       .from('operations_hub_matrix_live')
-      .select('sellpia_sku_code,own_code,image_url,display_name,smartstore_name,smartstore_product_code,smartstore_option_code,smartstore_match_tier,smartstore_match_score,smartstore_listing_count,makeshop_name,makeshop_product_code,makeshop_option_code,makeshop_match_tier,makeshop_match_score,makeshop_listing_count,ably_name,ably_product_code,ably_option_code,ably_match_tier,ably_match_score,ably_listing_count,updated_at,sellpia_product_name,sellpia_option_name,sellpia_own_code,sellpia_current_stock,sellpia_available_stock,sellpia_safety_stock,sellpia_sale_price,sellpia_inventory_at,smartstore_stock,smartstore_price,smartstore_inventory_at,makeshop_stock,makeshop_price,makeshop_inventory_at,ably_stock,ably_price,ably_inventory_at', { count: 'exact' })
-      .order('sellpia_sku_code', { ascending: true })
-      .range(from, to);
+      .select('sellpia_sku_code,own_code,image_url,display_name,smartstore_name,smartstore_product_code,smartstore_option_code,smartstore_match_tier,smartstore_match_score,smartstore_listing_count,makeshop_name,makeshop_product_code,makeshop_option_code,makeshop_match_tier,makeshop_match_score,makeshop_listing_count,ably_name,ably_product_code,ably_option_code,ably_match_tier,ably_match_score,ably_listing_count,updated_at,sellpia_product_name,sellpia_option_name,sellpia_own_code,sellpia_current_stock,sellpia_available_stock,sellpia_safety_stock,sellpia_sale_price,sellpia_inventory_at,smartstore_stock,smartstore_price,smartstore_inventory_at,makeshop_stock,makeshop_price,makeshop_inventory_at,ably_stock,ably_price,ably_inventory_at,overall_status', { count: 'exact' });
 
     if (keyword) {
-      query = query.or(`sellpia_sku_code.ilike.*${keyword}*,own_code.ilike.*${keyword}*,display_name.ilike.*${keyword}*`);
+      query = query.or(`sellpia_sku_code.ilike.*${keyword}*,own_code.ilike.*${keyword}*,display_name.ilike.*${keyword}*,sellpia_own_code.ilike.*${keyword}*,sellpia_product_name.ilike.*${keyword}*`);
     }
+    if (status === 'attention') query = query.in('overall_status', ['review', 'unmatched']);
+    else if (['connected', 'review', 'unmatched'].includes(status)) query = query.eq('overall_status', status);
+
+    const sortOptions = {
+      sku_asc: ['sellpia_sku_code', true],
+      stock_desc: ['sellpia_current_stock', false],
+      price_desc: ['sellpia_sale_price', false],
+      updated_desc: ['updated_at', false]
+    };
+    const [sortColumn, ascending] = sortOptions[sort] || sortOptions.sku_asc;
+    query = query.order(sortColumn, {ascending, nullsFirst:false});
+    if (sortColumn !== 'sellpia_sku_code') query = query.order('sellpia_sku_code', {ascending:true});
+    query = query.range(from, to);
 
     const { data, error, count } = await query;
     if (error) throw error;

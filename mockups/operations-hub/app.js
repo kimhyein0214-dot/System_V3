@@ -75,7 +75,7 @@ const pendingCount = document.getElementById('pending-count');
 const changeModal = document.getElementById('change-modal');
 const pendingChanges = [];
 const liveData = window.SystemV3Data;
-const matrixState = {page:1, search:'', total:0, loading:false, requestId:0};
+const matrixState = {page:1, search:'', status:'all', sort:'sku_asc', total:0, loading:false, requestId:0};
 const matrixRowsBySku = new Map();
 const matrixTable = document.querySelector('.matrix-table');
 const matrixZoomOut = document.getElementById('matrix-zoom-out');
@@ -85,21 +85,64 @@ const MATRIX_ZOOM_KEY = 'system-v3-matrix-zoom';
 const MATRIX_ZOOM_MIN = 80;
 const MATRIX_ZOOM_MAX = 140;
 const MATRIX_ZOOM_STEP = 10;
+const MATRIX_PRESETS_KEY = 'system-v3-matrix-presets-v1';
+const MATRIX_ACTIVE_PRESET_KEY = 'system-v3-matrix-active-preset';
+const DEFAULT_VIEW_OPTIONS = {
+  channels:{smartstore:true, makeshop:true, ably:true},
+  showMapping:true,
+  showInventory:true,
+  showPrice:true,
+  showAttributes:true,
+  showSync:true,
+  status:'all',
+  sort:'sku_asc',
+  zoom:100
+};
+const BUILTIN_PRESETS = Object.freeze({
+  all:{id:'all', name:'전체 현황', ...DEFAULT_VIEW_OPTIONS},
+  matching:{id:'matching', name:'매칭 검토', ...DEFAULT_VIEW_OPTIONS, showInventory:false, showPrice:false, showAttributes:false, status:'attention'},
+  inventory:{id:'inventory', name:'재고 작업', ...DEFAULT_VIEW_OPTIONS, showPrice:false, showAttributes:false, zoom:110},
+  price:{id:'price', name:'가격 작업', ...DEFAULT_VIEW_OPTIONS, showInventory:false, showAttributes:false, zoom:110},
+  attributes:{id:'attributes', name:'속성·태그', ...DEFAULT_VIEW_OPTIONS, channels:{smartstore:false, makeshop:false, ably:false}, showMapping:false, showInventory:false, showPrice:false, status:'all'}
+});
+
+function cloneView(view) {
+  return {...view, channels:{...view.channels}};
+}
+
+function readCustomPresets() {
+  try {
+    const parsed = JSON.parse(localStorage.getItem(MATRIX_PRESETS_KEY) || '[]');
+    return Array.isArray(parsed) ? parsed.filter(item => item?.id && item?.name).map(item => ({...cloneView(DEFAULT_VIEW_OPTIONS), ...item, channels:{...DEFAULT_VIEW_OPTIONS.channels, ...item.channels}})) : [];
+  } catch (error) {
+    console.warn('matrix preset storage reset', error);
+    return [];
+  }
+}
+
+let customPresets = readCustomPresets();
+let activePresetId = localStorage.getItem(MATRIX_ACTIVE_PRESET_KEY) || 'all';
+let modifiedPresetSourceId = null;
+function findPreset(id) {
+  return BUILTIN_PRESETS[id] || customPresets.find(item => item.id === id) || BUILTIN_PRESETS.all;
+}
+let activeView = cloneView(findPreset(activePresetId));
 let matrixZoom = Math.max(MATRIX_ZOOM_MIN, Math.min(MATRIX_ZOOM_MAX, Number(localStorage.getItem(MATRIX_ZOOM_KEY)) || 100));
 
-function applyMatrixZoom(value, {persist = true} = {}) {
+function applyMatrixZoom(value, {persist = true, syncView = true} = {}) {
   matrixZoom = Math.max(MATRIX_ZOOM_MIN, Math.min(MATRIX_ZOOM_MAX, Number(value) || 100));
   matrixTable.style.setProperty('--matrix-zoom', String(matrixZoom / 100));
   matrixZoomValue.textContent = `${matrixZoom}%`;
   matrixZoomOut.disabled = matrixZoom <= MATRIX_ZOOM_MIN;
   matrixZoomIn.disabled = matrixZoom >= MATRIX_ZOOM_MAX;
+  if (syncView) activeView.zoom = matrixZoom;
   if (persist) localStorage.setItem(MATRIX_ZOOM_KEY, String(matrixZoom));
 }
 
-matrixZoomOut.addEventListener('click', () => applyMatrixZoom(matrixZoom - MATRIX_ZOOM_STEP));
-matrixZoomIn.addEventListener('click', () => applyMatrixZoom(matrixZoom + MATRIX_ZOOM_STEP));
-matrixZoomValue.addEventListener('click', () => applyMatrixZoom(100));
-applyMatrixZoom(matrixZoom, {persist:false});
+matrixZoomOut.addEventListener('click', () => { applyMatrixZoom(matrixZoom - MATRIX_ZOOM_STEP); markViewModified(); });
+matrixZoomIn.addEventListener('click', () => { applyMatrixZoom(matrixZoom + MATRIX_ZOOM_STEP); markViewModified(); });
+matrixZoomValue.addEventListener('click', () => { applyMatrixZoom(100); markViewModified(); });
+applyMatrixZoom(matrixZoom, {persist:false, syncView:false});
 
 function escapeHtml(value) {
   return String(value ?? '').replace(/[&<>'"]/g, character => ({
@@ -124,6 +167,95 @@ function formatLiveTime(value) {
   return new Intl.DateTimeFormat('ko-KR', {
     month:'2-digit', day:'2-digit', hour:'2-digit', minute:'2-digit', hour12:false
   }).format(date);
+}
+
+function viewColumnIndexes(view) {
+  const visible = new Set([1,2,3,4,5,6,7]);
+  const channelColumns = {
+    smartstore:{mapping:[8,9,10], inventory:[11], price:[12]},
+    makeshop:{mapping:[13,14,15], inventory:[16], price:[17]},
+    ably:{mapping:[18,19], inventory:[20], price:[21]}
+  };
+  Object.entries(channelColumns).forEach(([channel, groups]) => {
+    if (!view.channels[channel]) return;
+    if (view.showMapping) groups.mapping.forEach(index => visible.add(index));
+    if (view.showInventory) groups.inventory.forEach(index => visible.add(index));
+    if (view.showPrice) groups.price.forEach(index => visible.add(index));
+  });
+  if (view.showAttributes) [22,23,24].forEach(index => visible.add(index));
+  if (view.showSync) visible.add(25);
+  return visible;
+}
+
+function applyColumnVisibility(view = activeView) {
+  const visible = viewColumnIndexes(view);
+  const columnHeaders = matrixTable.querySelectorAll('.column-row th');
+  for (let index = 3; index <= 25; index += 1) {
+    const show = visible.has(index);
+    const header = columnHeaders[index - 3];
+    if (header) header.hidden = !show;
+    matrixBody.querySelectorAll(`tr td:nth-child(${index})`).forEach(cell => { cell.hidden = !show; });
+  }
+  const groupConfig = [
+    ['.smart-group', [8,9,10,11,12]],
+    ['.make-group', [13,14,15,16,17]],
+    ['.ably-group', [18,19,20,21]],
+    ['.ops-group', [22,23,24,25]]
+  ];
+  groupConfig.forEach(([selector, indexes]) => {
+    const header = matrixTable.querySelector(selector);
+    const count = indexes.filter(index => visible.has(index)).length;
+    header.hidden = count === 0;
+    if (count) header.colSpan = count;
+  });
+  const variableColumns = [...visible].filter(index => index > 7).length;
+  matrixTable.style.minWidth = `${Math.max(820, 776 + variableColumns * 105)}px`;
+}
+
+function renderCustomPresetOptions() {
+  const select = document.getElementById('custom-preset-select');
+  select.innerHTML = '<option value="">선택</option>' + customPresets.map(preset => `<option value="${escapeHtml(preset.id)}">${escapeHtml(preset.name)}</option>`).join('');
+  select.value = customPresets.some(item => item.id === activePresetId) ? activePresetId : '';
+}
+
+function setActivePresetUi() {
+  document.querySelectorAll('.matrix-view-tabs button[data-preset-id]').forEach(button => {
+    const active = button.dataset.presetId === activePresetId;
+    button.classList.toggle('active', active);
+    button.classList.toggle('custom-active', false);
+  });
+  renderCustomPresetOptions();
+  document.getElementById('view-settings-btn').textContent = activePresetId === 'temporary' ? '보기 설정 · 수정됨' : '보기 설정';
+}
+
+function applyViewPreset(view, {id = null, reload = true, announce = true} = {}) {
+  activeView = cloneView({...cloneView(DEFAULT_VIEW_OPTIONS), ...view, channels:{...DEFAULT_VIEW_OPTIONS.channels, ...view.channels}});
+  if (id) {
+    activePresetId = id;
+    modifiedPresetSourceId = null;
+    localStorage.setItem(MATRIX_ACTIVE_PRESET_KEY, id);
+  }
+  matrixState.status = activeView.status;
+  matrixState.sort = activeView.sort;
+  document.getElementById('matrix-status-filter').value = activeView.status;
+  applyMatrixZoom(activeView.zoom, {syncView:false});
+  applyColumnVisibility(activeView);
+  setActivePresetUi();
+  if (reload) loadLiveMatrix({resetPage:true});
+  if (announce) showToast(`${activeView.name} 보기를 적용했습니다.`);
+}
+
+function saveCustomPresets() {
+  localStorage.setItem(MATRIX_PRESETS_KEY, JSON.stringify(customPresets));
+  renderCustomPresetOptions();
+}
+
+function markViewModified() {
+  if (activePresetId === 'temporary') return;
+  modifiedPresetSourceId = activePresetId;
+  activePresetId = 'temporary';
+  localStorage.removeItem(MATRIX_ACTIVE_PRESET_KEY);
+  setActivePresetUi();
 }
 
 function matrixImage(product) {
@@ -176,7 +308,7 @@ function renderLiveMatrixRows(products) {
     const imageUrl = escapeHtml(product.image_url || '');
     const tiers = [product.smartstore_match_tier, product.makeshop_match_tier, product.ably_match_tier];
     const connectedCount = tiers.filter(Boolean).length;
-    const overallState = connectedCount === 0 ? 'unmatched' : tiers.includes('FAST_REVIEW') ? 'review' : 'connected';
+    const overallState = product.overall_status || (connectedCount === 0 ? 'unmatched' : tiers.includes('FAST_REVIEW') ? 'review' : 'connected');
     const displayName = escapeHtml(product.sellpia_product_name || product.display_name || '상품명 원본 적재 대기');
     const optionName = escapeHtml(product.sellpia_option_name || '셀피아 옵션명 적재 대기');
     const sellpiaStock = formatNullableNumber(product.sellpia_current_stock);
@@ -196,6 +328,7 @@ function renderLiveMatrixRows(products) {
       <td class="data-gap">-</td><td class="data-gap">-</td><td>${mappingTag}</td><td>${formatLiveTime(product.updated_at)}</td>
     </tr>`;
   }).join('');
+  applyColumnVisibility(activeView);
 }
 
 function setMatrixConnection(state, label) {
@@ -212,7 +345,7 @@ async function loadLiveMatrix({resetPage = false} = {}) {
   setMatrixConnection('loading', 'DB 조회 중');
   matrixBody.innerHTML = '<tr class="matrix-empty-row loading"><td colspan="25"><b>Supabase에서 실제 SKU를 불러오는 중입니다.</b><span>이미지와 자사코드를 함께 연결합니다.</span></td></tr>';
   try {
-    const result = await liveData.loadProducts({page:matrixState.page, search:matrixState.search});
+    const result = await liveData.loadProducts({page:matrixState.page, search:matrixState.search, status:matrixState.status, sort:matrixState.sort});
     if (requestId !== matrixState.requestId) return;
     matrixState.total = result.count;
     renderLiveMatrixRows(result.rows);
@@ -359,6 +492,107 @@ function updateSelectedCount() {
   document.getElementById('selected-count').textContent = count;
 }
 
+const viewSettingsModal = document.getElementById('view-settings-modal');
+function fillViewSettingsForm(view = activeView) {
+  document.getElementById('preset-name').value = view.name || '';
+  document.getElementById('preset-channel-smartstore').checked = view.channels.smartstore;
+  document.getElementById('preset-channel-makeshop').checked = view.channels.makeshop;
+  document.getElementById('preset-channel-ably').checked = view.channels.ably;
+  document.getElementById('preset-show-mapping').checked = view.showMapping;
+  document.getElementById('preset-show-inventory').checked = view.showInventory;
+  document.getElementById('preset-show-price').checked = view.showPrice;
+  document.getElementById('preset-show-attributes').checked = view.showAttributes;
+  document.getElementById('preset-show-sync').checked = view.showSync;
+  document.getElementById('preset-status').value = view.status;
+  document.getElementById('preset-sort').value = view.sort;
+  document.getElementById('preset-zoom').value = String(view.zoom);
+  const editablePresetId = activePresetId === 'temporary' ? modifiedPresetSourceId : activePresetId;
+  document.getElementById('delete-preset').hidden = !customPresets.some(item => item.id === editablePresetId);
+}
+
+function readViewSettingsForm() {
+  return {
+    name:document.getElementById('preset-name').value.trim() || '사용자 보기',
+    channels:{
+      smartstore:document.getElementById('preset-channel-smartstore').checked,
+      makeshop:document.getElementById('preset-channel-makeshop').checked,
+      ably:document.getElementById('preset-channel-ably').checked
+    },
+    showMapping:document.getElementById('preset-show-mapping').checked,
+    showInventory:document.getElementById('preset-show-inventory').checked,
+    showPrice:document.getElementById('preset-show-price').checked,
+    showAttributes:document.getElementById('preset-show-attributes').checked,
+    showSync:document.getElementById('preset-show-sync').checked,
+    status:document.getElementById('preset-status').value,
+    sort:document.getElementById('preset-sort').value,
+    zoom:Number(document.getElementById('preset-zoom').value) || 100
+  };
+}
+
+function openViewSettings() {
+  fillViewSettingsForm(activeView);
+  viewSettingsModal.hidden = false;
+  document.getElementById('preset-name').focus();
+}
+
+function closeViewSettings() {
+  viewSettingsModal.hidden = true;
+}
+
+function nextCustomPresetId() {
+  return `custom-${Date.now()}-${Math.random().toString(36).slice(2,7)}`;
+}
+
+function uniquePresetName(baseName) {
+  const names = new Set(customPresets.map(item => item.name));
+  if (!names.has(baseName)) return baseName;
+  let number = 2;
+  while (names.has(`${baseName} ${number}`)) number += 1;
+  return `${baseName} ${number}`;
+}
+
+document.getElementById('view-settings-btn').addEventListener('click', openViewSettings);
+document.getElementById('close-view-settings').addEventListener('click', closeViewSettings);
+viewSettingsModal.addEventListener('click', event => { if (event.target === viewSettingsModal) closeViewSettings(); });
+document.getElementById('apply-view-settings').addEventListener('click', () => {
+  const draft = readViewSettingsForm();
+  markViewModified();
+  applyViewPreset(draft, {id:null});
+  closeViewSettings();
+});
+document.getElementById('save-view-preset').addEventListener('click', () => {
+  const draft = readViewSettingsForm();
+  const editablePresetId = activePresetId === 'temporary' ? modifiedPresetSourceId : activePresetId;
+  const existingIndex = customPresets.findIndex(item => item.id === editablePresetId);
+  const id = existingIndex >= 0 ? editablePresetId : nextCustomPresetId();
+  const saved = {...draft, id, name:existingIndex >= 0 ? draft.name : uniquePresetName(draft.name)};
+  if (existingIndex >= 0) customPresets.splice(existingIndex, 1, saved);
+  else customPresets.push(saved);
+  saveCustomPresets();
+  applyViewPreset(saved, {id});
+  closeViewSettings();
+  showToast(`${saved.name} 프리셋을 이 PC에 저장했습니다.`);
+});
+document.getElementById('duplicate-preset').addEventListener('click', () => {
+  const draft = readViewSettingsForm();
+  const duplicate = {...draft, id:nextCustomPresetId(), name:uniquePresetName(`${draft.name} 복사본`)};
+  customPresets.push(duplicate);
+  saveCustomPresets();
+  applyViewPreset(duplicate, {id:duplicate.id});
+  closeViewSettings();
+  showToast(`${duplicate.name} 프리셋을 만들었습니다.`);
+});
+document.getElementById('delete-preset').addEventListener('click', () => {
+  const editablePresetId = activePresetId === 'temporary' ? modifiedPresetSourceId : activePresetId;
+  const preset = customPresets.find(item => item.id === editablePresetId);
+  if (!preset || !window.confirm(`${preset.name} 프리셋을 이 PC에서 삭제할까요?`)) return;
+  customPresets = customPresets.filter(item => item.id !== preset.id);
+  saveCustomPresets();
+  closeViewSettings();
+  applyViewPreset(BUILTIN_PRESETS.all, {id:'all'});
+  showToast(`${preset.name} 프리셋을 삭제했습니다.`);
+});
+
 matrixBody.addEventListener('click', event => {
   if (event.target.closest('input,button')) return;
   const row = event.target.closest('tr[data-sku]');
@@ -411,15 +645,21 @@ document.getElementById('matrix-search').addEventListener('input', event => {
 });
 
 document.getElementById('matrix-status-filter').addEventListener('change', event => {
-  matrixBody.querySelectorAll('tr').forEach(row => {
-    row.hidden = event.target.value !== 'all' && row.dataset.status !== event.target.value;
-  });
+  activeView.status = event.target.value;
+  matrixState.status = event.target.value;
+  markViewModified();
+  loadLiveMatrix({resetPage:true});
 });
 
-document.querySelectorAll('.matrix-view-tabs button').forEach(button => button.addEventListener('click', () => {
-  document.querySelectorAll('.matrix-view-tabs button').forEach(item => item.classList.toggle('active', item === button));
-  showToast(`${button.textContent} 보기로 전환했습니다.`);
+document.querySelectorAll('.matrix-view-tabs button[data-preset-id]').forEach(button => button.addEventListener('click', () => {
+  const preset = findPreset(button.dataset.presetId);
+  applyViewPreset(preset, {id:preset.id});
 }));
+document.getElementById('custom-preset-select').addEventListener('change', event => {
+  if (!event.target.value) return;
+  const preset = findPreset(event.target.value);
+  applyViewPreset(preset, {id:preset.id});
+});
 
 document.getElementById('matrix-bulk-btn').addEventListener('click', () => {
   const selected = [...document.querySelectorAll('.row-check:checked')];
@@ -604,6 +844,14 @@ function showToast(message) {
   clearTimeout(toastTimer);
   toastTimer = setTimeout(() => toast.classList.remove('show'), 2600);
 }
+
+document.addEventListener('keydown', event => {
+  if (event.key === 'Escape' && !viewSettingsModal.hidden) closeViewSettings();
+});
+
+const startupPreset = findPreset(activePresetId);
+activePresetId = startupPreset.id;
+applyViewPreset(startupPreset, {id:startupPreset.id, reload:false, announce:false});
 
 if (liveData) {
   refreshLiveData({resetPage:true});
