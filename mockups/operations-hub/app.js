@@ -74,20 +74,206 @@ const changeBar = document.getElementById('change-bar');
 const pendingCount = document.getElementById('pending-count');
 const changeModal = document.getElementById('change-modal');
 const pendingChanges = [];
+const liveData = window.SystemV3Data;
+const matrixState = {page:1, search:'', total:0, loading:false, requestId:0};
+const matrixRowsBySku = new Map();
+
+function escapeHtml(value) {
+  return String(value ?? '').replace(/[&<>'"]/g, character => ({
+    '&':'&amp;', '<':'&lt;', '>':'&gt;', "'":'&#39;', '"':'&quot;'
+  })[character]);
+}
+
+function formatNumber(value) {
+  return Number(value || 0).toLocaleString('ko-KR');
+}
+
+function formatLiveTime(value) {
+  if (!value) return '-';
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return '-';
+  return new Intl.DateTimeFormat('ko-KR', {
+    month:'2-digit', day:'2-digit', hour:'2-digit', minute:'2-digit', hour12:false
+  }).format(date);
+}
+
+function matrixImage(product) {
+  if (!product.image_url) return '<span class="product-thumb gray">NO</span>';
+  const url = escapeHtml(product.image_url);
+  return `<span class="product-thumb live-thumb"><img src="${url}" alt="${escapeHtml(product.sellpia_sku_code)} 상품 이미지" loading="lazy" referrerpolicy="no-referrer" onerror="this.parentNode.classList.add('image-failed');this.remove()"></span>`;
+}
+
+function matchState(tier) {
+  if (!tier) return {key:'unmatched', label:'미매칭'};
+  if (tier === 'FAST_REVIEW') return {key:'review', label:'검토 필요'};
+  return {key:'connected', label:'연결 완료'};
+}
+
+function channelCells(product, prefix, hasSeparateOption = true) {
+  const tier = product[`${prefix}_match_tier`];
+  const state = matchState(tier);
+  const productCode = escapeHtml(product[`${prefix}_product_code`] || '-');
+  const optionCode = escapeHtml(product[`${prefix}_option_code`] || '-');
+  const listingCount = Number(product[`${prefix}_listing_count`] || 0);
+  const title = listingCount > 1 ? ` title="이 SKU에 ${listingCount}개의 판매처 행이 연결되어 있습니다."` : '';
+  const codeCells = hasSeparateOption
+    ? `<td${title}>${productCode}</td><td>${optionCode}</td>`
+    : `<td${title}>${productCode}${optionCode !== '-' ? `<em class="sub-code">${optionCode}</em>` : ''}</td>`;
+  return `<td><span class="matrix-status ${state.key}">${state.label}</span></td>${codeCells}<td class="data-gap">-</td><td class="data-gap">-</td>`;
+}
+
+function renderLiveMatrixRows(products) {
+  matrixRowsBySku.clear();
+  if (!products.length) {
+    matrixBody.innerHTML = '<tr class="matrix-empty-row"><td colspan="25"><b>검색 결과가 없습니다.</b><span>SKU 또는 자사코드를 다시 확인해주세요.</span></td></tr>';
+    return;
+  }
+  matrixBody.innerHTML = products.map(product => {
+    matrixRowsBySku.set(product.sellpia_sku_code, product);
+    const sku = escapeHtml(product.sellpia_sku_code);
+    const ownCode = escapeHtml(product.own_code || '-');
+    const imageUrl = escapeHtml(product.image_url || '');
+    const tiers = [product.smartstore_match_tier, product.makeshop_match_tier, product.ably_match_tier];
+    const connectedCount = tiers.filter(Boolean).length;
+    const overallState = connectedCount === 0 ? 'unmatched' : tiers.includes('FAST_REVIEW') ? 'review' : 'connected';
+    const displayName = escapeHtml(product.display_name || '상품명 원본 적재 대기');
+    const mappingTag = overallState === 'review' ? '<span class="tag review-tag">검토 필요</span>' : `<span class="tag">${connectedCount}처 연결</span>`;
+    return `<tr data-sku="${sku}" data-own-code="${ownCode}" data-image="${imageUrl}" data-status="${overallState}">
+      <td class="sticky-col select-col"><input class="row-check" type="checkbox" aria-label="${sku} 선택"></td>
+      <td class="sticky-col image-col">${matrixImage(product)}</td>
+      <td class="sticky-col sku-col code-cell">${sku}</td>
+      <td>${ownCode}</td>
+      <td class="product-cell"><b title="${displayName}">${displayName}</b><em>매칭 DB 기준 대표 상품명</em></td>
+      <td class="number-cell data-gap">-</td><td class="number-cell data-gap">-</td>
+      ${channelCells(product, 'smartstore')}
+      ${channelCells(product, 'makeshop')}
+      ${channelCells(product, 'ably', false)}
+      <td class="data-gap">-</td><td class="data-gap">-</td><td>${mappingTag}</td><td>${formatLiveTime(product.updated_at)}</td>
+    </tr>`;
+  }).join('');
+}
+
+function setMatrixConnection(state, label) {
+  const badge = document.getElementById('matrix-live-status');
+  badge.className = `live-data-badge ${state}`;
+  badge.textContent = label;
+}
+
+async function loadLiveMatrix({resetPage = false} = {}) {
+  if (!liveData) return;
+  if (resetPage) matrixState.page = 1;
+  const requestId = ++matrixState.requestId;
+  matrixState.loading = true;
+  setMatrixConnection('loading', 'DB 조회 중');
+  matrixBody.innerHTML = '<tr class="matrix-empty-row loading"><td colspan="25"><b>Supabase에서 실제 SKU를 불러오는 중입니다.</b><span>이미지와 자사코드를 함께 연결합니다.</span></td></tr>';
+  try {
+    const result = await liveData.loadProducts({page:matrixState.page, search:matrixState.search});
+    if (requestId !== matrixState.requestId) return;
+    matrixState.total = result.count;
+    renderLiveMatrixRows(result.rows);
+    const first = result.count ? ((result.page - 1) * result.pageSize) + 1 : 0;
+    const last = Math.min(result.page * result.pageSize, result.count);
+    document.getElementById('matrix-total-count').textContent = formatNumber(result.count);
+    document.getElementById('live-total-sku').textContent = formatNumber(result.count);
+    document.getElementById('live-catalog-state').textContent = 'Supabase 실데이터';
+    document.getElementById('matrix-range').textContent = `${formatNumber(first)}–${formatNumber(last)} / ${formatNumber(result.count)}`;
+    document.getElementById('matrix-page').textContent = result.page;
+    document.getElementById('matrix-prev').disabled = result.page <= 1;
+    document.getElementById('matrix-next').disabled = last >= result.count;
+    document.getElementById('select-all-matrix').checked = false;
+    updateSelectedCount();
+    setMatrixConnection('connected', `LIVE · ${formatNumber(result.count)} SKU`);
+  } catch (error) {
+    console.error('operations hub matrix load failed', error);
+    matrixBody.innerHTML = '<tr class="matrix-empty-row error"><td colspan="25"><b>실데이터를 불러오지 못했습니다.</b><span>DB 새로고침을 눌러 다시 시도해주세요.</span></td></tr>';
+    document.getElementById('live-catalog-state').textContent = '연결 오류';
+    setMatrixConnection('error', 'DB 연결 오류');
+  } finally {
+    if (requestId === matrixState.requestId) matrixState.loading = false;
+  }
+}
+
+function channelCard(source) {
+  const className = {smartstore:'smart', makeshop:'make', ably:'ably'}[source];
+  return className ? document.querySelector(`.sync-list .channel-logo.${className}`)?.closest('div') : null;
+}
+
+async function loadLiveSourceStatus() {
+  if (!liveData) return;
+  try {
+    const {latest} = await liveData.loadSourceStatus();
+    for (const source of ['smartstore','makeshop','ably']) {
+      const event = latest[source];
+      const card = channelCard(source);
+      if (!event || !card) continue;
+      const difference = Number(event.payload?.differences || 0);
+      const missing = Number(event.payload?.missing || 0);
+      const description = card.querySelector('p em');
+      const time = card.querySelector('time');
+      const status = card.querySelector('.status');
+      description.textContent = `매칭 ${formatNumber(event.output_rows)}건 · 차이 ${formatNumber(difference)} · 미매칭 ${formatNumber(missing)}`;
+      time.textContent = formatLiveTime(event.event_at);
+      status.textContent = event.status === 'SUCCESS' ? '완료' : event.status === 'ERROR' ? '오류' : '대기';
+      status.className = `status ${event.status === 'SUCCESS' ? 'done' : 'wait'}`;
+    }
+    const newest = Object.values(latest).sort((a,b) => new Date(b.event_at) - new Date(a.event_at))[0];
+    if (newest) document.querySelector('.time-value').textContent = formatLiveTime(newest.event_at).split(' ').pop();
+  } catch (error) {
+    console.error('operations hub source status load failed', error);
+  }
+}
+
+async function refreshLiveData(options) {
+  await Promise.all([loadLiveMatrix(options), loadLiveSourceStatus()]);
+}
 
 function matrixRowName(row) {
   return {
     sku: row.dataset.sku,
+    ownCode: row.dataset.ownCode || '-',
+    image: row.dataset.image || '',
     name: row.querySelector('.product-cell b').textContent,
     option: row.querySelector('.product-cell em').textContent
   };
 }
 
+function fillDrawerChannel(sectionKey, dataKey, product) {
+  const section = document.getElementById(`drawer-${sectionKey}`);
+  const state = matchState(product?.[`${dataKey}_match_tier`]);
+  const status = section.querySelector('.matrix-status');
+  status.className = `matrix-status ${state.key}`;
+  status.textContent = state.label;
+  document.getElementById(`drawer-${sectionKey}-product`).value = product?.[`${dataKey}_product_code`] || '';
+  document.getElementById(`drawer-${sectionKey}-option`).value = product?.[`${dataKey}_option_code`] || '';
+}
+
 function openProductDrawer(row) {
   const product = matrixRowName(row);
+  const liveProduct = matrixRowsBySku.get(product.sku) || {};
   document.getElementById('drawer-sku').textContent = product.sku;
-  document.getElementById('drawer-name').textContent = product.name;
-  document.getElementById('drawer-option').textContent = product.option;
+  document.getElementById('drawer-name').textContent = liveProduct.display_name || product.name;
+  document.getElementById('drawer-option').textContent = `자사코드 ${product.ownCode}`;
+  const drawerThumb = document.querySelector('.drawer-product .product-thumb');
+  drawerThumb.className = 'product-thumb live-thumb';
+  drawerThumb.innerHTML = product.image ? `<img src="${escapeHtml(product.image)}" alt="${escapeHtml(product.sku)} 상품 이미지">` : 'NO';
+  document.querySelectorAll('[data-drawer-field]').forEach(input => {
+    input.value = '';
+    input.placeholder = '판매처 DB 적재 후 표시';
+    input.disabled = true;
+  });
+  fillDrawerChannel('smart', 'smartstore', liveProduct);
+  fillDrawerChannel('make', 'makeshop', liveProduct);
+  fillDrawerChannel('ably', 'ably', liveProduct);
+  const connectedCount = ['smartstore','makeshop','ably'].filter(channel => liveProduct[`${channel}_match_tier`]).length;
+  document.getElementById('drawer-stock').textContent = '-';
+  document.getElementById('drawer-price').textContent = '-';
+  document.getElementById('drawer-channel-count').textContent = `${connectedCount}곳`;
+  const attributeSection = document.querySelector('.compact-section');
+  attributeSection.querySelectorAll('select,input').forEach(input => { input.disabled = true; });
+  attributeSection.querySelector('.wide-label input').value = '속성 DB 적재 전';
+  const drawerSave = document.getElementById('drawer-save');
+  drawerSave.disabled = true;
+  drawerSave.textContent = '판매처 DB 연결 대기';
   productDrawer.dataset.sku = product.sku;
   matrixBody.querySelectorAll('tr').forEach(item => item.classList.toggle('selected-row', item === row));
   productDrawer.classList.add('open');
@@ -160,17 +346,19 @@ matrixBody.addEventListener('dblclick', event => {
   input.addEventListener('blur', () => finish(true));
 });
 
-document.querySelectorAll('.row-check').forEach(check => check.addEventListener('change', updateSelectedCount));
+matrixBody.addEventListener('change', event => {
+  if (event.target.matches('.row-check')) updateSelectedCount();
+});
 document.getElementById('select-all-matrix').addEventListener('change', event => {
   document.querySelectorAll('.row-check').forEach(check => { check.checked = event.target.checked; });
   updateSelectedCount();
 });
 
+let matrixSearchTimer;
 document.getElementById('matrix-search').addEventListener('input', event => {
-  const keyword = event.target.value.trim().toLowerCase();
-  matrixBody.querySelectorAll('tr').forEach(row => {
-    row.hidden = keyword && !row.textContent.toLowerCase().includes(keyword);
-  });
+  matrixState.search = event.target.value.trim();
+  clearTimeout(matrixSearchTimer);
+  matrixSearchTimer = setTimeout(() => loadLiveMatrix({resetPage:true}), 280);
 });
 
 document.getElementById('matrix-status-filter').addEventListener('change', event => {
@@ -190,17 +378,26 @@ document.getElementById('matrix-bulk-btn').addEventListener('click', () => {
     showToast('일괄 수정할 상품을 먼저 선택해주세요.');
     return;
   }
-  selected.forEach(check => {
-    const row = check.closest('tr');
-    addPendingChange({sku:row.dataset.sku, field:'안전재고', before:'0', after:'3'});
-  });
-  showToast(`${selected.length}개 상품의 일괄 수정안을 변경 대기에 추가했습니다.`);
+  showToast('판매처 정규화 행이 DB에 적재되면 일괄수정이 활성화됩니다.');
+});
+
+document.getElementById('matrix-refresh-btn').addEventListener('click', () => refreshLiveData());
+document.getElementById('matrix-prev').addEventListener('click', () => {
+  if (matrixState.loading || matrixState.page <= 1) return;
+  matrixState.page -= 1;
+  loadLiveMatrix();
+});
+document.getElementById('matrix-next').addEventListener('click', () => {
+  if (matrixState.loading || matrixState.page * liveData.pageSize >= matrixState.total) return;
+  matrixState.page += 1;
+  loadLiveMatrix();
 });
 
 document.getElementById('close-drawer').addEventListener('click', closeProductDrawer);
 document.getElementById('drawer-cancel').addEventListener('click', closeProductDrawer);
 drawerBackdrop.addEventListener('click', closeProductDrawer);
 document.getElementById('drawer-save').addEventListener('click', () => {
+  if (document.getElementById('drawer-save').disabled) return;
   const sku = productDrawer.dataset.sku || '1014-1';
   document.querySelectorAll('[data-drawer-field]').forEach(input => {
     addPendingChange({sku, field:input.dataset.drawerField, before:'기존값', after:input.value});
@@ -288,4 +485,11 @@ function showToast(message) {
   toast.classList.add('show');
   clearTimeout(toastTimer);
   toastTimer = setTimeout(() => toast.classList.remove('show'), 2600);
+}
+
+if (liveData) {
+  refreshLiveData({resetPage:true});
+  window.setInterval(loadLiveSourceStatus, 60000);
+} else {
+  setMatrixConnection('error', 'DB 모듈 없음');
 }
