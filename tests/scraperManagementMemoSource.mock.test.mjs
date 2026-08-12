@@ -8,7 +8,7 @@ const html = readFileSync(
 
 assert.match(
   html,
-  /<title>0806-관리메모1누락오류 수정<\/title>/,
+  /<title>0812-접수일 재동기화 오류 수정<\/title>/,
   "the deployed scraper page must show the current release name",
 );
 
