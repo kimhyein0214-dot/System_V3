@@ -389,7 +389,9 @@ async function loadLiveSourceStatus() {
       const description = card.querySelector('p em');
       const time = card.querySelector('time');
       const status = card.querySelector('.status');
-      description.textContent = `매칭 ${formatNumber(event.output_rows)}건 · 차이 ${formatNumber(difference)} · 미매칭 ${formatNumber(missing)}`;
+      description.textContent = event.event_type === 'SOURCE_UPLOAD'
+        ? `원본 ${formatNumber(event.output_rows)}건 · DB 반영`
+        : `매칭 ${formatNumber(event.output_rows)}건 · 차이 ${formatNumber(difference)} · 미매칭 ${formatNumber(missing)}`;
       time.textContent = formatLiveTime(event.event_at);
       status.textContent = event.status === 'SUCCESS' ? '완료' : event.status === 'ERROR' ? '오류' : '대기';
       status.className = `status ${event.status === 'SUCCESS' ? 'done' : 'wait'}`;
@@ -747,10 +749,11 @@ const uploadCapabilityBadge = document.getElementById('upload-capability-badge')
 let selectedFiles = [];
 
 function setUploadCapability() {
-  const supported = sourceSelect.value === 'sellpia';
+  const supported = ['sellpia','smartstore','makeshop','ably'].includes(sourceSelect.value);
+  const label = sourceConfig[sourceSelect.value]?.name || '원본';
   uploadButton.disabled = !supported;
-  uploadButton.textContent = supported ? 'DB 업로드 시작' : '판매처 업로드 연결 예정';
-  uploadCapabilityBadge.textContent = supported ? '셀피아 실데이터 업로드 연결' : '파서 확인 완료 · DB 적재 연결 예정';
+  uploadButton.textContent = supported ? 'DB 업로드 시작' : '업로드 연결 예정';
+  uploadCapabilityBadge.textContent = supported ? `${label} 실데이터 업로드 연결` : '재고조사 업로드 연결 예정';
 }
 
 function updateSource() {
@@ -793,15 +796,17 @@ function showUploadProgress({percent = 0, title = '처리 중', detail = ''} = {
 
 uploadButton.addEventListener('click', async () => {
   const config = sourceConfig[sourceSelect.value];
-  if (sourceSelect.value !== 'sellpia') {
-    showToast('현재는 셀피아 기준 원본부터 DB 업로드가 연결되어 있습니다.');
+  const supported = ['sellpia','smartstore','makeshop','ably'].includes(sourceSelect.value);
+  if (!supported) {
+    showToast('재고조사 파일 업로드는 재고조사 화면과 함께 연결할 예정입니다.');
     return;
   }
   if (selectedFiles.length !== config.files) {
-    showToast(`셀피아 분할 파일 ${config.files}개를 모두 선택해주세요.`);
+    showToast(`${config.name} 파일 ${config.files}개를 모두 선택해주세요.`);
     return;
   }
-  if (!liveData?.uploadSellpiaSnapshot) {
+  const uploadMethod = sourceSelect.value === 'sellpia' ? liveData?.uploadSellpiaSnapshot : liveData?.uploadSellerSnapshot;
+  if (!uploadMethod) {
     showToast('업로드 모듈을 불러오지 못했습니다. 새로고침 후 다시 시도해주세요.');
     return;
   }
@@ -819,17 +824,24 @@ uploadButton.addEventListener('click', async () => {
   sourceSelect.disabled = true;
   fileInput.disabled = true;
   uploadButton.textContent = '업로드 진행 중…';
-  showUploadProgress({percent:1, title:'파일 확인 중', detail:'헤더, 행번호, SKU 중복을 검사합니다.'});
+  showUploadProgress({
+    percent:1,
+    title:'파일 확인 중',
+    detail:sourceSelect.value === 'sellpia' ? '헤더, 행번호, SKU 중복을 검사합니다.' : '헤더와 상품·옵션 코드 중복을 검사합니다.'
+  });
   try {
-    const result = await liveData.uploadSellpiaSnapshot(selectedFiles, fields, showUploadProgress);
-    showUploadProgress({percent:100, title:'DB 업로드 완료', detail:`${formatNumber(result.rowCount)}개 SKU를 새 스냅샷으로 저장했습니다.`});
-    showToast(`셀피아 ${formatNumber(result.rowCount)}개 SKU 업로드 완료`);
+    const result = sourceSelect.value === 'sellpia'
+      ? await uploadMethod(selectedFiles, fields, showUploadProgress)
+      : await uploadMethod(sourceSelect.value, selectedFiles, fields, showUploadProgress);
+    const rowLabel = sourceSelect.value === 'sellpia' ? 'SKU' : '상품·옵션';
+    showUploadProgress({percent:100, title:'DB 업로드 완료', detail:`${formatNumber(result.rowCount)}개 ${rowLabel}을 새 스냅샷으로 저장했습니다.`});
+    showToast(`${config.name} ${formatNumber(result.rowCount)}개 ${rowLabel} 업로드 완료`);
     await refreshLiveData({resetPage:true});
     window.setTimeout(() => showPage('matching'), 500);
   } catch (error) {
-    console.error('sellpia snapshot upload failed', error);
+    console.error(`${sourceSelect.value} snapshot upload failed`, error);
     showUploadProgress({percent:0, title:'업로드 실패', detail:error?.message || '원본 파일을 다시 확인해주세요.'});
-    showToast('셀피아 업로드에 실패했습니다. 진행상황의 오류 내용을 확인해주세요.');
+    showToast(`${config.name} 업로드에 실패했습니다. 오류 내용을 확인해주세요.`);
   } finally {
     sourceSelect.disabled = false;
     fileInput.disabled = false;

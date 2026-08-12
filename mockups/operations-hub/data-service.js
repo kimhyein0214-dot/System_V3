@@ -15,6 +15,7 @@
   }
 
   const db = requireClient();
+  const sellerParsers = global.SystemV3SellerParsers;
 
   function normalizedSearch(value) {
     return String(value || '').trim().replace(/[^0-9A-Za-z가-힣ㄱ-ㅎㅏ-ㅣ_\-\[\]\s]/g, '');
@@ -61,9 +62,7 @@
 
     const latest = {};
     for (const event of data || []) {
-      if (!latest[event.source] || latest[event.source].event_type !== 'INVENTORY_MATCH') {
-        if (event.event_type === 'INVENTORY_MATCH') latest[event.source] = event;
-      }
+      if (!latest[event.source] && ['SOURCE_UPLOAD', 'INVENTORY_MATCH'].includes(event.event_type)) latest[event.source] = event;
     }
     return { events: data || [], latest };
   }
@@ -233,11 +232,89 @@
     }
   }
 
+  async function uploadSellerSnapshot(source, files, fields = {}, onProgress) {
+    if (!sellerParsers?.parseSellerFiles) throw new Error('판매처 원본 파서를 불러오지 못했습니다.');
+    const selectedFiles = Array.from(files || []);
+    const selectedFields = {
+      inventory:Boolean(fields.inventory),
+      price:Boolean(fields.price),
+      basic:Boolean(fields.basic),
+      status:Boolean(fields.status)
+    };
+    const {normalizedRows, sourceRowCount, duplicateRowCount, parserVersion} = await sellerParsers.parseSellerFiles(
+      source,
+      selectedFiles,
+      selectedFields,
+      onProgress
+    );
+    const sourceFileSize = selectedFiles.reduce((sum, file) => sum + Number(file.size || 0), 0);
+    let snapshotId = null;
+    try {
+      onProgress?.({
+        percent:22,
+        title:'판매처 DB 작업 생성 중',
+        detail:`${normalizedRows.length.toLocaleString('ko-KR')}개 상품·옵션 키를 새 스냅샷으로 준비합니다.`
+      });
+      const {data:snapshot, error:snapshotError} = await db
+        .from('seller_inventory_snapshots')
+        .insert({
+          source_channel:source,
+          source_file_names:selectedFiles.map(file => file.name),
+          source_file_size:sourceFileSize,
+          source_row_count:sourceRowCount,
+          valid_row_count:0,
+          invalid_row_count:0,
+          upload_status:'uploading',
+          selected_fields:selectedFields,
+          uploaded_by:'operations_hub_frontend',
+          metadata:{
+            parser_version:parserVersion,
+            duplicate_row_count:duplicateRowCount,
+            source_files:selectedFiles.map(file => ({name:file.name, size:file.size}))
+          }
+        })
+        .select('snapshot_id')
+        .single();
+      if (snapshotError) throw snapshotError;
+      snapshotId = snapshot.snapshot_id;
+
+      const chunkSize = 400;
+      for (let offset = 0; offset < normalizedRows.length; offset += chunkSize) {
+        const chunk = normalizedRows.slice(offset, offset + chunkSize).map(row => ({snapshot_id:snapshotId, ...row}));
+        const {error} = await db.from('seller_inventory_snapshot_rows').insert(chunk);
+        if (error) throw error;
+        const loaded = Math.min(offset + chunk.length, normalizedRows.length);
+        onProgress?.({
+          percent:22 + Math.round((loaded / normalizedRows.length) * 70),
+          title:'판매처 DB 저장 중',
+          detail:`${loaded.toLocaleString('ko-KR')} / ${normalizedRows.length.toLocaleString('ko-KR')} 상품·옵션 저장 완료`
+        });
+      }
+
+      onProgress?.({percent:94, title:'선택 갱신 병합 중', detail:'선택하지 않은 기존 필드는 상품·옵션 코드 기준으로 보존합니다.'});
+      const {data:finalizedRows, error:finalizeError} = await db.rpc('finalize_seller_inventory_snapshot', {p_snapshot_id:snapshotId});
+      if (finalizeError) throw finalizeError;
+      const finalized = Array.isArray(finalizedRows) ? finalizedRows[0] : finalizedRows;
+      onProgress?.({percent:97, title:'매트릭스 연결 중', detail:'최신 판매처 재고·가격을 통합 매트릭스에 반영합니다.'});
+      return {snapshotId, source, rowCount:Number(finalized?.row_count || normalizedRows.length)};
+    } catch (error) {
+      if (snapshotId) {
+        await db.from('seller_inventory_snapshots').update({
+          upload_status:'failed',
+          upload_note:String(error?.message || error).slice(0, 1000),
+          completed_at:new Date().toISOString()
+        }).eq('snapshot_id', snapshotId);
+      }
+      throw error;
+    }
+  }
+
   global.SystemV3Data = Object.freeze({
     pageSize: PAGE_SIZE,
     loadProducts,
     loadSourceStatus,
     loadTags,
-    uploadSellpiaSnapshot
+    uploadSellpiaSnapshot,
+    uploadSellerSnapshot
   });
 })(window);
