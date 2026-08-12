@@ -67,6 +67,176 @@ function buildTablePage(id, element) {
 
 document.querySelectorAll('.table-page').forEach(page => buildTablePage(page.id, page));
 
+const matrixBody = document.getElementById('matrix-body');
+const productDrawer = document.getElementById('product-drawer');
+const drawerBackdrop = document.getElementById('drawer-backdrop');
+const changeBar = document.getElementById('change-bar');
+const pendingCount = document.getElementById('pending-count');
+const changeModal = document.getElementById('change-modal');
+const pendingChanges = [];
+
+function matrixRowName(row) {
+  return {
+    sku: row.dataset.sku,
+    name: row.querySelector('.product-cell b').textContent,
+    option: row.querySelector('.product-cell em').textContent
+  };
+}
+
+function openProductDrawer(row) {
+  const product = matrixRowName(row);
+  document.getElementById('drawer-sku').textContent = product.sku;
+  document.getElementById('drawer-name').textContent = product.name;
+  document.getElementById('drawer-option').textContent = product.option;
+  productDrawer.dataset.sku = product.sku;
+  matrixBody.querySelectorAll('tr').forEach(item => item.classList.toggle('selected-row', item === row));
+  productDrawer.classList.add('open');
+  drawerBackdrop.classList.add('open');
+  productDrawer.setAttribute('aria-hidden', 'false');
+}
+
+function closeProductDrawer() {
+  productDrawer.classList.remove('open');
+  drawerBackdrop.classList.remove('open');
+  productDrawer.setAttribute('aria-hidden', 'true');
+}
+
+function addPendingChange(change) {
+  const duplicate = pendingChanges.find(item => item.sku === change.sku && item.field === change.field);
+  if (duplicate) {
+    duplicate.after = change.after;
+  } else {
+    pendingChanges.push(change);
+  }
+  pendingCount.textContent = pendingChanges.length;
+  changeBar.hidden = pendingChanges.length === 0;
+}
+
+function clearPendingChanges() {
+  pendingChanges.length = 0;
+  pendingCount.textContent = '0';
+  changeBar.hidden = true;
+  document.querySelectorAll('.editable-cell.pending').forEach(cell => cell.classList.remove('pending'));
+}
+
+function updateSelectedCount() {
+  const count = document.querySelectorAll('.row-check:checked').length;
+  document.getElementById('selected-count').textContent = count;
+}
+
+matrixBody.addEventListener('click', event => {
+  if (event.target.closest('input,button')) return;
+  const row = event.target.closest('tr[data-sku]');
+  if (row) openProductDrawer(row);
+});
+
+matrixBody.addEventListener('dblclick', event => {
+  const cell = event.target.closest('.editable-cell');
+  if (!cell || cell.querySelector('input')) return;
+  const row = cell.closest('tr');
+  const before = cell.textContent.trim();
+  const input = document.createElement('input');
+  input.className = 'inline-editor';
+  input.value = before;
+  cell.textContent = '';
+  cell.appendChild(input);
+  input.focus();
+  input.select();
+  let completed = false;
+  const finish = save => {
+    if (completed) return;
+    completed = true;
+    const after = save ? input.value.trim() || before : before;
+    cell.textContent = after;
+    if (save && after !== before) {
+      cell.classList.add('pending');
+      addPendingChange({sku:row.dataset.sku, field:cell.dataset.field, before, after});
+    }
+  };
+  input.addEventListener('keydown', keyEvent => {
+    if (keyEvent.key === 'Enter') finish(true);
+    if (keyEvent.key === 'Escape') finish(false);
+  });
+  input.addEventListener('blur', () => finish(true));
+});
+
+document.querySelectorAll('.row-check').forEach(check => check.addEventListener('change', updateSelectedCount));
+document.getElementById('select-all-matrix').addEventListener('change', event => {
+  document.querySelectorAll('.row-check').forEach(check => { check.checked = event.target.checked; });
+  updateSelectedCount();
+});
+
+document.getElementById('matrix-search').addEventListener('input', event => {
+  const keyword = event.target.value.trim().toLowerCase();
+  matrixBody.querySelectorAll('tr').forEach(row => {
+    row.hidden = keyword && !row.textContent.toLowerCase().includes(keyword);
+  });
+});
+
+document.getElementById('matrix-status-filter').addEventListener('change', event => {
+  matrixBody.querySelectorAll('tr').forEach(row => {
+    row.hidden = event.target.value !== 'all' && row.dataset.status !== event.target.value;
+  });
+});
+
+document.querySelectorAll('.matrix-view-tabs button').forEach(button => button.addEventListener('click', () => {
+  document.querySelectorAll('.matrix-view-tabs button').forEach(item => item.classList.toggle('active', item === button));
+  showToast(`${button.textContent} 보기로 전환했습니다.`);
+}));
+
+document.getElementById('matrix-bulk-btn').addEventListener('click', () => {
+  const selected = [...document.querySelectorAll('.row-check:checked')];
+  if (!selected.length) {
+    showToast('일괄 수정할 상품을 먼저 선택해주세요.');
+    return;
+  }
+  selected.forEach(check => {
+    const row = check.closest('tr');
+    addPendingChange({sku:row.dataset.sku, field:'안전재고', before:'0', after:'3'});
+  });
+  showToast(`${selected.length}개 상품의 일괄 수정안을 변경 대기에 추가했습니다.`);
+});
+
+document.getElementById('close-drawer').addEventListener('click', closeProductDrawer);
+document.getElementById('drawer-cancel').addEventListener('click', closeProductDrawer);
+drawerBackdrop.addEventListener('click', closeProductDrawer);
+document.getElementById('drawer-save').addEventListener('click', () => {
+  const sku = productDrawer.dataset.sku || '1014-1';
+  document.querySelectorAll('[data-drawer-field]').forEach(input => {
+    addPendingChange({sku, field:input.dataset.drawerField, before:'기존값', after:input.value});
+  });
+  closeProductDrawer();
+  showToast(`${sku} 수정내용을 변경 대기에 추가했습니다.`);
+});
+
+document.querySelectorAll('.drawer-tabs button').forEach(button => button.addEventListener('click', () => {
+  document.querySelectorAll('.drawer-tabs button').forEach(item => item.classList.toggle('active', item === button));
+  if (button.textContent !== '판매처 연결') showToast(`${button.textContent} 화면은 다음 목업 단계에서 확장됩니다.`);
+}));
+
+document.getElementById('discard-changes').addEventListener('click', () => {
+  clearPendingChanges();
+  showToast('목업 변경사항을 모두 취소했습니다.');
+});
+
+function openChangeModal() {
+  if (!pendingChanges.length) return;
+  document.getElementById('modal-count').textContent = `${pendingChanges.length}건`;
+  document.getElementById('modal-products').textContent = `${new Set(pendingChanges.map(item => item.sku)).size}개`;
+  document.getElementById('change-list').innerHTML = pendingChanges.map(change => `
+    <article class="change-item"><span>${change.sku}</span><p><b>${change.field}</b><em>${change.before} → ${change.after}</em></p><strong>변경 대기</strong></article>`).join('');
+  changeModal.hidden = false;
+}
+
+document.getElementById('preview-changes').addEventListener('click', openChangeModal);
+document.getElementById('close-change-modal').addEventListener('click', () => { changeModal.hidden = true; });
+document.getElementById('modal-back').addEventListener('click', () => { changeModal.hidden = true; });
+document.getElementById('apply-mock-changes').addEventListener('click', () => {
+  changeModal.hidden = true;
+  clearPendingChanges();
+  showToast('목업 완료: 실제 DB나 판매처에는 반영되지 않았습니다.');
+});
+
 function showPage(pageId) {
   document.querySelectorAll('.page').forEach(page => page.classList.remove('active-page'));
   document.querySelectorAll('.nav-item').forEach(item => item.classList.toggle('active', item.dataset.page === pageId));

@@ -41,7 +41,7 @@
           <nav class="nav-list" aria-label="주요 메뉴">
             <button class="nav-item active" data-page="dashboard"><i>01</i><span>운영 현황</span></button>
             <button class="nav-item" data-page="upload"><i>02</i><span>원본 업로드</span><b>4</b></button>
-            <button class="nav-item" data-page="matching"><i>03</i><span>상품 매칭</span><b class="warn-badge">396</b></button>
+            <button class="nav-item" data-page="matching"><i>03</i><span>통합 매트릭스</span><b class="warn-badge">396</b></button>
             <button class="nav-item" data-page="inventory"><i>04</i><span>재고조사</span></button>
             <button class="nav-item" data-page="channels"><i>05</i><span>판매처 동기화</span></button>
             <button class="nav-item" data-page="attributes"><i>06</i><span>상품 속성·태그</span></button>
@@ -73,7 +73,7 @@
                 <div class="panel-title"><div><h3>빠른 작업</h3><p>자주 사용하는 업무를 바로 시작합니다.</p></div></div>
                 <div class="quick-grid">
                   <button data-page="upload"><span class="quick-icon upload">↑</span><b>원본 파일 업로드</b><em>판매처를 선택해 새 원본 등록</em></button>
-                  <button data-page="matching"><span class="quick-icon match">↔</span><b>미매칭 상품 검토</b><em>396건의 연결 후보 확인</em></button>
+                  <button data-page="matching"><span class="quick-icon match">↔</span><b>통합 매트릭스</b><em>상품 연결·재고·가격 통합 관리</em></button>
                   <button data-page="inventory"><span class="quick-icon count">#</span><b>재고조사 시작</b><em>조사수량과 피킹수량 대조</em></button>
                   <button data-page="channels"><span class="quick-icon sync">↻</span><b>판매처 재고 갱신</b><em>재고·가격 선택 동기화</em></button>
                 </div>
@@ -149,13 +149,85 @@
             </div>
           </div>
 
-          <div id="matching" class="page table-page" data-title="상품 매칭" data-copy="셀피아 SKU와 판매처 상품의 연결 상태를 검색하고 검토합니다."></div>
+          <div id="matching" class="page matrix-page">
+            <div class="page-head matrix-page-head">
+              <div><h2>통합 매트릭스</h2><p>셀피아 SKU를 기준으로 판매처 연결, 재고, 가격과 운영정보를 한 화면에서 관리합니다.</p></div>
+              <div class="head-actions"><button class="btn" data-toast="현재 보이는 열 구성을 저장했습니다.">보기 저장</button><button class="btn">엑셀 내보내기</button><button class="btn primary" id="matrix-bulk-btn">선택 일괄수정</button></div>
+            </div>
+
+            <div class="matrix-view-tabs">
+              <button class="active">전체 현황</button><button>매칭 검토</button><button>재고 작업</button><button>가격 작업</button><button>속성·태그</button>
+              <span>보기 프리셋</span>
+            </div>
+            <div class="matrix-toolbar">
+              <div class="matrix-search"><span>⌕</span><input id="matrix-search" placeholder="SKU / 자사코드 / 상품명 / 판매처코드 검색"></div>
+              <select id="matrix-status-filter"><option value="all">전체 연결상태</option><option value="connected">연결 완료</option><option value="review">검토 필요</option><option value="unmatched">미매칭</option></select>
+              <select><option>전체 판매처</option><option>스마트스토어</option><option>메이크샵</option><option>에이블리</option></select>
+              <button class="filter-toggle active">재고 차이 <b>1,284</b></button>
+              <button class="filter-toggle">가격 차이 <b>742</b></button>
+              <button class="btn compact">표시 열 설정</button>
+              <div class="matrix-result"><b>27,223</b>개 SKU <span>·</span> 선택 <strong id="selected-count">0</strong></div>
+            </div>
+
+            <div class="matrix-legend">
+              <span><i class="legend-edit"></i> 수정 가능</span><span><i class="legend-diff"></i> 판매처와 차이</span><span><i class="legend-pending"></i> 변경 대기</span><em>셀을 더블클릭하면 바로 수정 · 행을 클릭하면 상세 편집</em>
+            </div>
+
+            <div class="matrix-shell">
+              <table class="matrix-table" aria-label="통합 상품 매트릭스">
+                <thead>
+                  <tr class="group-row">
+                    <th class="sticky-col select-col" rowspan="2"><input id="select-all-matrix" type="checkbox" aria-label="전체 선택"></th>
+                    <th class="sticky-col image-col" rowspan="2">이미지</th>
+                    <th class="sticky-col sku-col" colspan="5">셀피아 기준</th>
+                    <th class="smart-group" colspan="5">스마트스토어</th>
+                    <th class="make-group" colspan="5">메이크샵</th>
+                    <th class="ably-group" colspan="4">에이블리</th>
+                    <th class="ops-group" colspan="4">운영정보</th>
+                  </tr>
+                  <tr class="column-row">
+                    <th class="sticky-col sku-col">셀피아 SKU</th><th>자사코드</th><th class="name-column">상품명 / 옵션명</th><th>현재재고</th><th>판매가</th>
+                    <th>연결상태</th><th>상품코드</th><th>옵션코드</th><th>판매처재고</th><th>판매가격</th>
+                    <th>연결상태</th><th>상품코드</th><th>옵션코드</th><th>판매처재고</th><th>판매가격</th>
+                    <th>연결상태</th><th>상품코드</th><th>판매처재고</th><th>판매가격</th>
+                    <th>소재</th><th>상품군</th><th>태그</th><th>최근 동기화</th>
+                  </tr>
+                </thead>
+                <tbody id="matrix-body">
+                  <tr data-sku="1014-1" data-status="connected"><td class="sticky-col select-col"><input class="row-check" type="checkbox"></td><td class="sticky-col image-col"><span class="product-thumb blue">★</span></td><td class="sticky-col sku-col code-cell">1014-1</td><td>[P] C-07-01</td><td class="product-cell"><b>NEW 컬러 큐빅 별 피어싱</b><em>크리스탈 [PC-7-01]</em></td><td class="number-cell">3</td><td class="number-cell">5,200</td><td><span class="matrix-status connected">연결 완료</span></td><td>2085501</td><td>425</td><td><button class="editable-cell diff" data-field="스마트스토어 재고">2</button></td><td><button class="editable-cell" data-field="스마트스토어 가격">5,200</button></td><td><span class="matrix-status connected">연결 완료</span></td><td>4680371525</td><td>50094640701</td><td><button class="editable-cell" data-field="메이크샵 재고">3</button></td><td><button class="editable-cell" data-field="메이크샵 가격">5,200</button></td><td><span class="matrix-status connected">연결 완료</span></td><td>A-1014-1</td><td><button class="editable-cell" data-field="에이블리 재고">3</button></td><td><button class="editable-cell" data-field="에이블리 가격">5,200</button></td><td>써지컬스틸</td><td>피어싱</td><td><span class="tag">큐빅</span><span class="tag">베스트</span></td><td>12:41</td></tr>
+                  <tr data-sku="11035-124" data-status="review"><td class="sticky-col select-col"><input class="row-check" type="checkbox"></td><td class="sticky-col image-col"><span class="product-thumb gray">○</span></td><td class="sticky-col sku-col code-cell">11035-124</td><td>[P] R-18-24</td><td class="product-cell"><b>베이직 링 피어싱</b><em>실버 8mm [PR-18-24]</em></td><td class="number-cell">12</td><td class="number-cell">4,900</td><td><span class="matrix-status review">검토 필요</span></td><td>4017832</td><td>118</td><td><button class="editable-cell diff" data-field="스마트스토어 재고">9</button></td><td><button class="editable-cell diff" data-field="스마트스토어 가격">5,200</button></td><td><span class="matrix-status connected">연결 완료</span></td><td>4680771204</td><td>5009144124</td><td><button class="editable-cell" data-field="메이크샵 재고">12</button></td><td><button class="editable-cell" data-field="메이크샵 가격">4,900</button></td><td><span class="matrix-status unmatched">미매칭</span></td><td>-</td><td>-</td><td>-</td><td>써지컬스틸</td><td>피어싱</td><td><span class="tag">기본</span></td><td>11:58</td></tr>
+                  <tr data-sku="11246-13" data-status="unmatched"><td class="sticky-col select-col"><input class="row-check" type="checkbox"></td><td class="sticky-col image-col"><span class="product-thumb pink">◆</span></td><td class="sticky-col sku-col code-cell">11246-13</td><td>[P] B-04-13</td><td class="product-cell"><b>큐빅 바벨 피어싱</b><em>골드 [PB-4-13]</em></td><td class="number-cell">7</td><td class="number-cell">6,900</td><td><span class="matrix-status unmatched">미매칭</span></td><td>-</td><td>-</td><td>-</td><td>-</td><td><span class="matrix-status review">검토 필요</span></td><td>4680912331</td><td>5009330113</td><td><button class="editable-cell diff" data-field="메이크샵 재고">5</button></td><td><button class="editable-cell" data-field="메이크샵 가격">6,900</button></td><td><span class="matrix-status unmatched">미매칭</span></td><td>-</td><td>-</td><td>-</td><td>-</td><td>피어싱</td><td><span class="tag new">신상품</span></td><td>11:42</td></tr>
+                  <tr data-sku="1280-18" data-status="connected"><td class="sticky-col select-col"><input class="row-check" type="checkbox"></td><td class="sticky-col image-col"><span class="product-thumb lilac">●</span></td><td class="sticky-col sku-col code-cell">1280-18</td><td>[P] S-11-18</td><td class="product-cell"><b>심플 미니 큐빅 피어싱</b><em>라이트핑크 6mm [PS-11-18]</em></td><td class="number-cell">4</td><td class="number-cell">4,500</td><td><span class="matrix-status connected">연결 완료</span></td><td>2086110</td><td>419</td><td><button class="editable-cell" data-field="스마트스토어 재고">4</button></td><td><button class="editable-cell" data-field="스마트스토어 가격">4,500</button></td><td><span class="matrix-status connected">연결 완료</span></td><td>4996226288</td><td>4974563218</td><td><button class="editable-cell" data-field="메이크샵 재고">4</button></td><td><button class="editable-cell" data-field="메이크샵 가격">4,500</button></td><td><span class="matrix-status connected">연결 완료</span></td><td>A-1280-18</td><td><button class="editable-cell diff" data-field="에이블리 재고">3</button></td><td><button class="editable-cell" data-field="에이블리 가격">4,500</button></td><td>써지컬스틸</td><td>피어싱</td><td><span class="tag">미니</span><span class="tag">컬러</span></td><td>어제 17:31</td></tr>
+                  <tr data-sku="11057-4" data-status="connected"><td class="sticky-col select-col"><input class="row-check" type="checkbox"></td><td class="sticky-col image-col"><span class="product-thumb gold">✦</span></td><td class="sticky-col sku-col code-cell">11057-4</td><td>[P] T-03-04</td><td class="product-cell"><b>데일리 골드 볼 피어싱</b><em>골드 4mm [PT-03-04]</em></td><td class="number-cell">97</td><td class="number-cell">3,900</td><td><span class="matrix-status connected">연결 완료</span></td><td>2092014</td><td>702</td><td><button class="editable-cell diff" data-field="스마트스토어 재고">94</button></td><td><button class="editable-cell" data-field="스마트스토어 가격">3,900</button></td><td><span class="matrix-status connected">연결 완료</span></td><td>4681105704</td><td>5009457004</td><td><button class="editable-cell diff" data-field="메이크샵 재고">96</button></td><td><button class="editable-cell" data-field="메이크샵 가격">3,900</button></td><td><span class="matrix-status connected">연결 완료</span></td><td>A-11057-4</td><td><button class="editable-cell" data-field="에이블리 재고">97</button></td><td><button class="editable-cell" data-field="에이블리 가격">3,900</button></td><td>14K 골드</td><td>피어싱</td><td><span class="tag">골드</span><span class="tag">데일리</span></td><td>12:39</td></tr>
+                </tbody>
+              </table>
+            </div>
+            <div class="matrix-footer"><span>1–5 / 27,223</span><p>가로로 스크롤하여 판매처별 정보를 확인하세요.</p><div><button disabled>‹</button><button class="active">1</button><button>2</button><button>3</button><button>›</button></div></div>
+
+            <div id="change-bar" class="change-bar" hidden><div><span>!</span><p><b>변경 대기 <strong id="pending-count">0</strong>건</b><em>아직 DB나 판매처에 반영되지 않았습니다.</em></p></div><button class="btn" id="discard-changes">변경 취소</button><button class="btn primary" id="preview-changes">변경 미리보기</button></div>
+          </div>
           <div id="inventory" class="page table-page" data-title="재고조사" data-copy="조사수량과 오늘 피킹·미송서랍 수량을 합산해 실재고를 계산합니다."></div>
           <div id="channels" class="page table-page" data-title="판매처 동기화" data-copy="판매처별 재고·가격 반영 범위와 실행 상태를 관리합니다."></div>
           <div id="attributes" class="page table-page" data-title="상품 속성·태그" data-copy="소재·상품군·형태와 운영 태그를 상품코드 기준으로 관리합니다."></div>
           <div id="jobs" class="page table-page" data-title="작업 현황·로그" data-copy="업로드와 동기화 작업의 진행률, 처리 결과, 오류를 확인합니다."></div>
         </section>
       </main>
+    </div>
+    <aside id="product-drawer" class="product-drawer" aria-hidden="true">
+      <div class="drawer-head"><div><span>상품 상세 편집</span><h3 id="drawer-sku">1014-1</h3></div><button id="close-drawer" aria-label="상세창 닫기">×</button></div>
+      <div class="drawer-product"><span class="product-thumb blue">★</span><p><b id="drawer-name">NEW 컬러 큐빅 별 피어싱</b><em id="drawer-option">크리스탈 [PC-7-01]</em></p></div>
+      <div class="drawer-tabs"><button class="active">판매처 연결</button><button>재고·가격</button><button>속성·태그</button><button>변경이력</button></div>
+      <div class="drawer-body">
+        <div class="drawer-summary"><div><span>셀피아 재고</span><b>3</b></div><div><span>판매가</span><b>5,200</b></div><div><span>연결 판매처</span><b>3곳</b></div></div>
+        <section class="drawer-section"><div class="drawer-section-title"><h4><i class="dot smart"></i>스마트스토어</h4><span class="matrix-status connected">연결 완료</span></div><div class="form-grid"><label>상품코드<input value="2085501"></label><label>옵션코드<input value="425"></label><label>판매처 재고<input value="2" data-drawer-field="스마트스토어 재고"></label><label>판매가격<input value="5,200" data-drawer-field="스마트스토어 가격"></label></div><button class="drawer-link-btn">연결 상품 변경</button></section>
+        <section class="drawer-section"><div class="drawer-section-title"><h4><i class="dot make"></i>메이크샵</h4><span class="matrix-status connected">연결 완료</span></div><div class="form-grid"><label>상품코드<input value="4680371525"></label><label>옵션코드<input value="50094640701"></label><label>판매처 재고<input value="3" data-drawer-field="메이크샵 재고"></label><label>판매가격<input value="5,200" data-drawer-field="메이크샵 가격"></label></div><button class="drawer-link-btn">연결 상품 변경</button></section>
+        <section class="drawer-section compact-section"><h4>상품 속성</h4><div class="form-grid"><label>소재<select><option>써지컬스틸</option><option>14K 골드</option><option>실버925</option></select></label><label>상품군<select><option>피어싱</option><option>귀걸이</option><option>목걸이</option></select></label></div><label class="wide-label">태그<input value="큐빅, 베스트"></label></section>
+      </div>
+      <div class="drawer-foot"><p>수정내용은 변경 대기에 추가됩니다.</p><button class="btn" id="drawer-cancel">취소</button><button class="btn primary" id="drawer-save">변경 대기에 추가</button></div>
+    </aside>
+    <div id="drawer-backdrop" class="drawer-backdrop"></div>
+    <div id="change-modal" class="modal-backdrop" hidden>
+      <section class="change-modal"><div class="modal-head"><div><span>변경사항 미리보기</span><h3>판매처 반영 전 최종 확인</h3></div><button id="close-change-modal">×</button></div><div class="modal-summary"><div><span>변경 상품</span><b id="modal-products">1개</b></div><div><span>변경 항목</span><b id="modal-count">1건</b></div><div><span>영향 판매처</span><b>3곳</b></div></div><div id="change-list" class="change-list"></div><div class="modal-notice"><b>DB 운영값은 즉시 저장</b><span>판매처 반영값은 작업 대기에 등록되고 성공 후 최종값으로 표시됩니다.</span></div><div class="modal-foot"><button class="btn" id="modal-back">돌아가기</button><button class="btn primary" id="apply-mock-changes">선택 변경사항 반영</button></div></section>
     </div>
     <div id="toast" class="toast" role="status"></div>
     <script src="./app.js"></script>
