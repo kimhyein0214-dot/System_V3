@@ -3359,7 +3359,7 @@ function renderInspectionPanels(options = {}) {
           const statusNotes = [itemState?.drawerMemo ? `서랍 ${itemState.drawerMemo}` : "", itemState?.memo ? itemState.memo : ""].filter(Boolean);
           const sellpiaOrderMemo = itemSellpiaOrderMemo(selected, item);
           const inspectionMemo = itemInspectionMemo(item);
-          const memoReadonly = allowWrites && !itemCancelled && !selectedShipmentGroup ? "" : "readonly";
+          const memoReadonly = allowWrites ? "" : "readonly";
           const memoHint = allowWrites ? "" : ' title="읽기전용입니다. URL에 write=1을 붙여야 저장할 수 있습니다."';
           const itemActionDisabled = allowWorkflowEvents && !itemCancelled ? "" : "disabled";
           const reopenButton =
