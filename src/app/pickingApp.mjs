@@ -5152,6 +5152,42 @@ async function saveCsCaseOrderMemo(row, scope = els.csDetail) {
   toast("상품행 주문메모 저장");
 }
 
+async function saveCsOrderMemosBeforeCancellation(cancelButton) {
+  const action = String(cancelButton?.dataset?.csCancelAction || "");
+  const itemAction = action.startsWith("item-");
+  const root = itemAction
+    ? cancelButton?.closest(".cs-item-card, .cs-item-row")
+    : cancelButton?.closest(".cs-source-order-section, .cs-detail-card") || els.csDetail;
+  const scopes = itemAction
+    ? [root].filter(Boolean)
+    : Array.from(root?.querySelectorAll(".cs-item-card[data-cs-row-key], .cs-item-row[data-cs-row-key]") || []);
+
+  if (!scopes.length) throw new Error("취소 전에 저장할 주문메모 상품행을 찾지 못했습니다.");
+  for (const scope of scopes) {
+    const row = selectedCsItemRow(scope.dataset.csRowKey || "");
+    if (!row) throw new Error("취소 전에 주문메모를 저장할 상품행을 찾지 못했습니다.");
+    await saveCsCaseOrderMemo(row, scope);
+  }
+}
+
+async function runCsCancellationAction(cancelButton) {
+  if (!cancelButton || cancelButton.disabled) return;
+  cancelButton.disabled = true;
+  try {
+    await saveCsOrderMemosBeforeCancellation(cancelButton);
+    const action = cancelButton.dataset.csCancelAction || "";
+    if (action.startsWith("order-")) {
+      await toggleCsOrderCancellation(cancelButton.dataset.csOrderGroup || "", action === "order-reopen");
+    } else {
+      const row = selectedCsItemRow(cancelButton.dataset.csRowKey || "");
+      if (!row) throw new Error("취소 처리할 상품행을 찾지 못했습니다.");
+      await toggleCsItemCancellation(row, action === "item-reopen");
+    }
+  } finally {
+    if (cancelButton.isConnected) cancelButton.disabled = false;
+  }
+}
+
 async function saveCsTemplateOverride(row, scope = els.csDetail) {
   if (!allowWrites) {
     toast("읽기전용입니다. URL에 write=1을 붙여야 알림톡 템플릿을 저장할 수 있습니다.");
@@ -9004,13 +9040,7 @@ function bindEvents() {
   els.csDetail?.addEventListener("click", (event) => {
     const cancelButton = event.target.closest("[data-cs-cancel-action]");
     if (cancelButton) {
-      const action = cancelButton.dataset.csCancelAction || "";
-      if (action.startsWith("order-")) {
-        toggleCsOrderCancellation(cancelButton.dataset.csOrderGroup || "", action === "order-reopen").catch(showCsError);
-      } else {
-        const row = selectedCsItemRow(cancelButton.dataset.csRowKey || "");
-        toggleCsItemCancellation(row, action === "item-reopen").catch(showCsError);
-      }
+      runCsCancellationAction(cancelButton).catch(showCsError);
       return;
     }
     const holdButton = event.target.closest("[data-cs-hold-action]");
