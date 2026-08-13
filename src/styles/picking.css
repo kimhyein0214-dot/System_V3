@@ -210,6 +210,13 @@ input {
   color: #64748b;
 }
 
+.is-cancelled input:not([readonly]):not(:disabled),
+.is-cancelled textarea:not([readonly]):not(:disabled),
+.is-cancelled select:not(:disabled) {
+  background-color: #fff;
+  color: #111827;
+}
+
 .workflow-row-badge.cancelled,
 .tray-item.cancelled .tray-item-state {
   border-color: #94a3b8;

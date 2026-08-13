@@ -2,11 +2,25 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 
 const source = fs.readFileSync(new URL("../src/app/pickingApp.mjs", import.meta.url), "utf8");
+const styles = fs.readFileSync(new URL("../src/styles/picking.css", import.meta.url), "utf8");
 
 assert.match(
   source,
-  /const orderMemoReadonly = allowWrites && !cancellation\.cancelled \? "" : "readonly";/,
-  "CS order memo must remain editable for automatic/virtual CS rows in write mode",
+  /const orderMemoReadonly = allowWrites \? "" : "readonly";/,
+  "CS order memo must remain editable for cancelled and automatic/virtual CS rows in write mode",
+);
+assert.match(
+  styles,
+  /\.is-cancelled input:not\(\[readonly\]\):not\(:disabled\)/,
+  "editable fields on cancelled rows must retain an obvious input appearance",
+);
+assert.match(source, /const readonly = allowWrites && !virtualCase \? "" : "readonly";/);
+assert.match(source, /const managementReadonly = allowWrites \? "" : "readonly";/);
+assert.match(source, /const disabled = allowWrites \? "" : "disabled";/);
+assert.doesNotMatch(
+  source,
+  /const (?:orderMemoReadonly|managementReadonly|disabled) = [^;]*cancellation\.cancelled/,
+  "cancelled CS rows must not lock editable fields or save actions",
 );
 assert.match(source, /<span>주문메모<\/span>/, "CS item editor must label the field as 주문메모");
 assert.doesNotMatch(source, /주문메모 \/ CS메모/, "legacy combined order/CS memo label must be removed");

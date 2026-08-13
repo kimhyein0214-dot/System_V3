@@ -4602,10 +4602,10 @@ function renderCsCaseItemEditor(row, itemNumber = 0) {
   const cancellation = csCancellationState(row);
   const workflowItem = cancellation.item;
   const partialShippingHoldOn = Boolean(workflowItem && isHold(workflowItem));
-  const readonly = allowWrites && !virtualCase && !cancellation.cancelled ? "" : "readonly";
-  const orderMemoReadonly = allowWrites && !cancellation.cancelled ? "" : "readonly";
-  const managementReadonly = allowWrites && !cancellation.cancelled ? "" : "readonly";
-  const disabled = allowWrites && !cancellation.cancelled ? "" : "disabled";
+  const readonly = allowWrites && !virtualCase ? "" : "readonly";
+  const orderMemoReadonly = allowWrites ? "" : "readonly";
+  const managementReadonly = allowWrites ? "" : "readonly";
+  const disabled = allowWrites ? "" : "disabled";
   const partialHoldDisabled = allowWrites && workflowItem && !cancellation.cancelled ? "" : "disabled";
   const receiptDate = caseRow?.receipt_date || order.receipt_date || item.receipt_date || "";
   const memo = String(item.order_memo ?? "");
@@ -4733,7 +4733,7 @@ function renderCsCaseDetail(group) {
   const holdAction = holdState?.action || "inspection-hold";
   const holdLabel = holdState?.actionLabel || "배송보류 처리";
   const holdDisabled = invoice && allowWorkflowEvents && !invoiceCancelled ? "" : "disabled";
-  const managementReadonly = allowWrites && !invoiceCancelled ? "" : "readonly";
+  const managementReadonly = allowWrites ? "" : "readonly";
   const scheduledHistory = String(group.order?.sellpia_outbound_scheduled_date || "");
   const headerBadges = csCaseBadges(group);
   els.csDetail.innerHTML = `<div class="cs-detail-card cs-case-detail-card ${invoiceCancelled ? "is-cancelled" : ""}">
