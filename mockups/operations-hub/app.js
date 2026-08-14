@@ -78,6 +78,7 @@ const liveData = window.SystemV3Data;
 const matrixState = {page:1, search:'', status:'all', sort:'sku_asc', total:0, loading:false, requestId:0};
 const matrixRowsBySku = new Map();
 const matrixTable = document.querySelector('.matrix-table');
+const matrixCellSelection = {anchor:null, focus:null, dragging:false};
 const matrixZoomOut = document.getElementById('matrix-zoom-out');
 const matrixZoomValue = document.getElementById('matrix-zoom-value');
 const matrixZoomIn = document.getElementById('matrix-zoom-in');
@@ -276,7 +277,7 @@ function matrixImage(product) {
 function sellpiaEditor(fieldKey, label, value, {number = false, className = ''} = {}) {
   const rawValue = value ?? '';
   const displayValue = number ? formatNullableNumber(rawValue) : (String(rawValue).trim() || '-');
-  return `<button class="editable-cell sellpia-edit ${className}" data-source="sellpia" data-field-key="${fieldKey}" data-field="${label}" data-value="${escapeHtml(rawValue)}" data-value-type="${number ? 'number' : 'text'}">${escapeHtml(displayValue)}</button>`;
+  return `<button class="editable-cell sellpia-edit ${className}" data-source="sellpia" data-field-key="${fieldKey}" data-field="${label}" data-value="${escapeHtml(rawValue)}" data-value-type="${number ? 'number' : 'text'}" aria-keyshortcuts="Control+C Control+V">${escapeHtml(displayValue)}</button>`;
 }
 
 function matchState(tier) {
@@ -325,6 +326,7 @@ function channelInventoryCells(product, prefix, label) {
 }
 
 function renderLiveMatrixRows(products) {
+  clearMatrixCellSelection();
   matrixRowsBySku.clear();
   if (!products.length) {
     matrixBody.innerHTML = '<tr class="matrix-empty-row"><td colspan="29"><b>검색 결과가 없습니다.</b><span>SKU 또는 자사코드를 다시 확인해주세요.</span></td></tr>';
@@ -717,6 +719,182 @@ function addPendingChange(change) {
   changeBar.hidden = pendingChanges.length === 0;
 }
 
+function editableMatrixGrid() {
+  return [...matrixBody.querySelectorAll('tr[data-sku]')]
+    .map(row => [...row.querySelectorAll('.sellpia-edit')]);
+}
+
+function editableCellPosition(cell, grid = editableMatrixGrid()) {
+  for (let rowIndex = 0; rowIndex < grid.length; rowIndex += 1) {
+    const columnIndex = grid[rowIndex].indexOf(cell);
+    if (columnIndex >= 0) return {rowIndex, columnIndex};
+  }
+  return null;
+}
+
+function selectionRectangle(grid = editableMatrixGrid()) {
+  const anchor = editableCellPosition(matrixCellSelection.anchor, grid);
+  const focus = editableCellPosition(matrixCellSelection.focus, grid);
+  if (!anchor || !focus) return null;
+  return {
+    top:Math.min(anchor.rowIndex, focus.rowIndex),
+    bottom:Math.max(anchor.rowIndex, focus.rowIndex),
+    left:Math.min(anchor.columnIndex, focus.columnIndex),
+    right:Math.max(anchor.columnIndex, focus.columnIndex)
+  };
+}
+
+function paintMatrixCellSelection() {
+  const grid = editableMatrixGrid();
+  matrixBody.querySelectorAll('.sellpia-edit.cell-selected,.sellpia-edit.cell-anchor').forEach(cell => {
+    cell.classList.remove('cell-selected', 'cell-anchor');
+    cell.setAttribute('aria-selected', 'false');
+  });
+  const bounds = selectionRectangle(grid);
+  if (!bounds) return;
+  for (let rowIndex = bounds.top; rowIndex <= bounds.bottom; rowIndex += 1) {
+    for (let columnIndex = bounds.left; columnIndex <= bounds.right; columnIndex += 1) {
+      const cell = grid[rowIndex]?.[columnIndex];
+      if (!cell) continue;
+      cell.classList.add('cell-selected');
+      cell.setAttribute('aria-selected', 'true');
+    }
+  }
+  matrixCellSelection.anchor?.classList.add('cell-anchor');
+}
+
+function selectMatrixCell(cell, {extend = false} = {}) {
+  if (!cell?.matches('.sellpia-edit')) return;
+  if (!extend || !matrixCellSelection.anchor?.isConnected) matrixCellSelection.anchor = cell;
+  matrixCellSelection.focus = cell;
+  paintMatrixCellSelection();
+}
+
+function clearMatrixCellSelection() {
+  matrixCellSelection.dragging = false;
+  matrixCellSelection.anchor = null;
+  matrixCellSelection.focus = null;
+  matrixBody.querySelectorAll('.sellpia-edit.cell-selected,.sellpia-edit.cell-anchor').forEach(cell => {
+    cell.classList.remove('cell-selected', 'cell-anchor');
+    cell.setAttribute('aria-selected', 'false');
+  });
+  document.body.classList.remove('matrix-cell-selecting');
+}
+
+function matrixSelectionClipboardText() {
+  const grid = editableMatrixGrid();
+  const bounds = selectionRectangle(grid);
+  if (!bounds) return '';
+  const rows = [];
+  for (let rowIndex = bounds.top; rowIndex <= bounds.bottom; rowIndex += 1) {
+    const values = [];
+    for (let columnIndex = bounds.left; columnIndex <= bounds.right; columnIndex += 1) {
+      values.push(String(grid[rowIndex]?.[columnIndex]?.dataset.value ?? ''));
+    }
+    rows.push(values.join('\t'));
+  }
+  return rows.join('\n');
+}
+
+function normalizePastedRows(text) {
+  const rows = String(text || '').replace(/\r/g, '').split('\n');
+  if (rows.length > 1 && rows.at(-1) === '') rows.pop();
+  return rows.map(row => row.split('\t'));
+}
+
+function commitEditableCellValue(cell, value) {
+  if (!cell?.matches('.sellpia-edit')) return {changed:false, valid:false};
+  const row = cell.closest('tr[data-sku]');
+  if (!row) return {changed:false, valid:false};
+  const before = String(cell.dataset.value ?? '');
+  const numeric = cell.dataset.valueType === 'number';
+  let after = String(value ?? '').trim();
+  if (numeric) after = after.replace(/,/g, '');
+  if (numeric && !/^\d+(\.\d+)?$/.test(after)) return {changed:false, valid:false};
+  if (after === before) return {changed:false, valid:true};
+  cell.dataset.value = after;
+  cell.textContent = numeric ? formatNullableNumber(after) : (after || '-');
+  cell.classList.add('pending');
+  addPendingChange({
+    sku:row.dataset.sku,
+    field:cell.dataset.field,
+    fieldKey:cell.dataset.fieldKey,
+    before,
+    after
+  });
+  if (!pendingChanges.some(item => item.sku === row.dataset.sku && item.field === cell.dataset.field)) {
+    cell.classList.remove('pending');
+  }
+  return {changed:true, valid:true};
+}
+
+function isClipboardTypingTarget(target) {
+  return Boolean(target?.closest?.('input,textarea,select,[contenteditable="true"],.inline-editor'));
+}
+
+matrixBody.addEventListener('mousedown', event => {
+  const cell = event.target.closest('.sellpia-edit');
+  if (!cell || cell.querySelector('input') || event.button !== 0) return;
+  selectMatrixCell(cell, {extend:event.shiftKey});
+  matrixCellSelection.dragging = true;
+  document.body.classList.add('matrix-cell-selecting');
+  event.preventDefault();
+});
+
+matrixBody.addEventListener('mouseover', event => {
+  if (!matrixCellSelection.dragging) return;
+  const cell = event.target.closest('.sellpia-edit');
+  if (!cell || cell === matrixCellSelection.focus) return;
+  matrixCellSelection.focus = cell;
+  paintMatrixCellSelection();
+});
+
+document.addEventListener('mouseup', () => {
+  matrixCellSelection.dragging = false;
+  document.body.classList.remove('matrix-cell-selecting');
+});
+
+document.addEventListener('copy', event => {
+  if (!matrixCellSelection.anchor?.isConnected || isClipboardTypingTarget(document.activeElement)) return;
+  const text = matrixSelectionClipboardText();
+  if (!text) return;
+  event.clipboardData?.setData('text/plain', text);
+  event.preventDefault();
+  const bounds = selectionRectangle();
+  const count = bounds ? (bounds.bottom - bounds.top + 1) * (bounds.right - bounds.left + 1) : 0;
+  showToast(`${count}개 셀을 복사했습니다.`);
+});
+
+document.addEventListener('paste', event => {
+  if (!matrixCellSelection.anchor?.isConnected || isClipboardTypingTarget(document.activeElement)) return;
+  const text = event.clipboardData?.getData('text/plain');
+  if (!text) return;
+  event.preventDefault();
+  const grid = editableMatrixGrid();
+  const anchor = editableCellPosition(matrixCellSelection.anchor, grid);
+  if (!anchor) return;
+  const pastedRows = normalizePastedRows(text);
+  let changed = 0;
+  let invalid = 0;
+  let overflow = 0;
+  let lastCell = matrixCellSelection.anchor;
+  pastedRows.forEach((values, rowOffset) => values.forEach((value, columnOffset) => {
+    const cell = grid[anchor.rowIndex + rowOffset]?.[anchor.columnIndex + columnOffset];
+    if (!cell) {
+      overflow += 1;
+      return;
+    }
+    const result = commitEditableCellValue(cell, value);
+    if (!result.valid) invalid += 1;
+    if (result.changed) changed += 1;
+    lastCell = cell;
+  }));
+  matrixCellSelection.focus = lastCell;
+  paintMatrixCellSelection();
+  const notes = [invalid ? `형식 오류 ${invalid}개 제외` : '', overflow ? `현재 페이지 밖 ${overflow}개 제외` : ''].filter(Boolean);
+  showToast(`${changed}개 셀을 붙여넣었습니다.${notes.length ? ` · ${notes.join(' · ')}` : ''}`);
+});
+
 function clearPendingChanges() {
   pendingChanges.length = 0;
   pendingCount.textContent = '0';
@@ -874,7 +1052,6 @@ matrixBody.addEventListener('focusout', event => {
 matrixBody.addEventListener('dblclick', event => {
   const cell = event.target.closest('.editable-cell');
   if (!cell || cell.dataset.source !== 'sellpia' || cell.querySelector('input')) return;
-  const row = cell.closest('tr');
   const before = cell.dataset.value ?? cell.textContent.trim();
   const numeric = cell.dataset.valueType === 'number';
   const input = document.createElement('input');
@@ -895,13 +1072,12 @@ matrixBody.addEventListener('dblclick', event => {
       after = before;
       save = false;
     }
-    cell.dataset.value = after;
-    cell.textContent = numeric ? formatNullableNumber(after) : (after || '-');
     if (save && after !== before) {
-      cell.classList.add('pending');
-      addPendingChange({sku:row.dataset.sku, field:cell.dataset.field, fieldKey:cell.dataset.fieldKey, before, after});
-      if (!pendingChanges.some(item => item.sku === row.dataset.sku && item.field === cell.dataset.field)) cell.classList.remove('pending');
+      commitEditableCellValue(cell, after);
+      return;
     }
+    cell.dataset.value = before;
+    cell.textContent = numeric ? formatNullableNumber(before) : (before || '-');
   };
   input.addEventListener('keydown', keyEvent => {
     if (keyEvent.key === 'Enter') finish(true);

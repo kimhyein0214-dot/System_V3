@@ -99,6 +99,10 @@
 .seller-name-cell b i{display:inline-block;margin-left:5px;border-radius:7px;background:#eaf2ff;color:var(--blue);padding:2px 5px;font-size:6px;font-style:normal;vertical-align:1px}
 .seller-name-cell.draft{background:#f7faff!important}
 .matrix-table.wrap-names .seller-name-cell b,.matrix-table.wrap-names .seller-name-cell em,.matrix-table.wrap-names .product-cell b,.matrix-table.wrap-names .product-cell em{white-space:normal;display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:2;line-height:1.35}
+.editable-cell.cell-selected{position:relative;z-index:2;outline:2px solid #4d8ee8;outline-offset:-1px;background:#eaf3ff}
+.editable-cell.cell-anchor{outline:3px solid var(--blue);outline-offset:-2px}
+body.matrix-cell-selecting{user-select:none}
+.legend-selection{background:#eaf3ff;border:2px solid #4d8ee8!important}
 .mapping-code-cell{padding:0 4px!important}
 .mapping-code-button{max-width:125px;height:29px;border:1px solid transparent;border-radius:5px;background:transparent;padding:0 6px;overflow:hidden;text-overflow:ellipsis;color:#334155;font-size:8px;font-weight:800;white-space:nowrap;cursor:pointer}
 .mapping-code-button:hover,.mapping-code-button:focus-visible{border-color:#91b5ef;background:#f1f6ff;color:#1558c0;outline:0}

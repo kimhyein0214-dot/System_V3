@@ -55,5 +55,10 @@ assert.match(dataSource, /search_operations_hub_seller_items[\s\S]*?link_operati
 assert.match(html, /id="drawer-smart-name"[\s\S]*?id="drawer-make-name"[\s\S]*?id="drawer-ably-name"/, "the detail drawer must edit seller-specific names independently");
 assert.match(source, /price-hover-target[\s\S]*?function showPricePopover[\s\S]*?가격정책 DB는 아직 연결 전/, "seller price cells must explain the live comparison without inventing a policy formula");
 assert.match(sellerDetailMigration, /operations_hub_manual_links[\s\S]*?search_operations_hub_seller_items[\s\S]*?link_operations_hub_seller_item[\s\S]*?smartstore_option_name/, "manual links and seller detail names must persist in the live matrix schema");
+assert.match(source, /function matrixSelectionClipboardText\([\s\S]*?rows\.join\('\\n'\)/, "selected Sellpia cells must copy to an Excel-compatible tab and newline grid");
+assert.match(source, /document\.addEventListener\('paste'[\s\S]*?normalizePastedRows[\s\S]*?commitEditableCellValue/, "Excel clipboard grids must paste into the selected editable Sellpia cell range");
+assert.match(source, /numeric && !\/\^\\d\+[\s\S]*?valid:false/, "clipboard paste must reject invalid numeric stock and price values");
+assert.match(html, /Ctrl\+C \/ Ctrl\+V 복사·붙여넣기/, "the matrix must explain spreadsheet-style clipboard controls");
+assert.match(css, /\.editable-cell\.cell-selected[\s\S]*?\.editable-cell\.cell-anchor/, "selected matrix cells and the anchor cell must remain visually distinct");
 
 console.log("Operations hub seller verification, linking, detail drawer, and live matrix contract: passed");
