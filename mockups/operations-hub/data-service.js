@@ -4,6 +4,7 @@
   const SUPABASE_URL = 'https://bpgvqmtsjgegnrdzmpep.supabase.co';
   const SUPABASE_KEY = 'sb_publishable__NVp6Ra227_e1TQqQE40oA_O2PVwv5C';
   const PAGE_SIZE = 50;
+  const MATRIX_SELECT = 'sellpia_sku_code,own_code,image_url,display_name,smartstore_name,smartstore_option_name,smartstore_product_code,smartstore_option_code,smartstore_match_tier,smartstore_match_score,smartstore_listing_count,smartstore_name_is_draft,smartstore_sale_status,makeshop_name,makeshop_option_name,makeshop_product_code,makeshop_option_code,makeshop_match_tier,makeshop_match_score,makeshop_listing_count,makeshop_name_is_draft,makeshop_sale_status,ably_name,ably_option_name,ably_product_code,ably_option_code,ably_match_tier,ably_match_score,ably_listing_count,ably_name_is_draft,ably_sale_status,updated_at,sellpia_product_name,sellpia_option_name,sellpia_own_code,sellpia_current_stock,sellpia_available_stock,sellpia_safety_stock,sellpia_sale_price,sellpia_inventory_at,smartstore_stock,smartstore_price,smartstore_inventory_at,makeshop_stock,makeshop_price,makeshop_inventory_at,ably_stock,ably_price,ably_inventory_at,overall_status,sellpia_override_image_url,sellpia_override_updated_at';
 
   function requireClient() {
     if (!global.supabase?.createClient) {
@@ -21,8 +22,35 @@
     return String(value || '').trim().replace(/[^0-9A-Za-z가-힣ㄱ-ㅎㅏ-ㅣ_\-\[\]\s]/g, '');
   }
 
-  async function loadProducts({ page = 1, search = '', searchSources = ['sellpia','smartstore','makeshop','ably'], status = 'all', sort = 'sku_asc', skus = [] } = {}) {
+  async function loadProducts({ page = 1, search = '', searchSources = ['sellpia','smartstore','makeshop','ably'], status = 'all', sort = 'sku_asc', skus = [], codeListRows = [] } = {}) {
     const safePage = Math.max(1, Number(page) || 1);
+    const orderedCodeRows = Array.isArray(codeListRows) ? codeListRows : [];
+    if (orderedCodeRows.length) {
+      const from = (safePage - 1) * PAGE_SIZE;
+      const pageRows = orderedCodeRows.slice(from, from + PAGE_SIZE);
+      const pageSkus = [...new Set(pageRows.map(item => cleanText(item.sellpia_sku_code)).filter(Boolean))];
+      let products = [];
+      if (pageSkus.length) {
+        const {data, error} = await db
+          .from('operations_hub_matrix_live')
+          .select(MATRIX_SELECT)
+          .in('sellpia_sku_code', pageSkus);
+        if (error) throw error;
+        products = data || [];
+      }
+      const productsBySku = new Map(products.map(product => [cleanText(product.sellpia_sku_code), product]));
+      return {
+        rows:pageRows.map(codeRow => {
+          const product = productsBySku.get(cleanText(codeRow.sellpia_sku_code));
+          return product
+            ? {...product, __codeList:codeRow}
+            : {sellpia_sku_code:'', __codeList:codeRow, __codeListPlaceholder:true};
+        }),
+        count:orderedCodeRows.length,
+        page:safePage,
+        pageSize:PAGE_SIZE
+      };
+    }
     const codeListSkus = [...new Set((skus || []).map(cleanText).filter(Boolean))];
     if (codeListSkus.length) {
       const {data, error} = await db.rpc('load_operations_hub_code_list', {
@@ -47,7 +75,7 @@
     const activeSearchSources = [...new Set((searchSources || []).map(source => cleanText(source).toLowerCase()).filter(source => allowedSearchSources.includes(source)))];
     let query = db
       .from('operations_hub_matrix_live')
-      .select('sellpia_sku_code,own_code,image_url,display_name,smartstore_name,smartstore_option_name,smartstore_product_code,smartstore_option_code,smartstore_match_tier,smartstore_match_score,smartstore_listing_count,smartstore_name_is_draft,smartstore_sale_status,makeshop_name,makeshop_option_name,makeshop_product_code,makeshop_option_code,makeshop_match_tier,makeshop_match_score,makeshop_listing_count,makeshop_name_is_draft,makeshop_sale_status,ably_name,ably_option_name,ably_product_code,ably_option_code,ably_match_tier,ably_match_score,ably_listing_count,ably_name_is_draft,ably_sale_status,updated_at,sellpia_product_name,sellpia_option_name,sellpia_own_code,sellpia_current_stock,sellpia_available_stock,sellpia_safety_stock,sellpia_sale_price,sellpia_inventory_at,smartstore_stock,smartstore_price,smartstore_inventory_at,makeshop_stock,makeshop_price,makeshop_inventory_at,ably_stock,ably_price,ably_inventory_at,overall_status,sellpia_override_image_url,sellpia_override_updated_at', { count: 'exact' });
+      .select(MATRIX_SELECT, { count: 'exact' });
 
     if (keyword) {
       const selectedSellers = activeSearchSources.filter(source => source !== 'sellpia');

@@ -26,7 +26,13 @@ assert.match(sourceFilterMigration, /join allowed_sources source on source\.sour
 assert.match(html, /셀피아[\s\S]*?스마트스토어[\s\S]*?메이크샵[\s\S]*?에이블리/, "the upload guide must keep the four source columns fixed");
 assert.match(app, /values\.length > 1[\s\S]*?한 행에 코드가 여러 개 있음/, "each input row must contain exactly one source code");
 assert.match(app, /sheet_to_json\(sheet, \{header:1, raw:false, defval:''\}\)/, "formatted Excel codes must be read without numeric coercion");
-assert.match(app, /matrixState\.codeListSkus = \[\.\.\.codeListSession\.skus\][\s\S]*?loadLiveMatrix\(\{resetPage:true\}\)/, "resolved SKUs must drive the live matrix filter");
+assert.match(app, /matrixState\.codeListRows = codeListSession\.resultRows\.map\(item => \(\{\.\.\.item\}\)\)[\s\S]*?loadLiveMatrix\(\{resetPage:true\}\)/, "ordered Excel result rows must drive the live matrix view");
+assert.match(app, /\.\.\.codeListSession\.resolved\.map[\s\S]*?\.\.\.codeListSession\.invalid\.map[\s\S]*?\.sort\(\(left, right\) => Number\(left\.input_row\) - Number\(right\.input_row\)/, "matched, missing, unmapped, and invalid inputs must share one ordered result stream");
+assert.match(data, /orderedCodeRows\.slice\(from, from \+ PAGE_SIZE\)/, "Excel result rows must be paginated in client input order");
+assert.match(data, /pageRows\.map\(codeRow =>[\s\S]*?__codeListPlaceholder:true/, "missing or unmapped Excel rows must survive as matrix placeholders");
+assert.match(app, /function renderCodeListPlaceholderRow[\s\S]*?code-list-placeholder-row/, "the matrix must render an explicit placeholder for unresolved Excel rows");
+assert.match(app, /<em>엑셀 \$\{inputRow\}행<\/em>/, "matched rows must expose their original Excel row number");
+assert.match(app, /matrixState\.codeListRows\.length\)\}개 결과/, "the active Excel-list pill must count result rows rather than unique SKUs");
 for (const rpc of ["find_operations_hub_listing_skus", "resolve_operations_hub_code_entries", "load_operations_hub_code_list"]) {
   assert.match(data, new RegExp(rpc), `${rpc} must be called through the database client`);
 }

@@ -75,7 +75,7 @@ const pendingCount = document.getElementById('pending-count');
 const changeModal = document.getElementById('change-modal');
 const pendingChanges = [];
 const liveData = window.SystemV3Data;
-const matrixState = {page:1, search:'', searchSources:['sellpia','smartstore','makeshop','ably'], status:'all', sort:'sku_asc', total:0, loading:false, requestId:0, codeListSkus:[], codeListName:''};
+const matrixState = {page:1, search:'', searchSources:['sellpia','smartstore','makeshop','ably'], status:'all', sort:'sku_asc', total:0, loading:false, requestId:0, codeListSkus:[], codeListRows:[], codeListName:''};
 const matrixRowsBySku = new Map();
 const matrixTable = document.querySelector('.matrix-table');
 const matrixCellSelection = {anchor:null, focus:null, dragging:false};
@@ -343,6 +343,44 @@ function channelInventoryCells(product, prefix, label) {
   return `<td><span class="matrix-status ${state.key}">${state.label}</span></td>${codeCells}${sellerNameCell(product, prefix)}${stockCell}${priceCell}`;
 }
 
+function codeListSourceLabel(source) {
+  return {sellpia:'셀피아', smartstore:'스마트스토어', makeshop:'메이크샵', ably:'에이블리'}[source] || source || '판매처 확인 필요';
+}
+
+function codeListPlaceholderSellerCells(codeRow, source) {
+  if (codeRow.source_channel !== source) return '<td class="data-gap">-</td>'.repeat(6);
+  const reason = escapeHtml(codeRow.reason || codeListIssueLabel(codeRow.match_status));
+  const inputCode = escapeHtml(codeRow.input_code || '-');
+  const state = codeRow.match_status === 'unmapped' ? 'review' : 'unmatched';
+  return `<td><span class="matrix-status ${state}">${reason}</span></td>
+    <td class="code-list-placeholder-code" title="${inputCode}">${inputCode}</td>
+    <td class="data-gap">-</td>
+    <td class="product-cell"><b>원본 코드 연결 대기</b><em>${escapeHtml(codeListSourceLabel(source))}</em></td>
+    <td class="data-gap">-</td><td class="data-gap">-</td>`;
+}
+
+function renderCodeListPlaceholderRow(product) {
+  const codeRow = product.__codeList || {};
+  const rowNo = Math.max(1, Number(codeRow.input_row) || 1);
+  const sourceLabel = escapeHtml(codeListSourceLabel(codeRow.source_channel));
+  const inputCode = escapeHtml(codeRow.input_code || '-');
+  const reasonText = codeRow.reason || (codeRow.match_status === 'matched' ? '상품 정보 없음' : codeListIssueLabel(codeRow.match_status));
+  const reason = escapeHtml(reasonText);
+  const state = codeRow.match_status === 'unmapped' ? 'review' : 'unmatched';
+  return `<tr class="code-list-placeholder-row" data-input-row="${rowNo}" data-status="${state}">
+    <td class="sticky-col select-col"><input class="row-check" type="checkbox" disabled aria-label="엑셀 ${rowNo}행 선택 불가"></td>
+    <td class="sticky-col image-col"><span class="code-list-placeholder-symbol">!</span></td>
+    <td class="sticky-col sku-col code-list-sku-cell"><b>엑셀 ${rowNo}행</b><em>${reason}</em></td>
+    <td class="sticky-col own-code-col data-gap">-</td>
+    <td class="sticky-col sellpia-name-col product-cell"><b title="${inputCode}">${inputCode}</b><em>${sourceLabel} · ${reason}</em></td>
+    <td class="sticky-col sellpia-stock-col data-gap">-</td><td class="sticky-col sellpia-price-col data-gap">-</td>
+    ${codeListPlaceholderSellerCells(codeRow, 'smartstore')}
+    ${codeListPlaceholderSellerCells(codeRow, 'makeshop')}
+    ${codeListPlaceholderSellerCells(codeRow, 'ably')}
+    <td class="data-gap">-</td><td class="data-gap">-</td><td><span class="tag ${state === 'review' ? 'review-tag' : ''}">${reason}</span></td><td>엑셀 ${rowNo}행</td>
+  </tr>`;
+}
+
 function renderLiveMatrixRows(products) {
   clearMatrixCellSelection();
   matrixRowsBySku.clear();
@@ -351,8 +389,12 @@ function renderLiveMatrixRows(products) {
     return;
   }
   matrixBody.innerHTML = products.map(product => {
+    if (product.__codeListPlaceholder) return renderCodeListPlaceholderRow(product);
     matrixRowsBySku.set(product.sellpia_sku_code, product);
     const sku = escapeHtml(product.sellpia_sku_code);
+    const codeRow = product.__codeList || null;
+    const inputRow = codeRow ? Math.max(1, Number(codeRow.input_row) || 1) : null;
+    const skuMarkup = codeRow ? `<span class="code-list-sku-cell"><b>${sku}</b><em>엑셀 ${inputRow}행</em></span>` : sku;
     const rawOwnCode = product.sellpia_own_code || product.own_code || '';
     const ownCode = escapeHtml(rawOwnCode || '-');
     const liveImageUrl = product.sellpia_override_image_url || product.image_url || '';
@@ -367,10 +409,10 @@ function renderLiveMatrixRows(products) {
     const sellpiaStock = formatNullableNumber(product.sellpia_current_stock);
     const sellpiaPrice = formatNullableNumber(product.sellpia_sale_price);
     const mappingTag = overallState === 'review' ? '<span class="tag review-tag">검토 필요</span>' : `<span class="tag">${connectedCount}처 연결</span>`;
-    return `<tr data-sku="${sku}" data-own-code="${ownCode}" data-image="${imageUrl}" data-status="${overallState}">
+    return `<tr data-sku="${sku}" data-own-code="${ownCode}" data-image="${imageUrl}" data-status="${overallState}"${inputRow ? ` data-input-row="${inputRow}"` : ''}>
       <td class="sticky-col select-col"><input class="row-check" type="checkbox" aria-label="${sku} 선택"></td>
       <td class="sticky-col image-col image-drop-cell" data-image-drop="${sku}" title="이미지를 이 셀에 놓으면 ${sku}.jpg로 저장됩니다.">${matrixImage(product)}<span class="image-drop-hint">DROP</span></td>
-      <td class="sticky-col sku-col code-cell">${sku}</td>
+      <td class="sticky-col sku-col code-cell">${skuMarkup}</td>
       <td class="sticky-col own-code-col">${sellpiaEditor('sellpia_own_code', '셀피아 자사코드', rawOwnCode, {className:'sellpia-text-compact'})}</td>
       <td class="sticky-col sellpia-name-col product-cell"><b title="${displayName}">${displayName}</b><em title="${optionName}">${optionName}</em></td>
       <td class="sticky-col sellpia-stock-col number-cell${sellpiaStock === '-' ? ' data-gap' : ''}">${sellpiaEditor('sellpia_current_stock', '셀피아 현재재고', product.sellpia_current_stock, {number:true})}</td>
@@ -404,7 +446,8 @@ async function loadLiveMatrix({resetPage = false} = {}) {
       searchSources:matrixState.searchSources,
       status:matrixState.status,
       sort:matrixState.sort,
-      skus:matrixState.codeListSkus
+      skus:matrixState.codeListSkus,
+      codeListRows:matrixState.codeListRows
     });
     if (requestId !== matrixState.requestId) return;
     matrixState.total = result.count;
@@ -418,8 +461,8 @@ async function loadLiveMatrix({resetPage = false} = {}) {
     document.getElementById('matrix-next').disabled = last >= result.count;
     document.getElementById('select-all-matrix').checked = false;
     updateSelectedCount();
-    setMatrixConnection('connected', matrixState.codeListSkus.length
-      ? `엑셀 목록 · ${formatNumber(result.count)} SKU`
+    setMatrixConnection('connected', matrixState.codeListRows.length
+      ? `엑셀 목록 · ${formatNumber(result.count)} 결과 행`
       : `LIVE · ${formatNumber(result.count)} SKU`);
   } catch (error) {
     console.error('operations hub matrix load failed', error);
@@ -1197,7 +1240,7 @@ const codeListApply = document.getElementById('code-list-apply');
 const codeListFilterPill = document.getElementById('code-list-filter-pill');
 const codeListSearchInput = document.getElementById('matrix-search');
 const matrixSearchSourceInputs = [...document.querySelectorAll('#matrix-search-sources input[type="checkbox"]')];
-const codeListSession = {fileName:'', entries:[], invalid:[], resolved:[], skus:[]};
+const codeListSession = {fileName:'', entries:[], invalid:[], resolved:[], skus:[], resultRows:[]};
 const CODE_LIST_SOURCES = [
   {key:'sellpia', label:'셀피아', aliases:['셀피아','셀피아sku','셀피아코드']},
   {key:'smartstore', label:'스마트스토어', aliases:['스마트스토어','스마트스토어상품코드','스마트스토어코드']},
@@ -1215,6 +1258,7 @@ function resetCodeListImport() {
   codeListSession.invalid = [];
   codeListSession.resolved = [];
   codeListSession.skus = [];
+  codeListSession.resultRows = [];
   codeListFileInput.value = '';
   codeListProgress.hidden = true;
   codeListResult.hidden = true;
@@ -1299,6 +1343,21 @@ function renderCodeListResult() {
     });
   }
   codeListSession.skus = matchedSkus;
+  codeListSession.resultRows = [
+    ...codeListSession.resolved.map((item, sourceOrder) => ({
+      ...item,
+      source_order:sourceOrder,
+      reason:item.match_status === 'matched' ? '' : codeListIssueLabel(item.match_status)
+    })),
+    ...codeListSession.invalid.map((item, sourceOrder) => ({
+      ...item,
+      source_order:codeListSession.resolved.length + sourceOrder,
+      match_status:'invalid_row',
+      sellpia_sku_code:null
+    }))
+  ]
+    .sort((left, right) => Number(left.input_row) - Number(right.input_row) || left.source_order - right.source_order)
+    .map((item, resultOrder) => ({...item, result_order:resultOrder + 1}));
   const unmappedCount = issues.filter(item => item.reason === '매핑 필요').length;
   const missingCount = issues.length - unmappedCount;
   document.getElementById('code-list-input-count').textContent = formatNumber(codeListSession.entries.length + codeListSession.invalid.length);
@@ -1309,7 +1368,7 @@ function renderCodeListResult() {
     ? issues.slice(0, 200).map(item => `<article><b>${formatNumber(item.input_row)}행</b><em>${escapeHtml(item.source_channel)}</em><em title="${escapeHtml(item.input_code)}">${escapeHtml(item.input_code)}</em><span>${escapeHtml(item.reason)}</span></article>`).join('')
     : '<div class="mapping-empty"><b>모든 코드가 매칭되었습니다.</b><span>엑셀 행 순서대로 매트릭스에 표시할 수 있습니다.</span></div>';
   codeListResult.hidden = false;
-  codeListApply.disabled = !matchedSkus.length;
+  codeListApply.disabled = !codeListSession.resultRows.length;
 }
 
 async function importCodeListFile(file) {
@@ -1343,11 +1402,12 @@ async function importCodeListFile(file) {
 }
 
 function updateCodeListFilterUi() {
-  const active = matrixState.codeListSkus.length > 0;
+  const active = matrixState.codeListRows.length > 0;
   codeListFilterPill.hidden = !active;
-  document.getElementById('code-list-filter-count').textContent = active ? `${formatNumber(matrixState.codeListSkus.length)}개 SKU` : '0개 SKU';
+  document.getElementById('code-list-filter-count').textContent = active ? `${formatNumber(matrixState.codeListRows.length)}개 결과` : '0개 결과';
   document.getElementById('code-list-open').classList.toggle('active', active);
   codeListSearchInput.disabled = active;
+  document.getElementById('matrix-status-filter').disabled = active;
   matrixSearchSourceInputs.forEach(input => { input.disabled = active; });
   codeListSearchInput.placeholder = active
     ? `${matrixState.codeListName || '엑셀 목록'} 순서로 모아보는 중`
@@ -1356,6 +1416,7 @@ function updateCodeListFilterUi() {
 
 function clearCodeListFilter() {
   matrixState.codeListSkus = [];
+  matrixState.codeListRows = [];
   matrixState.codeListName = '';
   matrixState.search = '';
   codeListSearchInput.value = '';
@@ -1382,15 +1443,16 @@ codeListFileInput.addEventListener('change', () => importCodeListFile(codeListFi
   if (type === 'drop') importCodeListFile(event.dataTransfer?.files?.[0]);
 }));
 codeListApply.addEventListener('click', () => {
-  if (!codeListSession.skus.length) return;
+  if (!codeListSession.resultRows.length) return;
   matrixState.codeListSkus = [...codeListSession.skus];
+  matrixState.codeListRows = codeListSession.resultRows.map(item => ({...item}));
   matrixState.codeListName = codeListSession.fileName;
   matrixState.search = '';
   codeListSearchInput.value = '';
   updateCodeListFilterUi();
   closeCodeListModal();
   loadLiveMatrix({resetPage:true});
-  showToast(`${formatNumber(matrixState.codeListSkus.length)}개 SKU를 엑셀 행 순서대로 모았습니다.`);
+  showToast(`${formatNumber(codeListSession.entries.length + codeListSession.invalid.length)}개 입력 행을 ${formatNumber(matrixState.codeListRows.length)}개 결과 행으로 펼쳤습니다.`);
 });
 codeListFilterPill.addEventListener('click', clearCodeListFilter);
 
