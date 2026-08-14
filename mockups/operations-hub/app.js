@@ -1998,11 +1998,12 @@ async function runSellerExport() {
     if (!exportable.length) throw new Error(`원본 위치를 확인할 수 없는 항목만 ${formatNumber(blocked.length)}건입니다. 판매처 연결 코드와 최신 원본을 확인해주세요.`);
     showSellerExportProgress(22, '원본 파일 검증 중', `${formatNumber(exportable.length)}건을 대조합니다.${blocked.length ? ` 위치 확인 실패 ${formatNumber(blocked.length)}건은 제외합니다.` : ''}`);
     const result = await sellerExport.buildExportArchive(filesBySource, exportable, (percent, detail) => showSellerExportProgress(22 + percent * .74, '판매처 수정본 생성 중', detail));
-    await liveData.completeSellerExport({batchId, success:true, manifest:result.manifest});
+    await liveData.completeSellerExport({batchId, success:true, manifest:result.manifest, skippedItems:result.skippedItems});
     const timestamp = new Date().toISOString().replace(/[-:T]/g,'').slice(0,12);
     sellerExport.downloadBlob(result.blob, `SystemV3_판매처원본_${timestamp}.zip`);
-    showSellerExportProgress(100, 'ZIP 생성 완료', `${formatNumber(exportable.length)}건 · 파일 ${result.manifest.length}개를 내려받았습니다.${blocked.length ? ` 확인 실패 ${formatNumber(blocked.length)}건 제외` : ''}`);
-    showToast(`판매처 원본 ${formatNumber(exportable.length)}건 내보내기 완료${blocked.length ? ` · ${formatNumber(blocked.length)}건 제외` : ''}`);
+    const skippedCount = blocked.length + result.skippedItems.length;
+    showSellerExportProgress(100, 'ZIP 생성 완료', `${formatNumber(result.appliedItems.length)}건 · 파일 ${result.manifest.length}개를 내려받았습니다.${skippedCount ? ` 원본 검증 충돌 ${formatNumber(skippedCount)}건은 제외목록 CSV에 기록했습니다.` : ''}`);
+    showToast(`판매처 원본 ${formatNumber(result.appliedItems.length)}건 내보내기 완료${skippedCount ? ` · 충돌 ${formatNumber(skippedCount)}건 제외` : ''}`);
     await Promise.all([loadChangeQueue({silent:true}), loadLiveMatrix()]);
   } catch (error) {
     console.error('seller export failed', error);

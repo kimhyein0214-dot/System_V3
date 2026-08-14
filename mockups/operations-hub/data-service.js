@@ -452,12 +452,16 @@
     return {items, summary:Array.isArray(summaryRows) ? summaryRows[0] : summaryRows};
   }
 
-  async function completeSellerExport({batchId, success, manifest = [], errorMessage = ''}) {
+  async function completeSellerExport({batchId, success, manifest = [], errorMessage = '', skippedItems = []}) {
     const {data, error} = await db.rpc('complete_operations_hub_export', {
       p_export_batch_id:batchId,
       p_success:Boolean(success),
       p_file_manifest:manifest,
-      p_error_message:cleanText(errorMessage)
+      p_error_message:cleanText(errorMessage),
+      p_skipped_items:(skippedItems || []).map(item => ({
+        export_item_id:Number(item.export_item_id),
+        reason:cleanText(item.reason)
+      })).filter(item => Number.isFinite(item.export_item_id))
     });
     if (error) throw error;
     return Array.isArray(data) ? data[0] : data;

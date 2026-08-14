@@ -12,6 +12,7 @@ const partialMigration = fs.readFileSync(new URL('../supabase/migrations/2026081
 const draftMigration = fs.readFileSync(new URL('../supabase/migrations/20260814153000_operations_hub_seller_drafts_and_originals.sql', import.meta.url), 'utf8');
 const aliasMigration = fs.readFileSync(new URL('../supabase/migrations/20260814154500_operations_hub_export_source_alias.sql', import.meta.url), 'utf8');
 const bulkMigration = fs.readFileSync(new URL('../supabase/migrations/20260814173000_operations_hub_export_bulk_prepare.sql', import.meta.url), 'utf8');
+const conflictMigration = fs.readFileSync(new URL('../supabase/migrations/20260814183000_operations_hub_export_row_conflicts.sql', import.meta.url), 'utf8');
 
 for (const table of ['operations_hub_export_batches', 'operations_hub_export_items']) {
   assert.match(migration, new RegExp(`create table if not exists public\\.${table}`), `${table} must persist the export audit trail`);
@@ -29,7 +30,7 @@ for (const id of ['matrix-match-stock-btn','matrix-export-btn','queue-export','q
   assert.match(html, new RegExp(`id="${id}"`), `export UI must include ${id}`);
 }
 assert.match(html, /seller-source-parsers\.js[\s\S]*?seller-export-adapter\.js[\s\S]*?data-service\.js/, 'the export adapter must load before application startup');
-assert.match(html, /20260814-matrixtools1/g, 'all local assets must share the export deployment version');
+assert.match(html, /20260814-exportconflict1/g, 'all local assets must share the export deployment version');
 assert.doesNotMatch(html, /class="seller-export-files"/, 'export must reuse the latest stored originals instead of asking for files again');
 assert.match(draftMigration, /source_storage_files jsonb[^]*?seller-originals/, 'seller snapshots must retain immutable original file references');
 assert.match(draftMigration, /save_operations_hub_seller_value_draft[^]*?stage_operations_hub_seller_inventory_match/, 'seller cells and bulk stock matching must create reviewable drafts');
@@ -38,12 +39,17 @@ assert.match(bulkMigration, /prepare_operations_hub_change_export[^]*?set statem
 assert.match(bulkMigration, /source_specific as materialized[^]*?seller_product_code[^]*?global_changes/, 'source-specific drafts must use their stored seller codes without rescanning the matrix');
 assert.match(bulkMigration, /returns table\(item_count integer, blocked_count integer, batch_status text\)/, 'bulk preparation must return only a compact summary');
 assert.match(bulkMigration, /alter function public\.complete_operations_hub_export[^]*?statement_timeout = '45s'/, 'bulk export completion must allow the queue status update to finish');
+assert.match(conflictMigration, /p_skipped_items jsonb[^]*?jsonb_to_recordset[^]*?blocking_reason[^]*?status = 'failed'/, 'runtime source conflicts must be finalized as item-level failures');
+assert.doesNotMatch(conflictMigration, /security definer/i, 'runtime conflict finalization must not bypass RLS');
 assert.match(data, /downloadLatestSellerOriginals[^]*?storage\.from\('seller-originals'\)\.download/, 'export must download the latest stored originals');
 assert.match(app, /stageSellerInventoryDrafts[^]*?loadLiveMatrix/, 'inventory matching must stop at a reviewable matrix draft');
 assert.match(data, /prepareSellerExport[\s\S]*?range\(from, from \+ pageSize - 1\)/, 'large export plans must be read through pagination');
 assert.match(data, /rpc\('prepare_operations_hub_change_export'/, 'the frontend must use the optimized bulk preparation RPC');
 assert.match(data, /completeSellerExport[\s\S]*?confirmChangesApplied/, 'the frontend adapter must expose export and manual apply confirmation');
+assert.match(data, /p_skipped_items:[\s\S]*?export_item_id[\s\S]*?reason/, 'runtime export conflicts must be sent back to the database');
 assert.match(app, /buildExportArchive[\s\S]*?completeSellerExport\(\{batchId, success:true/, 'files must be built before the queue is marked exported');
+assert.match(app, /skippedItems:result\.skippedItems[\s\S]*?제외목록 CSV/, 'successful exports must report row conflicts without aborting the whole archive');
+assert.match(adapterSource, /SystemV3_내보내기_제외목록\.csv/, 'the archive must include a CSV describing skipped conflicts');
 assert.match(app, /confirmChangesApplied/, 'marketplace upload confirmation must be a separate action');
 
 const context = {console, setTimeout, URL:{createObjectURL(){}, revokeObjectURL(){}}, Blob};
@@ -67,5 +73,17 @@ const makePatched = adapter.patchMakeshopRow(makeRow, [
 assert.equal(adapter.cellValue(makePatched, 'AG4', []), '8');
 assert.equal(adapter.cellValue(makePatched, 'AF4', []), '400');
 assert.equal(adapter.outputName('원본.xlsx'), '원본_SystemV3반영.xlsx');
+
+const conflicts = [];
+const applied = [];
+const partialMakePatched = adapter.patchMakeshopRow(makeRow, [
+  {export_item_id:41, source_row_no:4, source_channel:'makeshop', sellpia_sku_code:'11334-1', seller_option_code:'425', field_key:'sellpia_current_stock', expected_source_value:102, after_value:100},
+  {export_item_id:42, source_row_no:4, source_channel:'makeshop', sellpia_sku_code:'1014-2', seller_option_code:'425', field_key:'sellpia_sale_price', expected_source_value:5400, after_value:5600, base_price:5200, option_price:200},
+], [], conflict => conflicts.push(conflict), item => applied.push(item));
+assert.equal(adapter.cellValue(partialMakePatched, 'AG4', []), '3', 'a conflicting stock item must leave the original cell untouched');
+assert.equal(adapter.cellValue(partialMakePatched, 'AF4', []), '400', 'a valid sibling item must still be applied');
+assert.equal(conflicts.length, 1, 'only the conflicting item must be skipped');
+assert.equal(conflicts[0].item.export_item_id, 41);
+assert.equal(applied.length, 1);
 
 console.log('Operations hub seller original export and inventory reconciliation: passed');
