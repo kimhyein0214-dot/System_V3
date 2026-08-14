@@ -335,12 +335,17 @@ function channelInventoryCells(product, prefix, label) {
   const sellpiaPrice = product.sellpia_sale_price;
   const stockDiff = stock !== null && stock !== undefined && sellpiaStock !== null && sellpiaStock !== undefined && Number(stock) !== Number(sellpiaStock);
   const priceDiff = price !== null && price !== undefined && sellpiaPrice !== null && sellpiaPrice !== undefined && Number(price) !== Number(sellpiaPrice);
+  const stockDraft = product.__sellerDrafts?.[`${prefix}:sellpia_current_stock`];
+  const priceDraft = product.__sellerDrafts?.[`${prefix}:sellpia_sale_price`];
+  const stockDisplay = stockDraft ? stockDraft.after_value : stock;
+  const priceDisplay = priceDraft ? priceDraft.after_value : price;
+  const draftClass = draft => draft ? ` pending draft-${draft.status}` : '';
   const stockCell = stock === null || stock === undefined
     ? '<td class="data-gap">-</td>'
-    : `<td><span class="seller-value${stockDiff ? ' diff' : ''}" title="셀피아 기준값을 수정한 뒤 판매처 반영 대기열에서 동기화합니다.">${formatNullableNumber(stock)}</span></td>`;
+    : `<td><button class="editable-cell seller-edit${stockDiff && !stockDraft ? ' diff' : ''}${draftClass(stockDraft)}" data-source="${prefix}" data-field-key="sellpia_current_stock" data-field="${label} 재고" data-value="${escapeHtml(stockDisplay)}" data-baseline="${escapeHtml(stock)}" data-value-type="number" data-change-id="${stockDraft?.change_id || ''}" data-draft-status="${stockDraft?.status || ''}" title="${stockDraft ? `수정안 ${formatNullableNumber(stockDisplay)} · 원본 ${formatNullableNumber(stock)}` : '수정 가능한 판매처 재고 · 변경하면 매트릭스 수정안으로 저장됩니다.'}">${formatNullableNumber(stockDisplay)}</button></td>`;
   const priceCell = price === null || price === undefined
     ? '<td class="data-gap">-</td>'
-    : `<td><span class="seller-value price-hover-target${priceDiff ? ' diff' : ''}" tabindex="0" data-price-source="${prefix}" data-price-label="${label}" data-current-price="${escapeHtml(price)}" data-base-price="${escapeHtml(sellpiaPrice ?? '')}" data-price-updated="${escapeHtml(product[`${prefix}_inventory_at`] || '')}">${formatNullableNumber(price)}</span></td>`;
+    : `<td><button class="editable-cell seller-edit price-hover-target${priceDiff && !priceDraft ? ' diff' : ''}${draftClass(priceDraft)}" data-source="${prefix}" data-field-key="sellpia_sale_price" data-field="${label} 판매가" data-value="${escapeHtml(priceDisplay)}" data-baseline="${escapeHtml(price)}" data-value-type="number" data-change-id="${priceDraft?.change_id || ''}" data-draft-status="${priceDraft?.status || ''}" tabindex="0" data-price-source="${prefix}" data-price-label="${label}" data-current-price="${escapeHtml(priceDisplay)}" data-base-price="${escapeHtml(sellpiaPrice ?? '')}" data-price-updated="${escapeHtml(product[`${prefix}_inventory_at`] || '')}" title="${priceDraft ? `수정안 ${formatNullableNumber(priceDisplay)} · 원본 ${formatNullableNumber(price)}` : '수정 가능한 판매처 가격 · 변경하면 매트릭스 수정안으로 저장됩니다.'}">${formatNullableNumber(priceDisplay)}</button></td>`;
   return `<td><span class="matrix-status ${state.key}">${state.label}</span></td>${codeCells}${sellerNameCell(product, prefix)}${stockCell}${priceCell}`;
 }
 
@@ -875,7 +880,7 @@ function clearMatrixCellSelection() {
 
 function matrixCellClipboardValue(cell) {
   if (!cell) return '';
-  const editable = cell.querySelector('.sellpia-edit');
+  const editable = cell.querySelector('.editable-cell');
   if (editable) return String(editable.dataset.value ?? '');
   if (cell.matches('.select-col,.image-col')) return '';
   const productName = cell.querySelector('.product-cell b,.seller-name-cell b, b');
@@ -1170,7 +1175,7 @@ matrixBody.addEventListener('dblclick', event => {
     if (row) openProductDrawer(row);
     return;
   }
-  if (cell.dataset.source !== 'sellpia' || cell.querySelector('input')) return;
+  if (cell.querySelector('input')) return;
   const before = cell.dataset.value ?? cell.textContent.trim();
   const numeric = cell.dataset.valueType === 'number';
   const input = document.createElement('input');
@@ -1181,7 +1186,7 @@ matrixBody.addEventListener('dblclick', event => {
   input.focus();
   input.select();
   let completed = false;
-  const finish = save => {
+  const finish = async save => {
     if (completed) return;
     completed = true;
     let after = save ? input.value.trim() : before;
@@ -1192,7 +1197,34 @@ matrixBody.addEventListener('dblclick', event => {
       save = false;
     }
     if (save && after !== before) {
-      commitEditableCellValue(cell, after);
+      if (cell.dataset.source === 'sellpia') {
+        commitEditableCellValue(cell, after);
+        return;
+      }
+      cell.dataset.value = after;
+      cell.textContent = formatNullableNumber(after);
+      cell.classList.add('pending');
+      cell.disabled = true;
+      try {
+        const row = cell.closest('tr[data-sku]');
+        const result = await liveData.saveSellerValueDraft({
+          sku:row.dataset.sku,
+          source:cell.dataset.source,
+          fieldKey:cell.dataset.fieldKey,
+          after
+        });
+        showToast(result?.draft_status === 'unchanged'
+          ? `${cell.dataset.field} 수정안을 취소했습니다.`
+          : `${cell.dataset.field} 수정안을 매트릭스에 저장했습니다.`);
+        await Promise.all([loadLiveMatrix(), loadChangeQueue({silent:true})]);
+      } catch (error) {
+        console.error('seller draft save failed', error);
+        cell.dataset.value = before;
+        cell.textContent = formatNullableNumber(before);
+        cell.classList.remove('pending');
+        cell.disabled = false;
+        showToast(`판매처 수정안 저장 실패: ${error?.message || error}`);
+      }
       return;
     }
     cell.dataset.value = before;
@@ -1839,16 +1871,10 @@ document.getElementById('queue-event-close').addEventListener('click', () => { d
 
 const sellerExport = window.SystemV3SellerExport;
 const sellerExportModal = document.getElementById('seller-export-modal');
-const sellerExportState = {changeIds:[], running:false};
+const sellerExportState = {rows:[], action:'export', running:false};
 
 function selectedExportSources() {
   return [...sellerExportModal.querySelectorAll('.seller-export-source-check:checked')].map(input => input.value);
-}
-
-function sellerExportFiles() {
-  const files = new Map();
-  sellerExportModal.querySelectorAll('.seller-export-files').forEach(input => files.set(input.dataset.source, Array.from(input.files || [])));
-  return files;
 }
 
 function showSellerExportProgress(percent, title, detail) {
@@ -1861,14 +1887,60 @@ function showSellerExportProgress(percent, title, detail) {
   document.getElementById('seller-export-progress-detail').textContent = detail;
 }
 
-function openSellerExport({mode = 'change_queue', rows = []} = {}) {
-  sellerExportState.changeIds = rows.filter(row => row.status === 'validated').map(row => Number(row.change_id));
-  const radio = sellerExportModal.querySelector(`input[name="seller-export-mode"][value="${mode}"]`);
-  if (radio) radio.checked = true;
+async function refreshSellerOriginalStates() {
+  const nodes = [...sellerExportModal.querySelectorAll('[data-export-source]')];
+  nodes.forEach(node => {
+    node.querySelector('.seller-original-state').textContent = '최신 원본 확인 중';
+    node.classList.remove('original-ready', 'original-missing');
+  });
+  try {
+    const statuses = await liveData.loadLatestSellerOriginalStatus(nodes.map(node => node.dataset.exportSource));
+    for (const status of statuses) {
+      const node = sellerExportModal.querySelector(`[data-export-source="${status.source}"]`);
+      if (!node) continue;
+      const names = status.fileNames.length ? status.fileNames.join(', ') : '보관 파일 없음';
+      node.querySelector('.seller-original-state').textContent = status.available
+        ? `${status.fileNames.length}개 보관 · ${formatLiveTime(status.completedAt)}`
+        : `다음 원본 업로드부터 자동 보관 · ${names}`;
+      node.classList.add(status.available ? 'original-ready' : 'original-missing');
+      if (sellerExportState.action === 'export' && !status.available) {
+        const checkbox = node.querySelector('.seller-export-source-check');
+        checkbox.checked = false;
+        checkbox.disabled = true;
+      }
+    }
+  } catch (error) {
+    nodes.forEach(node => { node.querySelector('.seller-original-state').textContent = '원본 상태 조회 실패'; });
+  }
+}
+
+function selectedMatrixSkus() {
+  return [...matrixBody.querySelectorAll('.row-check:checked')]
+    .map(check => check.closest('tr[data-sku]')?.dataset.sku)
+    .filter(Boolean);
+}
+
+function openSellerExport({action = 'export', rows = []} = {}) {
+  sellerExportState.rows = rows;
+  sellerExportState.action = action;
   const rowSources = new Set(rows.flatMap(row => row.source_channel ? [row.source_channel] : (row.target_channels || [])));
-  sellerExportModal.querySelectorAll('.seller-export-source-check').forEach(input => { input.checked = !rowSources.size || rowSources.has(input.value); });
+  sellerExportModal.querySelectorAll('.seller-export-source-check').forEach(input => {
+    input.disabled = false;
+    input.checked = !rowSources.size || rowSources.has(input.value);
+  });
+  const skus = selectedMatrixSkus();
+  document.getElementById('seller-export-title').textContent = action === 'draft' ? '셀피아 기준 재고 수정안' : '검토한 수정본 내보내기';
+  document.getElementById('seller-export-kicker').textContent = action === 'draft' ? '매트릭스 수정안 생성' : '판매처 원본 파일 생성';
+  document.getElementById('seller-export-guide-title').textContent = action === 'draft'
+    ? `셀피아 재고와 다른 판매처 값을 수정안으로 만듭니다.${skus.length ? ` · 선택 ${formatNumber(skus.length)}개 SKU` : ' · 전체 매트릭스'}`
+    : '매트릭스에서 검토한 수정안만 최신 보관 원본에 반영합니다.';
+  document.getElementById('seller-export-guide-detail').textContent = action === 'draft'
+    ? '원본 파일은 아직 바뀌지 않습니다. 생성 후 파란 수정 가능 셀에서 값을 확인하거나 다시 고칠 수 있습니다.'
+    : '원본을 다시 선택할 필요가 없습니다. 시스템이 마지막 업로드 원본을 불러와 별도의 ZIP 수정본으로 내려받습니다.';
+  document.getElementById('seller-export-run').textContent = action === 'draft' ? '매트릭스에 수정안 만들기' : '검토한 수정본 ZIP 만들기';
   document.getElementById('seller-export-progress').hidden = true;
   sellerExportModal.hidden = false;
+  refreshSellerOriginalStates();
 }
 
 function closeSellerExport() {
@@ -1881,13 +1953,8 @@ async function runSellerExport() {
     showToast('원본 내보내기 모듈을 불러오지 못했습니다. 새로고침 후 다시 시도해주세요.');
     return;
   }
-  const mode = sellerExportModal.querySelector('input[name="seller-export-mode"]:checked')?.value || 'change_queue';
   const sources = selectedExportSources();
   if (!sources.length) { showToast('판매처를 하나 이상 선택해주세요.'); return; }
-  const filesBySource = sellerExportFiles();
-  const requiredCounts = {smartstore:2, makeshop:1, ably:1};
-  const missing = sources.filter(source => (filesBySource.get(source) || []).length !== requiredCounts[source]);
-  if (missing.length) { showToast(`${missing.map(source => CHANNEL_LABELS[source]).join(', ')} 최신 원본 파일을 모두 선택해주세요.`); return; }
   const batchId = createRequestId();
   const button = document.getElementById('seller-export-run');
   sellerExportState.running = true;
@@ -1896,20 +1963,46 @@ async function runSellerExport() {
   document.getElementById('seller-export-close').disabled = true;
   let prepared = false;
   try {
-    showSellerExportProgress(3, 'DB 반영 계획 생성 중', mode === 'inventory_match' ? '셀피아 재고와 다른 판매처 상품을 찾습니다.' : '검증 완료된 변경대기의 원본 위치를 찾습니다.');
-    const items = await liveData.prepareSellerExport({batchId, mode, changeIds:sellerExportState.changeIds, sources});
+    if (sellerExportState.action === 'draft') {
+      const skus = selectedMatrixSkus();
+      showSellerExportProgress(15, '재고 차이 계산 중', `${skus.length ? `선택 ${formatNumber(skus.length)}개 SKU` : '전체 매트릭스'}에서 판매처별 차이를 찾습니다.`);
+      const result = await liveData.stageSellerInventoryDrafts({sources, skus, batchId});
+      const staged = Number(result?.staged_count || 0);
+      showSellerExportProgress(100, '수정안 생성 완료', `${formatNumber(staged)}건을 매트릭스 검토 대기로 저장했습니다. 판매처 셀에서 값을 다시 수정할 수 있습니다.`);
+      showToast(staged ? `재고 수정안 ${formatNumber(staged)}건을 만들었습니다.` : '셀피아 재고와 다른 판매처 값이 없습니다.');
+      await Promise.all([loadLiveMatrix(), loadChangeQueue({silent:true})]);
+      return;
+    }
+
+    showSellerExportProgress(4, '수정안 확인 중', '검토한 판매처 수정안을 내보내기 상태로 확정합니다.');
+    let changeIds;
+    if (sellerExportState.rows.length) {
+      const reviewIds = sellerExportState.rows.filter(row => ['pending','failed'].includes(row.status)).map(row => Number(row.change_id));
+      if (reviewIds.length) await liveData.validateChangeQueue(reviewIds);
+      changeIds = sellerExportState.rows.map(row => Number(row.change_id));
+    } else {
+      changeIds = await liveData.validateSellerDraftsForExport(sources);
+    }
+    if (!changeIds.length) throw new Error('매트릭스에서 검토할 판매처 수정안이 없습니다. 먼저 재고 수정안을 만들어주세요.');
+    showSellerExportProgress(9, '최신 원본 불러오는 중', '마지막 업로드 때 시스템에 보관한 원본 파일을 자동으로 가져옵니다.');
+    const filesBySource = await liveData.downloadLatestSellerOriginals(sources, progress => {
+      const ratio = progress.total ? progress.completed / progress.total : 0;
+      showSellerExportProgress(9 + ratio * 8, '최신 원본 불러오는 중', progress.name ? `${progress.name} 다운로드 중` : '원본 다운로드 완료');
+    });
+    showSellerExportProgress(18, 'DB 반영 계획 생성 중', '검증 완료된 수정안의 원본 위치를 찾습니다.');
+    const items = await liveData.prepareSellerExport({batchId, mode:'change_queue', changeIds, sources});
     prepared = true;
     const blocked = items.filter(item => item.blocking_reason);
     const exportable = items.filter(item => !item.blocking_reason);
     if (!exportable.length) throw new Error(`원본 위치를 확인할 수 없는 항목만 ${formatNumber(blocked.length)}건입니다. 판매처 연결 코드와 최신 원본을 확인해주세요.`);
-    showSellerExportProgress(12, '원본 파일 검증 중', `${formatNumber(exportable.length)}건을 대조합니다.${blocked.length ? ` 위치 확인 실패 ${formatNumber(blocked.length)}건은 제외합니다.` : ''}`);
-    const result = await sellerExport.buildExportArchive(filesBySource, exportable, (percent, detail) => showSellerExportProgress(12 + percent * .84, '판매처 원본 생성 중', detail));
+    showSellerExportProgress(22, '원본 파일 검증 중', `${formatNumber(exportable.length)}건을 대조합니다.${blocked.length ? ` 위치 확인 실패 ${formatNumber(blocked.length)}건은 제외합니다.` : ''}`);
+    const result = await sellerExport.buildExportArchive(filesBySource, exportable, (percent, detail) => showSellerExportProgress(22 + percent * .74, '판매처 수정본 생성 중', detail));
     await liveData.completeSellerExport({batchId, success:true, manifest:result.manifest});
     const timestamp = new Date().toISOString().replace(/[-:T]/g,'').slice(0,12);
     sellerExport.downloadBlob(result.blob, `SystemV3_판매처원본_${timestamp}.zip`);
     showSellerExportProgress(100, 'ZIP 생성 완료', `${formatNumber(exportable.length)}건 · 파일 ${result.manifest.length}개를 내려받았습니다.${blocked.length ? ` 확인 실패 ${formatNumber(blocked.length)}건 제외` : ''}`);
     showToast(`판매처 원본 ${formatNumber(exportable.length)}건 내보내기 완료${blocked.length ? ` · ${formatNumber(blocked.length)}건 제외` : ''}`);
-    await loadChangeQueue({silent:true});
+    await Promise.all([loadChangeQueue({silent:true}), loadLiveMatrix()]);
   } catch (error) {
     console.error('seller export failed', error);
     if (prepared) {
@@ -1925,8 +2018,9 @@ async function runSellerExport() {
   }
 }
 
-document.getElementById('matrix-export-btn').addEventListener('click', () => openSellerExport({mode:'inventory_match'}));
-document.getElementById('queue-export').addEventListener('click', () => openSellerExport({mode:'change_queue', rows:selectedQueueRows()}));
+document.getElementById('matrix-match-stock-btn').addEventListener('click', () => openSellerExport({action:'draft'}));
+document.getElementById('matrix-export-btn').addEventListener('click', () => openSellerExport({action:'export'}));
+document.getElementById('queue-export').addEventListener('click', () => openSellerExport({action:'export', rows:selectedQueueRows()}));
 document.getElementById('seller-export-close').addEventListener('click', closeSellerExport);
 document.getElementById('seller-export-cancel').addEventListener('click', closeSellerExport);
 document.getElementById('seller-export-run').addEventListener('click', runSellerExport);

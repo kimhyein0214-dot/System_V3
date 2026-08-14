@@ -22,6 +22,40 @@
     return String(value || '').trim().replace(/[^0-9A-Za-z가-힣ㄱ-ㅎㅏ-ㅣ_\-\[\]\s]/g, '');
   }
 
+  async function attachSellerDrafts(rows) {
+    const products = Array.isArray(rows) ? rows : [];
+    const skus = [...new Set(products.map(row => cleanText(row?.sellpia_sku_code)).filter(Boolean))];
+    if (!skus.length) return products;
+    const {data, error} = await db
+      .from('operations_hub_change_queue')
+      .select('change_id,sellpia_sku_code,source_channel,field_key,before_value,after_value,status,updated_at')
+      .in('sellpia_sku_code', skus)
+      .not('source_channel', 'is', null)
+      .in('field_key', ['sellpia_current_stock','sellpia_sale_price'])
+      .in('status', ['pending','validated','processing','exported','failed'])
+      .order('updated_at', {ascending:false})
+      .order('change_id', {ascending:false})
+      .limit(1000);
+    if (error) throw error;
+    const draftByKey = new Map();
+    for (const draft of data || []) {
+      const key = `${draft.sellpia_sku_code}|${draft.source_channel}|${draft.field_key}`;
+      if (!draftByKey.has(key)) draftByKey.set(key, draft);
+    }
+    return products.map(product => {
+      const sku = cleanText(product?.sellpia_sku_code);
+      if (!sku) return product;
+      const drafts = {};
+      for (const source of ['smartstore','makeshop','ably']) {
+        for (const fieldKey of ['sellpia_current_stock','sellpia_sale_price']) {
+          const draft = draftByKey.get(`${sku}|${source}|${fieldKey}`);
+          if (draft) drafts[`${source}:${fieldKey}`] = draft;
+        }
+      }
+      return {...product, __sellerDrafts:drafts};
+    });
+  }
+
   async function loadProducts({ page = 1, search = '', searchSources = ['sellpia','smartstore','makeshop','ably'], status = 'all', sort = 'sku_asc', skus = [], codeListRows = [] } = {}) {
     const safePage = Math.max(1, Number(page) || 1);
     const orderedCodeRows = Array.isArray(codeListRows) ? codeListRows : [];
@@ -39,13 +73,14 @@
         products = data || [];
       }
       const productsBySku = new Map(products.map(product => [cleanText(product.sellpia_sku_code), product]));
-      return {
-        rows:pageRows.map(codeRow => {
+      const orderedRows = pageRows.map(codeRow => {
           const product = productsBySku.get(cleanText(codeRow.sellpia_sku_code));
           return product
             ? {...product, __codeList:codeRow}
             : {sellpia_sku_code:'', __codeList:codeRow, __codeListPlaceholder:true};
-        }),
+        });
+      return {
+        rows:await attachSellerDrafts(orderedRows),
         count:orderedCodeRows.length,
         page:safePage,
         pageSize:PAGE_SIZE
@@ -62,7 +97,7 @@
       });
       if (error) throw error;
       return {
-        rows:Array.isArray(data?.rows) ? data.rows : [],
+        rows:await attachSellerDrafts(Array.isArray(data?.rows) ? data.rows : []),
         count:Number(data?.count || 0),
         page:Number(data?.page || safePage),
         pageSize:Number(data?.pageSize || data?.page_size || PAGE_SIZE)
@@ -119,7 +154,7 @@
 
     const { data, error, count } = await query;
     if (error) throw error;
-    return { rows: data || [], count: count || 0, page: safePage, pageSize: PAGE_SIZE };
+    return { rows: await attachSellerDrafts(data || []), count: count || 0, page: safePage, pageSize: PAGE_SIZE };
   }
 
   async function loadSourceStatus() {
@@ -291,6 +326,106 @@
     const {data, error} = await db.rpc('retry_operations_hub_changes', {p_change_ids:(changeIds || []).map(Number)});
     if (error) throw error;
     return Array.isArray(data) ? data[0] : data;
+  }
+
+  async function saveSellerValueDraft({sku, source, fieldKey, after, batchId = null}) {
+    const {data, error} = await db.rpc('save_operations_hub_seller_value_draft', {
+      p_sku:cleanText(sku),
+      p_source:cleanText(source),
+      p_field_key:cleanText(fieldKey),
+      p_after:Number(after),
+      p_batch_id:batchId
+    });
+    if (error) throw error;
+    return Array.isArray(data) ? data[0] : data;
+  }
+
+  async function stageSellerInventoryDrafts({sources = [], skus = [], batchId = null} = {}) {
+    const {data, error} = await db.rpc('stage_operations_hub_seller_inventory_match', {
+      p_sources:(sources || []).map(cleanText),
+      p_skus:(skus || []).map(cleanText),
+      p_batch_id:batchId
+    });
+    if (error) throw error;
+    return Array.isArray(data) ? data[0] : data;
+  }
+
+  async function loadSellerDraftRows({sources = [], statuses = ['pending','validated','failed']} = {}) {
+    const selectedSources = (sources || []).map(cleanText).filter(Boolean);
+    if (!selectedSources.length) return [];
+    const rows = [];
+    const pageSize = 1000;
+    for (let from = 0; ; from += pageSize) {
+      const {data, error} = await db
+        .from('operations_hub_change_queue')
+        .select('change_id,source_channel,status,field_key')
+        .in('source_channel', selectedSources)
+        .in('status', statuses)
+        .order('change_id', {ascending:true})
+        .range(from, from + pageSize - 1);
+      if (error) throw error;
+      rows.push(...(data || []));
+      if (!data || data.length < pageSize) break;
+    }
+    return rows;
+  }
+
+  async function validateSellerDraftsForExport(sources = []) {
+    const reviewRows = await loadSellerDraftRows({sources, statuses:['pending','failed']});
+    for (let offset = 0; offset < reviewRows.length; offset += 300) {
+      await validateChangeQueue(reviewRows.slice(offset, offset + 300).map(row => row.change_id));
+    }
+    const validatedRows = await loadSellerDraftRows({sources, statuses:['validated']});
+    return validatedRows.map(row => Number(row.change_id));
+  }
+
+  async function loadLatestSellerOriginalStatus(sources = ['smartstore','makeshop','ably']) {
+    const selectedSources = (sources || []).map(cleanText).filter(Boolean);
+    const {data, error} = await db
+      .from('seller_inventory_snapshots')
+      .select('snapshot_id,source_channel,source_file_names,source_storage_files,source_file_size,completed_at,created_at')
+      .eq('upload_status', 'ready')
+      .in('source_channel', selectedSources)
+      .order('completed_at', {ascending:false, nullsFirst:false})
+      .order('created_at', {ascending:false})
+      .limit(50);
+    if (error) throw error;
+    const latest = new Map();
+    for (const row of data || []) if (!latest.has(row.source_channel)) latest.set(row.source_channel, row);
+    return selectedSources.map(source => {
+      const snapshot = latest.get(source);
+      const files = Array.isArray(snapshot?.source_storage_files) ? snapshot.source_storage_files : [];
+      return {
+        source,
+        snapshotId:snapshot?.snapshot_id || null,
+        completedAt:snapshot?.completed_at || snapshot?.created_at || null,
+        files,
+        fileNames:Array.isArray(snapshot?.source_file_names) ? snapshot.source_file_names : [],
+        available:Boolean(snapshot && files.length)
+      };
+    });
+  }
+
+  async function downloadLatestSellerOriginals(sources = [], onProgress) {
+    const statuses = await loadLatestSellerOriginalStatus(sources);
+    const missing = statuses.filter(status => !status.available);
+    if (missing.length) throw new Error(`${missing.map(status => status.source).join(', ')} 최신 원본 파일이 시스템에 보관되어 있지 않습니다.`);
+    const filesBySource = new Map();
+    const allFiles = statuses.flatMap(status => status.files.map(file => ({...file, source:status.source})));
+    let completed = 0;
+    for (const status of statuses) {
+      const files = [];
+      for (const storedFile of status.files) {
+        onProgress?.({completed, total:allFiles.length, source:status.source, name:storedFile.name});
+        const {data:blob, error} = await db.storage.from('seller-originals').download(storedFile.path);
+        if (error) throw error;
+        files.push(new File([blob], storedFile.name, {type:storedFile.type || blob.type || 'application/octet-stream'}));
+        completed += 1;
+      }
+      filesBySource.set(status.source, files);
+    }
+    onProgress?.({completed, total:allFiles.length});
+    return filesBySource;
   }
 
   async function prepareSellerExport({batchId, mode, changeIds = [], sources = []}) {
@@ -599,6 +734,28 @@
       if (snapshotError) throw snapshotError;
       snapshotId = snapshot.snapshot_id;
 
+      const storageFiles = [];
+      for (let index = 0; index < selectedFiles.length; index += 1) {
+        const file = selectedFiles[index];
+        const extension = file.name.includes('.') ? `.${file.name.split('.').pop().toLowerCase().replace(/[^0-9a-z]/g, '')}` : '';
+        const path = `${source}/${snapshotId}/${String(index + 1).padStart(2, '0')}${extension}`;
+        onProgress?.({
+          percent:23 + Math.round(((index + 1) / selectedFiles.length) * 3),
+          title:'원본 백업 중',
+          detail:`${file.name} 파일을 최신 원본 보관소에 저장합니다.`
+        });
+        const {error:storageError} = await db.storage
+          .from('seller-originals')
+          .upload(path, file, {contentType:file.type || 'application/octet-stream', cacheControl:'3600', upsert:false});
+        if (storageError) throw storageError;
+        storageFiles.push({name:file.name, path, size:Number(file.size || 0), type:file.type || 'application/octet-stream'});
+      }
+      const {error:storageRecordError} = await db
+        .from('seller_inventory_snapshots')
+        .update({source_storage_files:storageFiles})
+        .eq('snapshot_id', snapshotId);
+      if (storageRecordError) throw storageRecordError;
+
       const chunkSize = 400;
       for (let offset = 0; offset < normalizedRows.length; offset += chunkSize) {
         const chunk = normalizedRows.slice(offset, offset + chunkSize).map(row => ({snapshot_id:snapshotId, ...row}));
@@ -647,6 +804,11 @@
     validateChangeQueue,
     cancelChangeQueue,
     retryChangeQueue,
+    saveSellerValueDraft,
+    stageSellerInventoryDrafts,
+    validateSellerDraftsForExport,
+    loadLatestSellerOriginalStatus,
+    downloadLatestSellerOriginals,
     prepareSellerExport,
     completeSellerExport,
     confirmChangesApplied,
