@@ -82,9 +82,40 @@
       return `<c${cleanAttrs} s="${styleId}">`;
     });
   }
-  function applyChangeHighlights(sheetXml, stylesXml, references) {
-    const refs = [...new Set(references || [])].filter(Boolean);
-    if (!refs.length) return {sheetXml, stylesXml};
+  function normalizeHighlights(changes) {
+    const byReference = new Map();
+    for (const change of changes || []) {
+      const reference = typeof change === 'string' ? change : change?.reference;
+      if (!reference) continue;
+      if (!byReference.has(reference)) byReference.set(reference, {reference, full:false, lineIndexes:new Set()});
+      const highlight = byReference.get(reference);
+      const rawLineIndex = typeof change === 'object' ? change?.lineIndex : null;
+      const lineIndex = rawLineIndex === null || rawLineIndex === undefined || rawLineIndex === '' ? NaN : Number(rawLineIndex);
+      if (!Number.isInteger(lineIndex) || lineIndex < 0) highlight.full = true;
+      else highlight.lineIndexes.add(lineIndex);
+    }
+    return [...byReference.values()];
+  }
+  function boldInlineText(sheetXml, highlight) {
+    const reference = highlight.reference;
+    const matcher = new RegExp(`<c\\b([^>]*\\br="${reference}"[^>]*)>([\\s\\S]*?)<\\/c>`);
+    let applied = false;
+    const nextSheetXml = String(sheetXml).replace(matcher, (cellXml, attrs, body) => {
+      if (xmlAttribute(attrs, 't') !== 'inlineStr') return cellXml;
+      const lines = richTextValue(body).split(/\r?\n/);
+      const runs = lines.map((line, index) => {
+        const text = `${line}${index < lines.length - 1 ? '\n' : ''}`;
+        const bold = highlight.full || highlight.lineIndexes.has(index);
+        return `<r>${bold ? '<rPr><b/></rPr>' : ''}<t xml:space="preserve">${xmlEscape(text)}</t></r>`;
+      }).join('');
+      applied = true;
+      return `<c${attrs}><is>${runs}</is></c>`;
+    });
+    return {sheetXml:nextSheetXml, applied};
+  }
+  function applyChangeHighlights(sheetXml, stylesXml, changes) {
+    const highlights = normalizeHighlights(changes);
+    if (!highlights.length) return {sheetXml, stylesXml};
     const fontsSection = String(stylesXml).match(/<fonts\b[^>]*>[\s\S]*?<\/fonts>/)?.[0];
     const fillsSection = String(stylesXml).match(/<fills\b[^>]*>[\s\S]*?<\/fills>/)?.[0];
     const xfsSection = String(stylesXml).match(/<cellXfs\b[^>]*>[\s\S]*?<\/cellXfs>/)?.[0];
@@ -99,34 +130,38 @@
     const highlightedStyleByBase = new Map();
     const yellowFillId = fills.length;
 
-    function highlightedStyle(baseStyleId) {
+    function highlightedStyle(baseStyleId, boldCell) {
       const safeBaseId = xfs[baseStyleId] ? baseStyleId : 0;
-      if (highlightedStyleByBase.has(safeBaseId)) return highlightedStyleByBase.get(safeBaseId);
+      const styleKey = `${safeBaseId}:${boldCell ? 'bold' : 'fill'}`;
+      if (highlightedStyleByBase.has(styleKey)) return highlightedStyleByBase.get(styleKey);
       const baseXf = xfs[safeBaseId] || '<xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0"/>';
       const sourceFontId = Number(xmlAttribute(baseXf, 'fontId', '0')) || 0;
       let boldFontId = sourceFontId;
-      if (!fontIsBold(fonts[sourceFontId])) {
+      if (boldCell && !fontIsBold(fonts[sourceFontId])) {
         if (!boldFontBySource.has(sourceFontId)) {
           boldFontBySource.set(sourceFontId, fonts.length + addedFonts.length);
           addedFonts.push(boldFont(fonts[sourceFontId] || '<font/>'));
         }
         boldFontId = boldFontBySource.get(sourceFontId);
       }
-      let nextXf = setXmlAttribute(baseXf, 'fontId', boldFontId);
+      let nextXf = boldCell ? setXmlAttribute(baseXf, 'fontId', boldFontId) : baseXf;
       nextXf = setXmlAttribute(nextXf, 'fillId', yellowFillId);
-      nextXf = setXmlAttribute(nextXf, 'applyFont', '1');
+      if (boldCell) nextXf = setXmlAttribute(nextXf, 'applyFont', '1');
       nextXf = setXmlAttribute(nextXf, 'applyFill', '1');
       const nextStyleId = xfs.length + addedXfs.length;
       addedXfs.push(nextXf);
-      highlightedStyleByBase.set(safeBaseId, nextStyleId);
+      highlightedStyleByBase.set(styleKey, nextStyleId);
       return nextStyleId;
     }
 
     let nextSheetXml = String(sheetXml);
-    for (const reference of refs) {
+    for (const highlight of highlights) {
+      const reference = highlight.reference;
       const cellAttrs = nextSheetXml.match(new RegExp(`<c\\b([^>]*\\br="${reference}"[^>]*)>`))?.[1] || '';
       const baseStyleId = Number(xmlAttribute(cellAttrs, 's', '0')) || 0;
-      nextSheetXml = setCellStyle(nextSheetXml, reference, highlightedStyle(baseStyleId));
+      const richText = boldInlineText(nextSheetXml, highlight);
+      nextSheetXml = richText.sheetXml;
+      nextSheetXml = setCellStyle(nextSheetXml, reference, highlightedStyle(baseStyleId, !richText.applied));
     }
     const yellowFill = '<fill><patternFill patternType="solid"><fgColor rgb="FFFFFF00"/><bgColor indexed="64"/></patternFill></fill>';
     let nextStylesXml = appendStyleNodes(stylesXml, 'fonts', addedFonts, fonts.length + addedFonts.length);
@@ -175,7 +210,8 @@
           const current=String(cellValue(output,`Q${row}`,sharedStrings)).split(/\r?\n/)[optionIndex]??''; verifyExpected(current,item);
           changedRef=`Q${row}`; output=setCellValue(output,changedRef,replaceLine(cellValue(output,changedRef,sharedStrings),optionIndex,after),'string');
         }
-        if(changedRef) onApplied?.(item,changedRef);
+        const changedLineIndex = optionCode && ['sellpia_current_stock','sellpia_sale_price','seller_option_name'].includes(item.field_key) ? optionIndex : null;
+        if(changedRef) onApplied?.(item,changedRef,{lineIndex:changedLineIndex});
       } catch(error) {
         if(error?.exportConflict && onConflict) onConflict({item,reason:error.message}); else throw error;
       }
@@ -235,13 +271,13 @@
     const rowNumbers=new Set([...String(sheetXml).matchAll(/<row\b[^>]*\br="(\d+)"/g)].map(match=>Number(match[1])));
     const byRow=new Map();
     for(const item of items){const row=Number(item.source_row_no);if(!rowNumbers.has(row)){const reason=`${SOURCE_LABELS[item.source_channel]} ${item.sellpia_sku_code}: 보관 원본에서 ${row}행을 찾지 못했습니다.`;if(onConflict)onConflict({item,reason});else throw exportConflict(item,reason);continue;}if(!byRow.has(row))byRow.set(row,[]);byRow.get(row).push(item);}
-    const appliedReferences=new Set();
-    const recordApplied=(item,reference)=>{if(reference)appliedReferences.add(reference);onApplied?.(item);};
+    const appliedHighlights=[];
+    const recordApplied=(item,reference,highlight)=>{if(reference)appliedHighlights.push({reference,...(highlight||{})});onApplied?.(item);};
     const patched=sheetXml.replace(/<row\b[^>]*\br="(\d+)"[^>]*>[\s\S]*?<\/row>/g,(rowXml,rowNo)=>{
       const changes=byRow.get(Number(rowNo)); if(!changes) return rowXml;
       return items[0].source_channel==='smartstore'?patchSmartstoreRow(rowXml,changes,shared,onConflict,recordApplied):patchMakeshopRow(rowXml,changes,shared,onConflict,recordApplied);
     });
-    const highlighted=applyChangeHighlights(patched,stylesXml,appliedReferences);
+    const highlighted=applyChangeHighlights(patched,stylesXml,appliedHighlights);
     zip.file(sheetPath,highlighted.sheetXml); zip.file(stylesPath,highlighted.stylesXml); return zip.generateAsync({type:'blob',compression:'DEFLATE',compressionOptions:{level:6}});
   }
 
