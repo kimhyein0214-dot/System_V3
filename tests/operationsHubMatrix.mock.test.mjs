@@ -28,6 +28,9 @@ assert.match(source, /MATRIX_ZOOM_STEP = 5;/, "matrix zoom must move in five-per
 assert.match(html, /value="80">80%[\s\S]*?value="85">85%[\s\S]*?value="140">140%/, "preset zoom options must include five-percent increments");
 assert.match(css, /\.matrix-table\{zoom:var\(--matrix-zoom,1\)\}/, "zoom must apply to the matrix table only");
 assert.match(css, /\.matrix-table \.sellpia-price-col\{left:calc\(640px \+ var\(--image-col-width\)\);[\s\S]*?box-shadow:3px 0 0 var\(--blue\)/, "the Sellpia pane must keep its blue frozen right boundary while image width changes");
+assert.match(html, /id="matrix-freeze-toggle"[^>]*aria-pressed="true"[^>]*>셀피아 고정 ON/, "the toolbar must expose an accessible Sellpia freeze toggle");
+assert.match(source, /MATRIX_FREEZE_KEY = 'system-v3-matrix-sellpia-freeze'[\s\S]*?applyMatrixSellpiaFreeze[\s\S]*?localStorage\.setItem\(MATRIX_FREEZE_KEY/, "the Sellpia freeze preference must be applied and persisted");
+assert.match(css, /\.matrix-table\.sellpia-unfrozen \.sticky-col\{left:auto\}[\s\S]*?tbody \.sticky-col\{position:static\}[\s\S]*?sellpia-group\{box-shadow:none\}/, "unfrozen mode must remove horizontal sticky positioning and the frozen boundary");
 assert.match(html, /data-preset-id="all"[\s\S]*?id="custom-preset-select"/, "built-in and custom matrix presets must be selectable");
 assert.match(html, /id="view-settings-modal"[\s\S]*?id="save-view-preset"/, "matrix view settings must support saving personal presets");
 assert.match(source, /MATRIX_PRESETS_KEY = 'system-v3-matrix-presets-v1'/, "personal presets must persist locally");

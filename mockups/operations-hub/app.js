@@ -82,7 +82,9 @@ const matrixCellSelection = {anchor:null, focus:null, dragging:false};
 const matrixZoomOut = document.getElementById('matrix-zoom-out');
 const matrixZoomValue = document.getElementById('matrix-zoom-value');
 const matrixZoomIn = document.getElementById('matrix-zoom-in');
+const matrixFreezeToggle = document.getElementById('matrix-freeze-toggle');
 const MATRIX_ZOOM_KEY = 'system-v3-matrix-zoom';
+const MATRIX_FREEZE_KEY = 'system-v3-matrix-sellpia-freeze';
 const MATRIX_ZOOM_MIN = 80;
 const MATRIX_ZOOM_MAX = 140;
 const MATRIX_ZOOM_STEP = 5;
@@ -133,6 +135,20 @@ function findPreset(id) {
 }
 let activeView = cloneView(findPreset(activePresetId));
 let matrixZoom = Math.max(MATRIX_ZOOM_MIN, Math.min(MATRIX_ZOOM_MAX, Number(localStorage.getItem(MATRIX_ZOOM_KEY)) || 100));
+let matrixSellpiaFrozen = localStorage.getItem(MATRIX_FREEZE_KEY) !== 'off';
+
+function applyMatrixSellpiaFreeze(frozen, {persist = true, announce = false} = {}) {
+  matrixSellpiaFrozen = Boolean(frozen);
+  matrixTable.classList.toggle('sellpia-unfrozen', !matrixSellpiaFrozen);
+  matrixFreezeToggle.classList.toggle('active', matrixSellpiaFrozen);
+  matrixFreezeToggle.setAttribute('aria-pressed', String(matrixSellpiaFrozen));
+  matrixFreezeToggle.textContent = `셀피아 고정 ${matrixSellpiaFrozen ? 'ON' : 'OFF'}`;
+  matrixFreezeToggle.title = matrixSellpiaFrozen
+    ? '셀피아 기준 영역을 화면 왼쪽에 고정합니다.'
+    : '고정 없이 전체 매트릭스를 좌우로 이동합니다.';
+  if (persist) localStorage.setItem(MATRIX_FREEZE_KEY, matrixSellpiaFrozen ? 'on' : 'off');
+  if (announce) showToast(matrixSellpiaFrozen ? '셀피아 기준 영역을 다시 고정했습니다.' : '고정을 해제했습니다. 전체 표가 좌우로 함께 움직입니다.');
+}
 
 function applyMatrixZoom(value, {persist = true, syncView = true} = {}) {
   matrixZoom = Math.max(MATRIX_ZOOM_MIN, Math.min(MATRIX_ZOOM_MAX, Number(value) || 100));
@@ -148,6 +164,8 @@ matrixZoomOut.addEventListener('click', () => { applyMatrixZoom(matrixZoom - MAT
 matrixZoomIn.addEventListener('click', () => { applyMatrixZoom(matrixZoom + MATRIX_ZOOM_STEP); markViewModified(); });
 matrixZoomValue.addEventListener('click', () => { applyMatrixZoom(100); markViewModified(); });
 applyMatrixZoom(matrixZoom, {persist:false, syncView:false});
+matrixFreezeToggle.addEventListener('click', () => applyMatrixSellpiaFreeze(!matrixSellpiaFrozen, {announce:true}));
+applyMatrixSellpiaFreeze(matrixSellpiaFrozen, {persist:false});
 
 function escapeHtml(value) {
   return String(value ?? '').replace(/[&<>'"]/g, character => ({

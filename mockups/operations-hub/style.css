@@ -89,6 +89,7 @@
 .matrix-table .sellpia-stock-col{left:calc(560px + var(--image-col-width));width:80px;min-width:80px}
 .matrix-table .sellpia-price-col{left:calc(640px + var(--image-col-width));width:80px;min-width:80px;box-shadow:3px 0 0 var(--blue),12px 0 18px rgba(15,23,42,.12)}
 .matrix-table .sellpia-group{left:calc(36px + var(--image-col-width));width:684px;min-width:684px;box-shadow:3px 0 0 var(--blue),12px 0 18px rgba(15,23,42,.12)}
+.matrix-freeze-toggle{height:31px;border:1px solid var(--line);border-radius:6px;background:#fff;padding:0 9px;color:#64748b;font-size:8px;font-weight:900;cursor:pointer;white-space:nowrap}.matrix-freeze-toggle.active{border-color:#7da6e5;background:#edf4ff;color:#1558c0}.matrix-freeze-toggle:hover{border-color:#7da6e5;color:#1558c0}.matrix-table.sellpia-unfrozen .sticky-col{left:auto}.matrix-table.sellpia-unfrozen tbody .sticky-col{position:static}.matrix-table.sellpia-unfrozen .sellpia-price-col,.matrix-table.sellpia-unfrozen .sellpia-group{box-shadow:none}
 .matrix-table .product-thumb{width:var(--thumb-width);height:var(--thumb-height);border-radius:6px}
 .matrix-table .product-thumb.live-thumb img{object-fit:contain;background:#fff}
 .matrix-table .image-drop-hint{left:6px;right:6px;bottom:3px}
