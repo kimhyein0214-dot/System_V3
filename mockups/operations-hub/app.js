@@ -1936,7 +1936,7 @@ function openSellerExport({action = 'export', rows = []} = {}) {
     : '매트릭스에서 검토한 수정안만 최신 보관 원본에 반영합니다.';
   document.getElementById('seller-export-guide-detail').textContent = action === 'draft'
     ? '원본 파일은 아직 바뀌지 않습니다. 생성 후 파란 수정 가능 셀에서 값을 확인하거나 다시 고칠 수 있습니다.'
-    : '원본을 다시 선택할 필요가 없습니다. 시스템이 마지막 업로드 원본을 불러와 별도의 ZIP 수정본으로 내려받습니다.';
+    : '원본을 다시 선택할 필요가 없습니다. 수정된 XLSX 셀은 형광 노랑 배경과 굵은 글씨로 표시해 별도의 ZIP 수정본으로 내려받습니다.';
   document.getElementById('seller-export-run').textContent = action === 'draft' ? '매트릭스에 수정안 만들기' : '검토한 수정본 ZIP 만들기';
   document.getElementById('seller-export-progress').hidden = true;
   sellerExportModal.hidden = false;
@@ -2022,7 +2022,7 @@ async function runSellerExport() {
     const timestamp = new Date().toISOString().replace(/[-:T]/g,'').slice(0,12);
     sellerExport.downloadBlob(result.blob, `SystemV3_판매처원본_${timestamp}.zip`);
     const skippedCount = blocked.length + result.skippedItems.length;
-    showSellerExportProgress(100, 'ZIP 생성 완료', `${formatNumber(result.appliedItems.length)}건 · 파일 ${result.manifest.length}개를 내려받았습니다.${skippedCount ? ` 원본 검증 충돌 ${formatNumber(skippedCount)}건은 제외목록 CSV에 기록했습니다.` : ''}`);
+    showSellerExportProgress(100, 'ZIP 생성 완료', `${formatNumber(result.appliedItems.length)}건 · 파일 ${result.manifest.length}개를 내려받았습니다. XLSX 수정 셀은 형광 노랑·굵은 글씨로 표시했습니다.${skippedCount ? ` 원본 검증 충돌 ${formatNumber(skippedCount)}건은 제외목록 CSV에 기록했습니다.` : ''}`);
     showToast(`판매처 원본 ${formatNumber(result.appliedItems.length)}건 내보내기 완료${skippedCount ? ` · 충돌 ${formatNumber(skippedCount)}건 제외` : ''}`);
     await Promise.all([loadChangeQueue({silent:true}), loadLiveMatrix()]);
   } catch (error) {

@@ -31,7 +31,7 @@ for (const id of ['matrix-match-stock-btn','matrix-export-btn','queue-export','q
   assert.match(html, new RegExp(`id="${id}"`), `export UI must include ${id}`);
 }
 assert.match(html, /seller-source-parsers\.js[\s\S]*?seller-export-adapter\.js[\s\S]*?data-service\.js/, 'the export adapter must load before application startup');
-assert.match(html, /20260814-inventorybatch1/g, 'all local assets must share the export deployment version');
+assert.match(html, /20260814-exporthighlight1/g, 'all local assets must share the export deployment version');
 assert.doesNotMatch(html, /class="seller-export-files"/, 'export must reuse the latest stored originals instead of asking for files again');
 assert.match(draftMigration, /source_storage_files jsonb[^]*?seller-originals/, 'seller snapshots must retain immutable original file references');
 assert.match(draftMigration, /save_operations_hub_seller_value_draft[^]*?stage_operations_hub_seller_inventory_match/, 'seller cells and bulk stock matching must create reviewable drafts');
@@ -72,6 +72,25 @@ const smartPatched = adapter.patchSmartstoreRow(smartRow, [
 ], []);
 assert.equal(adapter.cellValue(smartPatched, 'S3', []), '2\n9');
 assert.equal(adapter.cellValue(smartPatched, 'R3', []), '0\n500');
+
+const changedSmartRefs = [];
+adapter.patchSmartstoreRow(smartRow, [
+  {source_row_no:3, source_channel:'smartstore', sellpia_sku_code:'1014-2', seller_option_code:'op2', field_key:'sellpia_current_stock', expected_source_value:3, after_value:9},
+  {source_row_no:3, source_channel:'smartstore', sellpia_sku_code:'1014-2', seller_option_code:'op2', field_key:'sellpia_sale_price', expected_source_value:5400, after_value:5700},
+], [], null, (_, reference) => changedSmartRefs.push(reference));
+assert.deepEqual(changedSmartRefs, ['S3','R3'], 'only successfully modified Smartstore cells must be highlighted');
+
+const styleFixture = '<?xml version="1.0"?><styleSheet><fonts count="2"><font><name val="Arial"/><sz val="10"/></font><font><b/><name val="Arial"/></font></fonts><fills count="2"><fill><patternFill patternType="none"/></fill><fill><patternFill patternType="gray125"/></fill></fills><borders count="2"><border/><border><left style="thin"/></border></borders><cellXfs count="2"><xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0"/><xf numFmtId="4" fontId="0" fillId="0" borderId="1" xfId="0" applyAlignment="1"><alignment horizontal="right"/></xf></cellXfs></styleSheet>';
+const sheetFixture = '<worksheet><sheetData><row r="3"><c r="F3" s="1"><v>5200</v></c><c r="G3" s="1"><v>untouched</v></c><c r="S3"><v>9</v></c></row></sheetData></worksheet>';
+const highlighted = adapter.applyChangeHighlights(sheetFixture, styleFixture, ['F3','S3']);
+assert.match(highlighted.stylesXml, /<fills count="3">[\s\S]*?fgColor rgb="FFFFFF00"/, 'review highlighting must add a fluorescent yellow fill');
+assert.match(highlighted.stylesXml, /<fonts count="3">[\s\S]*?<font><b\/><name val="Arial"\/><sz val="10"\/><\/font>/, 'review highlighting must add a bold version of the original font');
+assert.match(highlighted.stylesXml, /<cellXfs count="4">/, 'one highlighted style must be derived for each original cell style');
+assert.match(highlighted.stylesXml, /<xf (?=[^>]*numFmtId="4")(?=[^>]*fontId="2")(?=[^>]*fillId="2")(?=[^>]*borderId="1")(?=[^>]*applyAlignment="1")(?=[^>]*applyFont="1")(?=[^>]*applyFill="1")[^>]*><alignment horizontal="right"\/><\/xf>/, 'highlighting must preserve number format, border, and alignment');
+assert.match(highlighted.sheetXml, /<c r="F3" s="2">/, 'a changed styled cell must point to its derived review style');
+assert.match(highlighted.sheetXml, /<c r="S3" s="3">/, 'a changed unstyled cell must point to a derived default review style');
+assert.match(highlighted.sheetXml, /<c r="G3" s="1">/, 'an untouched cell must keep its original style');
+assert.match(adapterSource, /applyChangeHighlights\(patched,stylesXml,appliedReferences\)/, 'the XLSX export path must highlight only successfully applied cell references');
 
 const makeRow = '<row r="4"><c r="AD4" t="inlineStr"><is><t>골드</t></is></c><c r="AF4"><v>200</v></c><c r="AG4"><v>3</v></c><c r="AR4"><v>425</v></c></row>';
 const makePatched = adapter.patchMakeshopRow(makeRow, [
