@@ -350,6 +350,18 @@
     return Array.isArray(data) ? data[0] : data;
   }
 
+  async function stageSellerInventoryDraftBatch({sources = [], skus = [], batchId = null, afterSku = null, batchSize = 500} = {}) {
+    const {data, error} = await db.rpc('stage_operations_hub_seller_inventory_match_batch', {
+      p_sources:(sources || []).map(cleanText),
+      p_skus:(skus || []).map(cleanText),
+      p_batch_id:batchId,
+      p_after_sku:cleanText(afterSku) || null,
+      p_batch_size:Math.max(25, Math.min(Number(batchSize) || 500, 500))
+    });
+    if (error) throw error;
+    return Array.isArray(data) ? data[0] : data;
+  }
+
   async function loadSellerDraftRows({sources = [], statuses = ['pending','validated','failed']} = {}) {
     const selectedSources = (sources || []).map(cleanText).filter(Boolean);
     if (!selectedSources.length) return [];
@@ -810,6 +822,7 @@
     retryChangeQueue,
     saveSellerValueDraft,
     stageSellerInventoryDrafts,
+    stageSellerInventoryDraftBatch,
     validateSellerDraftsForExport,
     loadLatestSellerOriginalStatus,
     downloadLatestSellerOriginals,

@@ -1965,11 +1965,31 @@ async function runSellerExport() {
   try {
     if (sellerExportState.action === 'draft') {
       const skus = selectedMatrixSkus();
-      showSellerExportProgress(15, '재고 차이 계산 중', `${skus.length ? `선택 ${formatNumber(skus.length)}개 SKU` : '전체 매트릭스'}에서 판매처별 차이를 찾습니다.`);
-      const result = await liveData.stageSellerInventoryDrafts({sources, skus, batchId});
-      const staged = Number(result?.staged_count || 0);
+      showSellerExportProgress(5, '재고 차이 계산 준비', `${skus.length ? `선택 ${formatNumber(skus.length)}개 SKU` : '전체 매트릭스'}를 안전한 묶음으로 나눠 확인합니다.`);
+      let afterSku = null;
+      let processed = 0;
+      let total = skus.length || 0;
+      let staged = 0;
+      let cancelled = 0;
+      let hasMore = true;
+      while (hasMore) {
+        const result = await liveData.stageSellerInventoryDraftBatch({sources, skus, batchId, afterSku, batchSize:500});
+        const batchProcessed = Number(result?.processed_count || 0);
+        if (!total) total = Number(result?.total_count || 0);
+        processed += batchProcessed;
+        staged += Number(result?.staged_count || 0);
+        cancelled += Number(result?.cancelled_count || 0);
+        afterSku = result?.next_cursor || null;
+        hasMore = Boolean(result?.has_more) && batchProcessed > 0 && afterSku;
+        const ratio = total ? Math.min(processed / total, 1) : 1;
+        showSellerExportProgress(
+          5 + ratio * 90,
+          '재고 수정안 생성 중',
+          `${formatNumber(Math.min(processed, total || processed))} / ${formatNumber(total || processed)} SKU 확인 · 수정안 ${formatNumber(staged)}건 저장`
+        );
+      }
       showSellerExportProgress(100, '수정안 생성 완료', `${formatNumber(staged)}건을 매트릭스 검토 대기로 저장했습니다. 판매처 셀에서 값을 다시 수정할 수 있습니다.`);
-      showToast(staged ? `재고 수정안 ${formatNumber(staged)}건을 만들었습니다.` : '셀피아 재고와 다른 판매처 값이 없습니다.');
+      showToast(staged ? `재고 수정안 ${formatNumber(staged)}건을 만들었습니다.${cancelled ? ` 기존 수정안 ${formatNumber(cancelled)}건은 교체했습니다.` : ''}` : '셀피아 재고와 다른 판매처 값이 없습니다.');
       await Promise.all([loadLiveMatrix(), loadChangeQueue({silent:true})]);
       return;
     }

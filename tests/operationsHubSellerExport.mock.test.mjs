@@ -13,6 +13,7 @@ const draftMigration = fs.readFileSync(new URL('../supabase/migrations/202608141
 const aliasMigration = fs.readFileSync(new URL('../supabase/migrations/20260814154500_operations_hub_export_source_alias.sql', import.meta.url), 'utf8');
 const bulkMigration = fs.readFileSync(new URL('../supabase/migrations/20260814173000_operations_hub_export_bulk_prepare.sql', import.meta.url), 'utf8');
 const conflictMigration = fs.readFileSync(new URL('../supabase/migrations/20260814183000_operations_hub_export_row_conflicts.sql', import.meta.url), 'utf8');
+const inventoryBatchMigration = fs.readFileSync(new URL('../supabase/migrations/20260814190000_operations_hub_inventory_match_batches.sql', import.meta.url), 'utf8');
 
 for (const table of ['operations_hub_export_batches', 'operations_hub_export_items']) {
   assert.match(migration, new RegExp(`create table if not exists public\\.${table}`), `${table} must persist the export audit trail`);
@@ -30,7 +31,7 @@ for (const id of ['matrix-match-stock-btn','matrix-export-btn','queue-export','q
   assert.match(html, new RegExp(`id="${id}"`), `export UI must include ${id}`);
 }
 assert.match(html, /seller-source-parsers\.js[\s\S]*?seller-export-adapter\.js[\s\S]*?data-service\.js/, 'the export adapter must load before application startup');
-assert.match(html, /20260814-exportconflict1/g, 'all local assets must share the export deployment version');
+assert.match(html, /20260814-inventorybatch1/g, 'all local assets must share the export deployment version');
 assert.doesNotMatch(html, /class="seller-export-files"/, 'export must reuse the latest stored originals instead of asking for files again');
 assert.match(draftMigration, /source_storage_files jsonb[^]*?seller-originals/, 'seller snapshots must retain immutable original file references');
 assert.match(draftMigration, /save_operations_hub_seller_value_draft[^]*?stage_operations_hub_seller_inventory_match/, 'seller cells and bulk stock matching must create reviewable drafts');
@@ -42,7 +43,14 @@ assert.match(bulkMigration, /alter function public\.complete_operations_hub_expo
 assert.match(conflictMigration, /p_skipped_items jsonb[^]*?jsonb_to_recordset[^]*?blocking_reason[^]*?status = 'failed'/, 'runtime source conflicts must be finalized as item-level failures');
 assert.doesNotMatch(conflictMigration, /security definer/i, 'runtime conflict finalization must not bypass RLS');
 assert.match(data, /downloadLatestSellerOriginals[^]*?storage\.from\('seller-originals'\)\.download/, 'export must download the latest stored originals');
-assert.match(app, /stageSellerInventoryDrafts[^]*?loadLiveMatrix/, 'inventory matching must stop at a reviewable matrix draft');
+assert.match(app, /stageSellerInventoryDraftBatch[^]*?loadLiveMatrix/, 'inventory matching must stop at a reviewable matrix draft');
+assert.match(data, /stageSellerInventoryDraftBatch[^]*?p_after_sku:[^]*?p_batch_size:/, 'the frontend must stage large inventory matches through cursor batches');
+assert.match(app, /while \(hasMore\)[^]*?processed \/ total[^]*?수정안 생성 중/, 'bulk inventory matching must show real SKU progress for each committed batch');
+assert.match(inventoryBatchMigration, /operations_hub_change_queue_inventory_active_idx[^]*?field_key = 'sellpia_current_stock'/, 'active inventory drafts need a focused replacement index');
+assert.match(inventoryBatchMigration, /with candidates as materialized[^]*?sku_page as materialized[^]*?limit v_batch_size/, 'inventory staging must bound each database transaction');
+assert.equal((inventoryBatchMigration.match(/from public\.operations_hub_matrix_live matrix/g) || []).length, 1, 'each batch must scan the live matrix only once');
+assert.match(inventoryBatchMigration, /cancelled as \([^]*?inserted as \([^]*?processed_count < batch_stats\.total_count/, 'each batch must replace stale drafts and return a real continuation signal');
+assert.doesNotMatch(inventoryBatchMigration, /security definer/i, 'inventory batching must not bypass RLS');
 assert.match(data, /prepareSellerExport[\s\S]*?range\(from, from \+ pageSize - 1\)/, 'large export plans must be read through pagination');
 assert.match(data, /rpc\('prepare_operations_hub_change_export'/, 'the frontend must use the optimized bulk preparation RPC');
 assert.match(data, /completeSellerExport[\s\S]*?confirmChangesApplied/, 'the frontend adapter must expose export and manual apply confirmation');
