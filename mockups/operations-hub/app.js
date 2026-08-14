@@ -1989,8 +1989,9 @@ async function runSellerExport() {
       const ratio = progress.total ? progress.completed / progress.total : 0;
       showSellerExportProgress(9 + ratio * 8, '최신 원본 불러오는 중', progress.name ? `${progress.name} 다운로드 중` : '원본 다운로드 완료');
     });
-    showSellerExportProgress(18, 'DB 반영 계획 생성 중', '검증 완료된 수정안의 원본 위치를 찾습니다.');
-    const items = await liveData.prepareSellerExport({batchId, mode:'change_queue', changeIds, sources});
+    showSellerExportProgress(18, 'DB 반영 계획 생성 중', `${formatNumber(changeIds.length)}건의 원본 위치를 판매처 코드로 확인하고 있습니다.`);
+    const preparedExport = await liveData.prepareSellerExport({batchId, mode:'change_queue', changeIds, sources});
+    const items = preparedExport.items;
     prepared = true;
     const blocked = items.filter(item => item.blocking_reason);
     const exportable = items.filter(item => !item.blocking_reason);

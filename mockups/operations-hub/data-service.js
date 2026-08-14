@@ -429,9 +429,9 @@
   }
 
   async function prepareSellerExport({batchId, mode, changeIds = [], sources = []}) {
-    const {error} = await db.rpc('prepare_operations_hub_export', {
+    if (cleanText(mode) !== 'change_queue') throw new Error('검토한 수정본 내보내기만 지원합니다.');
+    const {data:summaryRows, error} = await db.rpc('prepare_operations_hub_change_export', {
       p_export_batch_id:batchId,
-      p_export_mode:cleanText(mode),
       p_change_ids:(changeIds || []).map(Number),
       p_sources:(sources || []).map(cleanText)
     });
@@ -449,7 +449,7 @@
       items.push(...(data || []));
       if (!data || data.length < pageSize) break;
     }
-    return items;
+    return {items, summary:Array.isArray(summaryRows) ? summaryRows[0] : summaryRows};
   }
 
   async function completeSellerExport({batchId, success, manifest = [], errorMessage = ''}) {

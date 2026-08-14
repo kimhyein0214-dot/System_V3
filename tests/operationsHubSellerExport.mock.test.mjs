@@ -11,6 +11,7 @@ const failureMigration = fs.readFileSync(new URL('../supabase/migrations/2026081
 const partialMigration = fs.readFileSync(new URL('../supabase/migrations/20260814143500_operations_hub_export_partial_success.sql', import.meta.url), 'utf8');
 const draftMigration = fs.readFileSync(new URL('../supabase/migrations/20260814153000_operations_hub_seller_drafts_and_originals.sql', import.meta.url), 'utf8');
 const aliasMigration = fs.readFileSync(new URL('../supabase/migrations/20260814154500_operations_hub_export_source_alias.sql', import.meta.url), 'utf8');
+const bulkMigration = fs.readFileSync(new URL('../supabase/migrations/20260814173000_operations_hub_export_bulk_prepare.sql', import.meta.url), 'utf8');
 
 for (const table of ['operations_hub_export_batches', 'operations_hub_export_items']) {
   assert.match(migration, new RegExp(`create table if not exists public\\.${table}`), `${table} must persist the export audit trail`);
@@ -28,14 +29,19 @@ for (const id of ['matrix-match-stock-btn','matrix-export-btn','queue-export','q
   assert.match(html, new RegExp(`id="${id}"`), `export UI must include ${id}`);
 }
 assert.match(html, /seller-source-parsers\.js[\s\S]*?seller-export-adapter\.js[\s\S]*?data-service\.js/, 'the export adapter must load before application startup');
-assert.match(html, /20260814-sellerdraft2/g, 'all local assets must share the export deployment version');
+assert.match(html, /20260814-exportperf1/g, 'all local assets must share the export deployment version');
 assert.doesNotMatch(html, /class="seller-export-files"/, 'export must reuse the latest stored originals instead of asking for files again');
 assert.match(draftMigration, /source_storage_files jsonb[^]*?seller-originals/, 'seller snapshots must retain immutable original file references');
 assert.match(draftMigration, /save_operations_hub_seller_value_draft[^]*?stage_operations_hub_seller_inventory_match/, 'seller cells and bulk stock matching must create reviewable drafts');
 assert.match(aliasMigration, /source\.source_channel as export_source_channel[^]*?r\.export_source_channel/, 'queue source and expanded export source must never share an ambiguous alias');
+assert.match(bulkMigration, /prepare_operations_hub_change_export[^]*?set statement_timeout = '45s'/, 'bulk export preparation must have a function-scoped timeout');
+assert.match(bulkMigration, /source_specific as materialized[^]*?seller_product_code[^]*?global_changes/, 'source-specific drafts must use their stored seller codes without rescanning the matrix');
+assert.match(bulkMigration, /returns table\(item_count integer, blocked_count integer, batch_status text\)/, 'bulk preparation must return only a compact summary');
+assert.match(bulkMigration, /alter function public\.complete_operations_hub_export[^]*?statement_timeout = '45s'/, 'bulk export completion must allow the queue status update to finish');
 assert.match(data, /downloadLatestSellerOriginals[^]*?storage\.from\('seller-originals'\)\.download/, 'export must download the latest stored originals');
 assert.match(app, /stageSellerInventoryDrafts[^]*?loadLiveMatrix/, 'inventory matching must stop at a reviewable matrix draft');
 assert.match(data, /prepareSellerExport[\s\S]*?range\(from, from \+ pageSize - 1\)/, 'large export plans must be read through pagination');
+assert.match(data, /rpc\('prepare_operations_hub_change_export'/, 'the frontend must use the optimized bulk preparation RPC');
 assert.match(data, /completeSellerExport[\s\S]*?confirmChangesApplied/, 'the frontend adapter must expose export and manual apply confirmation');
 assert.match(app, /buildExportArchive[\s\S]*?completeSellerExport\(\{batchId, success:true/, 'files must be built before the queue is marked exported');
 assert.match(app, /confirmChangesApplied/, 'marketplace upload confirmation must be a separate action');
