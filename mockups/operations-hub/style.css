@@ -150,6 +150,7 @@ body.matrix-cell-selecting{user-select:none}
 @media(max-width:760px){.mapping-result-item>button{grid-template-columns:1fr}.mapping-result-meta{justify-items:start}.product-drawer{width:calc(100vw - 16px)}}
 
 /* Excel code-list lookup */
+.matrix-search-sources{height:32px;display:flex;align-items:center;gap:3px;margin:0;border:0;padding:0}.matrix-search-sources legend{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0,0,0,0)}.matrix-search-sources label{height:26px;display:inline-flex;align-items:center;gap:3px;border:1px solid var(--line);border-radius:13px;background:#fff;padding:0 7px;color:#64748b;font-size:8px;font-weight:900;cursor:pointer;white-space:nowrap}.matrix-search-sources label:has(input:checked){border-color:#83a9e2;background:#edf4ff;color:#1558c0}.matrix-search-sources input{width:11px;height:11px;margin:0;accent-color:var(--blue)}.matrix-search-sources label:has(input:disabled){opacity:.45;cursor:not-allowed}
 .matrix-view-tabs .code-list-tab{margin-left:4px;border:1px solid #9ebbe5;border-bottom-color:#9ebbe5;border-radius:6px 6px 0 0;background:#f3f7ff;color:#1558c0}
 .matrix-view-tabs .code-list-tab:hover,.matrix-view-tabs .code-list-tab.active{border-color:var(--blue);background:#e8f1ff;color:#0f4ea8}
 .code-list-filter-pill{height:32px;display:inline-flex;align-items:center;gap:5px;border:1px solid #83a9e2;border-radius:15px;background:#edf4ff;padding:0 8px;color:#1558c0;font-size:8px;cursor:pointer}

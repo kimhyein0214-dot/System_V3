@@ -75,7 +75,7 @@ const pendingCount = document.getElementById('pending-count');
 const changeModal = document.getElementById('change-modal');
 const pendingChanges = [];
 const liveData = window.SystemV3Data;
-const matrixState = {page:1, search:'', status:'all', sort:'sku_asc', total:0, loading:false, requestId:0, codeListSkus:[], codeListName:''};
+const matrixState = {page:1, search:'', searchSources:['sellpia','smartstore','makeshop','ably'], status:'all', sort:'sku_asc', total:0, loading:false, requestId:0, codeListSkus:[], codeListName:''};
 const matrixRowsBySku = new Map();
 const matrixTable = document.querySelector('.matrix-table');
 const matrixCellSelection = {anchor:null, focus:null, dragging:false};
@@ -383,6 +383,7 @@ async function loadLiveMatrix({resetPage = false} = {}) {
     const result = await liveData.loadProducts({
       page:matrixState.page,
       search:matrixState.search,
+      searchSources:matrixState.searchSources,
       status:matrixState.status,
       sort:matrixState.sort,
       skus:matrixState.codeListSkus
@@ -1177,6 +1178,7 @@ const codeListResult = document.getElementById('code-list-result');
 const codeListApply = document.getElementById('code-list-apply');
 const codeListFilterPill = document.getElementById('code-list-filter-pill');
 const codeListSearchInput = document.getElementById('matrix-search');
+const matrixSearchSourceInputs = [...document.querySelectorAll('#matrix-search-sources input[type="checkbox"]')];
 const codeListSession = {fileName:'', entries:[], invalid:[], resolved:[], skus:[]};
 const CODE_LIST_SOURCES = [
   {key:'sellpia', label:'셀피아', aliases:['셀피아','셀피아sku','셀피아코드']},
@@ -1328,6 +1330,7 @@ function updateCodeListFilterUi() {
   document.getElementById('code-list-filter-count').textContent = active ? `${formatNumber(matrixState.codeListSkus.length)}개 SKU` : '0개 SKU';
   document.getElementById('code-list-open').classList.toggle('active', active);
   codeListSearchInput.disabled = active;
+  matrixSearchSourceInputs.forEach(input => { input.disabled = active; });
   codeListSearchInput.placeholder = active
     ? `${matrixState.codeListName || '엑셀 목록'} 순서로 모아보는 중`
     : 'SKU / 자사코드 / 상품명 / 상품코드-옵션코드 검색';
@@ -1387,6 +1390,17 @@ document.getElementById('matrix-search').addEventListener('input', event => {
   clearTimeout(matrixSearchTimer);
   matrixSearchTimer = setTimeout(() => loadLiveMatrix({resetPage:true}), 280);
 });
+
+matrixSearchSourceInputs.forEach(input => input.addEventListener('change', event => {
+  const selected = matrixSearchSourceInputs.filter(item => item.checked).map(item => item.value);
+  if (!selected.length) {
+    event.target.checked = true;
+    showToast('검색 대상 판매처를 하나 이상 선택해 주세요.');
+    return;
+  }
+  matrixState.searchSources = selected;
+  if (matrixState.search) loadLiveMatrix({resetPage:true});
+}));
 
 document.getElementById('matrix-status-filter').addEventListener('change', event => {
   activeView.status = event.target.value;
