@@ -74,6 +74,7 @@ const changeBar = document.getElementById('change-bar');
 const pendingCount = document.getElementById('pending-count');
 const changeModal = document.getElementById('change-modal');
 const pendingChanges = [];
+let pendingChangeBatchId = null;
 const liveData = window.SystemV3Data;
 const matrixState = {page:1, search:'', searchSources:['sellpia','smartstore','makeshop','ably'], status:'all', sort:'sku_asc', total:0, loading:false, requestId:0, codeListSkus:[], codeListRows:[], codeListName:''};
 const matrixRowsBySku = new Map();
@@ -479,6 +480,14 @@ function channelCard(source) {
   return className ? document.querySelector(`.sync-list .channel-logo.${className}`)?.closest('div') : null;
 }
 
+function updateJobsErrorBadge() {
+  const badge = document.getElementById('jobs-error-badge');
+  const sourceErrors = Number(badge.dataset.sourceErrors || 0);
+  const queueErrors = Number(badge.dataset.queueErrors || 0);
+  badge.textContent = formatNumber(sourceErrors + queueErrors);
+  badge.classList.toggle('warn-badge', sourceErrors + queueErrors > 0);
+}
+
 async function loadLiveSourceStatus() {
   if (!liveData) return;
   try {
@@ -522,7 +531,8 @@ async function loadLiveSourceStatus() {
       taskList.innerHTML = '<article><div class="task-row"><b>진행 중인 서버 작업 없음</b><span>정상</span></div><p>새 업로드나 동기화 작업을 시작하면 여기에 진행률이 표시됩니다.</p></article>';
     }
     const failedCount = (events || []).filter(event => event.status === 'ERROR').length;
-    document.getElementById('jobs-error-badge').textContent = formatNumber(failedCount);
+    document.getElementById('jobs-error-badge').dataset.sourceErrors = failedCount;
+    updateJobsErrorBadge();
     document.getElementById('dashboard-failed-alert').textContent = failedCount ? `최근 실패 작업 ${formatNumber(failedCount)}건` : '최근 실패 작업 없음';
   } catch (error) {
     console.error('operations hub source status load failed', error);
@@ -773,6 +783,7 @@ pricePopover.addEventListener('mouseenter', () => clearTimeout(pricePopoverTimer
 pricePopover.addEventListener('mouseleave', scheduleHidePricePopover);
 
 function addPendingChange(change) {
+  pendingChangeBatchId = null;
   const duplicate = pendingChanges.find(item => item.sku === change.sku && item.field === change.field);
   if (duplicate) {
     duplicate.after = change.after;
@@ -997,6 +1008,7 @@ document.addEventListener('paste', event => {
 
 function clearPendingChanges() {
   pendingChanges.length = 0;
+  pendingChangeBatchId = null;
   pendingCount.textContent = '0';
   changeBar.hidden = true;
   document.querySelectorAll('.editable-cell.pending').forEach(cell => cell.classList.remove('pending'));
@@ -1250,6 +1262,15 @@ const CODE_LIST_SOURCES = [
 
 function normalizeCodeListHeader(value) {
   return String(value || '').trim().toLowerCase().replace(/[\s_\-\/]/g, '');
+}
+
+function createRequestId() {
+  if (window.crypto?.randomUUID) return window.crypto.randomUUID();
+  return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, character => {
+    const random = Math.random() * 16 | 0;
+    const value = character === 'x' ? random : (random & 0x3 | 0x8);
+    return value.toString(16);
+  });
 }
 
 function resetCodeListImport() {
@@ -1534,12 +1555,18 @@ document.querySelectorAll('[data-drawer-link-source]').forEach(button => button.
   });
 }));
 
+document.querySelectorAll('.drawer-section textarea[data-seller-name]').forEach(input => input.addEventListener('input', () => {
+  delete input.closest('.drawer-section').dataset.queueBatchId;
+}));
+
 document.querySelectorAll('.seller-draft-save').forEach(button => button.addEventListener('click', async () => {
   const section = button.closest('.drawer-section');
   const source = section.dataset.source;
   const sectionKey = CHANNEL_SECTION_KEYS[source];
   const sku = productDrawer.dataset.sku;
   const queue = button.dataset.queue === 'true';
+  const batchId = section.dataset.queueBatchId || createRequestId();
+  section.dataset.queueBatchId = batchId;
   button.disabled = true;
   const originalLabel = button.textContent;
   button.textContent = queue ? '대기 등록 중' : '초안 저장 중';
@@ -1551,8 +1578,10 @@ document.querySelectorAll('.seller-draft-save').forEach(button => button.addEven
       optionCode:section.dataset.optionCode,
       productName:document.getElementById(`drawer-${sectionKey}-name`).value,
       optionName:document.getElementById(`drawer-${sectionKey}-option-name`).value,
-      queue
+      queue,
+      batchId
     });
+    delete section.dataset.queueBatchId;
     await loadLiveMatrix();
     const row = matrixBody.querySelector(`tr[data-sku="${CSS.escape(sku)}"]`);
     if (row) openProductDrawer(row);
@@ -1605,7 +1634,8 @@ document.getElementById('apply-sellpia-changes').addEventListener('click', async
   button.disabled = true;
   button.textContent = 'DB 저장 중...';
   try {
-    const result = await liveData.saveSellpiaChanges(pendingChanges);
+    pendingChangeBatchId ||= createRequestId();
+    const result = await liveData.saveSellpiaChanges(pendingChanges, pendingChangeBatchId);
     changeModal.hidden = true;
     clearPendingChanges();
     await refreshLiveData();
@@ -1619,11 +1649,199 @@ document.getElementById('apply-sellpia-changes').addEventListener('click', async
   }
 });
 
+const QUEUE_FIELD_LABELS = {
+  sellpia_own_code:'셀피아 자사코드',
+  sellpia_product_name:'셀피아 상품명',
+  sellpia_option_name:'셀피아 옵션명',
+  sellpia_current_stock:'판매처 재고',
+  sellpia_sale_price:'판매처 가격',
+  sellpia_image:'셀피아 이미지',
+  seller_product_name:'판매처 상품명',
+  seller_option_name:'판매처 옵션명'
+};
+const QUEUE_STATUS_LABELS = {
+  pending:'검증 대기', validated:'검증 완료', processing:'처리 중', applied:'반영 완료',
+  failed:'실패', saved:'DB 내부 저장', cancelled:'취소'
+};
+const QUEUE_EVENT_LABELS = {
+  created:'변경 생성', validated:'검증 완료', processing:'처리 시작', applied:'반영 완료',
+  failed:'실패', cancelled:'취소', retried:'재시도 등록', status_changed:'상태 변경'
+};
+const queueState = {rows:[], loading:false, selectedChangeId:null};
+const queueBody = document.getElementById('queue-body');
+
+function queueScalar(value) {
+  if (value === null || value === undefined || value === '') return '-';
+  if (typeof value === 'object') return JSON.stringify(value);
+  return String(value);
+}
+
+function queueTargetMarkup(row) {
+  const targets = Array.isArray(row.target_channels) ? row.target_channels : [];
+  if (!targets.length) return '<span class="queue-status saved">DB 내부</span>';
+  return `<span class="queue-targets">${targets.map(target => `<i>${escapeHtml(CHANNEL_LABELS[target] || target)}</i>`).join('')}</span>`;
+}
+
+function queueMessage(row) {
+  const validation = Array.isArray(row.validation_errors) ? row.validation_errors.join(' · ') : '';
+  return row.error_message || validation || row.status_message || '-';
+}
+
+function renderChangeQueue(rows) {
+  queueState.rows = rows;
+  if (!rows.length) {
+    queueBody.innerHTML = '<tr class="queue-empty"><td colspan="10">현재 조건에 해당하는 변경대기가 없습니다.</td></tr>';
+  } else {
+    queueBody.innerHTML = rows.map(row => {
+      const selectable = ['pending','validated','failed'].includes(row.status);
+      const before = escapeHtml(queueScalar(row.before_value));
+      const after = escapeHtml(queueScalar(row.after_value));
+      const message = escapeHtml(queueMessage(row));
+      const selected = Number(row.change_id) === Number(queueState.selectedChangeId);
+      return `<tr data-change-id="${Number(row.change_id)}" class="${selected ? 'selected' : ''}" title="배치 ${escapeHtml(row.change_batch_id || '-')}">
+        <td><input class="queue-row-check" type="checkbox" value="${Number(row.change_id)}" ${selectable ? '' : 'disabled'} aria-label="변경 ${Number(row.change_id)} 선택"></td>
+        <td>#${Number(row.change_id)}</td>
+        <td>${escapeHtml(row.sellpia_sku_code)}</td>
+        <td>${queueTargetMarkup(row)}</td>
+        <td>${escapeHtml(QUEUE_FIELD_LABELS[row.field_key] || row.field_key)}</td>
+        <td class="queue-value"><b title="${before}">${before}</b><em title="${after}">→ ${after}</em></td>
+        <td><span class="queue-status ${escapeHtml(row.status)}">${escapeHtml(QUEUE_STATUS_LABELS[row.status] || row.status)}</span></td>
+        <td>${Number(row.retry_count || 0)} / ${Number(row.max_retry_count || 3)}</td>
+        <td>${formatLiveTime(row.requested_at)}</td>
+        <td class="queue-message" title="${message}">${message}</td>
+      </tr>`;
+    }).join('');
+  }
+  document.getElementById('queue-result-count').textContent = `${formatNumber(rows.length)}건 표시`;
+  document.getElementById('queue-select-all').checked = false;
+  updateQueueSelection();
+}
+
+function selectedQueueRows() {
+  const ids = new Set([...queueBody.querySelectorAll('.queue-row-check:checked')].map(check => Number(check.value)));
+  return queueState.rows.filter(row => ids.has(Number(row.change_id)));
+}
+
+function updateQueueSelection() {
+  const selected = selectedQueueRows();
+  document.getElementById('queue-selected-count').textContent = selected.length;
+  document.getElementById('queue-validate').disabled = !selected.some(row => ['pending','failed'].includes(row.status));
+  document.getElementById('queue-cancel').disabled = !selected.some(row => ['pending','validated','failed'].includes(row.status));
+  document.getElementById('queue-retry').disabled = !selected.some(row => row.status === 'failed' && Number(row.retry_count) < Number(row.max_retry_count));
+}
+
+async function loadChangeQueue({silent = false} = {}) {
+  if (!liveData?.loadChangeQueue || queueState.loading) return;
+  queueState.loading = true;
+  const badge = document.getElementById('queue-live-status');
+  if (!silent) {
+    badge.className = 'live-data-badge loading';
+    badge.textContent = 'DB 조회 중';
+    queueBody.innerHTML = '<tr class="queue-empty"><td colspan="10">변경대기를 불러오는 중입니다.</td></tr>';
+  }
+  try {
+    const [queue, stats] = await Promise.all([
+      liveData.loadChangeQueue({
+        status:document.getElementById('queue-status-filter').value,
+        source:document.getElementById('queue-source-filter').value
+      }),
+      liveData.loadChangeQueueStats()
+    ]);
+    renderChangeQueue(queue.rows);
+    document.getElementById('queue-result-count').textContent = `${formatNumber(queue.count)}건 중 ${formatNumber(queue.rows.length)}건 표시`;
+    document.getElementById('queue-active-count').textContent = formatNumber(stats.active || 0);
+    document.getElementById('queue-validated-count').textContent = formatNumber(stats.validated || 0);
+    document.getElementById('queue-failed-count').textContent = formatNumber(stats.failed || 0);
+    document.getElementById('queue-applied-count').textContent = formatNumber(stats.applied || 0);
+    document.getElementById('jobs-error-badge').dataset.queueErrors = Number(stats.failed || 0);
+    updateJobsErrorBadge();
+    badge.className = 'live-data-badge connected';
+    badge.textContent = `LIVE · ${formatNumber(queue.count)}건`;
+  } catch (error) {
+    console.error('change queue load failed', error);
+    badge.className = 'live-data-badge error';
+    badge.textContent = 'DB 조회 오류';
+    queueBody.innerHTML = `<tr class="queue-empty"><td colspan="10">변경대기를 불러오지 못했습니다. ${escapeHtml(error?.message || error)}</td></tr>`;
+  } finally {
+    queueState.loading = false;
+  }
+}
+
+async function openQueueEvents(changeId) {
+  const panel = document.getElementById('queue-event-panel');
+  const list = document.getElementById('queue-event-list');
+  queueState.selectedChangeId = Number(changeId);
+  queueBody.querySelectorAll('tr[data-change-id]').forEach(row => row.classList.toggle('selected', Number(row.dataset.changeId) === queueState.selectedChangeId));
+  document.getElementById('queue-event-title').textContent = `변경 #${queueState.selectedChangeId} 이력`;
+  panel.hidden = false;
+  list.innerHTML = '<span class="queue-event-empty">이력을 불러오는 중입니다.</span>';
+  try {
+    const events = await liveData.loadChangeEvents(queueState.selectedChangeId);
+    list.innerHTML = events.length ? events.map(event => `<article><time>${formatLiveTime(event.created_at)}</time><p><b>${escapeHtml(QUEUE_EVENT_LABELS[event.event_type] || event.event_type)}</b><span>${escapeHtml(event.message || [event.from_status, event.to_status].filter(Boolean).join(' → ') || '-')}</span></p></article>`).join('') : '<span class="queue-event-empty">기록된 이벤트가 없습니다.</span>';
+  } catch (error) {
+    list.innerHTML = `<span class="queue-event-empty">이력 조회 실패 · ${escapeHtml(error?.message || error)}</span>`;
+  }
+}
+
+async function runQueueAction(action, button) {
+  const selected = selectedQueueRows();
+  const eligible = selected.filter(row => action === 'validate'
+    ? ['pending','failed'].includes(row.status)
+    : action === 'cancel'
+      ? ['pending','validated','failed'].includes(row.status)
+      : row.status === 'failed' && Number(row.retry_count) < Number(row.max_retry_count));
+  if (!eligible.length) return;
+  if (action === 'cancel' && !window.confirm(`${eligible.length}건의 판매처 반영 대기를 취소할까요? DB에 저장된 운영값은 유지됩니다.`)) return;
+  const ids = eligible.map(row => Number(row.change_id));
+  const originalLabel = button.textContent;
+  button.disabled = true;
+  button.textContent = action === 'validate' ? '검증 중…' : action === 'cancel' ? '취소 중…' : '재시도 등록 중…';
+  try {
+    const result = action === 'validate'
+      ? await liveData.validateChangeQueue(ids)
+      : action === 'cancel'
+        ? await liveData.cancelChangeQueue(ids)
+        : await liveData.retryChangeQueue(ids);
+    await loadChangeQueue();
+    if (action === 'validate') showToast(`검증 완료 ${Number(result?.validated_count || 0)}건 · 실패 ${Number(result?.failed_count || 0)}건`);
+    else if (action === 'cancel') showToast(`${Number(result?.cancelled_count || 0)}건을 취소했습니다.`);
+    else showToast(`재시도 ${Number(result?.retried_count || 0)}건 · 제외 ${Number(result?.skipped_count || 0)}건`);
+  } catch (error) {
+    console.error(`change queue ${action} failed`, error);
+    showToast(`변경대기 작업 실패: ${error?.message || error}`);
+  } finally {
+    button.disabled = false;
+    button.textContent = originalLabel;
+    updateQueueSelection();
+  }
+}
+
+queueBody.addEventListener('change', event => {
+  if (event.target.matches('.queue-row-check')) updateQueueSelection();
+});
+queueBody.addEventListener('click', event => {
+  if (event.target.closest('.queue-row-check')) return;
+  const row = event.target.closest('tr[data-change-id]');
+  if (row) openQueueEvents(row.dataset.changeId);
+});
+document.getElementById('queue-select-all').addEventListener('change', event => {
+  queueBody.querySelectorAll('.queue-row-check:not(:disabled)').forEach(check => { check.checked = event.target.checked; });
+  updateQueueSelection();
+});
+document.getElementById('queue-status-filter').addEventListener('change', () => loadChangeQueue());
+document.getElementById('queue-source-filter').addEventListener('change', () => loadChangeQueue());
+document.getElementById('queue-refresh').addEventListener('click', () => loadChangeQueue());
+document.getElementById('queue-validate').addEventListener('click', event => runQueueAction('validate', event.currentTarget));
+document.getElementById('queue-cancel').addEventListener('click', event => runQueueAction('cancel', event.currentTarget));
+document.getElementById('queue-retry').addEventListener('click', event => runQueueAction('retry', event.currentTarget));
+document.getElementById('queue-event-close').addEventListener('click', () => { document.getElementById('queue-event-panel').hidden = true; });
+
 function showPage(pageId) {
   document.querySelectorAll('.page').forEach(page => page.classList.remove('active-page'));
   document.querySelectorAll('.nav-item').forEach(item => item.classList.toggle('active', item.dataset.page === pageId));
   const target = document.getElementById(pageId);
   if (target) target.classList.add('active-page');
+  if (pageId === 'jobs') loadChangeQueue();
   document.querySelector('.content-area').scrollTop = 0;
 }
 
@@ -1756,6 +1974,7 @@ document.addEventListener('keydown', event => {
   if (event.key === 'Escape' && !viewSettingsModal.hidden) closeViewSettings();
   if (event.key === 'Escape' && !codeListModal.hidden) closeCodeListModal();
   if (event.key === 'Escape' && !mappingPopover.hidden) closeMappingSearch();
+  if (event.key === 'Escape' && !document.getElementById('queue-event-panel').hidden) document.getElementById('queue-event-panel').hidden = true;
   if (event.key === 'Escape' && productDrawer.classList.contains('open')) closeProductDrawer();
 });
 
@@ -1767,6 +1986,9 @@ updateCodeListFilterUi();
 if (liveData) {
   refreshLiveData({resetPage:true});
   window.setInterval(() => Promise.all([loadLiveSourceStatus(), loadLiveDashboardMetrics()]), 60000);
+  window.setInterval(() => {
+    if (document.getElementById('jobs').classList.contains('active-page')) loadChangeQueue({silent:true});
+  }, 30000);
 } else {
   setMatrixConnection('error', 'DB 모듈 없음');
 }

@@ -146,7 +146,7 @@
     return data;
   }
 
-  async function saveSellpiaChanges(changes) {
+  async function saveSellpiaChanges(changes, batchId = null) {
     const grouped = new Map();
     for (const change of changes || []) {
       if (!change?.sku || !change?.fieldKey) continue;
@@ -162,14 +162,15 @@
     for (const [sku, items] of grouped) {
       const {data, error} = await db.rpc('apply_operations_hub_sellpia_changes', {
         p_sku:sku,
-        p_changes:items
+        p_changes:items,
+        p_batch_id:batchId
       });
       if (error) throw error;
       const result = Array.isArray(data) ? data[0] : data;
       savedCount += Number(result?.saved_count || items.length);
       queuedCount += Number(result?.queued_count || 0);
     }
-    return {savedCount, queuedCount, productCount:grouped.size};
+    return {savedCount, queuedCount, productCount:grouped.size, batchId};
   }
 
   async function searchSellerItems(source, query, limit = 20) {
@@ -214,7 +215,7 @@
     return Array.isArray(data) ? data[0] : data;
   }
 
-  async function saveSellerListing({sku, source, productCode, optionCode = '', productName = '', optionName = '', queue = false}) {
+  async function saveSellerListing({sku, source, productCode, optionCode = '', productName = '', optionName = '', queue = false, batchId = null}) {
     const {data, error} = await db.rpc('save_operations_hub_seller_listing', {
       p_sku:cleanText(sku),
       p_source:cleanText(source),
@@ -222,8 +223,72 @@
       p_option_code:cleanText(optionCode),
       p_product_name:cleanText(productName),
       p_option_name:cleanText(optionName),
-      p_queue:Boolean(queue)
+      p_queue:Boolean(queue),
+      p_batch_id:batchId
     });
+    if (error) throw error;
+    return Array.isArray(data) ? data[0] : data;
+  }
+
+  async function loadChangeQueue({status = 'active', source = 'all', limit = 250} = {}) {
+    let query = db
+      .from('operations_hub_change_queue')
+      .select('change_id,change_batch_id,sellpia_sku_code,field_key,before_value,after_value,target_channels,status,requested_by,requested_at,processed_at,error_message,source_channel,seller_product_code,seller_option_code,validation_errors,validated_at,retry_count,max_retry_count,last_attempt_at,next_retry_at,cancelled_at,cancelled_by,status_message,updated_at', {count:'exact'})
+      .order('updated_at', {ascending:false})
+      .order('change_id', {ascending:false})
+      .limit(Math.max(1, Math.min(Number(limit) || 250, 500)));
+    if (status === 'active') query = query.in('status', ['pending','validated','processing','failed']);
+    else if (status !== 'all') query = query.eq('status', cleanText(status));
+    if (source !== 'all') query = query.contains('target_channels', [cleanText(source)]);
+    const {data, error, count} = await query;
+    if (error) throw error;
+    return {rows:data || [], count:Number(count || 0)};
+  }
+
+  async function loadChangeQueueStats() {
+    const statuses = ['pending','validated','processing','failed','applied','saved','cancelled'];
+    const counts = await Promise.all(statuses.map(async status => {
+      const {error, count} = await db
+        .from('operations_hub_change_queue')
+        .select('change_id', {count:'exact', head:true})
+        .eq('status', status);
+      if (error) throw error;
+      return [status, Number(count || 0)];
+    }));
+    const result = Object.fromEntries(counts);
+    result.active = result.pending + result.validated + result.processing + result.failed;
+    return result;
+  }
+
+  async function loadChangeEvents(changeId) {
+    const {data, error} = await db
+      .from('operations_hub_change_events')
+      .select('event_id,change_id,change_batch_id,event_type,from_status,to_status,message,payload,actor,created_at')
+      .eq('change_id', Number(changeId))
+      .order('created_at', {ascending:false})
+      .order('event_id', {ascending:false})
+      .limit(100);
+    if (error) throw error;
+    return data || [];
+  }
+
+  async function validateChangeQueue(changeIds) {
+    const {data, error} = await db.rpc('validate_operations_hub_changes', {p_change_ids:(changeIds || []).map(Number)});
+    if (error) throw error;
+    return Array.isArray(data) ? data[0] : data;
+  }
+
+  async function cancelChangeQueue(changeIds, reason = '사용자 취소') {
+    const {data, error} = await db.rpc('cancel_operations_hub_changes', {
+      p_change_ids:(changeIds || []).map(Number),
+      p_reason:cleanText(reason) || '사용자 취소'
+    });
+    if (error) throw error;
+    return Array.isArray(data) ? data[0] : data;
+  }
+
+  async function retryChangeQueue(changeIds) {
+    const {data, error} = await db.rpc('retry_operations_hub_changes', {p_change_ids:(changeIds || []).map(Number)});
     if (error) throw error;
     return Array.isArray(data) ? data[0] : data;
   }
@@ -533,6 +598,12 @@
     resolveCodeEntries,
     linkSellerItem,
     saveSellerListing,
+    loadChangeQueue,
+    loadChangeQueueStats,
+    loadChangeEvents,
+    validateChangeQueue,
+    cancelChangeQueue,
+    retryChangeQueue,
     uploadSellpiaImage,
     uploadSellpiaSnapshot,
     uploadSellerSnapshot

@@ -7,7 +7,7 @@
     <title>System V3 · 상품 운영 허브</title>
     <link rel="preconnect" href="https://cdnjs.cloudflare.com" crossorigin>
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/pretendard/1.3.9/static/pretendard.css">
-    <link rel="stylesheet" href="./style.css?v=20260814-codelistrows1">
+    <link rel="stylesheet" href="./style.css?v=20260814-changeworkflow1">
   </head>
   <body>
     <div class="app-shell">
@@ -45,7 +45,7 @@
             <button class="nav-item" data-page="inventory"><i>04</i><span>재고조사</span></button>
             <button class="nav-item" data-page="channels"><i>05</i><span>판매처 동기화</span></button>
             <button class="nav-item" data-page="attributes"><i>06</i><span>상품 속성·태그</span></button>
-            <button class="nav-item" data-page="jobs"><i>07</i><span>작업 현황·로그</span><b id="jobs-error-badge">-</b></button>
+            <button class="nav-item" data-page="jobs"><i>07</i><span>변경대기·로그</span><b id="jobs-error-badge">-</b></button>
           </nav>
 
           <div class="side-section">
@@ -222,7 +222,32 @@
           <div id="inventory" class="page table-page" data-title="재고조사" data-copy="조사수량과 오늘 피킹·미송서랍 수량을 합산해 실재고를 계산합니다."></div>
           <div id="channels" class="page table-page" data-title="판매처 동기화" data-copy="판매처별 재고·가격 반영 범위와 실행 상태를 관리합니다."></div>
           <div id="attributes" class="page table-page" data-title="상품 속성·태그" data-copy="소재·상품군·형태와 운영 태그를 상품코드 기준으로 관리합니다."></div>
-          <div id="jobs" class="page table-page" data-title="작업 현황·로그" data-copy="업로드와 동기화 작업의 진행률, 처리 결과, 오류를 확인합니다."></div>
+          <div id="jobs" class="page queue-page">
+            <div class="page-head"><div><h2>변경대기·감사 로그</h2><p>DB에 저장된 판매처 반영 대상을 검증하고 취소·재시도하며 전체 상태 이력을 확인합니다.</p></div><div id="queue-live-status" class="live-data-badge loading">DB 조회 중</div></div>
+            <section class="queue-summary" aria-label="변경대기 상태 요약">
+              <article><span>처리 대상</span><b id="queue-active-count">-</b><em>대기·검증·처리·실패</em></article>
+              <article class="blue"><span>검증 완료</span><b id="queue-validated-count">-</b><em>내보내기 가능</em></article>
+              <article class="danger"><span>실패</span><b id="queue-failed-count">-</b><em>재시도 필요</em></article>
+              <article class="good"><span>반영 완료</span><b id="queue-applied-count">-</b><em>감사이력 보존</em></article>
+            </section>
+            <div class="queue-toolbar">
+              <select id="queue-status-filter" aria-label="변경 상태 필터"><option value="active">처리 대상 전체</option><option value="pending">검증 대기</option><option value="validated">검증 완료</option><option value="processing">처리 중</option><option value="failed">실패</option><option value="applied">반영 완료</option><option value="saved">DB 내부 저장</option><option value="cancelled">취소</option><option value="all">전체 이력</option></select>
+              <select id="queue-source-filter" aria-label="판매처 필터"><option value="all">전체 판매처</option><option value="smartstore">스마트스토어</option><option value="makeshop">메이크샵</option><option value="ably">에이블리</option></select>
+              <span class="queue-selected">선택 <b id="queue-selected-count">0</b>건</span>
+              <button class="btn" id="queue-refresh">새로고침</button>
+              <button class="btn" id="queue-retry" disabled>실패 재시도</button>
+              <button class="btn danger" id="queue-cancel" disabled>선택 취소</button>
+              <button class="btn primary" id="queue-validate" disabled>선택 검증</button>
+            </div>
+            <div class="queue-table-shell">
+              <table class="queue-table">
+                <thead><tr><th><input id="queue-select-all" type="checkbox" aria-label="변경대기 전체 선택"></th><th>ID</th><th>셀피아 SKU</th><th>대상</th><th>필드</th><th>변경값</th><th>상태</th><th>재시도</th><th>요청시각</th><th>메시지</th></tr></thead>
+                <tbody id="queue-body"><tr class="queue-empty"><td colspan="10">변경대기를 불러오는 중입니다.</td></tr></tbody>
+              </table>
+            </div>
+            <div class="queue-foot"><span id="queue-result-count">0건</span><p>행을 누르면 해당 변경의 생성·검증·취소·재시도·완료 이력을 확인할 수 있습니다.</p></div>
+            <section id="queue-event-panel" class="queue-event-panel" hidden><div><h3 id="queue-event-title">변경 이력</h3><button id="queue-event-close" aria-label="변경 이력 닫기">×</button></div><div id="queue-event-list"></div></section>
+          </div>
         </section>
       </main>
     </div>
@@ -294,8 +319,8 @@
     <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.112.3/dist/umd/supabase.js"></script>
-    <script src="./seller-source-parsers.js?v=20260814-codelistrows1"></script>
-    <script src="./data-service.js?v=20260814-codelistrows1"></script>
-    <script src="./app.js?v=20260814-codelistrows1"></script>
+    <script src="./seller-source-parsers.js?v=20260814-changeworkflow1"></script>
+    <script src="./data-service.js?v=20260814-changeworkflow1"></script>
+    <script src="./app.js?v=20260814-changeworkflow1"></script>
   </body>
 </html>
