@@ -7,7 +7,7 @@
     <title>System V3 · 상품 운영 허브</title>
     <link rel="preconnect" href="https://cdnjs.cloudflare.com" crossorigin>
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/pretendard/1.3.9/static/pretendard.css">
-    <link rel="stylesheet" href="./style.css?v=20260814-exportperf1">
+    <link rel="stylesheet" href="./style.css?v=20260814-matrixtools1">
   </head>
   <body>
     <div class="app-shell">
@@ -150,23 +150,34 @@
           <div id="matching" class="page matrix-page">
             <div class="page-head matrix-page-head">
               <div><h2>통합 매트릭스</h2><p>셀피아 SKU를 기준으로 판매처 연결, 재고, 가격과 운영정보를 한 화면에서 관리합니다.</p></div>
-              <div class="head-actions"><span id="matrix-live-status" class="live-data-badge loading">DB 연결 중</span><button class="btn" id="matrix-refresh-btn">DB 새로고침</button><button class="btn" id="matrix-match-stock-btn">셀피아→판매처 재고 맞추기</button><button class="btn" id="matrix-export-btn">검토한 수정본 내보내기</button><button class="btn primary" id="matrix-bulk-btn">선택 일괄수정</button></div>
             </div>
+
+            <aside class="matrix-action-panel" aria-label="매트릭스 작업 도구">
+              <div class="matrix-action-panel-head"><span>작업 도구</span><span id="matrix-live-status" class="live-data-badge loading">DB 연결 중</span></div>
+              <button class="matrix-panel-action" id="matrix-refresh-btn"><span>↻</span><b>DB 새로고침</b></button>
+              <div class="matrix-action-divider"></div>
+              <button class="matrix-panel-action" id="matrix-match-stock-btn"><span>⇄</span><b>셀피아→판매처<br>재고 맞추기</b></button>
+              <button class="matrix-panel-action" id="matrix-export-btn"><span>⇩</span><b>검토한 수정본<br>내보내기</b></button>
+              <button class="matrix-panel-action primary" id="matrix-bulk-btn"><span>✓</span><b>선택 일괄수정</b></button>
+              <div class="matrix-action-divider"></div>
+              <label class="custom-preset-picker">내 프리셋<select id="custom-preset-select" aria-label="내 프리셋 선택"><option value="">선택</option></select></label>
+              <button id="code-list-open" class="matrix-panel-action code-list-tab" type="button"><span>▦</span><b>엑셀 코드목록</b></button>
+            </aside>
 
             <div class="matrix-view-tabs">
               <button class="active" data-preset-id="all">전체 현황</button><button data-preset-id="matching">매칭 검토</button><button data-preset-id="inventory">재고 작업</button><button data-preset-id="price">가격 작업</button><button data-preset-id="attributes">속성·태그</button>
-              <label class="custom-preset-picker">내 프리셋<select id="custom-preset-select" aria-label="내 프리셋 선택"><option value="">선택</option></select></label>
-              <button id="code-list-open" class="code-list-tab" type="button">엑셀 코드목록</button>
             </div>
             <div class="matrix-toolbar">
-              <div class="matrix-search"><span>⌕</span><input id="matrix-search" placeholder="SKU / 자사코드 / 상품명 / 상품코드-옵션코드 검색"></div>
-              <fieldset id="matrix-search-sources" class="matrix-search-sources" aria-label="검색 대상 판매처">
-                <legend>검색 대상</legend>
-                <label><input type="checkbox" value="sellpia" checked><span>셀피아</span></label>
-                <label><input type="checkbox" value="smartstore" checked><span>스스</span></label>
-                <label><input type="checkbox" value="makeshop" checked><span>메이크샵</span></label>
-                <label><input type="checkbox" value="ably" checked><span>에이블리</span></label>
-              </fieldset>
+              <div class="matrix-search-group" role="search" aria-label="상품 및 판매처 검색">
+                <div class="matrix-search"><span>⌕</span><input id="matrix-search" placeholder="SKU / 자사코드 / 상품명 / 상품코드-옵션코드 검색"></div>
+                <fieldset id="matrix-search-sources" class="matrix-search-sources" aria-label="검색 대상 판매처">
+                  <legend>검색 대상</legend>
+                  <label><input type="checkbox" value="sellpia" checked><span>셀피아</span></label>
+                  <label><input type="checkbox" value="smartstore" checked><span>스스</span></label>
+                  <label><input type="checkbox" value="makeshop" checked><span>메이크샵</span></label>
+                  <label><input type="checkbox" value="ably" checked><span>에이블리</span></label>
+                </fieldset>
+              </div>
               <button id="code-list-filter-pill" class="code-list-filter-pill" type="button" hidden><b>엑셀 목록</b><span id="code-list-filter-count">0개 SKU</span><i>×</i></button>
               <select id="matrix-status-filter"><option value="all">전체 연결상태</option><option value="attention">미매칭 + 검토 필요</option><option value="connected">연결 완료</option><option value="review">검토 필요</option><option value="unmatched">미매칭</option></select>
               <select disabled title="판매처별 정규화 행이 DB에 적재되면 활성화됩니다."><option>판매처 · 적재 대기</option><option>스마트스토어</option><option>메이크샵</option><option>에이블리</option></select>
@@ -336,9 +347,9 @@
     <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.112.3/dist/umd/supabase.js"></script>
-    <script src="./seller-source-parsers.js?v=20260814-exportperf1"></script>
-    <script src="./seller-export-adapter.js?v=20260814-exportperf1"></script>
-    <script src="./data-service.js?v=20260814-exportperf1"></script>
-    <script src="./app.js?v=20260814-exportperf1"></script>
+    <script src="./seller-source-parsers.js?v=20260814-matrixtools1"></script>
+    <script src="./seller-export-adapter.js?v=20260814-matrixtools1"></script>
+    <script src="./data-service.js?v=20260814-matrixtools1"></script>
+    <script src="./app.js?v=20260814-matrixtools1"></script>
   </body>
 </html>

@@ -4,6 +4,7 @@ import fs from "node:fs";
 const html = fs.readFileSync(new URL("../mockups/operations-hub/index.html", import.meta.url), "utf8");
 const app = fs.readFileSync(new URL("../mockups/operations-hub/app.js", import.meta.url), "utf8");
 const data = fs.readFileSync(new URL("../mockups/operations-hub/data-service.js", import.meta.url), "utf8");
+const css = fs.readFileSync(new URL("../mockups/operations-hub/style.css", import.meta.url), "utf8");
 const migration = fs.readFileSync(
   new URL("../supabase/migrations/20260814024918_operations_hub_code_list_lookup.sql", import.meta.url),
   "utf8",
@@ -13,12 +14,15 @@ const sourceFilterMigration = fs.readFileSync(
   "utf8",
 );
 
-assert.match(html, /id="code-list-open"[^>]*>엑셀 코드목록/, "the matrix must expose the Excel code-list entry point");
+assert.match(html, /id="code-list-open"[^>]*>[\s\S]*?엑셀 코드목록/, "the matrix must expose the Excel code-list entry point");
 for (const source of ["sellpia", "smartstore", "makeshop", "ably"]) {
   assert.match(html, new RegExp(`type="checkbox" value="${source}" checked`), `the search toolbar must expose ${source}`);
 }
 assert.match(app, /searchSources:\['sellpia','smartstore','makeshop','ably'\]/, "all search sources must be enabled by default");
 assert.match(app, /if \(!selected\.length\)[\s\S]*?event\.target\.checked = true/, "the last search source cannot be unchecked");
+assert.match(html, /class="matrix-search-group"[\s\S]*?id="matrix-search"[\s\S]*?id="matrix-search-sources"/, "search input and source filters must read as one grouped control");
+assert.match(css, /\.matrix-search-sources label\{[^}]*border:0[^}]*background:transparent/, "search source labels must not use individual pill outlines");
+assert.match(html, /class="matrix-action-panel"[\s\S]*?id="matrix-refresh-btn"[\s\S]*?id="matrix-bulk-btn"[\s\S]*?id="code-list-open"/, "matrix actions and saved views must live in the persistent right panel");
 assert.match(app, /if \(matrixState\.search\) loadLiveMatrix/, "changing a source reloads only an active search");
 assert.match(data, /find_operations_hub_listing_skus_by_sources/, "combined-code lookup must honor selected seller sources");
 assert.match(data, /activeSearchSources\.flatMap/, "text search fields must be built from selected sources");

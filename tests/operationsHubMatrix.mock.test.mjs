@@ -31,7 +31,8 @@ assert.match(css, /\.matrix-table \.sellpia-price-col\{left:calc\(640px \+ var\(
 assert.match(html, /id="matrix-freeze-toggle"[^>]*aria-pressed="true"[^>]*>셀피아 고정 ON/, "the toolbar must expose an accessible Sellpia freeze toggle");
 assert.match(source, /MATRIX_FREEZE_KEY = 'system-v3-matrix-sellpia-freeze'[\s\S]*?applyMatrixSellpiaFreeze[\s\S]*?localStorage\.setItem\(MATRIX_FREEZE_KEY/, "the Sellpia freeze preference must be applied and persisted");
 assert.match(css, /\.matrix-table\.sellpia-unfrozen \.sticky-col\{left:auto\}[\s\S]*?tbody \.sticky-col\{position:static\}[\s\S]*?sellpia-group\{box-shadow:none\}/, "unfrozen mode must remove horizontal sticky positioning and the frozen boundary");
-assert.match(html, /data-preset-id="all"[\s\S]*?id="custom-preset-select"/, "built-in and custom matrix presets must be selectable");
+assert.match(html, /data-preset-id="all"/, "built-in matrix presets must remain selectable");
+assert.match(html, /id="custom-preset-select"/, "personal matrix presets must remain selectable from the permanent action panel");
 assert.match(html, /id="view-settings-modal"[\s\S]*?id="save-view-preset"/, "matrix view settings must support saving personal presets");
 assert.match(source, /MATRIX_PRESETS_KEY = 'system-v3-matrix-presets-v1'/, "personal presets must persist locally");
 assert.match(source, /modifiedPresetSourceId = activePresetId;[\s\S]*?findIndex\(item => item\.id === editablePresetId\)/, "editing a selected personal preset must update that preset instead of creating a stray copy");
