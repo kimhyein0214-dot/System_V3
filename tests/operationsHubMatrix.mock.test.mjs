@@ -17,13 +17,17 @@ const editMigration = fs.readFileSync(
   new URL("../supabase/migrations/20260812170000_operations_hub_sellpia_edits.sql", import.meta.url),
   "utf8",
 );
+const sellerDetailMigration = fs.readFileSync(
+  new URL("../supabase/migrations/20260814020007_operations_hub_manual_links_and_seller_details.sql", import.meta.url),
+  "utf8",
+);
 
 assert.match(html, /id="matrix-zoom-out"[\s\S]*?id="matrix-zoom-value"[\s\S]*?id="matrix-zoom-in"/, "matrix zoom controls must be visible together");
 assert.match(source, /MATRIX_ZOOM_MIN = 80;[\s\S]*?MATRIX_ZOOM_MAX = 140;[\s\S]*?localStorage\.setItem\(MATRIX_ZOOM_KEY/, "matrix-only zoom must be bounded and persisted");
 assert.match(source, /MATRIX_ZOOM_STEP = 5;/, "matrix zoom must move in five-percent steps");
 assert.match(html, /value="80">80%[\s\S]*?value="85">85%[\s\S]*?value="140">140%/, "preset zoom options must include five-percent increments");
 assert.match(css, /\.matrix-table\{zoom:var\(--matrix-zoom,1\)\}/, "zoom must apply to the matrix table only");
-assert.match(css, /\.sellpia-price-col\{left:696px;[\s\S]*?box-shadow:3px 0 0 var\(--blue\)/, "the Sellpia pane must keep its blue frozen right boundary");
+assert.match(css, /\.matrix-table \.sellpia-price-col\{left:calc\(640px \+ var\(--image-col-width\)\);[\s\S]*?box-shadow:3px 0 0 var\(--blue\)/, "the Sellpia pane must keep its blue frozen right boundary while image width changes");
 assert.match(html, /data-preset-id="all"[\s\S]*?id="custom-preset-select"/, "built-in and custom matrix presets must be selectable");
 assert.match(html, /id="view-settings-modal"[\s\S]*?id="save-view-preset"/, "matrix view settings must support saving personal presets");
 assert.match(source, /MATRIX_PRESETS_KEY = 'system-v3-matrix-presets-v1'/, "personal presets must persist locally");
@@ -40,5 +44,16 @@ assert.match(dataSource, /apply_operations_hub_sellpia_changes/, "Sellpia matrix
 assert.match(source, /image-drop-cell[\s\S]*?uploadSellpiaImage/, "image cells must support Sellpia SKU image drops");
 assert.match(dataSource, /`sellpia\/\$\{safeSku\}\.jpg`[\s\S]*?upsert:true/, "dropped images must be normalized to the Sellpia SKU filename");
 assert.match(editMigration, /operations_hub_sellpia_overrides[\s\S]*?operations_hub_change_queue[\s\S]*?operations_hub_dashboard_metrics/, "Sellpia edits, seller outbox, and live dashboard metrics must persist in Supabase");
+assert.match(css, /--thumb-width:84px;--thumb-height:63px[\s\S]*?object-fit:contain/, "matrix thumbnails must be larger and show the complete image without cropping");
+assert.match(html, /스마트스토어[\s\S]*?상품명 \/ 옵션명[\s\S]*?메이크샵[\s\S]*?에이블리/, "every seller group must expose product and option names for verification");
+assert.match(html, /id="preset-show-status"[\s\S]*?id="preset-show-codes"[\s\S]*?id="preset-show-seller-names"[\s\S]*?id="preset-image-size"/, "view settings must independently control status, codes, seller names, and image size");
+assert.doesNotMatch(source, /sellpiaEditor\('sellpia_product_name'/, "Sellpia product names must not be editable inline in the matrix");
+assert.doesNotMatch(source, /sellpiaEditor\('sellpia_option_name'/, "Sellpia option names must not be editable inline in the matrix");
+assert.match(source, /sellpiaEditor\('sellpia_own_code'[\s\S]*?sellpiaEditor\('sellpia_current_stock'[\s\S]*?sellpiaEditor\('sellpia_sale_price'/, "only frequent Sellpia base fields should remain inline editable");
+assert.match(source, /mapping-code-button[\s\S]*?openMappingSearch[\s\S]*?linkSellerItem/, "seller code cells must open source search and save a manual link");
+assert.match(dataSource, /search_operations_hub_seller_items[\s\S]*?link_operations_hub_seller_item[\s\S]*?save_operations_hub_seller_listing/, "seller search, linking, and detail drafts must use database RPCs");
+assert.match(html, /id="drawer-smart-name"[\s\S]*?id="drawer-make-name"[\s\S]*?id="drawer-ably-name"/, "the detail drawer must edit seller-specific names independently");
+assert.match(source, /price-hover-target[\s\S]*?function showPricePopover[\s\S]*?가격정책 DB는 아직 연결 전/, "seller price cells must explain the live comparison without inventing a policy formula");
+assert.match(sellerDetailMigration, /operations_hub_manual_links[\s\S]*?search_operations_hub_seller_items[\s\S]*?link_operations_hub_seller_item[\s\S]*?smartstore_option_name/, "manual links and seller detail names must persist in the live matrix schema");
 
-console.log("Operations hub frozen pane, zoom, and Sellpia live matrix contract: passed");
+console.log("Operations hub seller verification, linking, detail drawer, and live matrix contract: passed");

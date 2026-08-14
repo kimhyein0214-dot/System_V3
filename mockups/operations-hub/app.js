@@ -89,21 +89,25 @@ const MATRIX_PRESETS_KEY = 'system-v3-matrix-presets-v1';
 const MATRIX_ACTIVE_PRESET_KEY = 'system-v3-matrix-active-preset';
 const DEFAULT_VIEW_OPTIONS = {
   channels:{smartstore:true, makeshop:true, ably:true},
-  showMapping:true,
+  showStatus:true,
+  showCodes:true,
+  showSellerNames:true,
   showInventory:true,
   showPrice:true,
   showAttributes:true,
   showSync:true,
+  wrapNames:false,
+  imageSize:'default',
   status:'all',
   sort:'sku_asc',
   zoom:100
 };
 const BUILTIN_PRESETS = Object.freeze({
   all:{id:'all', name:'전체 현황', ...DEFAULT_VIEW_OPTIONS},
-  matching:{id:'matching', name:'매칭 검토', ...DEFAULT_VIEW_OPTIONS, showInventory:false, showPrice:false, showAttributes:false, status:'attention'},
-  inventory:{id:'inventory', name:'재고 작업', ...DEFAULT_VIEW_OPTIONS, showPrice:false, showAttributes:false, zoom:110},
-  price:{id:'price', name:'가격 작업', ...DEFAULT_VIEW_OPTIONS, showInventory:false, showAttributes:false, zoom:110},
-  attributes:{id:'attributes', name:'속성·태그', ...DEFAULT_VIEW_OPTIONS, channels:{smartstore:false, makeshop:false, ably:false}, showMapping:false, showInventory:false, showPrice:false, status:'all'}
+  matching:{id:'matching', name:'매칭 검토', ...DEFAULT_VIEW_OPTIONS, showInventory:false, showPrice:false, showAttributes:false, wrapNames:true, status:'attention'},
+  inventory:{id:'inventory', name:'재고 작업', ...DEFAULT_VIEW_OPTIONS, showCodes:false, showSellerNames:false, showPrice:false, showAttributes:false, zoom:110},
+  price:{id:'price', name:'가격 작업', ...DEFAULT_VIEW_OPTIONS, showCodes:false, showSellerNames:false, showInventory:false, showAttributes:false, zoom:110},
+  attributes:{id:'attributes', name:'속성·태그', ...DEFAULT_VIEW_OPTIONS, channels:{smartstore:false, makeshop:false, ably:false}, showStatus:false, showCodes:false, showSellerNames:false, showInventory:false, showPrice:false, status:'all'}
 });
 
 function cloneView(view) {
@@ -172,35 +176,37 @@ function formatLiveTime(value) {
 function viewColumnIndexes(view) {
   const visible = new Set([1,2,3,4,5,6,7]);
   const channelColumns = {
-    smartstore:{mapping:[8,9,10], inventory:[11], price:[12]},
-    makeshop:{mapping:[13,14,15], inventory:[16], price:[17]},
-    ably:{mapping:[18,19], inventory:[20], price:[21]}
+    smartstore:{status:[8], codes:[9,10], names:[11], inventory:[12], price:[13]},
+    makeshop:{status:[14], codes:[15,16], names:[17], inventory:[18], price:[19]},
+    ably:{status:[20], codes:[21,22], names:[23], inventory:[24], price:[25]}
   };
   Object.entries(channelColumns).forEach(([channel, groups]) => {
     if (!view.channels[channel]) return;
-    if (view.showMapping) groups.mapping.forEach(index => visible.add(index));
+    if (view.showStatus ?? view.showMapping ?? true) groups.status.forEach(index => visible.add(index));
+    if (view.showCodes ?? view.showMapping ?? true) groups.codes.forEach(index => visible.add(index));
+    if (view.showSellerNames ?? true) groups.names.forEach(index => visible.add(index));
     if (view.showInventory) groups.inventory.forEach(index => visible.add(index));
     if (view.showPrice) groups.price.forEach(index => visible.add(index));
   });
-  if (view.showAttributes) [22,23,24].forEach(index => visible.add(index));
-  if (view.showSync) visible.add(25);
+  if (view.showAttributes) [26,27,28].forEach(index => visible.add(index));
+  if (view.showSync) visible.add(29);
   return visible;
 }
 
 function applyColumnVisibility(view = activeView) {
   const visible = viewColumnIndexes(view);
   const columnHeaders = matrixTable.querySelectorAll('.column-row th');
-  for (let index = 3; index <= 25; index += 1) {
+  for (let index = 3; index <= 29; index += 1) {
     const show = visible.has(index);
     const header = columnHeaders[index - 3];
     if (header) header.hidden = !show;
     matrixBody.querySelectorAll(`tr td:nth-child(${index})`).forEach(cell => { cell.hidden = !show; });
   }
   const groupConfig = [
-    ['.smart-group', [8,9,10,11,12]],
-    ['.make-group', [13,14,15,16,17]],
-    ['.ably-group', [18,19,20,21]],
-    ['.ops-group', [22,23,24,25]]
+    ['.smart-group', [8,9,10,11,12,13]],
+    ['.make-group', [14,15,16,17,18,19]],
+    ['.ably-group', [20,21,22,23,24,25]],
+    ['.ops-group', [26,27,28,29]]
   ];
   groupConfig.forEach(([selector, indexes]) => {
     const header = matrixTable.querySelector(selector);
@@ -209,7 +215,9 @@ function applyColumnVisibility(view = activeView) {
     if (count) header.colSpan = count;
   });
   const variableColumns = [...visible].filter(index => index > 7).length;
-  matrixTable.style.minWidth = `${Math.max(820, 776 + variableColumns * 105)}px`;
+  matrixTable.style.minWidth = `${Math.max(900, 776 + variableColumns * 112)}px`;
+  matrixTable.dataset.imageSize = ['compact','default','large'].includes(view.imageSize) ? view.imageSize : 'default';
+  matrixTable.classList.toggle('wrap-names', Boolean(view.wrapNames));
 }
 
 function renderCustomPresetOptions() {
@@ -277,16 +285,30 @@ function matchState(tier) {
   return {key:'connected', label:'연결 완료'};
 }
 
-function channelInventoryCells(product, prefix, label, hasSeparateOption = true) {
+function mappingCodeButton(product, prefix, label, kind, value, state) {
+  const display = escapeHtml(value || '-');
+  const prompt = state.key === 'unmatched' ? `${label} 원본에서 연결 상품 찾기` : `${label} 연결 확인·변경`;
+  return `<button class="mapping-code-button ${state.key}" data-link-source="${prefix}" data-code-kind="${kind}" title="${prompt}">${display}</button>`;
+}
+
+function sellerNameCell(product, prefix) {
+  const productName = String(product[`${prefix}_name`] || '').trim();
+  const optionName = String(product[`${prefix}_option_name`] || '').trim();
+  const isDraft = Boolean(product[`${prefix}_name_is_draft`]);
+  if (!productName && !optionName) return '<td class="seller-name-cell data-gap"><span>판매처명 없음</span></td>';
+  return `<td class="seller-name-cell${isDraft ? ' draft' : ''}" title="${escapeHtml([productName, optionName].filter(Boolean).join(' · '))}">
+    <b>${escapeHtml(productName || '상품명 없음')}${isDraft ? '<i>초안</i>' : ''}</b><em>${escapeHtml(optionName || '옵션명 없음')}</em>
+  </td>`;
+}
+
+function channelInventoryCells(product, prefix, label) {
   const tier = product[`${prefix}_match_tier`];
   const state = matchState(tier);
-  const productCode = escapeHtml(product[`${prefix}_product_code`] || '-');
-  const optionCode = escapeHtml(product[`${prefix}_option_code`] || '-');
+  const productCode = product[`${prefix}_product_code`] || '';
+  const optionCode = product[`${prefix}_option_code`] || '';
   const listingCount = Number(product[`${prefix}_listing_count`] || 0);
   const title = listingCount > 1 ? ` title="이 SKU에는 ${listingCount}개의 판매처 행이 연결되어 있습니다."` : '';
-  const codeCells = hasSeparateOption
-    ? `<td${title}>${productCode}</td><td>${optionCode}</td>`
-    : `<td${title}>${productCode}${optionCode !== '-' ? `<em class="sub-code">${optionCode}</em>` : ''}</td>`;
+  const codeCells = `<td class="mapping-code-cell"${title}>${mappingCodeButton(product, prefix, label, 'product', productCode, state)}</td><td class="mapping-code-cell">${mappingCodeButton(product, prefix, label, 'option', optionCode, state)}</td>`;
   const stock = product[`${prefix}_stock`];
   const price = product[`${prefix}_price`];
   const sellpiaStock = product.sellpia_current_stock;
@@ -298,14 +320,14 @@ function channelInventoryCells(product, prefix, label, hasSeparateOption = true)
     : `<td><span class="seller-value${stockDiff ? ' diff' : ''}" title="셀피아 기준값을 수정한 뒤 판매처 반영 대기열에서 동기화합니다.">${formatNullableNumber(stock)}</span></td>`;
   const priceCell = price === null || price === undefined
     ? '<td class="data-gap">-</td>'
-    : `<td><span class="seller-value${priceDiff ? ' diff' : ''}" title="셀피아 기준값을 수정한 뒤 판매처 반영 대기열에서 동기화합니다.">${formatNullableNumber(price)}</span></td>`;
-  return `<td><span class="matrix-status ${state.key}">${state.label}</span></td>${codeCells}${stockCell}${priceCell}`;
+    : `<td><span class="seller-value price-hover-target${priceDiff ? ' diff' : ''}" tabindex="0" data-price-source="${prefix}" data-price-label="${label}" data-current-price="${escapeHtml(price)}" data-base-price="${escapeHtml(sellpiaPrice ?? '')}" data-price-updated="${escapeHtml(product[`${prefix}_inventory_at`] || '')}">${formatNullableNumber(price)}</span></td>`;
+  return `<td><span class="matrix-status ${state.key}">${state.label}</span></td>${codeCells}${sellerNameCell(product, prefix)}${stockCell}${priceCell}`;
 }
 
 function renderLiveMatrixRows(products) {
   matrixRowsBySku.clear();
   if (!products.length) {
-    matrixBody.innerHTML = '<tr class="matrix-empty-row"><td colspan="25"><b>검색 결과가 없습니다.</b><span>SKU 또는 자사코드를 다시 확인해주세요.</span></td></tr>';
+    matrixBody.innerHTML = '<tr class="matrix-empty-row"><td colspan="29"><b>검색 결과가 없습니다.</b><span>SKU 또는 자사코드를 다시 확인해주세요.</span></td></tr>';
     return;
   }
   matrixBody.innerHTML = products.map(product => {
@@ -330,12 +352,12 @@ function renderLiveMatrixRows(products) {
       <td class="sticky-col image-col image-drop-cell" data-image-drop="${sku}" title="이미지를 이 셀에 놓으면 ${sku}.jpg로 저장됩니다.">${matrixImage(product)}<span class="image-drop-hint">DROP</span></td>
       <td class="sticky-col sku-col code-cell">${sku}</td>
       <td class="sticky-col own-code-col">${sellpiaEditor('sellpia_own_code', '셀피아 자사코드', rawOwnCode, {className:'sellpia-text-compact'})}</td>
-      <td class="sticky-col sellpia-name-col product-cell"><b title="${displayName}">${sellpiaEditor('sellpia_product_name', '셀피아 상품명', rawDisplayName, {className:'sellpia-text-wide'})}</b><em>${sellpiaEditor('sellpia_option_name', '셀피아 옵션명', rawOptionName, {className:'sellpia-text-wide'})}</em></td>
+      <td class="sticky-col sellpia-name-col product-cell"><b title="${displayName}">${displayName}</b><em title="${optionName}">${optionName}</em></td>
       <td class="sticky-col sellpia-stock-col number-cell${sellpiaStock === '-' ? ' data-gap' : ''}">${sellpiaEditor('sellpia_current_stock', '셀피아 현재재고', product.sellpia_current_stock, {number:true})}</td>
       <td class="sticky-col sellpia-price-col number-cell${sellpiaPrice === '-' ? ' data-gap' : ''}">${sellpiaEditor('sellpia_sale_price', '셀피아 판매가', product.sellpia_sale_price, {number:true})}</td>
       ${channelInventoryCells(product, 'smartstore', '스마트스토어')}
       ${channelInventoryCells(product, 'makeshop', '메이크샵')}
-      ${channelInventoryCells(product, 'ably', '에이블리', false)}
+      ${channelInventoryCells(product, 'ably', '에이블리')}
       <td class="data-gap">-</td><td class="data-gap">-</td><td>${mappingTag}</td><td>${formatLiveTime(product.sellpia_override_updated_at || product.updated_at)}</td>
     </tr>`;
   }).join('');
@@ -354,7 +376,7 @@ async function loadLiveMatrix({resetPage = false} = {}) {
   const requestId = ++matrixState.requestId;
   matrixState.loading = true;
   setMatrixConnection('loading', 'DB 조회 중');
-  matrixBody.innerHTML = '<tr class="matrix-empty-row loading"><td colspan="25"><b>Supabase에서 실제 SKU를 불러오는 중입니다.</b><span>이미지와 자사코드를 함께 연결합니다.</span></td></tr>';
+  matrixBody.innerHTML = '<tr class="matrix-empty-row loading"><td colspan="29"><b>Supabase에서 실제 SKU를 불러오는 중입니다.</b><span>이미지와 자사코드를 함께 연결합니다.</span></td></tr>';
   try {
     const result = await liveData.loadProducts({page:matrixState.page, search:matrixState.search, status:matrixState.status, sort:matrixState.sort});
     if (requestId !== matrixState.requestId) return;
@@ -374,7 +396,7 @@ async function loadLiveMatrix({resetPage = false} = {}) {
     setMatrixConnection('connected', `LIVE · ${formatNumber(result.count)} SKU`);
   } catch (error) {
     console.error('operations hub matrix load failed', error);
-    matrixBody.innerHTML = '<tr class="matrix-empty-row error"><td colspan="25"><b>실데이터를 불러오지 못했습니다.</b><span>DB 새로고침을 눌러 다시 시도해주세요.</span></td></tr>';
+    matrixBody.innerHTML = '<tr class="matrix-empty-row error"><td colspan="29"><b>실데이터를 불러오지 못했습니다.</b><span>DB 새로고침을 눌러 다시 시도해주세요.</span></td></tr>';
     document.getElementById('live-catalog-state').textContent = '연결 오류';
     setMatrixConnection('error', 'DB 연결 오류');
   } finally {
@@ -490,28 +512,37 @@ function fillDrawerChannel(sectionKey, dataKey, label, product) {
   const status = section.querySelector('.matrix-status');
   status.className = `matrix-status ${state.key}`;
   status.textContent = state.label;
-  document.getElementById(`drawer-${sectionKey}-product`).value = product?.[`${dataKey}_product_code`] || '';
-  document.getElementById(`drawer-${sectionKey}-option`).value = product?.[`${dataKey}_option_code`] || '';
+  const productCode = product?.[`${dataKey}_product_code`] || '';
+  const optionCode = product?.[`${dataKey}_option_code`] || '';
+  document.getElementById(`drawer-${sectionKey}-product`).value = productCode;
+  document.getElementById(`drawer-${sectionKey}-option`).value = optionCode;
+  const productName = document.getElementById(`drawer-${sectionKey}-name`);
+  const optionName = document.getElementById(`drawer-${sectionKey}-option-name`);
+  productName.value = product?.[`${dataKey}_name`] || '';
+  optionName.value = product?.[`${dataKey}_option_name`] || '';
+  productName.disabled = state.key === 'unmatched';
+  optionName.disabled = state.key === 'unmatched';
+  productName.placeholder = state.key === 'unmatched' ? '먼저 판매처 상품을 연결해주세요.' : '판매처별 SEO 상품명';
+  optionName.placeholder = state.key === 'unmatched' ? '먼저 판매처 옵션을 연결해주세요.' : '판매처 옵션명';
   const stockInput = section.querySelector(`[data-drawer-field="${label} 재고"]`);
   const priceInput = section.querySelector(`[data-drawer-field="${label} 가격"]`);
   stockInput.value = formatNullableNumber(product?.[`${dataKey}_stock`]);
   priceInput.value = formatNullableNumber(product?.[`${dataKey}_price`]);
+  section.dataset.productCode = productCode;
+  section.dataset.optionCode = optionCode;
+  section.querySelectorAll('.seller-draft-save').forEach(button => { button.disabled = state.key === 'unmatched'; });
 }
 
 function openProductDrawer(row) {
   const product = matrixRowName(row);
   const liveProduct = matrixRowsBySku.get(product.sku) || {};
   document.getElementById('drawer-sku').textContent = product.sku;
-  document.getElementById('drawer-name').textContent = liveProduct.display_name || product.name;
-  document.getElementById('drawer-option').textContent = `자사코드 ${product.ownCode}`;
+  document.getElementById('drawer-name').textContent = liveProduct.sellpia_product_name || liveProduct.display_name || product.name;
+  document.getElementById('drawer-option').textContent = `${liveProduct.sellpia_option_name || '옵션명 없음'} · 자사코드 ${product.ownCode}`;
   const drawerThumb = document.querySelector('.drawer-product .product-thumb');
   drawerThumb.className = 'product-thumb live-thumb';
   drawerThumb.innerHTML = product.image ? `<img src="${escapeHtml(product.image)}" alt="${escapeHtml(product.sku)} 상품 이미지">` : 'NO';
-  document.querySelectorAll('[data-drawer-field]').forEach(input => {
-    input.value = '';
-    input.placeholder = '판매처 DB 적재 후 표시';
-    input.disabled = true;
-  });
+  document.querySelectorAll('[data-drawer-field]').forEach(input => { input.value = ''; input.disabled = true; });
   fillDrawerChannel('smart', 'smartstore', '스마트스토어', liveProduct);
   fillDrawerChannel('make', 'makeshop', '메이크샵', liveProduct);
   fillDrawerChannel('ably', 'ably', '에이블리', liveProduct);
@@ -522,9 +553,6 @@ function openProductDrawer(row) {
   const attributeSection = document.querySelector('.compact-section');
   attributeSection.querySelectorAll('select,input').forEach(input => { input.disabled = true; });
   attributeSection.querySelector('.wide-label input').value = '속성 DB 적재 전';
-  const drawerSave = document.getElementById('drawer-save');
-  drawerSave.disabled = true;
-  drawerSave.textContent = '판매처 DB 연결 대기';
   productDrawer.dataset.sku = product.sku;
   matrixBody.querySelectorAll('tr').forEach(item => item.classList.toggle('selected-row', item === row));
   productDrawer.classList.add('open');
@@ -537,6 +565,142 @@ function closeProductDrawer() {
   drawerBackdrop.classList.remove('open');
   productDrawer.setAttribute('aria-hidden', 'true');
 }
+
+const CHANNEL_LABELS = {smartstore:'스마트스토어', makeshop:'메이크샵', ably:'에이블리'};
+const CHANNEL_SECTION_KEYS = {smartstore:'smart', makeshop:'make', ably:'ably'};
+const mappingPopover = document.getElementById('mapping-popover');
+const mappingSearchInput = document.getElementById('mapping-search-input');
+const mappingSearchResults = document.getElementById('mapping-search-results');
+const mappingState = {source:'', sku:'', anchor:null, requestId:0, timer:null};
+
+function positionFloatingPanel(panel, anchor, width = 500) {
+  const rect = anchor?.getBoundingClientRect?.() || {left:20, right:20, top:100, bottom:130};
+  const safeWidth = Math.min(width, window.innerWidth - 24);
+  panel.style.width = `${safeWidth}px`;
+  const left = Math.max(12, Math.min(rect.left, window.innerWidth - safeWidth - 12));
+  const estimatedHeight = Math.min(520, window.innerHeight - 24);
+  const below = rect.bottom + 8;
+  const top = below + estimatedHeight <= window.innerHeight ? below : Math.max(12, rect.top - estimatedHeight - 8);
+  panel.style.left = `${left}px`;
+  panel.style.top = `${top}px`;
+}
+
+function closeMappingSearch() {
+  mappingPopover.hidden = true;
+  mappingState.requestId += 1;
+  clearTimeout(mappingState.timer);
+}
+
+function openMappingSearch({source, sku, anchor, initialQuery = ''}) {
+  mappingState.source = source;
+  mappingState.sku = sku;
+  mappingState.anchor = anchor;
+  document.getElementById('mapping-source-label').textContent = CHANNEL_LABELS[source] || source;
+  document.getElementById('mapping-target-sku').textContent = sku;
+  mappingSearchInput.value = initialQuery === '-' ? '' : initialQuery;
+  document.getElementById('mapping-search-help').textContent = '최신 판매처 원본에서 상품코드·옵션코드·상품명·옵션명을 검색합니다.';
+  mappingSearchResults.innerHTML = '<div class="mapping-empty">검색어를 입력해주세요.</div>';
+  mappingPopover.hidden = false;
+  positionFloatingPanel(mappingPopover, anchor);
+  mappingSearchInput.focus();
+  mappingSearchInput.select();
+  if (mappingSearchInput.value.trim()) runMappingSearch();
+}
+
+function renderMappingResults(items) {
+  if (!items.length) {
+    mappingSearchResults.innerHTML = '<div class="mapping-empty"><b>검색 결과가 없습니다.</b><span>코드 일부 또는 상품명으로 다시 검색해주세요.</span></div>';
+    return;
+  }
+  mappingSearchResults.innerHTML = items.map(item => {
+    const linked = Array.isArray(item.linked_skus) ? item.linked_skus : [];
+    const otherLinks = linked.filter(sku => sku !== mappingState.sku);
+    const warning = otherLinks.length ? `<span class="mapping-linked-warning">다른 SKU ${escapeHtml(otherLinks.slice(0,3).join(', '))}${otherLinks.length > 3 ? ` 외 ${otherLinks.length - 3}` : ''} 연결됨</span>` : '<span class="mapping-free">연결 가능</span>';
+    return `<article class="mapping-result-item">
+      <button data-map-product="${escapeHtml(item.product_code)}" data-map-option="${escapeHtml(item.option_code || '')}" data-linked-skus="${escapeHtml(JSON.stringify(linked))}">
+        <span class="mapping-result-codes"><b>${escapeHtml(item.product_code)}</b><em>${escapeHtml(item.option_code || '옵션코드 없음')}</em></span>
+        <span class="mapping-result-names"><b>${escapeHtml(item.product_name || '상품명 없음')}</b><em>${escapeHtml(item.option_name || '옵션명 없음')}</em></span>
+        <span class="mapping-result-meta"><i>재고 ${formatNullableNumber(item.stock)}</i><i>${formatNullableNumber(item.price)}원</i>${warning}</span>
+      </button>
+    </article>`;
+  }).join('');
+}
+
+async function runMappingSearch() {
+  const keyword = mappingSearchInput.value.trim();
+  if (!keyword) {
+    mappingSearchResults.innerHTML = '<div class="mapping-empty">검색어를 입력해주세요.</div>';
+    return;
+  }
+  const requestId = ++mappingState.requestId;
+  mappingSearchResults.innerHTML = '<div class="mapping-empty loading"><b>원본 검색 중</b><span>최신 정규화 데이터를 확인합니다.</span></div>';
+  try {
+    const items = await liveData.searchSellerItems(mappingState.source, keyword, 24);
+    if (requestId !== mappingState.requestId) return;
+    renderMappingResults(items);
+  } catch (error) {
+    console.error('seller source search failed', error);
+    mappingSearchResults.innerHTML = `<div class="mapping-empty error"><b>검색하지 못했습니다.</b><span>${escapeHtml(error?.message || error)}</span></div>`;
+  }
+}
+
+mappingSearchInput.addEventListener('input', () => {
+  clearTimeout(mappingState.timer);
+  mappingState.timer = setTimeout(runMappingSearch, 260);
+});
+document.getElementById('close-mapping-popover').addEventListener('click', closeMappingSearch);
+mappingSearchResults.addEventListener('click', async event => {
+  const button = event.target.closest('[data-map-product]');
+  if (!button) return;
+  const linkedSkus = JSON.parse(button.dataset.linkedSkus || '[]');
+  const otherLinks = linkedSkus.filter(sku => sku !== mappingState.sku);
+  if (otherLinks.length && !window.confirm(`이 판매처 옵션은 ${otherLinks.join(', ')}에 연결되어 있습니다. ${mappingState.sku}에도 연결할까요?`)) return;
+  button.disabled = true;
+  button.classList.add('saving');
+  try {
+    await liveData.linkSellerItem({
+      sku:mappingState.sku,
+      source:mappingState.source,
+      productCode:button.dataset.mapProduct,
+      optionCode:button.dataset.mapOption
+    });
+    const sourceLabel = CHANNEL_LABELS[mappingState.source] || mappingState.source;
+    const sku = mappingState.sku;
+    closeMappingSearch();
+    closeProductDrawer();
+    await refreshLiveData();
+    showToast(`${sku} · ${sourceLabel} 연결을 저장했습니다.`);
+  } catch (error) {
+    console.error('seller item link failed', error);
+    showToast(`연결 저장 실패: ${error?.message || error}`);
+    button.disabled = false;
+    button.classList.remove('saving');
+  }
+});
+
+const pricePopover = document.getElementById('price-popover');
+let pricePopoverTimer;
+function showPricePopover(target) {
+  clearTimeout(pricePopoverTimer);
+  const current = Number(target.dataset.currentPrice);
+  const base = Number(target.dataset.basePrice);
+  const hasBase = Number.isFinite(base);
+  const difference = hasBase ? current - base : null;
+  const diffClass = difference === 0 ? 'ok' : 'warn';
+  pricePopover.innerHTML = `<div class="price-popover-head"><b>${escapeHtml(target.dataset.priceLabel)} 가격 정보</b><span>${difference === 0 ? '기준가 일치' : '가격 확인'}</span></div>
+    <div class="price-popover-values"><p><span>현재 판매처가</span><b>${formatNullableNumber(current)}원</b></p><p><span>셀피아 기준가</span><b>${hasBase ? `${formatNullableNumber(base)}원` : '-'}</b></p><p class="${diffClass}"><span>가격 차이</span><b>${difference === null ? '-' : `${difference > 0 ? '+' : ''}${formatNullableNumber(difference)}원`}</b></p></div>
+    <div class="price-formula"><span>현재 확인식</span><code>판매처가 ${formatNullableNumber(current)} − 셀피아 기준가 ${hasBase ? formatNullableNumber(base) : '-'} = ${difference === null ? '-' : formatNullableNumber(difference)}</code></div>
+    <p class="price-policy-note">가격정책 DB는 아직 연결 전입니다. 현재는 실제 판매처가와 셀피아 기준가의 차이를 표시합니다.</p>
+    <footer>원본 갱신 ${formatLiveTime(target.dataset.priceUpdated)}</footer>`;
+  pricePopover.hidden = false;
+  positionFloatingPanel(pricePopover, target, 360);
+}
+function scheduleHidePricePopover() {
+  clearTimeout(pricePopoverTimer);
+  pricePopoverTimer = setTimeout(() => { pricePopover.hidden = true; }, 120);
+}
+pricePopover.addEventListener('mouseenter', () => clearTimeout(pricePopoverTimer));
+pricePopover.addEventListener('mouseleave', scheduleHidePricePopover);
 
 function addPendingChange(change) {
   const duplicate = pendingChanges.find(item => item.sku === change.sku && item.field === change.field);
@@ -571,14 +735,18 @@ function fillViewSettingsForm(view = activeView) {
   document.getElementById('preset-channel-smartstore').checked = view.channels.smartstore;
   document.getElementById('preset-channel-makeshop').checked = view.channels.makeshop;
   document.getElementById('preset-channel-ably').checked = view.channels.ably;
-  document.getElementById('preset-show-mapping').checked = view.showMapping;
+  document.getElementById('preset-show-status').checked = view.showStatus ?? view.showMapping ?? true;
+  document.getElementById('preset-show-codes').checked = view.showCodes ?? view.showMapping ?? true;
+  document.getElementById('preset-show-seller-names').checked = view.showSellerNames ?? true;
   document.getElementById('preset-show-inventory').checked = view.showInventory;
   document.getElementById('preset-show-price').checked = view.showPrice;
   document.getElementById('preset-show-attributes').checked = view.showAttributes;
   document.getElementById('preset-show-sync').checked = view.showSync;
+  document.getElementById('preset-wrap-names').checked = Boolean(view.wrapNames);
   document.getElementById('preset-status').value = view.status;
   document.getElementById('preset-sort').value = view.sort;
   document.getElementById('preset-zoom').value = String(view.zoom);
+  document.getElementById('preset-image-size').value = view.imageSize || 'default';
   const editablePresetId = activePresetId === 'temporary' ? modifiedPresetSourceId : activePresetId;
   document.getElementById('delete-preset').hidden = !customPresets.some(item => item.id === editablePresetId);
 }
@@ -591,14 +759,18 @@ function readViewSettingsForm() {
       makeshop:document.getElementById('preset-channel-makeshop').checked,
       ably:document.getElementById('preset-channel-ably').checked
     },
-    showMapping:document.getElementById('preset-show-mapping').checked,
+    showStatus:document.getElementById('preset-show-status').checked,
+    showCodes:document.getElementById('preset-show-codes').checked,
+    showSellerNames:document.getElementById('preset-show-seller-names').checked,
     showInventory:document.getElementById('preset-show-inventory').checked,
     showPrice:document.getElementById('preset-show-price').checked,
     showAttributes:document.getElementById('preset-show-attributes').checked,
     showSync:document.getElementById('preset-show-sync').checked,
+    wrapNames:document.getElementById('preset-wrap-names').checked,
     status:document.getElementById('preset-status').value,
     sort:document.getElementById('preset-sort').value,
-    zoom:Number(document.getElementById('preset-zoom').value) || 100
+    zoom:Number(document.getElementById('preset-zoom').value) || 100,
+    imageSize:document.getElementById('preset-image-size').value
   };
 }
 
@@ -667,9 +839,36 @@ document.getElementById('delete-preset').addEventListener('click', () => {
 });
 
 matrixBody.addEventListener('click', event => {
+  const mappingButton = event.target.closest('.mapping-code-button');
+  if (mappingButton) {
+    const row = mappingButton.closest('tr[data-sku]');
+    openMappingSearch({
+      source:mappingButton.dataset.linkSource,
+      sku:row.dataset.sku,
+      anchor:mappingButton,
+      initialQuery:mappingButton.textContent.trim()
+    });
+    return;
+  }
   if (event.target.closest('input,button')) return;
   const row = event.target.closest('tr[data-sku]');
   if (row) openProductDrawer(row);
+});
+
+matrixBody.addEventListener('mouseover', event => {
+  const target = event.target.closest('.price-hover-target');
+  if (target && !target.contains(event.relatedTarget)) showPricePopover(target);
+});
+matrixBody.addEventListener('mouseout', event => {
+  const target = event.target.closest('.price-hover-target');
+  if (target && !target.contains(event.relatedTarget)) scheduleHidePricePopover();
+});
+matrixBody.addEventListener('focusin', event => {
+  const target = event.target.closest('.price-hover-target');
+  if (target) showPricePopover(target);
+});
+matrixBody.addEventListener('focusout', event => {
+  if (event.target.closest('.price-hover-target')) scheduleHidePricePopover();
 });
 
 matrixBody.addEventListener('dblclick', event => {
@@ -805,15 +1004,58 @@ document.getElementById('matrix-next').addEventListener('click', () => {
 document.getElementById('close-drawer').addEventListener('click', closeProductDrawer);
 document.getElementById('drawer-cancel').addEventListener('click', closeProductDrawer);
 drawerBackdrop.addEventListener('click', closeProductDrawer);
-document.getElementById('drawer-save').addEventListener('click', () => {
-  if (document.getElementById('drawer-save').disabled) return;
-  const sku = productDrawer.dataset.sku || '1014-1';
-  document.querySelectorAll('[data-drawer-field]').forEach(input => {
-    addPendingChange({sku, field:input.dataset.drawerField, before:'기존값', after:input.value});
+document.querySelectorAll('[data-drawer-link-source]').forEach(button => button.addEventListener('click', () => {
+  const source = button.dataset.drawerLinkSource;
+  const section = button.closest('.drawer-section');
+  openMappingSearch({
+    source,
+    sku:productDrawer.dataset.sku,
+    anchor:button,
+    initialQuery:section.dataset.productCode || ''
   });
-  closeProductDrawer();
-  showToast(`${sku} 수정내용을 변경 대기에 추가했습니다.`);
-});
+}));
+
+document.querySelectorAll('.seller-draft-save').forEach(button => button.addEventListener('click', async () => {
+  const section = button.closest('.drawer-section');
+  const source = section.dataset.source;
+  const sectionKey = CHANNEL_SECTION_KEYS[source];
+  const sku = productDrawer.dataset.sku;
+  const queue = button.dataset.queue === 'true';
+  button.disabled = true;
+  const originalLabel = button.textContent;
+  button.textContent = queue ? '대기 등록 중' : '초안 저장 중';
+  try {
+    const result = await liveData.saveSellerListing({
+      sku,
+      source,
+      productCode:section.dataset.productCode,
+      optionCode:section.dataset.optionCode,
+      productName:document.getElementById(`drawer-${sectionKey}-name`).value,
+      optionName:document.getElementById(`drawer-${sectionKey}-option-name`).value,
+      queue
+    });
+    await loadLiveMatrix();
+    const row = matrixBody.querySelector(`tr[data-sku="${CSS.escape(sku)}"]`);
+    if (row) openProductDrawer(row);
+    showToast(queue ? `${CHANNEL_LABELS[source]} 명칭 변경 ${Number(result?.queued_count || 0)}건을 반영 대기에 추가했습니다.` : `${CHANNEL_LABELS[source]} 명칭 초안을 저장했습니다.`);
+  } catch (error) {
+    console.error('seller listing save failed', error);
+    showToast(`판매처명 저장 실패: ${error?.message || error}`);
+  } finally {
+    button.disabled = false;
+    button.textContent = originalLabel;
+  }
+}));
+
+function moveDrawerSelection(direction) {
+  const rows = [...matrixBody.querySelectorAll('tr[data-sku]')];
+  const currentIndex = rows.findIndex(row => row.dataset.sku === productDrawer.dataset.sku);
+  const target = rows[currentIndex + direction];
+  if (target) openProductDrawer(target);
+  else showToast(direction < 0 ? '현재 페이지의 첫 SKU입니다.' : '현재 페이지의 마지막 SKU입니다.');
+}
+document.getElementById('drawer-prev').addEventListener('click', () => moveDrawerSelection(-1));
+document.getElementById('drawer-next').addEventListener('click', () => moveDrawerSelection(1));
 
 document.querySelectorAll('.drawer-tabs button').forEach(button => button.addEventListener('click', () => {
   document.querySelectorAll('.drawer-tabs button').forEach(item => item.classList.toggle('active', item === button));
@@ -871,6 +1113,7 @@ document.addEventListener('click', event => {
   if (pageButton) showPage(pageButton.dataset.page);
   const toastButton = event.target.closest('[data-toast]');
   if (toastButton) showToast(toastButton.dataset.toast);
+  if (!mappingPopover.hidden && !event.target.closest('#mapping-popover,.mapping-code-button,[data-drawer-link-source]')) closeMappingSearch();
 });
 
 const sourceSelect = document.getElementById('source-select');
@@ -992,6 +1235,8 @@ function showToast(message) {
 
 document.addEventListener('keydown', event => {
   if (event.key === 'Escape' && !viewSettingsModal.hidden) closeViewSettings();
+  if (event.key === 'Escape' && !mappingPopover.hidden) closeMappingSearch();
+  if (event.key === 'Escape' && productDrawer.classList.contains('open')) closeProductDrawer();
 });
 
 const startupPreset = findPreset(activePresetId);
