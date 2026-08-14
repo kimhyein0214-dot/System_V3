@@ -58,7 +58,8 @@ assert.match(sellerDetailMigration, /operations_hub_manual_links[\s\S]*?search_o
 assert.match(source, /function matrixSelectionClipboardText\([\s\S]*?rows\.join\('\\n'\)/, "selected Sellpia cells must copy to an Excel-compatible tab and newline grid");
 assert.match(source, /document\.addEventListener\('paste'[\s\S]*?normalizePastedRows[\s\S]*?commitEditableCellValue/, "Excel clipboard grids must paste into the selected editable Sellpia cell range");
 assert.match(source, /numeric && !\/\^\\d\+[\s\S]*?valid:false/, "clipboard paste must reject invalid numeric stock and price values");
-assert.match(html, /Ctrl\+C \/ Ctrl\+V 복사·붙여넣기/, "the matrix must explain spreadsheet-style clipboard controls");
-assert.match(css, /\.editable-cell\.cell-selected[\s\S]*?\.editable-cell\.cell-anchor/, "selected matrix cells and the anchor cell must remain visually distinct");
+assert.match(html, /한 번 클릭은 셀 선택[\s\S]*?Ctrl\+C \/ Ctrl\+V/, "the matrix must explain spreadsheet-style clipboard controls");
+assert.match(css, /td\.matrix-cell-selected[\s\S]*?td\.matrix-cell-anchor/, "selected matrix cells and the anchor cell must remain visually distinct");
+assert.match(source, /matrixBody\.addEventListener\('click'[\s\S]*?selectMatrixCell\(cell[\s\S]*?matrixBody\.addEventListener\('dblclick'[\s\S]*?openProductDrawer\(row\)/, "single click must select a cell while double click opens row details");
 
 console.log("Operations hub seller verification, linking, detail drawer, and live matrix contract: passed");

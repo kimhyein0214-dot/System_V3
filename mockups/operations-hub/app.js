@@ -724,6 +724,11 @@ function editableMatrixGrid() {
     .map(row => [...row.querySelectorAll('.sellpia-edit')]);
 }
 
+function matrixCellGrid() {
+  return [...matrixBody.querySelectorAll('tr[data-sku]')]
+    .map(row => [...row.children].filter(cell => cell.matches('td')));
+}
+
 function editableCellPosition(cell, grid = editableMatrixGrid()) {
   for (let rowIndex = 0; rowIndex < grid.length; rowIndex += 1) {
     const columnIndex = grid[rowIndex].indexOf(cell);
@@ -732,9 +737,17 @@ function editableCellPosition(cell, grid = editableMatrixGrid()) {
   return null;
 }
 
-function selectionRectangle(grid = editableMatrixGrid()) {
-  const anchor = editableCellPosition(matrixCellSelection.anchor, grid);
-  const focus = editableCellPosition(matrixCellSelection.focus, grid);
+function matrixCellPosition(cell, grid = matrixCellGrid()) {
+  for (let rowIndex = 0; rowIndex < grid.length; rowIndex += 1) {
+    const columnIndex = grid[rowIndex].indexOf(cell);
+    if (columnIndex >= 0) return {rowIndex, columnIndex};
+  }
+  return null;
+}
+
+function selectionRectangle(grid = matrixCellGrid()) {
+  const anchor = matrixCellPosition(matrixCellSelection.anchor, grid);
+  const focus = matrixCellPosition(matrixCellSelection.focus, grid);
   if (!anchor || !focus) return null;
   return {
     top:Math.min(anchor.rowIndex, focus.rowIndex),
@@ -745,9 +758,9 @@ function selectionRectangle(grid = editableMatrixGrid()) {
 }
 
 function paintMatrixCellSelection() {
-  const grid = editableMatrixGrid();
-  matrixBody.querySelectorAll('.sellpia-edit.cell-selected,.sellpia-edit.cell-anchor').forEach(cell => {
-    cell.classList.remove('cell-selected', 'cell-anchor');
+  const grid = matrixCellGrid();
+  matrixBody.querySelectorAll('td.matrix-cell-selected,td.matrix-cell-anchor').forEach(cell => {
+    cell.classList.remove('matrix-cell-selected', 'matrix-cell-anchor');
     cell.setAttribute('aria-selected', 'false');
   });
   const bounds = selectionRectangle(grid);
@@ -756,15 +769,15 @@ function paintMatrixCellSelection() {
     for (let columnIndex = bounds.left; columnIndex <= bounds.right; columnIndex += 1) {
       const cell = grid[rowIndex]?.[columnIndex];
       if (!cell) continue;
-      cell.classList.add('cell-selected');
+      cell.classList.add('matrix-cell-selected');
       cell.setAttribute('aria-selected', 'true');
     }
   }
-  matrixCellSelection.anchor?.classList.add('cell-anchor');
+  matrixCellSelection.anchor?.classList.add('matrix-cell-anchor');
 }
 
 function selectMatrixCell(cell, {extend = false} = {}) {
-  if (!cell?.matches('.sellpia-edit')) return;
+  if (!cell?.matches('td') || !cell.closest('tr[data-sku]')) return;
   if (!extend || !matrixCellSelection.anchor?.isConnected) matrixCellSelection.anchor = cell;
   matrixCellSelection.focus = cell;
   paintMatrixCellSelection();
@@ -774,22 +787,35 @@ function clearMatrixCellSelection() {
   matrixCellSelection.dragging = false;
   matrixCellSelection.anchor = null;
   matrixCellSelection.focus = null;
-  matrixBody.querySelectorAll('.sellpia-edit.cell-selected,.sellpia-edit.cell-anchor').forEach(cell => {
-    cell.classList.remove('cell-selected', 'cell-anchor');
+  matrixBody.querySelectorAll('td.matrix-cell-selected,td.matrix-cell-anchor').forEach(cell => {
+    cell.classList.remove('matrix-cell-selected', 'matrix-cell-anchor');
     cell.setAttribute('aria-selected', 'false');
   });
   document.body.classList.remove('matrix-cell-selecting');
 }
 
+function matrixCellClipboardValue(cell) {
+  if (!cell) return '';
+  const editable = cell.querySelector('.sellpia-edit');
+  if (editable) return String(editable.dataset.value ?? '');
+  if (cell.matches('.select-col,.image-col')) return '';
+  const productName = cell.querySelector('.product-cell b,.seller-name-cell b, b');
+  const optionName = cell.querySelector('.product-cell em,.seller-name-cell em, em');
+  if (productName && optionName) return `${productName.textContent.trim()} / ${optionName.textContent.trim()}`;
+  const mappingCode = cell.querySelector('.mapping-code-button');
+  if (mappingCode) return mappingCode.textContent.trim();
+  return cell.textContent.replace(/\s+/g, ' ').trim();
+}
+
 function matrixSelectionClipboardText() {
-  const grid = editableMatrixGrid();
+  const grid = matrixCellGrid();
   const bounds = selectionRectangle(grid);
   if (!bounds) return '';
   const rows = [];
   for (let rowIndex = bounds.top; rowIndex <= bounds.bottom; rowIndex += 1) {
     const values = [];
     for (let columnIndex = bounds.left; columnIndex <= bounds.right; columnIndex += 1) {
-      values.push(String(grid[rowIndex]?.[columnIndex]?.dataset.value ?? ''));
+      values.push(matrixCellClipboardValue(grid[rowIndex]?.[columnIndex]));
     }
     rows.push(values.join('\t'));
   }
@@ -833,9 +859,11 @@ function isClipboardTypingTarget(target) {
 }
 
 matrixBody.addEventListener('mousedown', event => {
-  const cell = event.target.closest('.sellpia-edit');
-  if (!cell || cell.querySelector('input') || event.button !== 0) return;
+  if (event.target.closest('.row-check,.inline-editor')) return;
+  const cell = event.target.closest('td');
+  if (!cell || event.button !== 0) return;
   selectMatrixCell(cell, {extend:event.shiftKey});
+  if (isClipboardTypingTarget(document.activeElement)) document.activeElement.blur();
   matrixCellSelection.dragging = true;
   document.body.classList.add('matrix-cell-selecting');
   event.preventDefault();
@@ -843,7 +871,7 @@ matrixBody.addEventListener('mousedown', event => {
 
 matrixBody.addEventListener('mouseover', event => {
   if (!matrixCellSelection.dragging) return;
-  const cell = event.target.closest('.sellpia-edit');
+  const cell = event.target.closest('td');
   if (!cell || cell === matrixCellSelection.focus) return;
   matrixCellSelection.focus = cell;
   paintMatrixCellSelection();
@@ -871,8 +899,12 @@ document.addEventListener('paste', event => {
   if (!text) return;
   event.preventDefault();
   const grid = editableMatrixGrid();
-  const anchor = editableCellPosition(matrixCellSelection.anchor, grid);
-  if (!anchor) return;
+  const anchorEditableCell = matrixCellSelection.anchor.querySelector('.sellpia-edit');
+  const anchor = editableCellPosition(anchorEditableCell, grid);
+  if (!anchor) {
+    showToast('붙여넣기는 자사코드·현재재고·판매가 셀에서 시작해주세요.');
+    return;
+  }
   const pastedRows = normalizePastedRows(text);
   let changed = 0;
   let invalid = 0;
@@ -887,7 +919,7 @@ document.addEventListener('paste', event => {
     const result = commitEditableCellValue(cell, value);
     if (!result.valid) invalid += 1;
     if (result.changed) changed += 1;
-    lastCell = cell;
+    lastCell = cell.closest('td');
   }));
   matrixCellSelection.focus = lastCell;
   paintMatrixCellSelection();
@@ -1028,9 +1060,9 @@ matrixBody.addEventListener('click', event => {
     });
     return;
   }
-  if (event.target.closest('input,button')) return;
-  const row = event.target.closest('tr[data-sku]');
-  if (row) openProductDrawer(row);
+  if (event.target.closest('.row-check')) return;
+  const cell = event.target.closest('td');
+  if (cell) selectMatrixCell(cell, {extend:event.shiftKey});
 });
 
 matrixBody.addEventListener('mouseover', event => {
@@ -1050,8 +1082,15 @@ matrixBody.addEventListener('focusout', event => {
 });
 
 matrixBody.addEventListener('dblclick', event => {
-  const cell = event.target.closest('.editable-cell');
-  if (!cell || cell.dataset.source !== 'sellpia' || cell.querySelector('input')) return;
+  if (event.target.closest('.mapping-code-button,.row-check')) return;
+  const tableCell = event.target.closest('td');
+  const cell = event.target.closest('.editable-cell') || tableCell?.querySelector('.sellpia-edit');
+  if (!cell) {
+    const row = event.target.closest('tr[data-sku]');
+    if (row) openProductDrawer(row);
+    return;
+  }
+  if (cell.dataset.source !== 'sellpia' || cell.querySelector('input')) return;
   const before = cell.dataset.value ?? cell.textContent.trim();
   const numeric = cell.dataset.valueType === 'number';
   const input = document.createElement('input');
