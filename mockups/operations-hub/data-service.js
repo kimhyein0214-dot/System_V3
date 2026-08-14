@@ -237,7 +237,7 @@
       .order('updated_at', {ascending:false})
       .order('change_id', {ascending:false})
       .limit(Math.max(1, Math.min(Number(limit) || 250, 500)));
-    if (status === 'active') query = query.in('status', ['pending','validated','processing','failed']);
+    if (status === 'active') query = query.in('status', ['pending','validated','processing','exported','failed']);
     else if (status !== 'all') query = query.eq('status', cleanText(status));
     if (source !== 'all') query = query.contains('target_channels', [cleanText(source)]);
     const {data, error, count} = await query;
@@ -246,7 +246,7 @@
   }
 
   async function loadChangeQueueStats() {
-    const statuses = ['pending','validated','processing','failed','applied','saved','cancelled'];
+    const statuses = ['pending','validated','processing','exported','failed','applied','saved','cancelled'];
     const counts = await Promise.all(statuses.map(async status => {
       const {error, count} = await db
         .from('operations_hub_change_queue')
@@ -256,7 +256,7 @@
       return [status, Number(count || 0)];
     }));
     const result = Object.fromEntries(counts);
-    result.active = result.pending + result.validated + result.processing + result.failed;
+    result.active = result.pending + result.validated + result.processing + result.exported + result.failed;
     return result;
   }
 
@@ -289,6 +289,49 @@
 
   async function retryChangeQueue(changeIds) {
     const {data, error} = await db.rpc('retry_operations_hub_changes', {p_change_ids:(changeIds || []).map(Number)});
+    if (error) throw error;
+    return Array.isArray(data) ? data[0] : data;
+  }
+
+  async function prepareSellerExport({batchId, mode, changeIds = [], sources = []}) {
+    const {error} = await db.rpc('prepare_operations_hub_export', {
+      p_export_batch_id:batchId,
+      p_export_mode:cleanText(mode),
+      p_change_ids:(changeIds || []).map(Number),
+      p_sources:(sources || []).map(cleanText)
+    });
+    if (error) throw error;
+    const items = [];
+    const pageSize = 1000;
+    for (let from = 0; ; from += pageSize) {
+      const {data, error:loadError} = await db
+        .from('operations_hub_export_items')
+        .select('export_item_id,export_batch_id,change_id,sellpia_sku_code,source_channel,field_key,before_value,after_value,seller_product_code,seller_option_code,source_file_name,source_row_no,expected_source_value,base_price,option_price,blocking_reason,status')
+        .eq('export_batch_id', batchId)
+        .order('export_item_id', {ascending:true})
+        .range(from, from + pageSize - 1);
+      if (loadError) throw loadError;
+      items.push(...(data || []));
+      if (!data || data.length < pageSize) break;
+    }
+    return items;
+  }
+
+  async function completeSellerExport({batchId, success, manifest = [], errorMessage = ''}) {
+    const {data, error} = await db.rpc('complete_operations_hub_export', {
+      p_export_batch_id:batchId,
+      p_success:Boolean(success),
+      p_file_manifest:manifest,
+      p_error_message:cleanText(errorMessage)
+    });
+    if (error) throw error;
+    return Array.isArray(data) ? data[0] : data;
+  }
+
+  async function confirmChangesApplied(changeIds) {
+    const {data, error} = await db.rpc('confirm_operations_hub_changes_applied', {
+      p_change_ids:(changeIds || []).map(Number)
+    });
     if (error) throw error;
     return Array.isArray(data) ? data[0] : data;
   }
@@ -604,6 +647,9 @@
     validateChangeQueue,
     cancelChangeQueue,
     retryChangeQueue,
+    prepareSellerExport,
+    completeSellerExport,
+    confirmChangesApplied,
     uploadSellpiaImage,
     uploadSellpiaSnapshot,
     uploadSellerSnapshot

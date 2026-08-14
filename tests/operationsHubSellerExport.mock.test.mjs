@@ -1,0 +1,57 @@
+import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import vm from 'node:vm';
+
+const html = fs.readFileSync(new URL('../mockups/operations-hub/index.html', import.meta.url), 'utf8');
+const app = fs.readFileSync(new URL('../mockups/operations-hub/app.js', import.meta.url), 'utf8');
+const data = fs.readFileSync(new URL('../mockups/operations-hub/data-service.js', import.meta.url), 'utf8');
+const adapterSource = fs.readFileSync(new URL('../mockups/operations-hub/seller-export-adapter.js', import.meta.url), 'utf8');
+const migration = fs.readFileSync(new URL('../supabase/migrations/20260814131808_operations_hub_seller_export.sql', import.meta.url), 'utf8');
+const failureMigration = fs.readFileSync(new URL('../supabase/migrations/20260814140500_operations_hub_export_failure_finalize.sql', import.meta.url), 'utf8');
+const partialMigration = fs.readFileSync(new URL('../supabase/migrations/20260814143500_operations_hub_export_partial_success.sql', import.meta.url), 'utf8');
+
+for (const table of ['operations_hub_export_batches', 'operations_hub_export_items']) {
+  assert.match(migration, new RegExp(`create table if not exists public\\.${table}`), `${table} must persist the export audit trail`);
+  assert.match(migration, new RegExp(`alter table public\\.${table} enable row level security`), `${table} must enable RLS`);
+}
+for (const rpc of ['prepare_operations_hub_export', 'complete_operations_hub_export', 'confirm_operations_hub_changes_applied']) {
+  assert.match(migration + failureMigration, new RegExp(`create or replace function public\\.${rpc}`), `${rpc} must exist`);
+}
+assert.doesNotMatch(migration + failureMigration, /security definer/i, 'export RPCs must not bypass RLS');
+assert.match(migration, /status in \('pending', 'validated', 'processing', 'exported', 'applied'/, 'queue must distinguish file export from marketplace apply');
+assert.match(migration, /else[\s\S]*?sellpia_current_stock is distinct from t\.seller_stock/, 'inventory reconciliation must export only stock differences');
+assert.match(partialMigration, /blocking_reason is null[\s\S]*?then 'exported' else 'failed'/, 'valid rows must export while unresolved original rows remain failed');
+
+for (const id of ['matrix-export-btn','queue-export','queue-confirm-applied','seller-export-modal','seller-export-run']) {
+  assert.match(html, new RegExp(`id="${id}"`), `export UI must include ${id}`);
+}
+assert.match(html, /seller-source-parsers\.js[\s\S]*?seller-export-adapter\.js[\s\S]*?data-service\.js/, 'the export adapter must load before application startup');
+assert.match(html, /20260814-sellerexport1/g, 'all local assets must share the export deployment version');
+assert.match(data, /prepareSellerExport[\s\S]*?range\(from, from \+ pageSize - 1\)/, 'large export plans must be read through pagination');
+assert.match(data, /completeSellerExport[\s\S]*?confirmChangesApplied/, 'the frontend adapter must expose export and manual apply confirmation');
+assert.match(app, /buildExportArchive[\s\S]*?completeSellerExport\(\{batchId, success:true/, 'files must be built before the queue is marked exported');
+assert.match(app, /confirmChangesApplied/, 'marketplace upload confirmation must be a separate action');
+
+const context = {console, setTimeout, URL:{createObjectURL(){}, revokeObjectURL(){}}, Blob};
+vm.createContext(context);
+vm.runInContext(adapterSource, context);
+const adapter = context.SystemV3SellerExport;
+
+const smartRow = '<row r="3"><c r="F3"><v>5200</v></c><c r="P3" t="inlineStr"><is><t xml:space="preserve">op1\nop2</t></is></c><c r="Q3" t="inlineStr"><is><t xml:space="preserve">실버\n골드</t></is></c><c r="R3" t="inlineStr"><is><t xml:space="preserve">0\n200</t></is></c><c r="S3" t="inlineStr"><is><t xml:space="preserve">2\n3</t></is></c></row>';
+const smartPatched = adapter.patchSmartstoreRow(smartRow, [
+  {source_row_no:3, source_channel:'smartstore', sellpia_sku_code:'1014-2', seller_option_code:'op2', field_key:'sellpia_current_stock', expected_source_value:3, after_value:9},
+  {source_row_no:3, source_channel:'smartstore', sellpia_sku_code:'1014-2', seller_option_code:'op2', field_key:'sellpia_sale_price', expected_source_value:5400, after_value:5700},
+], []);
+assert.equal(adapter.cellValue(smartPatched, 'S3', []), '2\n9');
+assert.equal(adapter.cellValue(smartPatched, 'R3', []), '0\n500');
+
+const makeRow = '<row r="4"><c r="AD4" t="inlineStr"><is><t>골드</t></is></c><c r="AF4"><v>200</v></c><c r="AG4"><v>3</v></c><c r="AR4"><v>425</v></c></row>';
+const makePatched = adapter.patchMakeshopRow(makeRow, [
+  {source_row_no:4, source_channel:'makeshop', sellpia_sku_code:'1014-2', seller_option_code:'425', field_key:'sellpia_current_stock', expected_source_value:3, after_value:8},
+  {source_row_no:4, source_channel:'makeshop', sellpia_sku_code:'1014-2', seller_option_code:'425', field_key:'sellpia_sale_price', expected_source_value:5400, after_value:5600, base_price:5200, option_price:200},
+], []);
+assert.equal(adapter.cellValue(makePatched, 'AG4', []), '8');
+assert.equal(adapter.cellValue(makePatched, 'AF4', []), '400');
+assert.equal(adapter.outputName('원본.xlsx'), '원본_SystemV3반영.xlsx');
+
+console.log('Operations hub seller original export and inventory reconciliation: passed');

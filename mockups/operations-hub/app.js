@@ -1660,11 +1660,11 @@ const QUEUE_FIELD_LABELS = {
   seller_option_name:'판매처 옵션명'
 };
 const QUEUE_STATUS_LABELS = {
-  pending:'검증 대기', validated:'검증 완료', processing:'처리 중', applied:'반영 완료',
+  pending:'검증 대기', validated:'검증 완료', processing:'파일 생성 중', exported:'내보냄', applied:'반영 완료',
   failed:'실패', saved:'DB 내부 저장', cancelled:'취소'
 };
 const QUEUE_EVENT_LABELS = {
-  created:'변경 생성', validated:'검증 완료', processing:'처리 시작', applied:'반영 완료',
+  created:'변경 생성', validated:'검증 완료', processing:'파일 생성 시작', exported:'원본 내보냄', applied:'반영 완료',
   failed:'실패', cancelled:'취소', retried:'재시도 등록', status_changed:'상태 변경'
 };
 const queueState = {rows:[], loading:false, selectedChangeId:null};
@@ -1693,7 +1693,7 @@ function renderChangeQueue(rows) {
     queueBody.innerHTML = '<tr class="queue-empty"><td colspan="10">현재 조건에 해당하는 변경대기가 없습니다.</td></tr>';
   } else {
     queueBody.innerHTML = rows.map(row => {
-      const selectable = ['pending','validated','failed'].includes(row.status);
+      const selectable = ['pending','validated','exported','failed'].includes(row.status);
       const before = escapeHtml(queueScalar(row.before_value));
       const after = escapeHtml(queueScalar(row.after_value));
       const message = escapeHtml(queueMessage(row));
@@ -1728,6 +1728,7 @@ function updateQueueSelection() {
   document.getElementById('queue-validate').disabled = !selected.some(row => ['pending','failed'].includes(row.status));
   document.getElementById('queue-cancel').disabled = !selected.some(row => ['pending','validated','failed'].includes(row.status));
   document.getElementById('queue-retry').disabled = !selected.some(row => row.status === 'failed' && Number(row.retry_count) < Number(row.max_retry_count));
+  document.getElementById('queue-confirm-applied').disabled = !selected.some(row => row.status === 'exported');
 }
 
 async function loadChangeQueue({silent = false} = {}) {
@@ -1835,6 +1836,111 @@ document.getElementById('queue-validate').addEventListener('click', event => run
 document.getElementById('queue-cancel').addEventListener('click', event => runQueueAction('cancel', event.currentTarget));
 document.getElementById('queue-retry').addEventListener('click', event => runQueueAction('retry', event.currentTarget));
 document.getElementById('queue-event-close').addEventListener('click', () => { document.getElementById('queue-event-panel').hidden = true; });
+
+const sellerExport = window.SystemV3SellerExport;
+const sellerExportModal = document.getElementById('seller-export-modal');
+const sellerExportState = {changeIds:[], running:false};
+
+function selectedExportSources() {
+  return [...sellerExportModal.querySelectorAll('.seller-export-source-check:checked')].map(input => input.value);
+}
+
+function sellerExportFiles() {
+  const files = new Map();
+  sellerExportModal.querySelectorAll('.seller-export-files').forEach(input => files.set(input.dataset.source, Array.from(input.files || [])));
+  return files;
+}
+
+function showSellerExportProgress(percent, title, detail) {
+  const panel = document.getElementById('seller-export-progress');
+  panel.hidden = false;
+  const safePercent = Math.max(0, Math.min(100, Math.round(percent)));
+  document.getElementById('seller-export-progress-title').textContent = title;
+  document.getElementById('seller-export-progress-percent').textContent = `${safePercent}%`;
+  document.getElementById('seller-export-progress-bar').style.width = `${safePercent}%`;
+  document.getElementById('seller-export-progress-detail').textContent = detail;
+}
+
+function openSellerExport({mode = 'change_queue', rows = []} = {}) {
+  sellerExportState.changeIds = rows.filter(row => row.status === 'validated').map(row => Number(row.change_id));
+  const radio = sellerExportModal.querySelector(`input[name="seller-export-mode"][value="${mode}"]`);
+  if (radio) radio.checked = true;
+  const rowSources = new Set(rows.flatMap(row => row.source_channel ? [row.source_channel] : (row.target_channels || [])));
+  sellerExportModal.querySelectorAll('.seller-export-source-check').forEach(input => { input.checked = !rowSources.size || rowSources.has(input.value); });
+  document.getElementById('seller-export-progress').hidden = true;
+  sellerExportModal.hidden = false;
+}
+
+function closeSellerExport() {
+  if (sellerExportState.running) return;
+  sellerExportModal.hidden = true;
+}
+
+async function runSellerExport() {
+  if (!sellerExport || !liveData?.prepareSellerExport) {
+    showToast('원본 내보내기 모듈을 불러오지 못했습니다. 새로고침 후 다시 시도해주세요.');
+    return;
+  }
+  const mode = sellerExportModal.querySelector('input[name="seller-export-mode"]:checked')?.value || 'change_queue';
+  const sources = selectedExportSources();
+  if (!sources.length) { showToast('판매처를 하나 이상 선택해주세요.'); return; }
+  const filesBySource = sellerExportFiles();
+  const requiredCounts = {smartstore:2, makeshop:1, ably:1};
+  const missing = sources.filter(source => (filesBySource.get(source) || []).length !== requiredCounts[source]);
+  if (missing.length) { showToast(`${missing.map(source => CHANNEL_LABELS[source]).join(', ')} 최신 원본 파일을 모두 선택해주세요.`); return; }
+  const batchId = createRequestId();
+  const button = document.getElementById('seller-export-run');
+  sellerExportState.running = true;
+  button.disabled = true;
+  document.getElementById('seller-export-cancel').disabled = true;
+  document.getElementById('seller-export-close').disabled = true;
+  let prepared = false;
+  try {
+    showSellerExportProgress(3, 'DB 반영 계획 생성 중', mode === 'inventory_match' ? '셀피아 재고와 다른 판매처 상품을 찾습니다.' : '검증 완료된 변경대기의 원본 위치를 찾습니다.');
+    const items = await liveData.prepareSellerExport({batchId, mode, changeIds:sellerExportState.changeIds, sources});
+    prepared = true;
+    const blocked = items.filter(item => item.blocking_reason);
+    const exportable = items.filter(item => !item.blocking_reason);
+    if (!exportable.length) throw new Error(`원본 위치를 확인할 수 없는 항목만 ${formatNumber(blocked.length)}건입니다. 판매처 연결 코드와 최신 원본을 확인해주세요.`);
+    showSellerExportProgress(12, '원본 파일 검증 중', `${formatNumber(exportable.length)}건을 대조합니다.${blocked.length ? ` 위치 확인 실패 ${formatNumber(blocked.length)}건은 제외합니다.` : ''}`);
+    const result = await sellerExport.buildExportArchive(filesBySource, exportable, (percent, detail) => showSellerExportProgress(12 + percent * .84, '판매처 원본 생성 중', detail));
+    await liveData.completeSellerExport({batchId, success:true, manifest:result.manifest});
+    const timestamp = new Date().toISOString().replace(/[-:T]/g,'').slice(0,12);
+    sellerExport.downloadBlob(result.blob, `SystemV3_판매처원본_${timestamp}.zip`);
+    showSellerExportProgress(100, 'ZIP 생성 완료', `${formatNumber(exportable.length)}건 · 파일 ${result.manifest.length}개를 내려받았습니다.${blocked.length ? ` 확인 실패 ${formatNumber(blocked.length)}건 제외` : ''}`);
+    showToast(`판매처 원본 ${formatNumber(exportable.length)}건 내보내기 완료${blocked.length ? ` · ${formatNumber(blocked.length)}건 제외` : ''}`);
+    await loadChangeQueue({silent:true});
+  } catch (error) {
+    console.error('seller export failed', error);
+    if (prepared) {
+      try { await liveData.completeSellerExport({batchId, success:false, errorMessage:error?.message || String(error)}); } catch (completeError) { console.error('seller export failure state update failed', completeError); }
+    }
+    showSellerExportProgress(0, '내보내기 중단', error?.message || '원본 파일을 확인해주세요.');
+    showToast(`원본 내보내기 실패: ${error?.message || error}`);
+  } finally {
+    sellerExportState.running = false;
+    button.disabled = false;
+    document.getElementById('seller-export-cancel').disabled = false;
+    document.getElementById('seller-export-close').disabled = false;
+  }
+}
+
+document.getElementById('matrix-export-btn').addEventListener('click', () => openSellerExport({mode:'inventory_match'}));
+document.getElementById('queue-export').addEventListener('click', () => openSellerExport({mode:'change_queue', rows:selectedQueueRows()}));
+document.getElementById('seller-export-close').addEventListener('click', closeSellerExport);
+document.getElementById('seller-export-cancel').addEventListener('click', closeSellerExport);
+document.getElementById('seller-export-run').addEventListener('click', runSellerExport);
+document.getElementById('queue-confirm-applied').addEventListener('click', async event => {
+  const rows = selectedQueueRows().filter(row => row.status === 'exported');
+  if (!rows.length || !window.confirm(`${rows.length}건이 판매처에 실제 업로드 완료되었음을 확인할까요?`)) return;
+  const button = event.currentTarget; button.disabled = true;
+  try {
+    const result = await liveData.confirmChangesApplied(rows.map(row => Number(row.change_id)));
+    showToast(`${Number(result?.applied_count || 0)}건을 반영 완료로 기록했습니다.`);
+    await loadChangeQueue();
+  } catch (error) { showToast(`반영 완료 기록 실패: ${error?.message || error}`); }
+  finally { updateQueueSelection(); }
+});
 
 function showPage(pageId) {
   document.querySelectorAll('.page').forEach(page => page.classList.remove('active-page'));
@@ -1971,6 +2077,7 @@ function showToast(message) {
 }
 
 document.addEventListener('keydown', event => {
+  if (event.key === 'Escape' && !sellerExportModal.hidden) closeSellerExport();
   if (event.key === 'Escape' && !viewSettingsModal.hidden) closeViewSettings();
   if (event.key === 'Escape' && !codeListModal.hidden) closeCodeListModal();
   if (event.key === 'Escape' && !mappingPopover.hidden) closeMappingSearch();
