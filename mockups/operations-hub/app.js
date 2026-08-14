@@ -75,7 +75,7 @@ const pendingCount = document.getElementById('pending-count');
 const changeModal = document.getElementById('change-modal');
 const pendingChanges = [];
 const liveData = window.SystemV3Data;
-const matrixState = {page:1, search:'', status:'all', sort:'sku_asc', total:0, loading:false, requestId:0};
+const matrixState = {page:1, search:'', status:'all', sort:'sku_asc', total:0, loading:false, requestId:0, codeListSkus:[], codeListName:''};
 const matrixRowsBySku = new Map();
 const matrixTable = document.querySelector('.matrix-table');
 const matrixCellSelection = {anchor:null, focus:null, dragging:false};
@@ -380,22 +380,28 @@ async function loadLiveMatrix({resetPage = false} = {}) {
   setMatrixConnection('loading', 'DB 조회 중');
   matrixBody.innerHTML = '<tr class="matrix-empty-row loading"><td colspan="29"><b>Supabase에서 실제 SKU를 불러오는 중입니다.</b><span>이미지와 자사코드를 함께 연결합니다.</span></td></tr>';
   try {
-    const result = await liveData.loadProducts({page:matrixState.page, search:matrixState.search, status:matrixState.status, sort:matrixState.sort});
+    const result = await liveData.loadProducts({
+      page:matrixState.page,
+      search:matrixState.search,
+      status:matrixState.status,
+      sort:matrixState.sort,
+      skus:matrixState.codeListSkus
+    });
     if (requestId !== matrixState.requestId) return;
     matrixState.total = result.count;
     renderLiveMatrixRows(result.rows);
     const first = result.count ? ((result.page - 1) * result.pageSize) + 1 : 0;
     const last = Math.min(result.page * result.pageSize, result.count);
     document.getElementById('matrix-total-count').textContent = formatNumber(result.count);
-    document.getElementById('live-total-sku').textContent = formatNumber(result.count);
-    document.getElementById('live-catalog-state').textContent = 'Supabase 실데이터';
     document.getElementById('matrix-range').textContent = `${formatNumber(first)}–${formatNumber(last)} / ${formatNumber(result.count)}`;
     document.getElementById('matrix-page').textContent = result.page;
     document.getElementById('matrix-prev').disabled = result.page <= 1;
     document.getElementById('matrix-next').disabled = last >= result.count;
     document.getElementById('select-all-matrix').checked = false;
     updateSelectedCount();
-    setMatrixConnection('connected', `LIVE · ${formatNumber(result.count)} SKU`);
+    setMatrixConnection('connected', matrixState.codeListSkus.length
+      ? `엑셀 목록 · ${formatNumber(result.count)} SKU`
+      : `LIVE · ${formatNumber(result.count)} SKU`);
   } catch (error) {
     console.error('operations hub matrix load failed', error);
     matrixBody.innerHTML = '<tr class="matrix-empty-row error"><td colspan="29"><b>실데이터를 불러오지 못했습니다.</b><span>DB 새로고침을 눌러 다시 시도해주세요.</span></td></tr>';
@@ -600,7 +606,7 @@ function openMappingSearch({source, sku, anchor, initialQuery = ''}) {
   document.getElementById('mapping-source-label').textContent = CHANNEL_LABELS[source] || source;
   document.getElementById('mapping-target-sku').textContent = sku;
   mappingSearchInput.value = initialQuery === '-' ? '' : initialQuery;
-  document.getElementById('mapping-search-help').textContent = '최신 판매처 원본에서 상품코드·옵션코드·상품명·옵션명을 검색합니다.';
+  document.getElementById('mapping-search-help').textContent = '상품코드, 옵션코드, 상품코드-옵션코드 또는 상품명으로 검색합니다.';
   mappingSearchResults.innerHTML = '<div class="mapping-empty">검색어를 입력해주세요.</div>';
   mappingPopover.hidden = false;
   positionFloatingPanel(mappingPopover, anchor);
@@ -1163,6 +1169,210 @@ matrixBody.addEventListener('dblclick', event => {
   }
 }));
 
+const codeListModal = document.getElementById('code-list-modal');
+const codeListFileInput = document.getElementById('code-list-file');
+const codeListDropzone = document.getElementById('code-list-dropzone');
+const codeListProgress = document.getElementById('code-list-progress');
+const codeListResult = document.getElementById('code-list-result');
+const codeListApply = document.getElementById('code-list-apply');
+const codeListFilterPill = document.getElementById('code-list-filter-pill');
+const codeListSearchInput = document.getElementById('matrix-search');
+const codeListSession = {fileName:'', entries:[], invalid:[], resolved:[], skus:[]};
+const CODE_LIST_SOURCES = [
+  {key:'sellpia', label:'셀피아', aliases:['셀피아','셀피아sku','셀피아코드']},
+  {key:'smartstore', label:'스마트스토어', aliases:['스마트스토어','스마트스토어상품코드','스마트스토어코드']},
+  {key:'makeshop', label:'메이크샵', aliases:['메이크샵','메이크샵상품코드','메이크샵코드']},
+  {key:'ably', label:'에이블리', aliases:['에이블리','에이블리상품코드','에이블리코드']}
+];
+
+function normalizeCodeListHeader(value) {
+  return String(value || '').trim().toLowerCase().replace(/[\s_\-\/]/g, '');
+}
+
+function resetCodeListImport() {
+  codeListSession.fileName = '';
+  codeListSession.entries = [];
+  codeListSession.invalid = [];
+  codeListSession.resolved = [];
+  codeListSession.skus = [];
+  codeListFileInput.value = '';
+  codeListProgress.hidden = true;
+  codeListResult.hidden = true;
+  codeListApply.disabled = true;
+  codeListDropzone.disabled = false;
+  codeListDropzone.innerHTML = '<strong>엑셀 파일을 놓거나 선택하세요</strong><span>XLSX · XLS · CSV / 첫 번째 시트 사용</span>';
+}
+
+function openCodeListModal() {
+  resetCodeListImport();
+  codeListModal.hidden = false;
+}
+
+function closeCodeListModal() {
+  codeListModal.hidden = true;
+}
+
+function setCodeListProgress(percent, title, detail) {
+  codeListProgress.hidden = false;
+  document.getElementById('code-list-progress-title').textContent = title;
+  document.getElementById('code-list-progress-detail').textContent = detail;
+  document.getElementById('code-list-progress-bar').style.width = `${Math.max(0, Math.min(100, percent))}%`;
+}
+
+function parseCodeListRows(rows) {
+  const headerIndex = rows.findIndex((row, index) => {
+    if (index > 14) return false;
+    const headers = (row || []).map(normalizeCodeListHeader);
+    return CODE_LIST_SOURCES.every(source => source.aliases.some(alias => headers.includes(normalizeCodeListHeader(alias))));
+  });
+  if (headerIndex < 0) throw new Error('셀피아·스마트스토어·메이크샵·에이블리 4개 헤더를 찾지 못했습니다.');
+  const headers = (rows[headerIndex] || []).map(normalizeCodeListHeader);
+  const indexes = Object.fromEntries(CODE_LIST_SOURCES.map(source => [
+    source.key,
+    headers.findIndex(header => source.aliases.some(alias => header === normalizeCodeListHeader(alias)))
+  ]));
+  const entries = [];
+  const invalid = [];
+  rows.slice(headerIndex + 1).forEach((row, offset) => {
+    const rowNo = headerIndex + offset + 2;
+    const values = CODE_LIST_SOURCES.map(source => ({
+      source:source.key,
+      label:source.label,
+      code:String(row?.[indexes[source.key]] ?? '').trim()
+    })).filter(item => item.code);
+    if (!values.length) return;
+    if (values.length > 1) {
+      invalid.push({input_row:rowNo, source_channel:values.map(item => item.label).join(', '), input_code:values.map(item => item.code).join(' / '), reason:'한 행에 코드가 여러 개 있음'});
+      return;
+    }
+    entries.push({row_no:rowNo, source:values[0].source, code:values[0].code});
+  });
+  if (!entries.length && !invalid.length) throw new Error('헤더 아래에 확인할 코드가 없습니다.');
+  return {entries, invalid};
+}
+
+function codeListIssueLabel(status) {
+  return status === 'unmapped' ? '매핑 필요' : status === 'invalid_source' ? '판매처 오류' : '코드 없음';
+}
+
+function renderCodeListResult() {
+  const matchedSkus = [];
+  const seenSkus = new Set();
+  const grouped = new Map();
+  for (const item of codeListSession.resolved) {
+    if (!grouped.has(item.input_row)) grouped.set(item.input_row, []);
+    grouped.get(item.input_row).push(item);
+    if (item.match_status === 'matched' && item.sellpia_sku_code && !seenSkus.has(item.sellpia_sku_code)) {
+      seenSkus.add(item.sellpia_sku_code);
+      matchedSkus.push(item.sellpia_sku_code);
+    }
+  }
+  const issues = [...codeListSession.invalid];
+  for (const items of grouped.values()) {
+    if (items.some(item => item.match_status === 'matched')) continue;
+    const item = items[0];
+    issues.push({
+      input_row:item.input_row,
+      source_channel:CODE_LIST_SOURCES.find(source => source.key === item.source_channel)?.label || item.source_channel,
+      input_code:item.input_code,
+      reason:codeListIssueLabel(item.match_status)
+    });
+  }
+  codeListSession.skus = matchedSkus;
+  const unmappedCount = issues.filter(item => item.reason === '매핑 필요').length;
+  const missingCount = issues.length - unmappedCount;
+  document.getElementById('code-list-input-count').textContent = formatNumber(codeListSession.entries.length + codeListSession.invalid.length);
+  document.getElementById('code-list-match-count').textContent = formatNumber(matchedSkus.length);
+  document.getElementById('code-list-unmapped-count').textContent = formatNumber(unmappedCount);
+  document.getElementById('code-list-missing-count').textContent = formatNumber(missingCount);
+  document.getElementById('code-list-issues').innerHTML = issues.length
+    ? issues.slice(0, 200).map(item => `<article><b>${formatNumber(item.input_row)}행</b><em>${escapeHtml(item.source_channel)}</em><em title="${escapeHtml(item.input_code)}">${escapeHtml(item.input_code)}</em><span>${escapeHtml(item.reason)}</span></article>`).join('')
+    : '<div class="mapping-empty"><b>모든 코드가 매칭되었습니다.</b><span>엑셀 행 순서대로 매트릭스에 표시할 수 있습니다.</span></div>';
+  codeListResult.hidden = false;
+  codeListApply.disabled = !matchedSkus.length;
+}
+
+async function importCodeListFile(file) {
+  if (!file) return;
+  if (!window.XLSX) {
+    showToast('엑셀 읽기 모듈을 불러오지 못했습니다.');
+    return;
+  }
+  codeListDropzone.disabled = true;
+  codeListSession.fileName = file.name;
+  codeListDropzone.innerHTML = `<strong>${escapeHtml(file.name)}</strong><span>코드와 헤더를 확인하고 있습니다.</span>`;
+  setCodeListProgress(12, '파일 읽는 중', file.name);
+  try {
+    const workbook = XLSX.read(await file.arrayBuffer(), {type:'array', cellDates:false});
+    const sheet = workbook.Sheets[workbook.SheetNames[0]];
+    const rows = XLSX.utils.sheet_to_json(sheet, {header:1, raw:false, defval:''});
+    setCodeListProgress(35, '행 구조 확인 중', `${formatNumber(rows.length)}행`);
+    const parsed = parseCodeListRows(rows);
+    codeListSession.entries = parsed.entries;
+    codeListSession.invalid = parsed.invalid;
+    setCodeListProgress(58, 'DB에서 코드 연결 확인 중', `${formatNumber(parsed.entries.length)}개 코드`);
+    codeListSession.resolved = await liveData.resolveCodeEntries(parsed.entries);
+    setCodeListProgress(100, '코드 확인 완료', `${formatNumber(codeListSession.resolved.length)}개 연결 결과`);
+    renderCodeListResult();
+  } catch (error) {
+    console.error('code list import failed', error);
+    setCodeListProgress(100, '불러오기 실패', error?.message || String(error));
+    codeListDropzone.disabled = false;
+    codeListApply.disabled = true;
+  }
+}
+
+function updateCodeListFilterUi() {
+  const active = matrixState.codeListSkus.length > 0;
+  codeListFilterPill.hidden = !active;
+  document.getElementById('code-list-filter-count').textContent = active ? `${formatNumber(matrixState.codeListSkus.length)}개 SKU` : '0개 SKU';
+  document.getElementById('code-list-open').classList.toggle('active', active);
+  codeListSearchInput.disabled = active;
+  codeListSearchInput.placeholder = active
+    ? `${matrixState.codeListName || '엑셀 목록'} 순서로 모아보는 중`
+    : 'SKU / 자사코드 / 상품명 / 상품코드-옵션코드 검색';
+}
+
+function clearCodeListFilter() {
+  matrixState.codeListSkus = [];
+  matrixState.codeListName = '';
+  matrixState.search = '';
+  codeListSearchInput.value = '';
+  updateCodeListFilterUi();
+  loadLiveMatrix({resetPage:true});
+}
+
+document.getElementById('code-list-open').addEventListener('click', openCodeListModal);
+document.getElementById('code-list-close').addEventListener('click', closeCodeListModal);
+document.getElementById('code-list-cancel').addEventListener('click', closeCodeListModal);
+document.getElementById('code-list-reset').addEventListener('click', () => {
+  resetCodeListImport();
+  codeListFileInput.click();
+});
+codeListDropzone.addEventListener('click', () => codeListFileInput.click());
+codeListFileInput.addEventListener('change', () => importCodeListFile(codeListFileInput.files?.[0]));
+['dragenter','dragover'].forEach(type => codeListDropzone.addEventListener(type, event => {
+  event.preventDefault();
+  codeListDropzone.classList.add('drag-over');
+}));
+['dragleave','drop'].forEach(type => codeListDropzone.addEventListener(type, event => {
+  event.preventDefault();
+  codeListDropzone.classList.remove('drag-over');
+  if (type === 'drop') importCodeListFile(event.dataTransfer?.files?.[0]);
+}));
+codeListApply.addEventListener('click', () => {
+  if (!codeListSession.skus.length) return;
+  matrixState.codeListSkus = [...codeListSession.skus];
+  matrixState.codeListName = codeListSession.fileName;
+  matrixState.search = '';
+  codeListSearchInput.value = '';
+  updateCodeListFilterUi();
+  closeCodeListModal();
+  loadLiveMatrix({resetPage:true});
+  showToast(`${formatNumber(matrixState.codeListSkus.length)}개 SKU를 엑셀 행 순서대로 모았습니다.`);
+});
+codeListFilterPill.addEventListener('click', clearCodeListFilter);
+
 matrixBody.addEventListener('change', event => {
   if (event.target.matches('.row-check')) updateSelectedCount();
 });
@@ -1450,6 +1660,7 @@ function showToast(message) {
 
 document.addEventListener('keydown', event => {
   if (event.key === 'Escape' && !viewSettingsModal.hidden) closeViewSettings();
+  if (event.key === 'Escape' && !codeListModal.hidden) closeCodeListModal();
   if (event.key === 'Escape' && !mappingPopover.hidden) closeMappingSearch();
   if (event.key === 'Escape' && productDrawer.classList.contains('open')) closeProductDrawer();
 });
@@ -1457,6 +1668,7 @@ document.addEventListener('keydown', event => {
 const startupPreset = findPreset(activePresetId);
 activePresetId = startupPreset.id;
 applyViewPreset(startupPreset, {id:startupPreset.id, reload:false, announce:false});
+updateCodeListFilterUi();
 
 if (liveData) {
   refreshLiveData({resetPage:true});

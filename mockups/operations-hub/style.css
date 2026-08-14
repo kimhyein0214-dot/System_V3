@@ -148,3 +148,20 @@ body.matrix-cell-selecting{user-select:none}
 .view-settings-selects{grid-template-columns:1.1fr 1.2fr .65fr .8fr}
 
 @media(max-width:760px){.mapping-result-item>button{grid-template-columns:1fr}.mapping-result-meta{justify-items:start}.product-drawer{width:calc(100vw - 16px)}}
+
+/* Excel code-list lookup */
+.matrix-view-tabs .code-list-tab{margin-left:4px;border:1px solid #9ebbe5;border-bottom-color:#9ebbe5;border-radius:6px 6px 0 0;background:#f3f7ff;color:#1558c0}
+.matrix-view-tabs .code-list-tab:hover,.matrix-view-tabs .code-list-tab.active{border-color:var(--blue);background:#e8f1ff;color:#0f4ea8}
+.code-list-filter-pill{height:32px;display:inline-flex;align-items:center;gap:5px;border:1px solid #83a9e2;border-radius:15px;background:#edf4ff;padding:0 8px;color:#1558c0;font-size:8px;cursor:pointer}
+.code-list-filter-pill[hidden]{display:none}.code-list-filter-pill b{font-size:8px}.code-list-filter-pill span{color:#526f9a;font-weight:800}.code-list-filter-pill i{font-style:normal;font-size:12px}
+.code-list-modal{width:min(760px,calc(100vw - 28px));max-height:calc(100vh - 38px);display:flex;flex-direction:column;border:1px solid #64748b;border-radius:10px;background:#fff;box-shadow:0 25px 70px rgba(15,23,42,.28);overflow:hidden}
+.code-list-body{overflow:auto;padding:14px 16px}.code-list-guide{border:1px solid #d5dfec;border-radius:8px;background:#f8fafc;padding:11px}
+.code-list-guide>div{display:flex;align-items:baseline;gap:7px}.code-list-guide>div b{font-size:10px}.code-list-guide>div span{color:#64748b;font-size:8px}
+.code-list-guide table{width:100%;margin-top:9px;border-collapse:collapse;table-layout:fixed;font-size:8px}.code-list-guide th,.code-list-guide td{height:27px;border:1px solid #d7e0eb;padding:0 7px;text-align:left}.code-list-guide th{background:#eaf1fa;color:#334155}.code-list-guide td{background:#fff;color:#526277}
+.code-list-guide p{margin:8px 0 0;color:#64748b;font-size:8px;line-height:1.55}.code-list-guide p b{color:#1558c0}
+.code-list-dropzone{width:100%;min-height:92px;display:grid;place-content:center;gap:6px;margin-top:11px;border:2px dashed #9bb7dd;border-radius:8px;background:#f5f9ff;color:#334155;cursor:pointer}.code-list-dropzone:hover,.code-list-dropzone.drag-over{border-color:var(--blue);background:#eaf3ff}.code-list-dropzone strong{font-size:11px}.code-list-dropzone span{color:#718096;font-size:8px}
+.code-list-progress{margin-top:11px;border:1px solid #bdd1ed;border-radius:7px;background:#f5f9ff;padding:10px}.code-list-progress[hidden],.code-list-result[hidden]{display:none}.code-list-progress>div:first-child{display:flex;justify-content:space-between;font-size:9px}.code-list-progress>div:first-child span{color:#1558c0;font-weight:900}.code-list-progress .progress{margin-top:8px}
+.code-list-result{margin-top:11px}.code-list-summary{display:grid;grid-template-columns:repeat(4,1fr);gap:7px}.code-list-summary p{margin:0;border:1px solid #dbe3ed;border-radius:7px;background:#fff;padding:9px}.code-list-summary span{display:block;color:#718096;font-size:7px}.code-list-summary b{display:block;margin-top:4px;font-size:13px}.code-list-summary p:nth-child(2) b{color:#16814b}.code-list-summary p:nth-child(3) b,.code-list-summary p:nth-child(4) b{color:#b42318}
+.code-list-issues{max-height:145px;margin-top:8px;overflow:auto}.code-list-issues article{display:grid;grid-template-columns:52px 84px minmax(0,1fr) 80px;gap:7px;align-items:center;border-bottom:1px solid #edf1f5;padding:6px 7px;color:#526277;font-size:8px}.code-list-issues article b{color:#334155}.code-list-issues article em{overflow:hidden;text-overflow:ellipsis;font-style:normal;white-space:nowrap}.code-list-issues article span{justify-self:end;border-radius:7px;background:#fff0f0;padding:3px 5px;color:#b42318;font-weight:900}
+.code-list-modal .modal-foot>span{flex:1}
+@media(max-width:760px){.matrix-view-tabs .code-list-tab{display:none}.code-list-summary{grid-template-columns:1fr 1fr}.code-list-issues article{grid-template-columns:42px 68px minmax(0,1fr)}.code-list-issues article span{grid-column:3;justify-self:start}}

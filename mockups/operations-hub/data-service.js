@@ -21,8 +21,25 @@
     return String(value || '').trim().replace(/[^0-9A-Za-z가-힣ㄱ-ㅎㅏ-ㅣ_\-\[\]\s]/g, '');
   }
 
-  async function loadProducts({ page = 1, search = '', status = 'all', sort = 'sku_asc' } = {}) {
+  async function loadProducts({ page = 1, search = '', status = 'all', sort = 'sku_asc', skus = [] } = {}) {
     const safePage = Math.max(1, Number(page) || 1);
+    const codeListSkus = [...new Set((skus || []).map(cleanText).filter(Boolean))];
+    if (codeListSkus.length) {
+      const {data, error} = await db.rpc('load_operations_hub_code_list', {
+        p_skus:codeListSkus,
+        p_page:safePage,
+        p_page_size:PAGE_SIZE,
+        p_status:status,
+        p_sort:'input_order'
+      });
+      if (error) throw error;
+      return {
+        rows:Array.isArray(data?.rows) ? data.rows : [],
+        count:Number(data?.count || 0),
+        page:Number(data?.page || safePage),
+        pageSize:Number(data?.pageSize || data?.page_size || PAGE_SIZE)
+      };
+    }
     const from = (safePage - 1) * PAGE_SIZE;
     const to = from + PAGE_SIZE - 1;
     const keyword = normalizedSearch(search);
@@ -31,7 +48,14 @@
       .select('sellpia_sku_code,own_code,image_url,display_name,smartstore_name,smartstore_option_name,smartstore_product_code,smartstore_option_code,smartstore_match_tier,smartstore_match_score,smartstore_listing_count,smartstore_name_is_draft,smartstore_sale_status,makeshop_name,makeshop_option_name,makeshop_product_code,makeshop_option_code,makeshop_match_tier,makeshop_match_score,makeshop_listing_count,makeshop_name_is_draft,makeshop_sale_status,ably_name,ably_option_name,ably_product_code,ably_option_code,ably_match_tier,ably_match_score,ably_listing_count,ably_name_is_draft,ably_sale_status,updated_at,sellpia_product_name,sellpia_option_name,sellpia_own_code,sellpia_current_stock,sellpia_available_stock,sellpia_safety_stock,sellpia_sale_price,sellpia_inventory_at,smartstore_stock,smartstore_price,smartstore_inventory_at,makeshop_stock,makeshop_price,makeshop_inventory_at,ably_stock,ably_price,ably_inventory_at,overall_status,sellpia_override_image_url,sellpia_override_updated_at', { count: 'exact' });
 
     if (keyword) {
-      query = query.or(`sellpia_sku_code.ilike.*${keyword}*,own_code.ilike.*${keyword}*,display_name.ilike.*${keyword}*,sellpia_own_code.ilike.*${keyword}*,sellpia_product_name.ilike.*${keyword}*,smartstore_product_code.ilike.*${keyword}*,smartstore_option_code.ilike.*${keyword}*,smartstore_name.ilike.*${keyword}*,smartstore_option_name.ilike.*${keyword}*,makeshop_product_code.ilike.*${keyword}*,makeshop_option_code.ilike.*${keyword}*,makeshop_name.ilike.*${keyword}*,makeshop_option_name.ilike.*${keyword}*,ably_product_code.ilike.*${keyword}*,ably_option_code.ilike.*${keyword}*,ably_name.ilike.*${keyword}*,ably_option_name.ilike.*${keyword}*`);
+      const {data:listingMatches, error:listingError} = await db.rpc('find_operations_hub_listing_skus', {
+        p_query:keyword,
+        p_limit:500
+      });
+      if (listingError) throw listingError;
+      const listingSkus = [...new Set((listingMatches || []).map(item => cleanText(item.sellpia_sku_code)).filter(Boolean))];
+      if (listingSkus.length) query = query.in('sellpia_sku_code', listingSkus);
+      else query = query.or(`sellpia_sku_code.ilike.*${keyword}*,own_code.ilike.*${keyword}*,display_name.ilike.*${keyword}*,sellpia_own_code.ilike.*${keyword}*,sellpia_product_name.ilike.*${keyword}*,smartstore_product_code.ilike.*${keyword}*,smartstore_option_code.ilike.*${keyword}*,smartstore_name.ilike.*${keyword}*,smartstore_option_name.ilike.*${keyword}*,makeshop_product_code.ilike.*${keyword}*,makeshop_option_code.ilike.*${keyword}*,makeshop_name.ilike.*${keyword}*,makeshop_option_name.ilike.*${keyword}*,ably_product_code.ilike.*${keyword}*,ably_option_code.ilike.*${keyword}*,ably_name.ilike.*${keyword}*,ably_option_name.ilike.*${keyword}*`);
     }
     if (status === 'attention') query = query.in('overall_status', ['review', 'unmatched']);
     else if (['connected', 'review', 'unmatched'].includes(status)) query = query.eq('overall_status', status);
@@ -112,6 +136,25 @@
     });
     if (error) throw error;
     return data || [];
+  }
+
+  async function resolveCodeEntries(entries) {
+    const normalized = (entries || []).map(entry => ({
+      row_no:Math.max(1, Number(entry.row_no) || 1),
+      source:cleanText(entry.source),
+      code:cleanText(entry.code)
+    })).filter(entry => entry.code);
+    if (!normalized.length) return [];
+    const chunkSize = 500;
+    const resolved = [];
+    for (let offset = 0; offset < normalized.length; offset += chunkSize) {
+      const {data, error} = await db.rpc('resolve_operations_hub_code_entries', {
+        p_entries:normalized.slice(offset, offset + chunkSize)
+      });
+      if (error) throw error;
+      resolved.push(...(data || []));
+    }
+    return resolved;
   }
 
   async function linkSellerItem({sku, source, productCode, optionCode = ''}) {
@@ -441,6 +484,7 @@
     loadTags,
     saveSellpiaChanges,
     searchSellerItems,
+    resolveCodeEntries,
     linkSellerItem,
     saveSellerListing,
     uploadSellpiaImage,
