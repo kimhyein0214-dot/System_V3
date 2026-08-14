@@ -19,7 +19,16 @@
   const sellerParsers = global.SystemV3SellerParsers;
 
   function normalizedSearch(value) {
-    return String(value || '').trim().replace(/[^0-9A-Za-z가-힣ㄱ-ㅎㅏ-ㅣ_\-\[\]\s]/g, '');
+    return String(value || '').trim().replace(/[^0-9A-Za-z가-힣ㄱ-ㅎㅏ-ㅣ_\-\[\]\/\s]/g, '');
+  }
+
+  function splitIntersectionSearch(value) {
+    const text = normalizedSearch(value);
+    const slashIndex = text.indexOf('/');
+    if (slashIndex < 0) return null;
+    const productTerm = text.slice(0, slashIndex).trim();
+    const optionTerm = text.slice(slashIndex + 1).trim();
+    return productTerm && optionTerm ? {productTerm, optionTerm} : null;
   }
 
   async function attachSellerDrafts(rows) {
@@ -27,15 +36,11 @@
     const skus = [...new Set(products.map(row => cleanText(row?.sellpia_sku_code)).filter(Boolean))];
     if (!skus.length) return products;
     const {data, error} = await db
-      .from('operations_hub_change_queue')
+      .from('operations_hub_active_seller_drafts')
       .select('change_id,sellpia_sku_code,source_channel,field_key,before_value,after_value,status,updated_at')
       .in('sellpia_sku_code', skus)
-      .not('source_channel', 'is', null)
-      .in('field_key', ['sellpia_current_stock','sellpia_sale_price'])
-      .in('status', ['pending','validated','processing','exported','failed'])
       .order('updated_at', {ascending:false})
-      .order('change_id', {ascending:false})
-      .limit(1000);
+      .order('change_id', {ascending:false});
     if (error) throw error;
     const draftByKey = new Map();
     for (const draft of data || []) {
@@ -106,13 +111,26 @@
     const from = (safePage - 1) * PAGE_SIZE;
     const to = from + PAGE_SIZE - 1;
     const keyword = normalizedSearch(search);
+    const intersection = splitIntersectionSearch(search);
     const allowedSearchSources = ['sellpia','smartstore','makeshop','ably'];
     const activeSearchSources = [...new Set((searchSources || []).map(source => cleanText(source).toLowerCase()).filter(source => allowedSearchSources.includes(source)))];
     let query = db
       .from('operations_hub_matrix_live')
       .select(MATRIX_SELECT, { count: 'exact' });
 
-    if (keyword) {
+    if (intersection) {
+      const nameFields = {
+        sellpia:['sellpia_product_name','sellpia_option_name'],
+        smartstore:['smartstore_name','smartstore_option_name'],
+        makeshop:['makeshop_name','makeshop_option_name'],
+        ably:['ably_name','ably_option_name']
+      };
+      const filters = activeSearchSources.map(source => nameFields[source]).filter(Boolean).map(([productField, optionField]) =>
+        `and(${productField}.ilike.*${intersection.productTerm}*,${optionField}.ilike.*${intersection.optionTerm}*)`
+      );
+      if (filters.length) query = query.or(filters.join(','));
+      else query = query.eq('sellpia_sku_code', '__NO_SEARCH_SOURCE_SELECTED__');
+    } else if (keyword) {
       const selectedSellers = activeSearchSources.filter(source => source !== 'sellpia');
       let listingMatches = [];
       if (selectedSellers.length) {
@@ -175,7 +193,7 @@
   async function loadDashboardMetrics() {
     const {data, error} = await db
       .from('operations_hub_dashboard_metrics')
-      .select('total_sku,connected_sku,unmatched_sku,inventory_mismatch_sku,latest_sync_at,today_picked,shortage_drawer_qty')
+      .select('total_sku,connected_sku,unmatched_sku,inventory_mismatch_sku,projected_inventory_mismatch_sku,inventory_draft_cells,inventory_failed_cells,latest_sync_at,today_picked,shortage_drawer_qty')
       .single();
     if (error) throw error;
     return data;
@@ -208,16 +226,20 @@
     return {savedCount, queuedCount, productCount:grouped.size, batchId};
   }
 
-  async function searchSellerItems(source, query, limit = 20) {
+  async function searchSellerItems(source, query, page = 1, pageSize = 24) {
     const safeSource = cleanText(source);
     if (!['smartstore', 'makeshop', 'ably'].includes(safeSource)) throw new Error('판매처를 확인해주세요.');
-    const {data, error} = await db.rpc('search_operations_hub_seller_items', {
+    const safePage = Math.max(1, Number(page) || 1);
+    const safePageSize = Math.max(1, Math.min(Number(pageSize) || 24, 100));
+    const {data, error} = await db.rpc('search_operations_hub_seller_items_v2', {
       p_source:safeSource,
       p_query:cleanText(query),
-      p_limit:Math.max(1, Math.min(Number(limit) || 20, 50))
+      p_page:safePage,
+      p_page_size:safePageSize
     });
     if (error) throw error;
-    return data || [];
+    const rows = data || [];
+    return {rows, count:Number(rows[0]?.total_count || 0), page:safePage, pageSize:safePageSize};
   }
 
   async function resolveCodeEntries(entries) {

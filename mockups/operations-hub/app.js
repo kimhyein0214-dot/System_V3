@@ -552,15 +552,19 @@ async function loadLiveDashboardMetrics() {
     const connected = Number(metrics.connected_sku || 0);
     const unmatched = Number(metrics.unmatched_sku || 0);
     const mismatched = Number(metrics.inventory_mismatch_sku || 0);
+    const projectedMismatch = Number(metrics.projected_inventory_mismatch_sku ?? mismatched);
+    const inventoryDraftCells = Number(metrics.inventory_draft_cells || 0);
+    const inventoryFailedCells = Number(metrics.inventory_failed_cells || 0);
     document.getElementById('live-total-sku').textContent = formatNumber(total);
     document.getElementById('live-catalog-state').textContent = 'Supabase 실데이터';
     document.getElementById('live-connected-sku').textContent = formatNumber(connected);
     document.getElementById('live-connected-rate').textContent = total ? `${((connected / total) * 100).toFixed(1)}%` : '0%';
-    document.getElementById('live-inventory-mismatch').textContent = formatNumber(mismatched);
+    document.getElementById('live-inventory-mismatch').textContent = formatNumber(projectedMismatch);
+    document.getElementById('live-inventory-mismatch-detail').textContent = `원본 ${formatNumber(mismatched)} · 수정안 ${formatNumber(inventoryDraftCells)}셀${inventoryFailedCells ? ` · 실패 ${formatNumber(inventoryFailedCells)}셀` : ''}`;
     document.getElementById('live-unmatched-sku').textContent = formatNumber(unmatched);
     document.getElementById('matrix-unmatched-badge').textContent = formatNumber(unmatched);
     document.getElementById('dashboard-unmatched-alert').textContent = `미매칭 SKU ${formatNumber(unmatched)}건`;
-    document.getElementById('dashboard-inventory-alert').textContent = `재고 차이 ${formatNumber(mismatched)}건`;
+    document.getElementById('dashboard-inventory-alert').textContent = `수정안 반영 후 재고 차이 ${formatNumber(projectedMismatch)}건 · 원본 ${formatNumber(mismatched)}건`;
     const picking = metrics.today_picked;
     const shortage = metrics.shortage_drawer_qty;
     document.getElementById('live-today-picked').textContent = picking == null ? '-' : formatNumber(picking);
@@ -656,7 +660,7 @@ const CHANNEL_SECTION_KEYS = {smartstore:'smart', makeshop:'make', ably:'ably'};
 const mappingPopover = document.getElementById('mapping-popover');
 const mappingSearchInput = document.getElementById('mapping-search-input');
 const mappingSearchResults = document.getElementById('mapping-search-results');
-const mappingState = {source:'', sku:'', anchor:null, requestId:0, timer:null};
+const mappingState = {source:'', sku:'', anchor:null, requestId:0, timer:null, page:1, pageSize:24, count:0};
 
 function positionFloatingPanel(panel, anchor, width = 500) {
   const rect = anchor?.getBoundingClientRect?.() || {left:20, right:20, top:100, bottom:130};
@@ -680,10 +684,12 @@ function openMappingSearch({source, sku, anchor, initialQuery = ''}) {
   mappingState.source = source;
   mappingState.sku = sku;
   mappingState.anchor = anchor;
+  mappingState.page = 1;
+  mappingState.count = 0;
   document.getElementById('mapping-source-label').textContent = CHANNEL_LABELS[source] || source;
   document.getElementById('mapping-target-sku').textContent = sku;
   mappingSearchInput.value = initialQuery === '-' ? '' : initialQuery;
-  document.getElementById('mapping-search-help').textContent = '상품코드, 옵션코드, 상품코드-옵션코드 또는 상품명으로 검색합니다.';
+  document.getElementById('mapping-search-help').textContent = '코드 또는 상품명으로 검색합니다. 상품명 / 옵션명 형식은 두 조건의 교집합입니다.';
   mappingSearchResults.innerHTML = '<div class="mapping-empty">검색어를 입력해주세요.</div>';
   mappingPopover.hidden = false;
   positionFloatingPanel(mappingPopover, anchor);
@@ -692,12 +698,17 @@ function openMappingSearch({source, sku, anchor, initialQuery = ''}) {
   if (mappingSearchInput.value.trim()) runMappingSearch();
 }
 
-function renderMappingResults(items) {
+function renderMappingResults(result) {
+  const items = Array.isArray(result?.rows) ? result.rows : [];
+  mappingState.count = Number(result?.count || 0);
+  mappingState.page = Number(result?.page || 1);
+  const pageSize = Number(result?.pageSize || mappingState.pageSize);
+  const totalPages = Math.max(1, Math.ceil(mappingState.count / pageSize));
   if (!items.length) {
     mappingSearchResults.innerHTML = '<div class="mapping-empty"><b>검색 결과가 없습니다.</b><span>코드 일부 또는 상품명으로 다시 검색해주세요.</span></div>';
     return;
   }
-  mappingSearchResults.innerHTML = items.map(item => {
+  const rows = items.map(item => {
     const linked = Array.isArray(item.linked_skus) ? item.linked_skus : [];
     const otherLinks = linked.filter(sku => sku !== mappingState.sku);
     const warning = otherLinks.length ? `<span class="mapping-linked-warning">다른 SKU ${escapeHtml(otherLinks.slice(0,3).join(', '))}${otherLinks.length > 3 ? ` 외 ${otherLinks.length - 3}` : ''} 연결됨</span>` : '<span class="mapping-free">연결 가능</span>';
@@ -709,9 +720,13 @@ function renderMappingResults(items) {
       </button>
     </article>`;
   }).join('');
+  mappingSearchResults.innerHTML = `${rows}<nav class="mapping-pagination" aria-label="검색 결과 페이지">
+    <span>전체 ${formatNumber(mappingState.count)}개 · ${mappingState.page}/${totalPages}쪽</span>
+    <div><button type="button" data-mapping-page="${mappingState.page - 1}" ${mappingState.page <= 1 ? 'disabled' : ''}>이전</button><button type="button" data-mapping-page="${mappingState.page + 1}" ${mappingState.page >= totalPages ? 'disabled' : ''}>다음</button></div>
+  </nav>`;
 }
 
-async function runMappingSearch() {
+async function runMappingSearch(page = mappingState.page) {
   const keyword = mappingSearchInput.value.trim();
   if (!keyword) {
     mappingSearchResults.innerHTML = '<div class="mapping-empty">검색어를 입력해주세요.</div>';
@@ -720,9 +735,9 @@ async function runMappingSearch() {
   const requestId = ++mappingState.requestId;
   mappingSearchResults.innerHTML = '<div class="mapping-empty loading"><b>원본 검색 중</b><span>최신 정규화 데이터를 확인합니다.</span></div>';
   try {
-    const items = await liveData.searchSellerItems(mappingState.source, keyword, 24);
+    const result = await liveData.searchSellerItems(mappingState.source, keyword, page, mappingState.pageSize);
     if (requestId !== mappingState.requestId) return;
-    renderMappingResults(items);
+    renderMappingResults(result);
   } catch (error) {
     console.error('seller source search failed', error);
     mappingSearchResults.innerHTML = `<div class="mapping-empty error"><b>검색하지 못했습니다.</b><span>${escapeHtml(error?.message || error)}</span></div>`;
@@ -731,10 +746,17 @@ async function runMappingSearch() {
 
 mappingSearchInput.addEventListener('input', () => {
   clearTimeout(mappingState.timer);
+  mappingState.page = 1;
   mappingState.timer = setTimeout(runMappingSearch, 260);
 });
 document.getElementById('close-mapping-popover').addEventListener('click', closeMappingSearch);
 mappingSearchResults.addEventListener('click', async event => {
+  const pageButton = event.target.closest('[data-mapping-page]');
+  if (pageButton && !pageButton.disabled) {
+    mappingState.page = Math.max(1, Number(pageButton.dataset.mappingPage) || 1);
+    await runMappingSearch(mappingState.page);
+    return;
+  }
   const button = event.target.closest('[data-map-product]');
   if (!button) return;
   const linkedSkus = JSON.parse(button.dataset.linkedSkus || '[]');
@@ -1990,7 +2012,7 @@ async function runSellerExport() {
       }
       showSellerExportProgress(100, '수정안 생성 완료', `${formatNumber(staged)}건을 매트릭스 검토 대기로 저장했습니다. 판매처 셀에서 값을 다시 수정할 수 있습니다.`);
       showToast(staged ? `재고 수정안 ${formatNumber(staged)}건을 만들었습니다.${cancelled ? ` 기존 수정안 ${formatNumber(cancelled)}건은 교체했습니다.` : ''}` : '셀피아 재고와 다른 판매처 값이 없습니다.');
-      await Promise.all([loadLiveMatrix(), loadChangeQueue({silent:true})]);
+      await Promise.all([loadLiveMatrix(), loadChangeQueue({silent:true}), loadLiveDashboardMetrics()]);
       return;
     }
 

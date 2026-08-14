@@ -30,7 +30,7 @@
       <section class="status-strip" aria-label="오늘의 운영 현황">
         <article class="metric"><span>전체 SKU</span><strong id="live-total-sku">불러오는 중</strong><em id="live-catalog-state">Supabase 연결 중</em></article>
         <article class="metric good"><span>판매처 연결</span><strong id="live-connected-sku">불러오는 중</strong><em id="live-connected-rate">DB 집계 중</em></article>
-        <article class="metric danger"><span>재고 불일치</span><strong id="live-inventory-mismatch">불러오는 중</strong><em>확인 필요</em></article>
+        <article class="metric danger"><span>수정안 반영 후 재고 불일치</span><strong id="live-inventory-mismatch">불러오는 중</strong><em id="live-inventory-mismatch-detail">원본 집계 확인 중</em></article>
         <article class="metric warn"><span>미매칭 상품</span><strong id="live-unmatched-sku">불러오는 중</strong><em>매트릭스 실집계</em></article>
         <article class="metric blue"><span>오늘 피킹</span><strong id="live-today-picked">-</strong><em id="live-shortage-drawer">주문 DB 연결 대기</em></article>
         <article class="metric muted"><span>최근 동기화</span><strong class="time-value" id="live-latest-sync">-</strong><em id="live-latest-sync-detail">DB 확인 중</em></article>
@@ -169,7 +169,7 @@
             </div>
             <div class="matrix-toolbar">
               <div class="matrix-search-group" role="search" aria-label="상품 및 판매처 검색">
-                <div class="matrix-search"><span>⌕</span><input id="matrix-search" placeholder="SKU / 자사코드 / 상품명 / 상품코드-옵션코드 검색"></div>
+                <div class="matrix-search"><span>⌕</span><input id="matrix-search" placeholder="코드 또는 상품명 / 옵션명 교집합 검색"></div>
                 <fieldset id="matrix-search-sources" class="matrix-search-sources" aria-label="검색 대상 판매처">
                   <legend>검색 대상</legend>
                   <label><input type="checkbox" value="sellpia" checked><span>셀피아</span></label>
@@ -320,7 +320,7 @@
     </div>
     <section id="mapping-popover" class="mapping-popover" hidden aria-label="판매처 원본 검색">
       <div class="mapping-popover-head"><div><span id="mapping-source-label">판매처</span><h3><b id="mapping-target-sku">-</b> 연결 상품 찾기</h3></div><button id="close-mapping-popover" aria-label="검색창 닫기">×</button></div>
-      <div class="mapping-search"><span>⌕</span><input id="mapping-search-input" placeholder="상품코드 / 상품코드-옵션코드 / 상품명 검색" autocomplete="off"></div>
+      <div class="mapping-search"><span>⌕</span><input id="mapping-search-input" placeholder="코드 또는 상품명 / 옵션명 교집합 검색" autocomplete="off"></div>
       <p id="mapping-search-help">최신 원본 데이터에서 검색합니다.</p>
       <div id="mapping-search-results" class="mapping-search-results"><div class="mapping-empty">검색어를 입력해주세요.</div></div>
     </section>
@@ -347,9 +347,9 @@
     <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.112.3/dist/umd/supabase.js"></script>
-    <script src="./seller-source-parsers.js?v=20260814-exporthighlight1"></script>
-    <script src="./seller-export-adapter.js?v=20260814-exporthighlight1"></script>
-    <script src="./data-service.js?v=20260814-exporthighlight1"></script>
-    <script src="./app.js?v=20260814-exporthighlight1"></script>
+    <script src="./seller-source-parsers.js?v=20260814-searchdraft1"></script>
+    <script src="./seller-export-adapter.js?v=20260814-searchdraft1"></script>
+    <script src="./data-service.js?v=20260814-searchdraft1"></script>
+    <script src="./app.js?v=20260814-searchdraft1"></script>
   </body>
 </html>

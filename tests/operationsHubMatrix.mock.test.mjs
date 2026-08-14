@@ -21,6 +21,10 @@ const sellerDetailMigration = fs.readFileSync(
   new URL("../supabase/migrations/20260814020007_operations_hub_manual_links_and_seller_details.sql", import.meta.url),
   "utf8",
 );
+const searchDraftMigration = fs.readFileSync(
+  new URL("../supabase/migrations/20260814063641_operations_hub_search_drafts_projection.sql", import.meta.url),
+  "utf8",
+);
 
 assert.match(html, /id="matrix-zoom-out"[\s\S]*?id="matrix-zoom-value"[\s\S]*?id="matrix-zoom-in"/, "matrix zoom controls must be visible together");
 assert.match(source, /MATRIX_ZOOM_MIN = 80;[\s\S]*?MATRIX_ZOOM_MAX = 140;[\s\S]*?localStorage\.setItem\(MATRIX_ZOOM_KEY/, "matrix-only zoom must be bounded and persisted");
@@ -43,6 +47,11 @@ assert.match(migration, /with \(security_invoker = true\)/, "the live matrix vie
 assert.match(presetMigration, /end::text as overall_status/, "the live matrix view must expose server-filterable overall status");
 assert.match(html, /id="live-connected-sku"[\s\S]*?id="live-inventory-mismatch"[\s\S]*?id="live-today-picked"/, "dashboard header metrics must have live-data targets");
 assert.match(dataSource, /\.from\('operations_hub_dashboard_metrics'\)/, "dashboard metrics must load from the database");
+assert.match(dataSource, /projected_inventory_mismatch_sku[\s\S]*?inventory_draft_cells/, "dashboard metrics must distinguish projected mismatches from raw snapshots");
+assert.match(source, /live-inventory-mismatch-detail[\s\S]*?원본 \$\{formatNumber\(mismatched\)\}/, "the header must explain raw and draft-projected inventory counts");
+assert.match(dataSource, /\.from\('operations_hub_active_seller_drafts'\)/, "matrix draft colors must load from the de-duplicated active draft view");
+assert.doesNotMatch(dataSource, /operations_hub_active_seller_drafts'[\s\S]{0,500}?\.limit\(1000\)/, "active seller drafts must not be truncated at 1,000 history rows");
+assert.match(searchDraftMigration, /distinct on \(queue\.sellpia_sku_code, queue\.source_channel, queue\.field_key\)[\s\S]*?projected_inventory_mismatch_sku/, "the database must expose one latest draft per seller cell and projected mismatch totals");
 assert.match(source, /data-field-key="\$\{fieldKey\}"[\s\S]*?fieldKey:cell\.dataset\.fieldKey/, "Sellpia matrix cells must retain database field keys while editing");
 assert.match(dataSource, /apply_operations_hub_sellpia_changes/, "Sellpia matrix changes must save through the database RPC");
 assert.match(source, /image-drop-cell[\s\S]*?uploadSellpiaImage/, "image cells must support Sellpia SKU image drops");
@@ -56,6 +65,9 @@ assert.doesNotMatch(source, /sellpiaEditor\('sellpia_option_name'/, "Sellpia opt
 assert.match(source, /sellpiaEditor\('sellpia_own_code'[\s\S]*?sellpiaEditor\('sellpia_current_stock'[\s\S]*?sellpiaEditor\('sellpia_sale_price'/, "only frequent Sellpia base fields should remain inline editable");
 assert.match(source, /mapping-code-button[\s\S]*?openMappingSearch[\s\S]*?linkSellerItem/, "seller code cells must open source search and save a manual link");
 assert.match(dataSource, /search_operations_hub_seller_items[\s\S]*?link_operations_hub_seller_item[\s\S]*?save_operations_hub_seller_listing/, "seller search, linking, and detail drafts must use database RPCs");
+assert.match(dataSource, /search_operations_hub_seller_items_v2[\s\S]*?p_page[\s\S]*?p_page_size/, "seller matching search must be paginated instead of silently capped");
+assert.match(source, /상품명 \/ 옵션명[\s\S]*?mapping-pagination[\s\S]*?전체 \$\{formatNumber\(mappingState\.count\)\}개/, "seller search must explain intersection syntax and show total result count");
+assert.match(searchDraftMigration, /product_name[\s\S]*?ilike[\s\S]*?product_term[\s\S]*?option_name[\s\S]*?ilike[\s\S]*?option_term/, "seller search must apply product and option name terms as an intersection");
 assert.match(html, /id="drawer-smart-name"[\s\S]*?id="drawer-make-name"[\s\S]*?id="drawer-ably-name"/, "the detail drawer must edit seller-specific names independently");
 assert.match(source, /price-hover-target[\s\S]*?function showPricePopover[\s\S]*?가격정책 DB는 아직 연결 전/, "seller price cells must explain the live comparison without inventing a policy formula");
 assert.match(sellerDetailMigration, /operations_hub_manual_links[\s\S]*?search_operations_hub_seller_items[\s\S]*?link_operations_hub_seller_item[\s\S]*?smartstore_option_name/, "manual links and seller detail names must persist in the live matrix schema");
