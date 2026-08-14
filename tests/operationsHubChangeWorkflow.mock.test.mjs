@@ -23,10 +23,12 @@ assert.match(migration, /status_message = '더 최신 변경으로 대체됨'/, 
 for (const id of ["queue-status-filter", "queue-source-filter", "queue-refresh", "queue-retry", "queue-cancel", "queue-validate", "queue-body", "queue-event-panel"]) {
   assert.match(html, new RegExp(`id="${id}"`), `queue UI must include ${id}`);
 }
-assert.match(html, /20260814-partialbold1/g, "all deployed assets must share the current operations hub version");
+assert.match(html, /20260814-sellpiaautosave1/g, "all deployed assets must share the current operations hub version");
 assert.match(data, /loadChangeQueue[\s\S]*?loadChangeQueueStats[\s\S]*?loadChangeEvents[\s\S]*?validateChangeQueue[\s\S]*?cancelChangeQueue[\s\S]*?retryChangeQueue/, "the frontend data adapter must expose the complete queue workflow");
 assert.match(data, /p_batch_id:batchId/, "writes must send their stable request batch ID to the database");
-assert.match(app, /pendingChangeBatchId \|\|= createRequestId\(\)[\s\S]*?saveSellpiaChanges\(pendingChanges, pendingChangeBatchId\)/, "Sellpia retries must reuse the same batch ID");
+assert.match(app, /const batchId = pendingChangeBatchId \|\| createRequestId\(\)[\s\S]*?saveSellpiaChanges\(snapshot, batchId\)[\s\S]*?pendingChangeBatchId = batchId/, "Sellpia automatic-save retries must reuse the same batch ID after failure");
+assert.match(app, /SELLPIA_AUTOSAVE_DELAY_MS = 450[\s\S]*?scheduleSellpiaAutosave[\s\S]*?flushPendingSellpiaChanges\(\{automatic:true\}\)/, "Sellpia cell edits must automatically persist after a short batching delay");
+assert.match(app, /pendingChanges\.splice\(0, pendingChanges\.length\)[\s\S]*?restoreFailedChanges\(snapshot\)/, "new edits must remain separate while an automatic save is in flight and failed snapshots must be restored");
 assert.match(app, /function renderChangeQueue[\s\S]*?function runQueueAction/, "the live queue must render and execute state actions");
 assert.match(app, /if \(pageId === 'jobs'\) loadChangeQueue\(\)/, "opening the queue page must load live DB rows");
 

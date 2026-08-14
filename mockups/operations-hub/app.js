@@ -75,6 +75,11 @@ const pendingCount = document.getElementById('pending-count');
 const changeModal = document.getElementById('change-modal');
 const pendingChanges = [];
 let pendingChangeBatchId = null;
+let sellpiaAutosaveTimer = null;
+let sellpiaSaveInFlight = false;
+let sellpiaSavingCount = 0;
+let sellpiaSaveError = '';
+const SELLPIA_AUTOSAVE_DELAY_MS = 450;
 const liveData = window.SystemV3Data;
 const matrixState = {page:1, search:'', searchSources:['sellpia','smartstore','makeshop','ably'], status:'all', sort:'sku_asc', total:0, loading:false, requestId:0, codeListSkus:[], codeListRows:[], codeListName:''};
 const matrixRowsBySku = new Map();
@@ -811,6 +816,7 @@ pricePopover.addEventListener('mouseleave', scheduleHidePricePopover);
 
 function addPendingChange(change) {
   pendingChangeBatchId = null;
+  sellpiaSaveError = '';
   const duplicate = pendingChanges.find(item => item.sku === change.sku && item.field === change.field);
   if (duplicate) {
     duplicate.after = change.after;
@@ -821,8 +827,88 @@ function addPendingChange(change) {
   } else {
     pendingChanges.push(change);
   }
-  pendingCount.textContent = pendingChanges.length;
-  changeBar.hidden = pendingChanges.length === 0;
+  updatePendingChangeUi();
+  scheduleSellpiaAutosave();
+}
+
+function updatePendingChangeUi(message = '') {
+  const total = pendingChanges.length + sellpiaSavingCount;
+  pendingCount.textContent = total;
+  changeBar.hidden = total === 0;
+  const detail = changeBar.querySelector('em');
+  if (detail) detail.textContent = message || (sellpiaSaveInFlight
+    ? '셀피아 기준값을 Supabase에 자동 저장하고 있습니다.'
+    : sellpiaSaveError
+      ? `자동 저장 실패 · ${sellpiaSaveError}`
+      : '연속 입력을 잠깐 묶은 뒤 Supabase에 자동 저장합니다.');
+  const discard = document.getElementById('discard-changes');
+  const preview = document.getElementById('preview-changes');
+  if (discard) discard.disabled = sellpiaSaveInFlight || pendingChanges.length === 0;
+  if (preview) preview.disabled = sellpiaSaveInFlight || pendingChanges.length === 0;
+}
+
+function scheduleSellpiaAutosave(delay = SELLPIA_AUTOSAVE_DELAY_MS) {
+  clearTimeout(sellpiaAutosaveTimer);
+  if (!pendingChanges.length || sellpiaSaveInFlight || !liveData?.saveSellpiaChanges) return;
+  sellpiaAutosaveTimer = setTimeout(() => {
+    sellpiaAutosaveTimer = null;
+    flushPendingSellpiaChanges({automatic:true});
+  }, delay);
+}
+
+function pendingChangeKey(change) {
+  return `${change.sku}\u0000${change.fieldKey || change.field}`;
+}
+
+function removeSavedCellState(savedChanges) {
+  for (const saved of savedChanges) {
+    if (pendingChanges.some(change => pendingChangeKey(change) === pendingChangeKey(saved))) continue;
+    const row = matrixBody.querySelector(`tr[data-sku="${CSS.escape(saved.sku)}"]`);
+    row?.querySelector(`.sellpia-edit[data-field-key="${CSS.escape(saved.fieldKey)}"]`)?.classList.remove('pending');
+  }
+}
+
+function restoreFailedChanges(savedChanges) {
+  for (const failed of savedChanges) {
+    const current = pendingChanges.find(change => pendingChangeKey(change) === pendingChangeKey(failed));
+    if (current) current.before = failed.before;
+    else pendingChanges.push(failed);
+  }
+}
+
+async function flushPendingSellpiaChanges({automatic = false} = {}) {
+  if (sellpiaSaveInFlight || !pendingChanges.length || !liveData?.saveSellpiaChanges) return null;
+  clearTimeout(sellpiaAutosaveTimer);
+  sellpiaAutosaveTimer = null;
+  const snapshot = pendingChanges.splice(0, pendingChanges.length).map(change => ({...change}));
+  const batchId = pendingChangeBatchId || createRequestId();
+  pendingChangeBatchId = null;
+  sellpiaSaveInFlight = true;
+  sellpiaSavingCount = snapshot.length;
+  sellpiaSaveError = '';
+  updatePendingChangeUi();
+  let saved = false;
+  try {
+    const result = await liveData.saveSellpiaChanges(snapshot, batchId);
+    saved = true;
+    removeSavedCellState(snapshot);
+    changeModal.hidden = true;
+    showToast(`${result.savedCount}건 DB ${automatic ? '자동 ' : ''}저장 · 판매처 반영 대기 ${result.queuedCount}건 등록 완료`);
+    if (!pendingChanges.length) await refreshLiveData();
+    return result;
+  } catch (error) {
+    console.error('sellpia changes save failed', error);
+    restoreFailedChanges(snapshot);
+    pendingChangeBatchId = batchId;
+    sellpiaSaveError = error?.message || String(error);
+    showToast(`셀피아 자동 저장 실패: ${sellpiaSaveError}`);
+    return null;
+  } finally {
+    sellpiaSaveInFlight = false;
+    sellpiaSavingCount = 0;
+    updatePendingChangeUi();
+    if (saved && pendingChanges.length) scheduleSellpiaAutosave();
+  }
 }
 
 function editableMatrixGrid() {
@@ -1034,10 +1120,12 @@ document.addEventListener('paste', event => {
 });
 
 function clearPendingChanges() {
+  clearTimeout(sellpiaAutosaveTimer);
+  sellpiaAutosaveTimer = null;
   pendingChanges.length = 0;
   pendingChangeBatchId = null;
-  pendingCount.textContent = '0';
-  changeBar.hidden = true;
+  sellpiaSaveError = '';
+  updatePendingChangeUi();
   document.querySelectorAll('.editable-cell.pending').forEach(cell => cell.classList.remove('pending'));
 }
 
@@ -1688,15 +1776,7 @@ document.getElementById('apply-sellpia-changes').addEventListener('click', async
   button.disabled = true;
   button.textContent = 'DB 저장 중...';
   try {
-    pendingChangeBatchId ||= createRequestId();
-    const result = await liveData.saveSellpiaChanges(pendingChanges, pendingChangeBatchId);
-    changeModal.hidden = true;
-    clearPendingChanges();
-    await refreshLiveData();
-    showToast(`${result.savedCount}건 저장 · 판매처 반영 대기 ${result.queuedCount}건 등록 완료`);
-  } catch (error) {
-    console.error('sellpia changes save failed', error);
-    showToast(`변경 저장 실패: ${error?.message || error}`);
+    await flushPendingSellpiaChanges({automatic:false});
   } finally {
     button.disabled = false;
     button.textContent = '선택 변경사항 저장';
