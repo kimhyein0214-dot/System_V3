@@ -202,7 +202,7 @@
   async function loadMappingSyncStatus() {
     const {data, error} = await db
       .from('operations_hub_mapping_sync_status')
-      .select('official_mapping_count,manual_mapping_count,automatic_mapping_count,import_mapping_count,latest_official_mapping_at,latest_legacy_mapping_at,core_refreshed_at,core_refreshed_by,core_row_count,core_refresh_needed,latest_batch_id,latest_batch_origin,latest_batch_actor,latest_batch_status,latest_batch_requested_count,latest_batch_saved_count,latest_batch_failed_count,latest_batch_created_at,latest_batch_completed_at,mapping_version')
+      .select('official_mapping_count,manual_mapping_count,automatic_mapping_count,import_mapping_count,latest_official_mapping_at,latest_legacy_mapping_at,core_refreshed_at,core_refreshed_by,core_row_count,core_refresh_needed,latest_batch_id,latest_batch_request_id,latest_batch_origin,latest_batch_actor,latest_batch_status,latest_batch_requested_count,latest_batch_saved_count,latest_batch_failed_count,latest_batch_created_at,latest_batch_completed_at,mapping_version,legacy_auto_refresh_enabled,legacy_auto_refresh_schedule')
       .single();
     if (error) throw error;
     return data;

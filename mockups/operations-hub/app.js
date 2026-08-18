@@ -458,7 +458,9 @@ function renderMappingSyncStatus(status, state = '') {
   panel.className = `matrix-mapping-sync ${state || 'checking'}`;
   if (state === 'pending') {
     label.textContent = '코어 갱신 대기';
-    detail.textContent = '레거시 매핑 DB 저장은 완료됐지만 매트릭스 코어 갱신이 필요합니다.';
+    detail.textContent = status?.legacy_auto_refresh_enabled
+      ? '레거시 매핑 저장 완료 · 1분 내 코어 자동 갱신 예정입니다.'
+      : '레거시 매핑 DB 저장은 완료됐지만 매트릭스 코어 갱신이 필요합니다.';
   } else if (state === 'changed') {
     label.textContent = mappingSyncState.autoRefreshing ? '화면 갱신 중' : 'DB 변경 감지';
     detail.textContent = mappingSyncState.autoRefreshing
@@ -469,7 +471,7 @@ function renderMappingSyncStatus(status, state = '') {
     detail.textContent = status?.message || '매핑 동기화 상태를 읽지 못했습니다.';
   } else {
     label.textContent = '화면 반영 완료';
-    detail.textContent = `${formatNumber(official)}건 · 수동 ${formatNumber(manual)} · 자동 ${formatNumber(automatic)}${failed ? ` · 최근 실패 ${formatNumber(failed)}` : ''}`;
+    detail.textContent = `${formatNumber(official)}건 · 수동 ${formatNumber(manual)} · 자동 ${formatNumber(automatic)}${failed ? ` · 최근 실패 ${formatNumber(failed)}` : ''}${status?.legacy_auto_refresh_enabled ? ' · 레거시 1분 감시' : ''}`;
   }
   const screenAt = matrixState.lastLoadedAt ? formatLiveTime(matrixState.lastLoadedAt) : '-';
   time.textContent = `DB ${visibleAt ? formatLiveTime(visibleAt) : '-'} · 화면 ${screenAt}`;
