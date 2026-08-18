@@ -77,8 +77,64 @@
     });
   }
 
+  async function attachLinkBadges(rows) {
+    const products = Array.isArray(rows) ? rows : [];
+    const skus = [...new Set(products.map(row => cleanText(row?.sellpia_sku_code)).filter(Boolean))];
+    if (!skus.length) return products;
+    const {data, error} = await db.rpc('get_operations_hub_sku_link_badges', {p_skus:skus});
+    if (error) throw error;
+    const badgesBySku = new Map();
+    for (const badge of data || []) {
+      const sku = cleanText(badge.sellpia_sku_code);
+      if (!badgesBySku.has(sku)) badgesBySku.set(sku, {});
+      badgesBySku.get(sku)[cleanText(badge.source_channel)] = badge;
+    }
+    return products.map(product => ({
+      ...product,
+      __linkBadges:badgesBySku.get(cleanText(product?.sellpia_sku_code)) || {}
+    }));
+  }
+
   async function attachProductMetadata(rows) {
-    return attachSellerDrafts(await attachProductProfiles(rows));
+    return attachSellerDrafts(await attachLinkBadges(await attachProductProfiles(rows)));
+  }
+
+  async function loadListingGraph({source = 'all', relationType = 'complex', search = '', page = 1, pageSize = 50} = {}) {
+    const {data, error} = await db.rpc('list_operations_hub_listing_graph', {
+      p_source:cleanText(source) || 'all',
+      p_relation_type:cleanText(relationType) || 'complex',
+      p_search:cleanText(search),
+      p_page:Math.max(1, Number(page) || 1),
+      p_page_size:Math.max(1, Math.min(Number(pageSize) || 50, 100))
+    });
+    if (error) throw error;
+    return {
+      rows:Array.isArray(data?.rows) ? data.rows : [],
+      count:Number(data?.count || 0),
+      page:Number(data?.page || page || 1),
+      pageSize:Number(data?.pageSize || pageSize || 50)
+    };
+  }
+
+  async function saveListingComponent({source, productCode, optionCode = '', sku, qty = 1, role = 'additional'} = {}) {
+    const {data, error} = await db.rpc('upsert_operations_hub_listing_component', {
+      p_source:cleanText(source),
+      p_product_code:cleanText(productCode),
+      p_option_code:cleanText(optionCode),
+      p_sellpia_sku_code:cleanText(sku),
+      p_component_qty:Math.max(1, Math.trunc(Number(qty) || 1)),
+      p_component_role:cleanText(role) || 'additional'
+    });
+    if (error) throw error;
+    return Array.isArray(data) ? data[0] : data;
+  }
+
+  async function deactivateListingComponent(componentId) {
+    const {data, error} = await db.rpc('deactivate_operations_hub_listing_component', {
+      p_component_id:Number(componentId)
+    });
+    if (error) throw error;
+    return Array.isArray(data) ? data[0] : data;
   }
 
   async function loadProducts({ page = 1, search = '', searchSources = ['sellpia','smartstore','makeshop','ably'], status = 'all', sort = 'sku_asc', skus = [], codeListRows = [] } = {}) {
@@ -290,6 +346,15 @@
     return resolved;
   }
 
+  async function refreshListingGraphCache(skus = null) {
+    const normalizedSkus = Array.isArray(skus) ? [...new Set(skus.map(cleanText).filter(Boolean))] : null;
+    const {data, error} = await db.rpc('refresh_operations_hub_listing_legacy_cache', {
+      p_skus:normalizedSkus?.length ? normalizedSkus : null
+    });
+    if (error) throw error;
+    return Number(data || 0);
+  }
+
   async function linkSellerItem({sku, source, productCode, optionCode = ''}) {
     const {data, error} = await db.rpc('link_operations_hub_seller_item', {
       p_sku:cleanText(sku),
@@ -298,6 +363,7 @@
       p_option_code:cleanText(optionCode)
     });
     if (error) throw error;
+    await refreshListingGraphCache([sku]);
     return Array.isArray(data) ? data[0] : data;
   }
 
@@ -313,6 +379,7 @@
       p_batch_id:batchId
     });
     if (error) throw error;
+    await refreshListingGraphCache([sku]);
     return Array.isArray(data) ? data[0] : data;
   }
 
@@ -972,6 +1039,9 @@
   global.SystemV3Data = Object.freeze({
     pageSize: PAGE_SIZE,
     loadProducts,
+    loadListingGraph,
+    saveListingComponent,
+    deactivateListingComponent,
     loadDashboardMetrics,
     loadMappingSyncStatus,
     loadSourceStatus,
@@ -982,6 +1052,7 @@
     saveSellpiaChanges,
     searchSellerItems,
     resolveCodeEntries,
+    refreshListingGraphCache,
     linkSellerItem,
     saveSellerListing,
     loadChangeQueue,

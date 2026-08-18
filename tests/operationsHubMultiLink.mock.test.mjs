@@ -1,0 +1,25 @@
+import assert from "node:assert/strict";
+import fs from "node:fs";
+
+const migration = fs.readFileSync(new URL("../supabase/migrations/20260818033238_operations_hub_multilink_bom.sql", import.meta.url), "utf8");
+const html = fs.readFileSync(new URL("../mockups/operations-hub/index.html", import.meta.url), "utf8");
+const data = fs.readFileSync(new URL("../mockups/operations-hub/data-service.js", import.meta.url), "utf8");
+const app = fs.readFileSync(new URL("../mockups/operations-hub/app.js", import.meta.url), "utf8");
+const ambiguityFix = fs.readFileSync(new URL("../supabase/migrations/20260818034744_exclude_ambiguous_legacy_listing_options.sql", import.meta.url), "utf8");
+const upsertFix = fs.readFileSync(new URL("../supabase/migrations/20260818034857_fix_multilink_component_upsert_conflict.sql", import.meta.url), "utf8");
+const partialRefreshFix = fs.readFileSync(new URL("../supabase/migrations/20260818035322_global_identity_check_for_partial_link_refresh.sql", import.meta.url), "utf8");
+
+assert.match(migration, /operations_hub_seller_listings[\s\S]*operations_hub_listing_components[\s\S]*component_qty integer[\s\S]*check \(component_qty > 0\)/, "bundle graph must have durable listing and positive-quantity component records");
+assert.match(migration, /operations_hub_listing_component_projection[\s\S]*explicit_components[\s\S]*legacy_components/, "explicit graph must retain current 1:1 mappings through a compatibility projection");
+assert.match(migration, /legacy_promoted[\s\S]*Preserve the current 1:1 mapping/, "promoting a listing must preserve its existing SKU before adding bundle components");
+assert.match(migration, /min\(floor\(projection\.sellpia_available_stock::numeric \/ projection\.component_qty\)\)/, "bundle stock must be the limiting component stock divided by required quantity");
+assert.match(migration, /enable row level security[\s\S]*security_invoker = true[\s\S]*grant execute/i, "public graph access must keep RLS, invoker views, and explicit grants");
+assert.match(html, /data-page="multi-links"[\s\S]*id="multi-links"[\s\S]*id="multi-link-form"/, "operations hub must expose a dedicated multi-link workspace and editor");
+assert.match(data, /attachLinkBadges[\s\S]*loadListingGraph[\s\S]*saveListingComponent[\s\S]*deactivateListingComponent/, "frontend data adapter must expose graph reads, matrix badges, save, and soft-deactivation");
+assert.match(app, /matrix-relation-badge[\s\S]*openMultiLinkWorkspace[\s\S]*renderMultiLinkEditor/, "matrix badges must route into the dedicated listing editor");
+assert.doesNotMatch(migration, /delete from public\.operations_hub_listing_components/i, "component removal must be an auditable soft-deactivation");
+assert.match(ambiguityFix, /edge\.option_code <> ''[\s\S]*identity\.edge_count = 1/, "blank option codes shared by multiple SKUs must not be misclassified as bundles");
+assert.match(upsertFix, /on conflict on constraint operations_hub_listing_componen_listing_id_sellpia_sku_code_key/, "component upsert must avoid PL\/pgSQL output-column ambiguity with the actual truncated constraint name");
+assert.match(partialRefreshFix, /edge\.sellpia_sku_code = any\(p_skus\)[\s\S]*identity\.edge_count = 1/, "partial cache refresh must validate blank-option identity against the global edge set");
+
+console.log("Operations hub multi-link and bundle graph contract: passed");

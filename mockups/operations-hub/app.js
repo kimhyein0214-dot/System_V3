@@ -82,6 +82,7 @@ let sellpiaSaveError = '';
 const SELLPIA_AUTOSAVE_DELAY_MS = 450;
 const liveData = window.SystemV3Data;
 const matrixState = {page:1, search:'', searchSources:['sellpia','smartstore','makeshop','ably'], status:'all', sort:'sku_asc', total:0, loading:false, requestId:0, codeListSkus:[], codeListRows:[], codeListName:''};
+const multiLinkState = {page:1, pageSize:50, search:'', source:'all', relationType:'complex', total:0, loading:false, requestId:0, rows:[], selected:null, loaded:false};
 const mappingSyncState = {displayedVersion:'', checking:false, autoRefreshing:false, latest:null};
 const matrixRowsBySku = new Map();
 const drawerState = {activeTab:'connections', historyRequestId:0, historySku:'', attributeRequestId:0, priceRequestId:0, tags:null, attributeDraft:null, pricePolicies:null};
@@ -340,6 +341,11 @@ function channelInventoryCells(product, prefix, label) {
   const optionCode = product[`${prefix}_option_code`] || '';
   const listingCount = Number(product[`${prefix}_listing_count`] || 0);
   const title = listingCount > 1 ? ` title="이 SKU에는 ${listingCount}개의 판매처 행이 연결되어 있습니다."` : '';
+  const linkBadge = product.__linkBadges?.[prefix];
+  const relationLabels = {multi:'1:N', bundle:`조합 ${Number(linkBadge?.max_component_count || 0)}SKU`, multi_bundle:`1:N+조합`};
+  const relationBadge = linkBadge && linkBadge.relation_type !== 'single'
+    ? `<button class="matrix-relation-badge ${escapeHtml(linkBadge.relation_type)}" data-open-multi-link="${prefix}" data-link-sku="${escapeHtml(product.sellpia_sku_code)}" title="다중·조합 연결 화면에서 확인">${escapeHtml(relationLabels[linkBadge.relation_type] || '다중 연결')}</button>`
+    : '';
   const codeCells = `<td class="mapping-code-cell"${title}>${mappingCodeButton(product, prefix, label, 'product', productCode, state)}</td><td class="mapping-code-cell">${mappingCodeButton(product, prefix, label, 'option', optionCode, state)}</td>`;
   const stock = product[`${prefix}_stock`];
   const price = product[`${prefix}_price`];
@@ -358,7 +364,7 @@ function channelInventoryCells(product, prefix, label) {
   const priceCell = price === null || price === undefined
     ? '<td class="data-gap">-</td>'
     : `<td><button class="editable-cell seller-edit price-hover-target${priceDiff && !priceDraft ? ' diff' : ''}${draftClass(priceDraft)}" data-source="${prefix}" data-field-key="sellpia_sale_price" data-field="${label} 판매가" data-value="${escapeHtml(priceDisplay)}" data-baseline="${escapeHtml(price)}" data-value-type="number" data-change-id="${priceDraft?.change_id || ''}" data-draft-status="${priceDraft?.status || ''}" tabindex="0" data-price-source="${prefix}" data-price-label="${label}" data-current-price="${escapeHtml(priceDisplay)}" data-base-price="${escapeHtml(sellpiaPrice ?? '')}" data-price-updated="${escapeHtml(product[`${prefix}_inventory_at`] || '')}" title="${priceDraft ? `수정안 ${formatNullableNumber(priceDisplay)} · 원본 ${formatNullableNumber(price)}` : '수정 가능한 판매처 가격 · 변경하면 매트릭스 수정안으로 저장됩니다.'}">${formatNullableNumber(priceDisplay)}</button></td>`;
-  return `<td><span class="matrix-status ${state.key}">${state.label}</span></td>${codeCells}${sellerNameCell(product, prefix)}${stockCell}${priceCell}`;
+  return `<td><span class="matrix-status ${state.key}">${state.label}</span>${relationBadge}</td>${codeCells}${sellerNameCell(product, prefix)}${stockCell}${priceCell}`;
 }
 
 function codeListSourceLabel(source) {
@@ -510,6 +516,7 @@ async function loadMappingSyncStatus({markDisplayed = false, autoRefresh = false
       }
       mappingSyncState.autoRefreshing = true;
       renderMappingSyncStatus(status, 'changed');
+      if (liveData?.refreshListingGraphCache) await liveData.refreshListingGraphCache();
       const refreshed = await loadLiveMatrix();
       if (refreshed) mappingSyncState.displayedVersion = version;
       mappingSyncState.autoRefreshing = false;
@@ -1391,7 +1398,7 @@ function isClipboardTypingTarget(target) {
 }
 
 matrixBody.addEventListener('mousedown', event => {
-  if (event.target.closest('.row-check,.inline-editor')) return;
+  if (event.target.closest('.row-check,.inline-editor,[data-open-multi-link]')) return;
   const cell = event.target.closest('td');
   if (!cell || event.button !== 0) return;
   selectMatrixCell(cell, {extend:event.shiftKey});
@@ -1584,6 +1591,11 @@ document.getElementById('delete-preset').addEventListener('click', () => {
 });
 
 matrixBody.addEventListener('click', event => {
+  const multiLinkButton = event.target.closest('[data-open-multi-link]');
+  if (multiLinkButton) {
+    openMultiLinkWorkspace(multiLinkButton.dataset.openMultiLink, multiLinkButton.dataset.linkSku);
+    return;
+  }
   const mappingButton = event.target.closest('.mapping-code-button');
   if (mappingButton) {
     const row = mappingButton.closest('tr[data-sku]');
@@ -2678,12 +2690,223 @@ document.getElementById('queue-confirm-applied').addEventListener('click', async
   finally { updateQueueSelection(); }
 });
 
+function multiLinkKey(row) {
+  return `${row?.source_channel || ''}|${row?.product_code || ''}|${row?.option_code || ''}`;
+}
+
+function multiLinkChannelLabel(source) {
+  return {smartstore:'스마트스토어', makeshop:'메이크샵', ably:'에이블리'}[source] || source || '-';
+}
+
+function multiLinkRelationLabel(type, componentCount = 0, listingCount = 0) {
+  if (type === 'multi_bundle') return `1:N + 조합 ${componentCount}SKU`;
+  if (type === 'bundle') return `조합 ${componentCount}SKU`;
+  if (type === 'multi') return `1:N ${listingCount || 2}개`;
+  return '일반 1:1';
+}
+
+function renderMultiLinkRows() {
+  const body = document.getElementById('multi-link-body');
+  if (!multiLinkState.rows.length) {
+    const copy = multiLinkState.relationType === 'complex'
+      ? '현재 조회 조건에 해당하는 다중·조합 연결이 없습니다. 오른쪽에서 새 구성을 추가할 수 있습니다.'
+      : '조회 조건에 해당하는 연결이 없습니다.';
+    body.innerHTML = `<tr class="multi-link-empty"><td colspan="7">${escapeHtml(copy)}</td></tr>`;
+    return;
+  }
+  const selectedKey = multiLinkKey(multiLinkState.selected);
+  body.innerHTML = multiLinkState.rows.map(row => {
+    const components = Array.isArray(row.components) ? row.components : [];
+    const summary = components.slice(0, 3).map(item => `<span>${escapeHtml(item.sku)} × ${formatNumber(item.qty)}</span>`).join('');
+    const overflow = components.length > 3 ? `<em>+${components.length - 3}</em>` : '';
+    const stock = row.calculated_stock === null || row.calculated_stock === undefined ? '-' : formatNumber(row.calculated_stock);
+    return `<tr class="multi-link-row${selectedKey === multiLinkKey(row) ? ' selected' : ''}" data-multi-link-key="${escapeHtml(multiLinkKey(row))}">
+      <td><span class="relation-pill ${escapeHtml(row.relation_type)}">${escapeHtml(multiLinkRelationLabel(row.relation_type, row.component_count, row.max_listing_count))}</span></td>
+      <td><span class="multi-link-channel ${escapeHtml(row.source_channel)}"><i></i>${escapeHtml(multiLinkChannelLabel(row.source_channel))}</span></td>
+      <td class="code-cell">${escapeHtml(row.product_code || '-')}</td><td class="code-cell">${escapeHtml(row.option_code || '-')}</td>
+      <td class="multi-link-name"><b title="${escapeHtml(row.product_name || '')}">${escapeHtml(row.product_name || '상품명 없음')}</b><span title="${escapeHtml(row.option_name || '')}">${escapeHtml(row.option_name || '옵션명 없음')}</span></td>
+      <td><div class="multi-link-components-summary">${summary}${overflow}</div></td>
+      <td class="multi-link-stock${stock === '-' ? ' unknown' : ''}">${stock}</td>
+    </tr>`;
+  }).join('');
+}
+
+function renderMultiLinkEditor(row) {
+  multiLinkState.selected = row || null;
+  renderMultiLinkRows();
+  const title = document.getElementById('multi-link-editor-title');
+  const copy = document.getElementById('multi-link-editor-copy');
+  const componentsBox = document.getElementById('multi-link-components');
+  if (!row) {
+    title.textContent = '새 판매처 구성 등록';
+    copy.textContent = '판매처 코드와 셀피아 SKU를 입력하면 새 연결을 만들 수 있습니다.';
+    componentsBox.innerHTML = '<div class="multi-link-editor-empty">선택된 판매처 옵션이 없습니다.</div>';
+    return;
+  }
+  title.textContent = `${multiLinkChannelLabel(row.source_channel)} · ${row.product_code}${row.option_code ? ` / ${row.option_code}` : ''}`;
+  copy.textContent = `${multiLinkRelationLabel(row.relation_type, row.component_count, row.max_listing_count)} · 계산재고 ${row.calculated_stock ?? '확인 불가'}개 · ${row.is_explicit ? '명시적 구성' : '기존 1:1 호환 연결'}`;
+  document.getElementById('multi-link-form-source').value = row.source_channel;
+  document.getElementById('multi-link-form-product').value = row.product_code || '';
+  document.getElementById('multi-link-form-option').value = row.option_code || '';
+  const components = Array.isArray(row.components) ? row.components : [];
+  componentsBox.innerHTML = components.map(component => {
+    const canRemove = Boolean(component.componentId);
+    return `<article class="multi-link-component" data-component-id="${component.componentId || ''}" data-component-sku="${escapeHtml(component.sku)}">
+      <div class="multi-link-component-head"><div><b>${escapeHtml(component.sku)}</b><span>${escapeHtml([component.productName, component.optionName].filter(Boolean).join(' · ') || '셀피아 상품정보 없음')}</span></div>${canRemove ? '<button type="button" data-remove-component>연결 해제</button>' : ''}</div>
+      <div class="multi-link-component-meta"><span>가용재고<b>${formatNullableNumber(component.availableStock)}</b></span><span>구성수량<b>${formatNumber(component.qty)}</b></span><span>가능세트<b>${component.availableStock === null || component.availableStock === undefined ? '-' : formatNumber(Math.floor(Number(component.availableStock) / Math.max(1, Number(component.qty))))}</b></span></div>
+      <div class="multi-link-component-actions"><input data-component-qty type="number" min="1" step="1" value="${Math.max(1, Number(component.qty) || 1)}"><select data-component-role><option value="primary"${component.role === 'primary' ? ' selected' : ''}>기준 구성</option><option value="additional"${component.role === 'additional' ? ' selected' : ''}>추가 구성</option></select><button type="button" data-save-component>수량 저장</button></div>
+    </article>`;
+  }).join('') || '<div class="multi-link-editor-empty">활성 구성품이 없습니다.</div>';
+}
+
+async function loadMultiLinks({resetPage = false, selectKey = ''} = {}) {
+  if (!liveData?.loadListingGraph) return false;
+  if (resetPage) multiLinkState.page = 1;
+  const requestId = ++multiLinkState.requestId;
+  multiLinkState.loading = true;
+  const body = document.getElementById('multi-link-body');
+  body.innerHTML = '<tr class="multi-link-empty loading"><td colspan="7">Supabase에서 판매처 연결 구조를 불러오는 중입니다.</td></tr>';
+  try {
+    const result = await liveData.loadListingGraph({
+      source:multiLinkState.source,
+      relationType:multiLinkState.relationType,
+      search:multiLinkState.search,
+      page:multiLinkState.page,
+      pageSize:multiLinkState.pageSize
+    });
+    if (requestId !== multiLinkState.requestId) return false;
+    multiLinkState.rows = result.rows;
+    multiLinkState.total = result.count;
+    multiLinkState.page = result.page;
+    multiLinkState.loaded = true;
+    const first = result.count ? ((result.page - 1) * result.pageSize) + 1 : 0;
+    const last = Math.min(result.page * result.pageSize, result.count);
+    const wantedKey = selectKey || multiLinkKey(multiLinkState.selected);
+    multiLinkState.selected = result.rows.find(item => multiLinkKey(item) === wantedKey) || null;
+    document.getElementById('multi-link-count').textContent = formatNumber(result.count);
+    document.getElementById('multi-link-range').textContent = `${formatNumber(first)}–${formatNumber(last)} / ${formatNumber(result.count)}`;
+    document.getElementById('multi-link-page').textContent = result.page;
+    document.getElementById('multi-link-prev').disabled = result.page <= 1;
+    document.getElementById('multi-link-next').disabled = last >= result.count;
+    if (multiLinkState.relationType === 'complex' && multiLinkState.source === 'all' && !multiLinkState.search) {
+      document.getElementById('multi-link-badge').textContent = formatNumber(result.count);
+    }
+    renderMultiLinkEditor(multiLinkState.selected);
+    return true;
+  } catch (error) {
+    console.error('multi-link graph load failed', error);
+    body.innerHTML = `<tr class="multi-link-empty error"><td colspan="7">연결 구조를 불러오지 못했습니다. ${escapeHtml(error?.message || '')}</td></tr>`;
+    return false;
+  } finally {
+    if (requestId === multiLinkState.requestId) multiLinkState.loading = false;
+  }
+}
+
+function openMultiLinkWorkspace(source = 'all', sku = '') {
+  multiLinkState.source = source || 'all';
+  multiLinkState.relationType = 'complex';
+  multiLinkState.search = sku || '';
+  document.getElementById('multi-link-source').value = multiLinkState.source;
+  document.getElementById('multi-link-type').value = multiLinkState.relationType;
+  document.getElementById('multi-link-search').value = multiLinkState.search;
+  showPage('multi-links');
+  if (multiLinkState.loaded) loadMultiLinks({resetPage:true});
+}
+
+document.getElementById('multi-link-body').addEventListener('click', event => {
+  const rowElement = event.target.closest('.multi-link-row');
+  if (!rowElement) return;
+  const row = multiLinkState.rows.find(item => multiLinkKey(item) === rowElement.dataset.multiLinkKey);
+  if (row) renderMultiLinkEditor(row);
+});
+
+document.getElementById('multi-link-components').addEventListener('click', async event => {
+  const card = event.target.closest('.multi-link-component');
+  if (!card || !multiLinkState.selected) return;
+  if (event.target.closest('[data-save-component]')) {
+    const qty = Math.max(1, Math.trunc(Number(card.querySelector('[data-component-qty]').value) || 1));
+    const role = card.querySelector('[data-component-role]').value;
+    event.target.disabled = true;
+    try {
+      await liveData.saveListingComponent({source:multiLinkState.selected.source_channel, productCode:multiLinkState.selected.product_code, optionCode:multiLinkState.selected.option_code, sku:card.dataset.componentSku, qty, role});
+      const selectedKey = multiLinkKey(multiLinkState.selected);
+      await Promise.all([loadMultiLinks({selectKey:selectedKey}), loadLiveMatrix()]);
+      showToast(`${card.dataset.componentSku} 구성수량을 저장했습니다.`);
+    } catch (error) { showToast(`구성 저장 실패: ${error?.message || error}`); }
+    finally { event.target.disabled = false; }
+    return;
+  }
+  if (event.target.closest('[data-remove-component]')) {
+    if (!window.confirm(`${card.dataset.componentSku} 구성 연결을 해제할까요? 이력은 보존됩니다.`)) return;
+    event.target.disabled = true;
+    try {
+      await liveData.deactivateListingComponent(card.dataset.componentId);
+      const selectedKey = multiLinkKey(multiLinkState.selected);
+      await Promise.all([loadMultiLinks({selectKey:selectedKey}), loadLiveMatrix()]);
+      showToast(`${card.dataset.componentSku} 연결을 해제했습니다.`);
+    } catch (error) { showToast(`연결 해제 실패: ${error?.message || error}`); }
+    finally { event.target.disabled = false; }
+  }
+});
+
+document.getElementById('multi-link-form').addEventListener('submit', async event => {
+  event.preventDefault();
+  const saveButton = document.getElementById('multi-link-save');
+  const payload = {
+    source:document.getElementById('multi-link-form-source').value,
+    productCode:document.getElementById('multi-link-form-product').value,
+    optionCode:document.getElementById('multi-link-form-option').value,
+    sku:document.getElementById('multi-link-form-sku').value,
+    qty:document.getElementById('multi-link-form-qty').value,
+    role:document.getElementById('multi-link-form-role').value
+  };
+  saveButton.disabled = true;
+  saveButton.textContent = '구성 저장 중…';
+  try {
+    const saved = await liveData.saveListingComponent(payload);
+    multiLinkState.source = payload.source;
+    multiLinkState.relationType = 'all';
+    multiLinkState.search = payload.productCode;
+    document.getElementById('multi-link-source').value = payload.source;
+    document.getElementById('multi-link-type').value = 'all';
+    document.getElementById('multi-link-search').value = payload.productCode;
+    const selectedKey = `${payload.source}|${payload.productCode.trim()}|${payload.optionCode.trim()}`;
+    await Promise.all([loadMultiLinks({resetPage:true, selectKey:selectedKey}), loadLiveMatrix()]);
+    document.getElementById('multi-link-form-sku').value = '';
+    document.getElementById('multi-link-form-qty').value = '1';
+    showToast(`구성을 저장했습니다.${Number(saved?.promoted_component_count || 0) ? ' 기존 1:1 연결도 함께 보존했습니다.' : ''}`);
+  } catch (error) { showToast(`구성 저장 실패: ${error?.message || error}`); }
+  finally { saveButton.disabled = false; saveButton.textContent = '구성 저장'; }
+});
+
+let multiLinkSearchTimer;
+document.getElementById('multi-link-search').addEventListener('input', event => {
+  multiLinkState.search = event.target.value.trim();
+  clearTimeout(multiLinkSearchTimer);
+  multiLinkSearchTimer = setTimeout(() => loadMultiLinks({resetPage:true}), 280);
+});
+document.getElementById('multi-link-source').addEventListener('change', event => {multiLinkState.source = event.target.value; loadMultiLinks({resetPage:true});});
+document.getElementById('multi-link-type').addEventListener('change', event => {multiLinkState.relationType = event.target.value; loadMultiLinks({resetPage:true});});
+document.getElementById('multi-link-refresh').addEventListener('click', async event => {
+  event.target.disabled = true;
+  event.target.textContent = '연결 갱신 중…';
+  try {
+    await liveData.refreshListingGraphCache();
+    await Promise.all([loadMultiLinks(), loadLiveMatrix()]);
+    showToast('현재 매트릭스 연결을 다중·조합 목록에 반영했습니다.');
+  } catch (error) { showToast(`연결 갱신 실패: ${error?.message || error}`); }
+  finally { event.target.disabled = false; event.target.textContent = '새로고침'; }
+});
+document.getElementById('multi-link-prev').addEventListener('click', () => {if (multiLinkState.page > 1 && !multiLinkState.loading) {multiLinkState.page -= 1; loadMultiLinks();}});
+document.getElementById('multi-link-next').addEventListener('click', () => {if (multiLinkState.page * multiLinkState.pageSize < multiLinkState.total && !multiLinkState.loading) {multiLinkState.page += 1; loadMultiLinks();}});
+
 function showPage(pageId) {
   document.querySelectorAll('.page').forEach(page => page.classList.remove('active-page'));
   document.querySelectorAll('.nav-item').forEach(item => item.classList.toggle('active', item.dataset.page === pageId));
   const target = document.getElementById(pageId);
   if (target) target.classList.add('active-page');
   if (pageId === 'jobs') loadChangeQueue();
+  if (pageId === 'multi-links' && !multiLinkState.loaded) loadMultiLinks({resetPage:true});
   document.querySelector('.content-area').scrollTop = 0;
 }
 

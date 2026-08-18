@@ -7,7 +7,7 @@
     <title>System V3 · 상품 운영 허브</title>
     <link rel="preconnect" href="https://cdnjs.cloudflare.com" crossorigin>
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/pretendard/1.3.9/static/pretendard.css">
-    <link rel="stylesheet" href="./style.css?v=20260818-pricepolicy1">
+    <link rel="stylesheet" href="./style.css?v=20260818-multilink1">
   </head>
   <body>
     <div class="app-shell">
@@ -42,10 +42,11 @@
             <button class="nav-item active" data-page="dashboard"><i>01</i><span>운영 현황</span></button>
             <button class="nav-item" data-page="upload"><i>02</i><span>원본 업로드</span><b>4</b></button>
             <button class="nav-item" data-page="matching"><i>03</i><span>통합 매트릭스</span><b class="warn-badge" id="matrix-unmatched-badge">-</b></button>
-            <button class="nav-item" data-page="inventory"><i>04</i><span>재고조사</span></button>
-            <button class="nav-item" data-page="channels"><i>05</i><span>판매처 동기화</span></button>
-            <button class="nav-item" data-page="attributes"><i>06</i><span>상품 속성·태그</span></button>
-            <button class="nav-item" data-page="jobs"><i>07</i><span>변경대기·로그</span><b id="jobs-error-badge">-</b></button>
+            <button class="nav-item" data-page="multi-links"><i>04</i><span>다중·조합 연결</span><b id="multi-link-badge">-</b></button>
+            <button class="nav-item" data-page="inventory"><i>05</i><span>재고조사</span></button>
+            <button class="nav-item" data-page="channels"><i>06</i><span>판매처 동기화</span></button>
+            <button class="nav-item" data-page="attributes"><i>07</i><span>상품 속성·태그</span></button>
+            <button class="nav-item" data-page="jobs"><i>08</i><span>변경대기·로그</span><b id="jobs-error-badge">-</b></button>
           </nav>
 
           <div class="side-section">
@@ -235,6 +236,41 @@
 
             <div id="change-bar" class="change-bar" hidden><div><span>↻</span><p><b>DB 자동 저장 <strong id="pending-count">0</strong>건</b><em>연속 입력을 잠깐 묶은 뒤 Supabase에 자동 저장합니다.</em></p></div><button class="btn" id="discard-changes">저장 전 취소</button><button class="btn primary" id="preview-changes">변경 미리보기</button></div>
           </div>
+          <div id="multi-links" class="page multi-link-page">
+            <div class="page-head">
+              <div><h2>다중·조합 연결</h2><p>판매처 상품·옵션 하나에 여러 셀피아 SKU와 구성수량을 연결하고, 조합 가능 재고를 확인합니다.</p></div>
+              <div class="multi-link-head-note"><b>기존 1:1 자동 호환</b><span>수정하는 판매처 옵션만 명시적 구성으로 전환됩니다.</span></div>
+            </div>
+            <div class="multi-link-toolbar">
+              <div class="multi-link-search"><span>⌕</span><input id="multi-link-search" placeholder="판매처 코드 / 상품명 / 셀피아 SKU 검색"></div>
+              <select id="multi-link-source"><option value="all">전체 판매처</option><option value="smartstore">스마트스토어</option><option value="makeshop">메이크샵</option><option value="ably">에이블리</option></select>
+              <select id="multi-link-type"><option value="complex">다중·조합만</option><option value="multi_bundle">다중+조합</option><option value="bundle">조합 상품</option><option value="multi">1:N 연결</option><option value="single">일반 1:1</option><option value="all">전체 연결</option></select>
+              <button id="multi-link-refresh" class="btn">새로고침</button>
+              <span class="multi-link-result">결과 <b id="multi-link-count">-</b>개</span>
+            </div>
+            <div class="multi-link-layout">
+              <section class="multi-link-table-card">
+                <table class="multi-link-table">
+                  <thead><tr><th>유형</th><th>판매처</th><th>상품코드</th><th>옵션코드</th><th>상품명 / 옵션명</th><th>구성</th><th>계산재고</th></tr></thead>
+                  <tbody id="multi-link-body"><tr class="multi-link-empty"><td colspan="7">다중·조합 연결을 불러오는 중입니다.</td></tr></tbody>
+                </table>
+                <div class="multi-link-foot"><span id="multi-link-range">-</span><div><button id="multi-link-prev" disabled>‹</button><b id="multi-link-page">1</b><button id="multi-link-next" disabled>›</button></div></div>
+              </section>
+              <aside class="multi-link-editor" aria-label="구성품 편집">
+                <div class="multi-link-editor-head"><span>판매처 옵션 구성</span><h3 id="multi-link-editor-title">연결을 선택해주세요</h3><p id="multi-link-editor-copy">목록의 판매처 옵션을 누르면 현재 구성과 계산 재고를 표시합니다.</p></div>
+                <div id="multi-link-components" class="multi-link-components"><div class="multi-link-editor-empty">선택된 판매처 옵션이 없습니다.</div></div>
+                <form id="multi-link-form" class="multi-link-form">
+                  <div class="multi-link-form-guide"><b>SKU 구성 추가·수정</b><span>기존 1:1 옵션에 두 번째 SKU를 추가하면 현재 SKU도 자동 보존됩니다.</span></div>
+                  <label>판매처<select id="multi-link-form-source" required><option value="smartstore">스마트스토어</option><option value="makeshop">메이크샵</option><option value="ably">에이블리</option></select></label>
+                  <label>상품코드<input id="multi-link-form-product" required autocomplete="off"></label>
+                  <label>옵션코드<input id="multi-link-form-option" autocomplete="off"></label>
+                  <label>셀피아 SKU<input id="multi-link-form-sku" required autocomplete="off"></label>
+                  <div class="multi-link-form-row"><label>구성수량<input id="multi-link-form-qty" type="number" min="1" step="1" value="1" required></label><label>역할<select id="multi-link-form-role"><option value="additional">추가 구성</option><option value="primary">기준 구성</option></select></label></div>
+                  <button id="multi-link-save" class="btn primary" type="submit">구성 저장</button>
+                </form>
+              </aside>
+            </div>
+          </div>
           <div id="inventory" class="page table-page" data-title="재고조사" data-copy="조사수량과 오늘 피킹·미송서랍 수량을 합산해 실재고를 계산합니다."></div>
           <div id="channels" class="page table-page" data-title="판매처 동기화" data-copy="판매처별 재고·가격 반영 범위와 실행 상태를 관리합니다."></div>
           <div id="attributes" class="page table-page" data-title="상품 속성·태그" data-copy="소재·상품군·형태와 운영 태그를 상품코드 기준으로 관리합니다."></div>
@@ -366,9 +402,9 @@
     <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.112.3/dist/umd/supabase.js"></script>
-    <script src="./seller-source-parsers.js?v=20260818-pricepolicy1"></script>
-    <script src="./seller-export-adapter.js?v=20260818-pricepolicy1"></script>
-    <script src="./data-service.js?v=20260818-pricepolicy1"></script>
-    <script src="./app.js?v=20260818-pricepolicy1"></script>
+    <script src="./seller-source-parsers.js?v=20260818-multilink1"></script>
+    <script src="./seller-export-adapter.js?v=20260818-multilink1"></script>
+    <script src="./data-service.js?v=20260818-multilink1"></script>
+    <script src="./app.js?v=20260818-multilink1"></script>
   </body>
 </html>
