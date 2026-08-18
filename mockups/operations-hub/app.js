@@ -84,7 +84,12 @@ const liveData = window.SystemV3Data;
 const matrixState = {page:1, search:'', searchSources:['sellpia','smartstore','makeshop','ably'], status:'all', sort:'sku_asc', total:0, loading:false, requestId:0, codeListSkus:[], codeListRows:[], codeListName:''};
 const mappingSyncState = {displayedVersion:'', checking:false, autoRefreshing:false, latest:null};
 const matrixRowsBySku = new Map();
-const drawerState = {activeTab:'connections', historyRequestId:0, historySku:''};
+const drawerState = {activeTab:'connections', historyRequestId:0, historySku:'', attributeRequestId:0, tags:null, attributeDraft:null};
+const ATTRIBUTE_OPTIONS = Object.freeze({
+  material:['14K','925 실버','써지컬','티타늄','아크릴/투명','실버','기타'],
+  productGroup:['부품/소모품','피어싱','귀걸이','목걸이','반지','팔찌/발찌','헤어/잡화','기타'],
+  shape:['세트','링','바벨/바','볼','진주','큐빅/스톤','투명/리테이너','체인','모티브','기타']
+});
 const matrixTable = document.querySelector('.matrix-table');
 const matrixCellSelection = {anchor:null, focus:null, dragging:false};
 const matrixZoomOut = document.getElementById('matrix-zoom-out');
@@ -422,6 +427,8 @@ function renderLiveMatrixRows(products) {
     const sellpiaStock = formatNullableNumber(product.sellpia_current_stock);
     const sellpiaPrice = formatNullableNumber(product.sellpia_sale_price);
     const mappingTag = overallState === 'review' ? '<span class="tag review-tag">검토 필요</span>' : `<span class="tag">${connectedCount}처 연결</span>`;
+    const profile = product.__profile || {};
+    const tagSummary = [profile.shape, profile.tag_summary].filter(Boolean).join(' · ');
     return `<tr data-sku="${sku}" data-own-code="${ownCode}" data-image="${imageUrl}" data-status="${overallState}"${inputRow ? ` data-input-row="${inputRow}"` : ''}>
       <td class="sticky-col select-col"><input class="row-check" type="checkbox" aria-label="${sku} 선택"></td>
       <td class="sticky-col image-col image-drop-cell" data-image-drop="${sku}" title="이미지를 이 셀에 놓으면 ${sku}.jpg로 저장됩니다.">${matrixImage(product)}<span class="image-drop-hint">DROP</span></td>
@@ -433,7 +440,7 @@ function renderLiveMatrixRows(products) {
       ${channelInventoryCells(product, 'smartstore', '스마트스토어')}
       ${channelInventoryCells(product, 'makeshop', '메이크샵')}
       ${channelInventoryCells(product, 'ably', '에이블리')}
-      <td class="data-gap">-</td><td class="data-gap">-</td><td>${mappingTag}</td><td>${formatLiveTime(product.sellpia_override_updated_at || product.updated_at)}</td>
+      <td class="profile-cell${profile.material ? '' : ' data-gap'}">${escapeHtml(profile.material || '-')}</td><td class="profile-cell${profile.product_group ? '' : ' data-gap'}">${escapeHtml(profile.product_group || '-')}</td><td class="profile-tags-cell">${tagSummary ? `<span class="tag" title="${escapeHtml(tagSummary)}">${escapeHtml(tagSummary)}</span>` : mappingTag}</td><td>${formatLiveTime(profile.updated_at || product.sellpia_override_updated_at || product.updated_at)}</td>
     </tr>`;
   }).join('');
   applyColumnVisibility(activeView);
@@ -714,6 +721,29 @@ function drawerDraftState(drafts) {
   return {key:'pending', label:`수정안 ${values.length}건`};
 }
 
+function renderDrawerPricePolicy(source, label, priceValue, sellpiaPrice) {
+  const current = Number(priceValue);
+  const base = Number(sellpiaPrice);
+  const hasCurrent = priceValue !== '' && priceValue !== null && priceValue !== undefined && Number.isFinite(current);
+  const hasBase = sellpiaPrice !== '' && sellpiaPrice !== null && sellpiaPrice !== undefined && Number.isFinite(base);
+  const difference = hasCurrent && hasBase ? current - base : null;
+  const differenceText = difference === null ? '-' : `${difference > 0 ? '+' : ''}${formatNullableNumber(difference)}원`;
+  const currentFormula = `${label} 판매가 ${hasCurrent ? formatNullableNumber(current) : '-'} − 셀피아 기준가 ${hasBase ? formatNullableNumber(base) : '-'} = ${differenceText}`;
+  const legacyPolicy = source === 'smartstore'
+    ? `<div class="drawer-policy-formulas">
+        <p><span>정책 판매가</span><code>ROUND(현재 판매가 × (1 − 상품 할인율), 0)</code></p>
+        <p><span>추가옵션 금액</span><code>ROUND(옵션 금액 × (1 − 추가옵션 할인율), 0)</code></p>
+        <p><span>상품별 최종가</span><code>정책 판매가 + 할인 적용 추가옵션 최저 ~ 최고</code></p>
+      </div>
+      <footer>기존 시트 15_스마트스토어_가격정책 기준 · 현재 활성 할인 0건</footer>`
+    : `<p class="drawer-policy-empty">${label} 공통 가격정책은 아직 설정되지 않았습니다. 현재는 원본 판매가와 셀피아 기준가만 비교합니다.</p>`;
+  return `<div class="drawer-price-policy">
+    <div class="drawer-price-policy-head"><b>가격 계산 기준</b><span>원본 기준 · 정책 DB 미연결</span></div>
+    <div class="price-formula"><span>현재 확인식</span><code>${escapeHtml(currentFormula)}</code></div>
+    <details ${source === 'smartstore' ? 'open' : ''}><summary>수식 설정 보기</summary>${legacyPolicy}</details>
+  </div>`;
+}
+
 function renderDrawerInventoryChannel(source, label, product) {
   const state = matchState(product?.[`${source}_match_tier`]);
   const stock = product?.[`${source}_stock`];
@@ -733,6 +763,7 @@ function renderDrawerInventoryChannel(source, label, product) {
       <label>판매가격<input type="number" min="0" step="1" data-drawer-value="sellpia_sale_price" data-saved-value="${escapeHtml(priceValue)}" data-original-value="${escapeHtml(price ?? '')}" value="${escapeHtml(priceValue)}" ${priceDisabled ? 'disabled' : ''}></label>
     </div>
     <div class="drawer-value-comparison"><span>셀피아 재고 <b>${formatNullableNumber(product?.sellpia_current_stock)}</b></span><span>셀피아 판매가 <b>${formatNullableNumber(product?.sellpia_sale_price)}</b></span></div>
+    ${renderDrawerPricePolicy(source, label, priceValue, product?.sellpia_sale_price)}
     <div class="drawer-section-actions"><span>${stockDraft || priceDraft ? '파란 수정안은 변경대기에 저장됨' : '수정하면 변경대기에 즉시 저장됨'}</span><button class="btn primary drawer-value-save" ${state.key === 'unmatched' || (stockDisabled && priceDisabled) ? 'disabled' : ''}>수정안 저장</button></div>
   </section>`;
 }
@@ -743,6 +774,68 @@ function renderDrawerInventory(product) {
     renderDrawerInventoryChannel('makeshop', '메이크샵', product),
     renderDrawerInventoryChannel('ably', '에이블리', product)
   ].join('');
+}
+
+function attributeSelectOptions(values, selected) {
+  return values.map(value => `<option value="${escapeHtml(value)}" ${value === selected ? 'selected' : ''}>${escapeHtml(value)}</option>`).join('');
+}
+
+function attributeSourceLabel(profile) {
+  const sources = [profile.material_source, profile.product_group_source, profile.shape_source];
+  return sources.every(source => source === 'manual') ? '수동 확정' : '최초 자동 분류';
+}
+
+function renderAttributeTagChoices(tags, selectedIds, scope) {
+  const selected = new Set((selectedIds || []).map(String));
+  if (!tags.length) return '<div class="attribute-tags-empty">사용 가능한 태그가 없습니다.</div>';
+  return tags.map(tag => `<label class="attribute-tag-choice" style="--tag-color:${escapeHtml(tag.tag_color || '#dbeafe')}">
+    <input type="checkbox" data-attribute-tag="${scope}" value="${escapeHtml(tag.tag_id)}" ${selected.has(String(tag.tag_id)) ? 'checked' : ''}>
+    <span>${escapeHtml(tag.tag_name)}</span><em>${escapeHtml(tag.tag_group || '운영')}</em>
+  </label>`).join('');
+}
+
+function renderDrawerAttributesPanel(product, profile, tags) {
+  const productTags = Array.isArray(profile.product_tags) ? profile.product_tags : [];
+  const skuTags = Array.isArray(profile.sku_tags) ? profile.sku_tags : [];
+  drawerState.attributeDraft = {
+    material:profile.material || '기타',
+    productGroup:profile.product_group || '기타',
+    shape:profile.shape || '기타',
+    productTagIds:productTags.map(tag => String(tag.tag_id)),
+    skuTagIds:skuTags.map(tag => String(tag.tag_id))
+  };
+  document.getElementById('drawer-attributes-content').innerHTML = `<section class="drawer-section drawer-attributes-editor">
+    <div class="drawer-section-title"><h4>분류 속성</h4><span class="matrix-status ${attributeSourceLabel(profile) === '수동 확정' ? 'connected' : 'pending'}">${attributeSourceLabel(profile)}</span></div>
+    <div class="attribute-profile-meta"><span>상품코드 <b>${escapeHtml(profile.sellpia_product_code || '-')}</b></span><span>분류기 <b>${escapeHtml(profile.classifier_version || '-')}</b></span></div>
+    <div class="attribute-select-grid">
+      <label>소재<select id="drawer-attribute-material">${attributeSelectOptions(ATTRIBUTE_OPTIONS.material, drawerState.attributeDraft.material)}</select></label>
+      <label>상품군<select id="drawer-attribute-product-group">${attributeSelectOptions(ATTRIBUTE_OPTIONS.productGroup, drawerState.attributeDraft.productGroup)}</select></label>
+      <label>형태<select id="drawer-attribute-shape">${attributeSelectOptions(ATTRIBUTE_OPTIONS.shape, drawerState.attributeDraft.shape)}</select></label>
+    </div>
+    <div class="attribute-tag-section"><div><b>상품 공통 태그</b><span>같은 상품코드의 모든 옵션에 적용</span></div><div class="attribute-tag-grid">${renderAttributeTagChoices(tags, drawerState.attributeDraft.productTagIds, 'product')}</div></div>
+    <div class="attribute-tag-section"><div><b>현재 SKU 예외 태그</b><span>${escapeHtml(product.sellpia_sku_code)}에만 적용</span></div><div class="attribute-tag-grid">${renderAttributeTagChoices(tags, drawerState.attributeDraft.skuTagIds, 'sku')}</div></div>
+    <div class="attribute-new-tag"><input id="drawer-new-tag-name" maxlength="32" placeholder="새 태그 이름"><select id="drawer-new-tag-scope"><option value="product">상품 공통</option><option value="sku">현재 SKU</option></select><button class="btn" id="drawer-create-tag">태그 추가</button></div>
+    <div class="drawer-section-actions"><span>수동 저장 후 규칙 재분류로 덮어쓰지 않습니다.</span><button class="btn primary" id="drawer-save-attributes">속성·태그 저장</button></div>
+  </section>`;
+}
+
+async function renderDrawerAttributes(product) {
+  const content = document.getElementById('drawer-attributes-content');
+  const requestId = ++drawerState.attributeRequestId;
+  content.innerHTML = '<div class="drawer-empty-state loading"><b>속성·태그를 불러오는 중입니다.</b><span>상품 공통값과 현재 SKU 예외값을 확인합니다.</span></div>';
+  try {
+    const [tags, profile] = await Promise.all([
+      drawerState.tags ? Promise.resolve(drawerState.tags) : liveData.loadTags(),
+      product.__profile ? Promise.resolve(product.__profile) : liveData.ensureProductProfile(product.sellpia_sku_code)
+    ]);
+    if (requestId !== drawerState.attributeRequestId || productDrawer.dataset.sku !== product.sellpia_sku_code) return;
+    drawerState.tags = tags;
+    product.__profile = profile;
+    renderDrawerAttributesPanel(product, profile, tags);
+  } catch (error) {
+    console.error('product profile load failed', error);
+    if (requestId === drawerState.attributeRequestId) content.innerHTML = `<div class="drawer-empty-state error"><b>속성·태그를 불러오지 못했습니다.</b><span>${escapeHtml(error?.message || error)}</span></div>`;
+  }
 }
 
 function drawerFieldLabel(fieldKey) {
@@ -825,7 +918,7 @@ function setDrawerTab(tabName, {loadHistory = true} = {}) {
   document.getElementById('drawer-foot-status').textContent = {
     connections:'판매처명 초안과 실제 반영 대기를 분리해 저장합니다.',
     inventory:'재고·가격 수정안은 변경대기에 저장한 뒤 원본 내보내기로 반영합니다.',
-    attributes:'속성·태그 DB는 다음 개발 단계에서 연결합니다.',
+    attributes:'상품 공통 속성과 SKU 예외 태그를 Supabase에 즉시 저장합니다.',
     history:'SKU 단위 연결·수정·검증·내보내기 이력을 표시합니다.'
   }[tabName] || '';
   if (tabName === 'history' && loadHistory) loadDrawerHistory();
@@ -850,6 +943,7 @@ function openProductDrawer(row) {
   document.getElementById('drawer-channel-count').textContent = `${connectedCount}곳`;
   productDrawer.dataset.sku = product.sku;
   drawerState.historySku = '';
+  renderDrawerAttributes(liveProduct);
   matrixBody.querySelectorAll('tr').forEach(item => item.classList.toggle('selected-row', item === row));
   productDrawer.classList.add('open');
   drawerBackdrop.classList.add('open');
@@ -2000,6 +2094,74 @@ document.getElementById('drawer-inventory-list').addEventListener('click', async
   } finally {
     button.disabled = false;
     button.textContent = originalLabel;
+  }
+});
+
+function readDrawerAttributeDraft() {
+  const content = document.getElementById('drawer-attributes-content');
+  return {
+    material:content.querySelector('#drawer-attribute-material')?.value || '기타',
+    productGroup:content.querySelector('#drawer-attribute-product-group')?.value || '기타',
+    shape:content.querySelector('#drawer-attribute-shape')?.value || '기타',
+    productTagIds:[...content.querySelectorAll('[data-attribute-tag="product"]:checked')].map(input => input.value),
+    skuTagIds:[...content.querySelectorAll('[data-attribute-tag="sku"]:checked')].map(input => input.value)
+  };
+}
+
+document.getElementById('drawer-attributes-content').addEventListener('click', async event => {
+  const saveButton = event.target.closest('#drawer-save-attributes');
+  const createButton = event.target.closest('#drawer-create-tag');
+  if (!saveButton && !createButton) return;
+  const sku = productDrawer.dataset.sku;
+  const product = matrixRowsBySku.get(sku);
+  if (!sku || !product) return;
+
+  if (createButton) {
+    const nameInput = document.getElementById('drawer-new-tag-name');
+    const scope = document.getElementById('drawer-new-tag-scope').value;
+    const draft = readDrawerAttributeDraft();
+    const originalLabel = createButton.textContent;
+    createButton.disabled = true;
+    createButton.textContent = '추가 중…';
+    try {
+      const created = await liveData.createProductTag({name:nameInput.value, group:'운영'});
+      drawerState.tags = await liveData.loadTags();
+      if (scope === 'sku') draft.skuTagIds.push(String(created.tag_id));
+      else draft.productTagIds.push(String(created.tag_id));
+      const profile = product.__profile || await liveData.ensureProductProfile(sku);
+      profile.product_tags = drawerState.tags.filter(tag => draft.productTagIds.includes(String(tag.tag_id)));
+      profile.sku_tags = drawerState.tags.filter(tag => draft.skuTagIds.includes(String(tag.tag_id)));
+      profile.material = draft.material;
+      profile.product_group = draft.productGroup;
+      profile.shape = draft.shape;
+      renderDrawerAttributesPanel(product, profile, drawerState.tags);
+      showToast(`${created.tag_name} 태그를 만들었습니다. 저장을 눌러 상품에 적용해주세요.`);
+    } catch (error) {
+      console.error('product tag create failed', error);
+      showToast(`태그 추가 실패: ${error?.message || error}`);
+      createButton.disabled = false;
+      createButton.textContent = originalLabel;
+    }
+    return;
+  }
+
+  const draft = readDrawerAttributeDraft();
+  const originalLabel = saveButton.textContent;
+  saveButton.disabled = true;
+  saveButton.textContent = '저장 중…';
+  try {
+    const saved = await liveData.saveProductProfile({sku, ...draft});
+    product.__profile = saved;
+    await loadLiveMatrix();
+    const row = matrixBody.querySelector(`tr[data-sku="${CSS.escape(sku)}"]`);
+    if (row) openProductDrawer(row);
+    setDrawerTab('attributes', {loadHistory:false});
+    showToast(`${sku} 속성·태그를 DB에 저장했습니다.`);
+  } catch (error) {
+    console.error('product profile save failed', error);
+    showToast(`속성·태그 저장 실패: ${error?.message || error}`);
+    saveButton.disabled = false;
+    saveButton.textContent = originalLabel;
   }
 });
 

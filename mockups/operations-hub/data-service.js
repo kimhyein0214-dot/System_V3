@@ -61,6 +61,26 @@
     });
   }
 
+  async function attachProductProfiles(rows) {
+    const products = Array.isArray(rows) ? rows : [];
+    const skus = [...new Set(products.map(row => cleanText(row?.sellpia_sku_code)).filter(Boolean))];
+    if (!skus.length) return products;
+    const {data, error} = await db
+      .from('operations_hub_product_profiles')
+      .select('sellpia_sku_code,sellpia_product_code,material,product_group,shape,material_source,product_group_source,shape_source,classifier_version,classified_at,updated_by,updated_at,product_tags,sku_tags,tag_summary')
+      .in('sellpia_sku_code', skus);
+    if (error) throw error;
+    const profiles = new Map((data || []).map(profile => [cleanText(profile.sellpia_sku_code), profile]));
+    return products.map(product => {
+      const profile = profiles.get(cleanText(product?.sellpia_sku_code));
+      return profile ? {...product, __profile:profile} : product;
+    });
+  }
+
+  async function attachProductMetadata(rows) {
+    return attachSellerDrafts(await attachProductProfiles(rows));
+  }
+
   async function loadProducts({ page = 1, search = '', searchSources = ['sellpia','smartstore','makeshop','ably'], status = 'all', sort = 'sku_asc', skus = [], codeListRows = [] } = {}) {
     const safePage = Math.max(1, Number(page) || 1);
     const orderedCodeRows = Array.isArray(codeListRows) ? codeListRows : [];
@@ -85,7 +105,7 @@
             : {sellpia_sku_code:'', __codeList:codeRow, __codeListPlaceholder:true};
         });
       return {
-        rows:await attachSellerDrafts(orderedRows),
+        rows:await attachProductMetadata(orderedRows),
         count:orderedCodeRows.length,
         page:safePage,
         pageSize:PAGE_SIZE
@@ -102,7 +122,7 @@
       });
       if (error) throw error;
       return {
-        rows:await attachSellerDrafts(Array.isArray(data?.rows) ? data.rows : []),
+        rows:await attachProductMetadata(Array.isArray(data?.rows) ? data.rows : []),
         count:Number(data?.count || 0),
         page:Number(data?.page || safePage),
         pageSize:Number(data?.pageSize || data?.page_size || PAGE_SIZE)
@@ -172,7 +192,7 @@
 
     const { data, error, count } = await query;
     if (error) throw error;
-    return { rows: await attachSellerDrafts(data || []), count: count || 0, page: safePage, pageSize: PAGE_SIZE };
+    return { rows: await attachProductMetadata(data || []), count: count || 0, page: safePage, pageSize: PAGE_SIZE };
   }
 
   async function loadSourceStatus() {
@@ -612,11 +632,50 @@
   async function loadTags() {
     const { data, error } = await db
       .from('product_tags')
-      .select('tag_id,tag_name,tag_color')
+      .select('tag_id,tag_name,tag_color,tag_group,display_order,description')
       .eq('is_active', true)
+      .order('tag_group')
+      .order('display_order')
       .order('tag_name');
     if (error) throw error;
     return data || [];
+  }
+
+  async function ensureProductProfile(sku) {
+    const {data, error} = await db.rpc('ensure_operations_hub_product_profile', {p_sku:cleanText(sku)});
+    if (error) throw error;
+    return data || null;
+  }
+
+  async function saveProductProfile({sku, material, productGroup, shape, productTagIds = [], skuTagIds = []}) {
+    const {data, error} = await db.rpc('save_operations_hub_product_profile', {
+      p_sku:cleanText(sku),
+      p_material:cleanText(material),
+      p_product_group:cleanText(productGroup),
+      p_shape:cleanText(shape),
+      p_product_tag_ids:productTagIds,
+      p_sku_tag_ids:skuTagIds,
+      p_updated_by:'operations-hub'
+    });
+    if (error) throw error;
+    return data || null;
+  }
+
+  async function createProductTag({name, color = '#dbeafe', group = '운영'}) {
+    const tagName = cleanText(name);
+    if (!tagName) throw new Error('태그 이름을 입력해주세요.');
+    const {data, error} = await db
+      .from('product_tags')
+      .insert({
+        tag_name:tagName,
+        tag_color:cleanText(color) || '#dbeafe',
+        tag_group:cleanText(group) || '운영',
+        created_by:'operations-hub'
+      })
+      .select('tag_id,tag_name,tag_color,tag_group,display_order,description')
+      .single();
+    if (error) throw error;
+    return data;
   }
 
   function cleanText(value) {
@@ -880,6 +939,9 @@
     loadMappingSyncStatus,
     loadSourceStatus,
     loadTags,
+    ensureProductProfile,
+    saveProductProfile,
+    createProductTag,
     saveSellpiaChanges,
     searchSellerItems,
     resolveCodeEntries,
