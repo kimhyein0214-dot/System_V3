@@ -29,6 +29,7 @@ assert.match(migration, /'count', \(select count\(\*\) from filtered\)/, "the RP
 assert.doesNotMatch(migration, /execute\s+format/i, "filter input must never be interpolated into dynamic SQL");
 assert.match(migration, /grant execute on function public\.load_operations_hub_matrix_filtered[\s\S]*?to anon, authenticated/, "the public frontend roles must receive only function execution access");
 assert.match(css, /\.advanced-filter-chip[\s\S]*?\.advanced-filter-modal[\s\S]*?\.advanced-filter-row/, "the filter editor and applied chips must have dedicated layout styles");
+assert.match(css, /\.matrix-page\.active-page \.matrix-toolbar\{[^}]*overflow-x:auto/, "the permanent action panel must not cover trailing matrix filters");
 
 const assetVersions = [...html.matchAll(/(?:style\.css|seller-source-parsers\.js|seller-export-adapter\.js|data-service\.js|app\.js)\?v=([^"']+)/g)].map(match => match[1]);
 assert.equal(new Set(assetVersions).size, 1, "all local assets must share one cache-busting version");
