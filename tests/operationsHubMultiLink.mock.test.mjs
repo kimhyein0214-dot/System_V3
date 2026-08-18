@@ -8,6 +8,7 @@ const app = fs.readFileSync(new URL("../mockups/operations-hub/app.js", import.m
 const ambiguityFix = fs.readFileSync(new URL("../supabase/migrations/20260818034744_exclude_ambiguous_legacy_listing_options.sql", import.meta.url), "utf8");
 const upsertFix = fs.readFileSync(new URL("../supabase/migrations/20260818034857_fix_multilink_component_upsert_conflict.sql", import.meta.url), "utf8");
 const partialRefreshFix = fs.readFileSync(new URL("../supabase/migrations/20260818035322_global_identity_check_for_partial_link_refresh.sql", import.meta.url), "utf8");
+const inventoryDraftMigration = fs.readFileSync(new URL("../supabase/migrations/20260818045443_operations_hub_bundle_inventory_drafts.sql", import.meta.url), "utf8");
 
 assert.match(migration, /operations_hub_seller_listings[\s\S]*operations_hub_listing_components[\s\S]*component_qty integer[\s\S]*check \(component_qty > 0\)/, "bundle graph must have durable listing and positive-quantity component records");
 assert.match(migration, /operations_hub_listing_component_projection[\s\S]*explicit_components[\s\S]*legacy_components/, "explicit graph must retain current 1:1 mappings through a compatibility projection");
@@ -21,5 +22,12 @@ assert.doesNotMatch(migration, /delete from public\.operations_hub_listing_compo
 assert.match(ambiguityFix, /edge\.option_code <> ''[\s\S]*identity\.edge_count = 1/, "blank option codes shared by multiple SKUs must not be misclassified as bundles");
 assert.match(upsertFix, /on conflict on constraint operations_hub_listing_componen_listing_id_sellpia_sku_code_key/, "component upsert must avoid PL\/pgSQL output-column ambiguity with the actual truncated constraint name");
 assert.match(partialRefreshFix, /edge\.sellpia_sku_code = any\(p_skus\)[\s\S]*identity\.edge_count = 1/, "partial cache refresh must validate blank-option identity against the global edge set");
+assert.match(inventoryDraftMigration, /stage_operations_hub_listing_inventory_draft[\s\S]*listing\.listing_id[\s\S]*min\(floor\(matrix\.sellpia_available_stock::numeric \/ component\.component_qty\)\)[\s\S]*component\.is_active/, "bundle inventory drafts must recalculate only explicit active components inside the database");
+assert.match(inventoryDraftMigration, /v_listing_id is null[\s\S]*먼저 판매처 옵션의 구성을 저장/, "inferred legacy relationships must not create inventory drafts until explicitly confirmed");
+assert.match(inventoryDraftMigration, /seller_product_code = v_product_code[\s\S]*seller_option_code[\s\S]*조합 계산재고/, "bundle drafts must target the exact seller listing and enter the existing review queue");
+assert.doesNotMatch(inventoryDraftMigration, /security definer/i, "bundle inventory staging must not bypass RLS");
+assert.match(html, /multi-link-inventory-action[\s\S]*multi-link-open-queue[\s\S]*multi-link-stage-stock/, "the listing editor must show a reviewable inventory-draft action and queue entry point");
+assert.match(data, /stageListingInventoryDraft[\s\S]*stage_operations_hub_listing_inventory_draft/, "the data adapter must expose bundle inventory draft staging");
+assert.match(app, /renderMultiLinkInventoryAction[\s\S]*stageListingInventoryDraft[\s\S]*loadChangeQueue/, "staging bundle stock must refresh the listing, queue, dashboard, and matrix review surfaces");
 
 console.log("Operations hub multi-link and bundle graph contract: passed");

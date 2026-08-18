@@ -137,6 +137,17 @@
     return Array.isArray(data) ? data[0] : data;
   }
 
+  async function stageListingInventoryDraft({source, productCode, optionCode = '', batchId = null} = {}) {
+    const {data, error} = await db.rpc('stage_operations_hub_listing_inventory_draft', {
+      p_source:cleanText(source),
+      p_product_code:cleanText(productCode),
+      p_option_code:cleanText(optionCode),
+      p_batch_id:batchId
+    });
+    if (error) throw error;
+    return Array.isArray(data) ? data[0] : data;
+  }
+
   async function loadProducts({ page = 1, search = '', searchSources = ['sellpia','smartstore','makeshop','ably'], status = 'all', sort = 'sku_asc', skus = [], codeListRows = [] } = {}) {
     const safePage = Math.max(1, Number(page) || 1);
     const orderedCodeRows = Array.isArray(codeListRows) ? codeListRows : [];
@@ -1042,6 +1053,7 @@
     loadListingGraph,
     saveListingComponent,
     deactivateListingComponent,
+    stageListingInventoryDraft,
     loadDashboardMetrics,
     loadMappingSyncStatus,
     loadSourceStatus,

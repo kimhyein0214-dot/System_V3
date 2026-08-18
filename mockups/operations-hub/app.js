@@ -2720,20 +2720,78 @@ function renderMultiLinkRows() {
     const summary = components.slice(0, 3).map(item => `<span>${escapeHtml(item.sku)} × ${formatNumber(item.qty)}</span>`).join('');
     const overflow = components.length > 3 ? `<em>+${components.length - 3}</em>` : '';
     const stock = row.calculated_stock === null || row.calculated_stock === undefined ? '-' : formatNumber(row.calculated_stock);
-    return `<tr class="multi-link-row${selectedKey === multiLinkKey(row) ? ' selected' : ''}" data-multi-link-key="${escapeHtml(multiLinkKey(row))}">
+    const sellerStock = row.seller_stock === null || row.seller_stock === undefined ? '-' : formatNumber(row.seller_stock);
+    const draft = row.inventory_change_id ? `<em>수정안 ${formatNullableNumber(row.inventory_draft_stock)} · ${escapeHtml(QUEUE_STATUS_LABELS[row.inventory_draft_status] || row.inventory_draft_status)}</em>` : '';
+    return `<tr class="multi-link-row${selectedKey === multiLinkKey(row) ? ' selected' : ''}${row.inventory_change_id ? ' has-draft' : ''}" data-multi-link-key="${escapeHtml(multiLinkKey(row))}">
       <td><span class="relation-pill ${escapeHtml(row.relation_type)}">${escapeHtml(multiLinkRelationLabel(row.relation_type, row.component_count, row.max_listing_count))}</span></td>
       <td><span class="multi-link-channel ${escapeHtml(row.source_channel)}"><i></i>${escapeHtml(multiLinkChannelLabel(row.source_channel))}</span></td>
       <td class="code-cell">${escapeHtml(row.product_code || '-')}</td><td class="code-cell">${escapeHtml(row.option_code || '-')}</td>
       <td class="multi-link-name"><b title="${escapeHtml(row.product_name || '')}">${escapeHtml(row.product_name || '상품명 없음')}</b><span title="${escapeHtml(row.option_name || '')}">${escapeHtml(row.option_name || '옵션명 없음')}</span></td>
       <td><div class="multi-link-components-summary">${summary}${overflow}</div></td>
-      <td class="multi-link-stock${stock === '-' ? ' unknown' : ''}">${stock}</td>
+      <td class="multi-link-stock${stock === '-' ? ' unknown' : ''}"><b>${sellerStock} → ${stock}</b><small>원본 → 계산</small>${draft}</td>
     </tr>`;
   }).join('');
+}
+
+function renderMultiLinkInventoryAction(row) {
+  const panel = document.getElementById('multi-link-inventory-action');
+  const state = document.getElementById('multi-link-inventory-state');
+  const copy = document.getElementById('multi-link-inventory-copy');
+  const sellerStock = document.getElementById('multi-link-seller-stock');
+  const calculatedStock = document.getElementById('multi-link-calculated-stock');
+  const stageButton = document.getElementById('multi-link-stage-stock');
+  sellerStock.textContent = formatNullableNumber(row?.seller_stock);
+  calculatedStock.textContent = formatNullableNumber(row?.calculated_stock);
+
+  if (!row) {
+    panel.classList.add('disabled');
+    state.textContent = '연결을 선택해주세요';
+    copy.textContent = '명시적으로 저장한 구성만 재고 수정안으로 만들 수 있습니다.';
+    stageButton.disabled = true;
+    stageButton.textContent = '계산재고를 변경대기에 등록';
+    return;
+  }
+
+  const hasSellerStock = row.seller_stock !== null && row.seller_stock !== undefined;
+  const hasCalculatedStock = row.calculated_stock !== null && row.calculated_stock !== undefined;
+  const sameStock = hasSellerStock && hasCalculatedStock && Number(row.seller_stock) === Number(row.calculated_stock);
+  const hasDraft = Boolean(row.inventory_change_id);
+  const canStage = Boolean(row.is_explicit && hasSellerStock && hasCalculatedStock && (!sameStock || hasDraft));
+  panel.classList.toggle('disabled', !canStage);
+  stageButton.disabled = !canStage;
+
+  if (!row.is_explicit) {
+    state.textContent = '구성 확정 필요';
+    copy.textContent = '현재 목록은 기존 매핑에서 추정한 관계입니다. SKU 구성을 한 번 저장해 확정한 뒤에만 재고 수정안을 만들 수 있습니다.';
+    stageButton.textContent = '구성 저장 후 사용 가능';
+  } else if (!hasCalculatedStock) {
+    state.textContent = '계산 불가';
+    copy.textContent = '구성 SKU 중 가용재고를 확인할 수 없는 항목이 있습니다.';
+    stageButton.textContent = '가용재고 확인 필요';
+  } else if (!hasSellerStock) {
+    state.textContent = '판매처 원본 확인 필요';
+    copy.textContent = '최신 판매처 원본에 현재 재고가 있어야 수정안을 만들 수 있습니다.';
+    stageButton.textContent = '최신 원본 확인 필요';
+  } else if (hasDraft) {
+    state.textContent = `수정안 #${row.inventory_change_id} · ${QUEUE_STATUS_LABELS[row.inventory_draft_status] || row.inventory_draft_status}`;
+    copy.textContent = `현재 수정안 ${formatNullableNumber(row.inventory_draft_stock)}개가 변경대기에 있습니다. 다시 등록하면 최신 구성 계산값으로 교체합니다.`;
+    stageButton.textContent = sameStock ? '일치 상태 반영 · 기존 수정안 취소' : '최신 계산재고로 수정안 교체';
+  } else if (sameStock) {
+    state.textContent = '판매처 재고와 일치';
+    copy.textContent = '현재 판매처 원본 재고와 조합 계산재고가 같아 새 수정안이 필요하지 않습니다.';
+    stageButton.textContent = '재고 일치';
+  } else {
+    const difference = Number(row.calculated_stock) - Number(row.seller_stock);
+    state.textContent = `재고 차이 ${difference > 0 ? '+' : ''}${formatNumber(difference)}`;
+    copy.textContent = '등록해도 원본은 바뀌지 않습니다. 변경대기에서 검증한 뒤 기존 XLSX 내보내기를 사용합니다.';
+    stageButton.textContent = '계산재고를 변경대기에 등록';
+  }
 }
 
 function renderMultiLinkEditor(row) {
   multiLinkState.selected = row || null;
   renderMultiLinkRows();
+  renderMultiLinkInventoryAction(row);
   const title = document.getElementById('multi-link-editor-title');
   const copy = document.getElementById('multi-link-editor-copy');
   const componentsBox = document.getElementById('multi-link-components');
@@ -2848,6 +2906,43 @@ document.getElementById('multi-link-components').addEventListener('click', async
     finally { event.target.disabled = false; }
   }
 });
+
+document.getElementById('multi-link-stage-stock').addEventListener('click', async event => {
+  const row = multiLinkState.selected;
+  if (!row || !liveData?.stageListingInventoryDraft) return;
+  const button = event.currentTarget;
+  const originalLabel = button.textContent;
+  button.disabled = true;
+  button.textContent = '수정안 저장 중…';
+  try {
+    const result = await liveData.stageListingInventoryDraft({
+      source:row.source_channel,
+      productCode:row.product_code,
+      optionCode:row.option_code,
+      batchId:createRequestId()
+    });
+    const selectedKey = multiLinkKey(row);
+    await Promise.all([
+      loadMultiLinks({selectKey:selectedKey}),
+      loadChangeQueue({silent:true}),
+      loadLiveDashboardMetrics(),
+      loadLiveMatrix()
+    ]);
+    if (result?.draft_status === 'unchanged') {
+      showToast(`판매처 재고와 계산재고가 ${formatNullableNumber(result.calculated_stock)}개로 일치합니다.${Number(result.cancelled_count || 0) ? ' 기존 수정안은 취소했습니다.' : ''}`);
+    } else {
+      showToast(`조합 계산재고 ${formatNullableNumber(result.current_stock)} → ${formatNullableNumber(result.calculated_stock)}개를 변경대기 #${result.change_id}로 저장했습니다.`);
+    }
+  } catch (error) {
+    showToast(`조합 재고 수정안 저장 실패: ${error?.message || error}`);
+  } finally {
+    button.disabled = false;
+    button.textContent = originalLabel;
+    renderMultiLinkInventoryAction(multiLinkState.selected);
+  }
+});
+
+document.getElementById('multi-link-open-queue').addEventListener('click', () => showPage('jobs'));
 
 document.getElementById('multi-link-form').addEventListener('submit', async event => {
   event.preventDefault();
