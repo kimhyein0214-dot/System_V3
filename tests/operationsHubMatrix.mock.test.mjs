@@ -25,6 +25,10 @@ const searchDraftMigration = fs.readFileSync(
   new URL("../supabase/migrations/20260814063641_operations_hub_search_drafts_projection.sql", import.meta.url),
   "utf8",
 );
+const mappingSyncMigration = fs.readFileSync(
+  new URL("../supabase/migrations/20260818013437_operations_hub_mapping_sync.sql", import.meta.url),
+  "utf8",
+);
 
 assert.match(html, /id="matrix-zoom-out"[\s\S]*?id="matrix-zoom-value"[\s\S]*?id="matrix-zoom-in"/, "matrix zoom controls must be visible together");
 assert.match(source, /MATRIX_ZOOM_MIN = 80;[\s\S]*?MATRIX_ZOOM_MAX = 140;[\s\S]*?localStorage\.setItem\(MATRIX_ZOOM_KEY/, "matrix-only zoom must be bounded and persisted");
@@ -71,6 +75,13 @@ assert.match(searchDraftMigration, /product_name[\s\S]*?ilike[\s\S]*?product_ter
 assert.match(html, /id="drawer-smart-name"[\s\S]*?id="drawer-make-name"[\s\S]*?id="drawer-ably-name"/, "the detail drawer must edit seller-specific names independently");
 assert.match(source, /price-hover-target[\s\S]*?function showPricePopover[\s\S]*?가격정책 DB는 아직 연결 전/, "seller price cells must explain the live comparison without inventing a policy formula");
 assert.match(sellerDetailMigration, /operations_hub_manual_links[\s\S]*?search_operations_hub_seller_items[\s\S]*?link_operations_hub_seller_item[\s\S]*?smartstore_option_name/, "manual links and seller detail names must persist in the live matrix schema");
+assert.match(mappingSyncMigration, /operations_hub_manual_links_backup_20260818_013437[\s\S]*?mapping_origin[\s\S]*?mapping_batch_id/, "mapping storage changes must retain a rollback copy and preserve origin metadata");
+assert.match(mappingSyncMigration, /save_operations_hub_mapping_batch[\s\S]*?jsonb_array_length\(p_items\)[\s\S]*?operations_hub_manual_links[\s\S]*?operations_hub_link_history/, "automatic and imported mappings must use the audited official overlay path in bounded batches");
+assert.match(mappingSyncMigration, /refresh materialized view concurrently operations_private\.operations_hub_matrix_core[\s\S]*?operations_hub_matrix_refresh_state/, "legacy mapping refreshes must record the completed matrix-core version");
+assert.match(mappingSyncMigration, /operations_hub_mapping_sync_status[\s\S]*?core_refresh_needed[\s\S]*?mapping_version/, "the database must expose saved, core-refreshed, and visible mapping state separately");
+assert.match(html, /id="matrix-mapping-sync"[\s\S]*?id="matrix-mapping-sync-state"[\s\S]*?id="matrix-mapping-sync-time"/, "the permanent action panel must show mapping synchronization state");
+assert.match(dataSource, /operations_hub_mapping_sync_status[\s\S]*?loadMappingSyncStatus/, "the frontend must read mapping synchronization state from Supabase");
+assert.match(source, /loadMappingSyncStatus\(\{autoRefresh:true\}\)[\s\S]*?15000/, "the matrix must detect external mapping changes without requiring a manual page reload");
 assert.match(source, /function matrixSelectionClipboardText\([\s\S]*?rows\.join\('\\n'\)/, "selected Sellpia cells must copy to an Excel-compatible tab and newline grid");
 assert.match(source, /document\.addEventListener\('paste'[\s\S]*?normalizePastedRows[\s\S]*?commitEditableCellValue/, "Excel clipboard grids must paste into the selected editable Sellpia cell range");
 assert.match(source, /numeric && !\/\^\\d\+[\s\S]*?valid:false/, "clipboard paste must reject invalid numeric stock and price values");

@@ -82,6 +82,7 @@ let sellpiaSaveError = '';
 const SELLPIA_AUTOSAVE_DELAY_MS = 450;
 const liveData = window.SystemV3Data;
 const matrixState = {page:1, search:'', searchSources:['sellpia','smartstore','makeshop','ably'], status:'all', sort:'sku_asc', total:0, loading:false, requestId:0, codeListSkus:[], codeListRows:[], codeListName:''};
+const mappingSyncState = {displayedVersion:'', checking:false, autoRefreshing:false, latest:null};
 const matrixRowsBySku = new Map();
 const matrixTable = document.querySelector('.matrix-table');
 const matrixCellSelection = {anchor:null, focus:null, dragging:false};
@@ -443,8 +444,82 @@ function setMatrixConnection(state, label) {
   badge.textContent = label;
 }
 
+function renderMappingSyncStatus(status, state = '') {
+  const panel = document.getElementById('matrix-mapping-sync');
+  const label = document.getElementById('matrix-mapping-sync-state');
+  const detail = document.getElementById('matrix-mapping-sync-detail');
+  const time = document.getElementById('matrix-mapping-sync-time');
+  if (!panel || !label || !detail || !time) return;
+  const official = Number(status?.official_mapping_count || 0);
+  const manual = Number(status?.manual_mapping_count || 0);
+  const automatic = Number(status?.automatic_mapping_count || 0);
+  const failed = Number(status?.latest_batch_failed_count || 0);
+  const visibleAt = status?.latest_official_mapping_at || status?.core_refreshed_at;
+  panel.className = `matrix-mapping-sync ${state || 'checking'}`;
+  if (state === 'pending') {
+    label.textContent = '코어 갱신 대기';
+    detail.textContent = '레거시 매핑 DB 저장은 완료됐지만 매트릭스 코어 갱신이 필요합니다.';
+  } else if (state === 'changed') {
+    label.textContent = mappingSyncState.autoRefreshing ? '화면 갱신 중' : 'DB 변경 감지';
+    detail.textContent = mappingSyncState.autoRefreshing
+      ? '새 매핑을 현재 매트릭스 페이지에 반영하고 있습니다.'
+      : '현재 편집 저장이 끝나는 대로 화면을 자동 갱신합니다.';
+  } else if (state === 'error') {
+    label.textContent = '상태 확인 오류';
+    detail.textContent = status?.message || '매핑 동기화 상태를 읽지 못했습니다.';
+  } else {
+    label.textContent = '화면 반영 완료';
+    detail.textContent = `${formatNumber(official)}건 · 수동 ${formatNumber(manual)} · 자동 ${formatNumber(automatic)}${failed ? ` · 최근 실패 ${formatNumber(failed)}` : ''}`;
+  }
+  const screenAt = matrixState.lastLoadedAt ? formatLiveTime(matrixState.lastLoadedAt) : '-';
+  time.textContent = `DB ${visibleAt ? formatLiveTime(visibleAt) : '-'} · 화면 ${screenAt}`;
+}
+
+async function loadMappingSyncStatus({markDisplayed = false, autoRefresh = false} = {}) {
+  if (!liveData?.loadMappingSyncStatus || mappingSyncState.checking) return mappingSyncState.latest;
+  mappingSyncState.checking = true;
+  try {
+    const status = await liveData.loadMappingSyncStatus();
+    mappingSyncState.latest = status;
+    const version = String(status?.mapping_version || '');
+    const changed = Boolean(mappingSyncState.displayedVersion && version && version !== mappingSyncState.displayedVersion);
+    if (status?.core_refresh_needed) {
+      renderMappingSyncStatus(status, 'pending');
+      return status;
+    }
+    if (markDisplayed) {
+      mappingSyncState.displayedVersion = version;
+      renderMappingSyncStatus(status, 'synced');
+      return status;
+    }
+    if (changed && autoRefresh) {
+      const canRefresh = !matrixState.loading && !sellpiaSaveInFlight && !pendingChanges.length;
+      if (!canRefresh) {
+        renderMappingSyncStatus(status, 'changed');
+        return status;
+      }
+      mappingSyncState.autoRefreshing = true;
+      renderMappingSyncStatus(status, 'changed');
+      const refreshed = await loadLiveMatrix();
+      if (refreshed) mappingSyncState.displayedVersion = version;
+      mappingSyncState.autoRefreshing = false;
+      renderMappingSyncStatus(status, refreshed ? 'synced' : 'error');
+      return status;
+    }
+    renderMappingSyncStatus(status, changed ? 'changed' : 'synced');
+    return status;
+  } catch (error) {
+    console.error('mapping sync status load failed', error);
+    renderMappingSyncStatus({message:error?.message || String(error)}, 'error');
+    return null;
+  } finally {
+    mappingSyncState.checking = false;
+    mappingSyncState.autoRefreshing = false;
+  }
+}
+
 async function loadLiveMatrix({resetPage = false} = {}) {
-  if (!liveData) return;
+  if (!liveData) return false;
   if (resetPage) matrixState.page = 1;
   const requestId = ++matrixState.requestId;
   matrixState.loading = true;
@@ -460,7 +535,7 @@ async function loadLiveMatrix({resetPage = false} = {}) {
       skus:matrixState.codeListSkus,
       codeListRows:matrixState.codeListRows
     });
-    if (requestId !== matrixState.requestId) return;
+    if (requestId !== matrixState.requestId) return false;
     matrixState.total = result.count;
     renderLiveMatrixRows(result.rows);
     const first = result.count ? ((result.page - 1) * result.pageSize) + 1 : 0;
@@ -472,14 +547,17 @@ async function loadLiveMatrix({resetPage = false} = {}) {
     document.getElementById('matrix-next').disabled = last >= result.count;
     document.getElementById('select-all-matrix').checked = false;
     updateSelectedCount();
+    matrixState.lastLoadedAt = new Date().toISOString();
     setMatrixConnection('connected', matrixState.codeListRows.length
       ? `엑셀 목록 · ${formatNumber(result.count)} 결과 행`
       : `LIVE · ${formatNumber(result.count)} SKU`);
+    return true;
   } catch (error) {
     console.error('operations hub matrix load failed', error);
     matrixBody.innerHTML = '<tr class="matrix-empty-row error"><td colspan="29"><b>실데이터를 불러오지 못했습니다.</b><span>DB 새로고침을 눌러 다시 시도해주세요.</span></td></tr>';
     document.getElementById('live-catalog-state').textContent = '연결 오류';
     setMatrixConnection('error', 'DB 연결 오류');
+    return false;
   } finally {
     if (requestId === matrixState.requestId) matrixState.loading = false;
   }
@@ -588,6 +666,7 @@ async function loadLiveDashboardMetrics() {
 
 async function refreshLiveData(options) {
   await Promise.all([loadLiveMatrix(options), loadLiveSourceStatus(), loadLiveDashboardMetrics()]);
+  await loadMappingSyncStatus({markDisplayed:true});
 }
 
 function matrixRowName(row) {
@@ -2311,6 +2390,7 @@ updateCodeListFilterUi();
 if (liveData) {
   refreshLiveData({resetPage:true});
   window.setInterval(() => Promise.all([loadLiveSourceStatus(), loadLiveDashboardMetrics()]), 60000);
+  window.setInterval(() => loadMappingSyncStatus({autoRefresh:true}), 15000);
   window.setInterval(() => {
     if (document.getElementById('jobs').classList.contains('active-page')) loadChangeQueue({silent:true});
   }, 30000);
