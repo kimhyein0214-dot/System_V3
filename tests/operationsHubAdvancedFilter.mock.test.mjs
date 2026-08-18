@@ -9,6 +9,10 @@ const migration = fs.readFileSync(
   new URL("../supabase/migrations/20260818082659_operations_hub_advanced_matrix_filters.sql", import.meta.url),
   "utf8",
 );
+const optimizationMigration = fs.readFileSync(
+  new URL("../supabase/migrations/20260818084516_optimize_operations_hub_advanced_filters.sql", import.meta.url),
+  "utf8",
+);
 
 assert.match(html, /id="advanced-filter-btn"[\s\S]*?id="advanced-filter-count"/, "the matrix toolbar must expose the advanced filter count");
 assert.match(html, /id="advanced-filter-modal"[\s\S]*?id="advanced-filter-logic"[\s\S]*?id="advanced-filter-rows"[\s\S]*?id="advanced-filter-apply"/, "the filter modal must expose logic, condition rows, and apply controls");
@@ -28,6 +32,8 @@ assert.match(migration, /operations_hub_product_profiles profile/, "attributes a
 assert.match(migration, /'count', \(select count\(\*\) from filtered\)/, "the RPC must return the exact filtered total before paging");
 assert.doesNotMatch(migration, /execute\s+format/i, "filter input must never be interpolated into dynamic SQL");
 assert.match(migration, /grant execute on function public\.load_operations_hub_matrix_filtered[\s\S]*?to anon, authenticated/, "the public frontend roles must receive only function execution access");
+assert.match(optimizationMigration, /v_needs_profile[\s\S]*?load_operations_hub_matrix_filtered_with_profiles[\s\S]*?load_operations_hub_matrix_filtered_fast/, "common filters must avoid the expensive profile join while attribute and tag filters retain it");
+assert.match(optimizationMigration, /security invoker/g, "optimized filter routes must preserve invoker security");
 assert.match(css, /\.advanced-filter-chip[\s\S]*?\.advanced-filter-modal[\s\S]*?\.advanced-filter-row/, "the filter editor and applied chips must have dedicated layout styles");
 assert.match(css, /\.matrix-page\.active-page \.matrix-toolbar\{[^}]*overflow-x:auto/, "the permanent action panel must not cover trailing matrix filters");
 
