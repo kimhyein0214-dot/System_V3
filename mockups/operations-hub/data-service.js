@@ -338,6 +338,45 @@
     return data || [];
   }
 
+  async function loadProductHistory(sku, {limit = 60} = {}) {
+    const normalizedSku = cleanText(sku);
+    if (!normalizedSku) return {changes:[], events:[], links:[]};
+    const safeLimit = Math.max(10, Math.min(Number(limit) || 60, 100));
+    const [changeResult, linkResult] = await Promise.all([
+      db
+        .from('operations_hub_change_queue')
+        .select('change_id,change_batch_id,sellpia_sku_code,field_key,before_value,after_value,target_channels,status,requested_by,requested_at,processed_at,error_message,source_channel,seller_product_code,seller_option_code,validation_errors,validated_at,retry_count,status_message,updated_at')
+        .eq('sellpia_sku_code', normalizedSku)
+        .order('updated_at', {ascending:false})
+        .order('change_id', {ascending:false})
+        .limit(safeLimit),
+      db
+        .from('operations_hub_link_history')
+        .select('link_event_id,sellpia_sku_code,source_channel,before_link,after_link,changed_by,changed_at')
+        .eq('sellpia_sku_code', normalizedSku)
+        .order('changed_at', {ascending:false})
+        .order('link_event_id', {ascending:false})
+        .limit(safeLimit)
+    ]);
+    if (changeResult.error) throw changeResult.error;
+    if (linkResult.error) throw linkResult.error;
+    const changes = changeResult.data || [];
+    const changeIds = changes.map(item => Number(item.change_id)).filter(Number.isFinite);
+    let events = [];
+    if (changeIds.length) {
+      const {data, error} = await db
+        .from('operations_hub_change_events')
+        .select('event_id,change_id,change_batch_id,event_type,from_status,to_status,message,payload,actor,created_at')
+        .in('change_id', changeIds)
+        .order('created_at', {ascending:false})
+        .order('event_id', {ascending:false})
+        .limit(Math.min(300, safeLimit * 5));
+      if (error) throw error;
+      events = data || [];
+    }
+    return {changes, events, links:linkResult.data || []};
+  }
+
   async function validateChangeQueue(changeIds) {
     const {data, error} = await db.rpc('validate_operations_hub_changes', {p_change_ids:(changeIds || []).map(Number)});
     if (error) throw error;
@@ -849,6 +888,7 @@
     loadChangeQueue,
     loadChangeQueueStats,
     loadChangeEvents,
+    loadProductHistory,
     validateChangeQueue,
     cancelChangeQueue,
     retryChangeQueue,

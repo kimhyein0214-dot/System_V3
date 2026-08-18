@@ -84,6 +84,7 @@ const liveData = window.SystemV3Data;
 const matrixState = {page:1, search:'', searchSources:['sellpia','smartstore','makeshop','ably'], status:'all', sort:'sku_asc', total:0, loading:false, requestId:0, codeListSkus:[], codeListRows:[], codeListName:''};
 const mappingSyncState = {displayedVersion:'', checking:false, autoRefreshing:false, latest:null};
 const matrixRowsBySku = new Map();
+const drawerState = {activeTab:'connections', historyRequestId:0, historySku:''};
 const matrixTable = document.querySelector('.matrix-table');
 const matrixCellSelection = {anchor:null, focus:null, dragging:false};
 const matrixZoomOut = document.getElementById('matrix-zoom-out');
@@ -686,7 +687,7 @@ function fillDrawerChannel(sectionKey, dataKey, label, product) {
   const state = matchState(product?.[`${dataKey}_match_tier`]);
   const status = section.querySelector('.matrix-status');
   status.className = `matrix-status ${state.key}`;
-  status.textContent = state.label;
+  status.textContent = product?.[`${dataKey}_name_is_draft`] && state.key !== 'unmatched' ? '초안 저장' : state.label;
   const productCode = product?.[`${dataKey}_product_code`] || '';
   const optionCode = product?.[`${dataKey}_option_code`] || '';
   document.getElementById(`drawer-${sectionKey}-product`).value = productCode;
@@ -699,13 +700,135 @@ function fillDrawerChannel(sectionKey, dataKey, label, product) {
   optionName.disabled = state.key === 'unmatched';
   productName.placeholder = state.key === 'unmatched' ? '먼저 판매처 상품을 연결해주세요.' : '판매처별 SEO 상품명';
   optionName.placeholder = state.key === 'unmatched' ? '먼저 판매처 옵션을 연결해주세요.' : '판매처 옵션명';
-  const stockInput = section.querySelector(`[data-drawer-field="${label} 재고"]`);
-  const priceInput = section.querySelector(`[data-drawer-field="${label} 가격"]`);
-  stockInput.value = formatNullableNumber(product?.[`${dataKey}_stock`]);
-  priceInput.value = formatNullableNumber(product?.[`${dataKey}_price`]);
   section.dataset.productCode = productCode;
   section.dataset.optionCode = optionCode;
+  section.dataset.savedProductName = productName.value;
+  section.dataset.savedOptionName = optionName.value;
   section.querySelectorAll('.seller-draft-save').forEach(button => { button.disabled = state.key === 'unmatched'; });
+}
+
+function drawerDraftState(drafts) {
+  const values = drafts.filter(Boolean);
+  if (!values.length) return {key:'connected', label:'원본 기준'};
+  if (values.some(item => item.status === 'failed')) return {key:'review', label:`수정안 ${values.length}건 · 실패 확인`};
+  return {key:'pending', label:`수정안 ${values.length}건`};
+}
+
+function renderDrawerInventoryChannel(source, label, product) {
+  const state = matchState(product?.[`${source}_match_tier`]);
+  const stock = product?.[`${source}_stock`];
+  const price = product?.[`${source}_price`];
+  const stockDraft = product?.__sellerDrafts?.[`${source}:sellpia_current_stock`];
+  const priceDraft = product?.__sellerDrafts?.[`${source}:sellpia_sale_price`];
+  const draftState = state.key === 'unmatched' ? state : drawerDraftState([stockDraft, priceDraft]);
+  const stockValue = stockDraft?.after_value ?? stock ?? '';
+  const priceValue = priceDraft?.after_value ?? price ?? '';
+  const stockDisabled = state.key === 'unmatched' || stock === null || stock === undefined;
+  const priceDisabled = state.key === 'unmatched' || price === null || price === undefined;
+  return `<section class="drawer-section drawer-inventory-channel" data-source="${source}">
+    <div class="drawer-section-title"><h4><i class="dot ${{smartstore:'smart',makeshop:'make',ably:'ably'}[source]}"></i>${label}</h4><span class="matrix-status ${draftState.key}">${draftState.label}</span></div>
+    <div class="drawer-inventory-meta"><span>상품 ${escapeHtml(product?.[`${source}_product_code`] || '-')}</span><span>옵션 ${escapeHtml(product?.[`${source}_option_code`] || '-')}</span></div>
+    <div class="form-grid">
+      <label>판매처 재고<input type="number" min="0" step="1" data-drawer-value="sellpia_current_stock" data-saved-value="${escapeHtml(stockValue)}" data-original-value="${escapeHtml(stock ?? '')}" value="${escapeHtml(stockValue)}" ${stockDisabled ? 'disabled' : ''}></label>
+      <label>판매가격<input type="number" min="0" step="1" data-drawer-value="sellpia_sale_price" data-saved-value="${escapeHtml(priceValue)}" data-original-value="${escapeHtml(price ?? '')}" value="${escapeHtml(priceValue)}" ${priceDisabled ? 'disabled' : ''}></label>
+    </div>
+    <div class="drawer-value-comparison"><span>셀피아 재고 <b>${formatNullableNumber(product?.sellpia_current_stock)}</b></span><span>셀피아 판매가 <b>${formatNullableNumber(product?.sellpia_sale_price)}</b></span></div>
+    <div class="drawer-section-actions"><span>${stockDraft || priceDraft ? '파란 수정안은 변경대기에 저장됨' : '수정하면 변경대기에 즉시 저장됨'}</span><button class="btn primary drawer-value-save" ${state.key === 'unmatched' || (stockDisabled && priceDisabled) ? 'disabled' : ''}>수정안 저장</button></div>
+  </section>`;
+}
+
+function renderDrawerInventory(product) {
+  document.getElementById('drawer-inventory-list').innerHTML = [
+    renderDrawerInventoryChannel('smartstore', '스마트스토어', product),
+    renderDrawerInventoryChannel('makeshop', '메이크샵', product),
+    renderDrawerInventoryChannel('ably', '에이블리', product)
+  ].join('');
+}
+
+function drawerFieldLabel(fieldKey) {
+  return {
+    sellpia_own_code:'셀피아 자사코드', sellpia_product_name:'셀피아 상품명', sellpia_option_name:'셀피아 옵션명',
+    sellpia_current_stock:'재고', sellpia_sale_price:'판매가', sellpia_image:'셀피아 이미지',
+    seller_product_name:'판매처 상품명', seller_option_name:'판매처 옵션명'
+  }[fieldKey] || fieldKey || '변경사항';
+}
+
+function drawerStatusLabel(status) {
+  return {pending:'반영 대기',validated:'검증 완료',processing:'처리 중',exported:'내보냄',applied:'반영 완료',failed:'실패',saved:'DB 초안',cancelled:'취소'}[status] || status || '기록';
+}
+
+function historyValue(value) {
+  if (value === null || value === undefined) return '-';
+  if (typeof value === 'object') return JSON.stringify(value);
+  return String(value);
+}
+
+function renderDrawerHistory({changes = [], events = [], links = []}) {
+  const changeMap = new Map(changes.map(item => [Number(item.change_id), item]));
+  const eventChangeIds = new Set(events.map(item => Number(item.change_id)));
+  const items = [
+    ...events.map(event => ({kind:'event', at:event.created_at, event, change:changeMap.get(Number(event.change_id))})),
+    ...changes.filter(change => !eventChangeIds.has(Number(change.change_id))).map(change => ({kind:'change', at:change.updated_at, change})),
+    ...links.map(link => ({kind:'link', at:link.changed_at, link}))
+  ].sort((left, right) => new Date(right.at || 0) - new Date(left.at || 0)).slice(0, 100);
+  const list = document.getElementById('drawer-history-list');
+  if (!items.length) {
+    list.innerHTML = '<div class="drawer-empty-state"><b>이 SKU의 변경이력이 없습니다.</b><span>판매처 연결이나 수정안을 저장하면 여기에 기록됩니다.</span></div>';
+    return;
+  }
+  list.innerHTML = items.map(item => {
+    if (item.kind === 'link') {
+      const link = item.link;
+      const before = link.before_link || {};
+      const after = link.after_link || {};
+      return `<article class="drawer-history-item"><div><span class="drawer-history-kind link">연결 변경</span><time>${formatLiveTime(link.changed_at)}</time></div><b>${escapeHtml(CHANNEL_LABELS[link.source_channel] || link.source_channel)} · ${escapeHtml(after.product_code || '-')} / ${escapeHtml(after.option_code || '-')}</b><p>${before.product_code ? `이전 ${escapeHtml(before.product_code)} / ${escapeHtml(before.option_code || '-')}` : '신규 연결'} · ${escapeHtml(link.changed_by || '시스템')}</p></article>`;
+    }
+    const change = item.change || {};
+    const event = item.event;
+    const status = event?.to_status || change.status;
+    const sourceLabel = change.source_channel ? (CHANNEL_LABELS[change.source_channel] || change.source_channel) : '셀피아 기준';
+    const description = event?.message || change.status_message || change.error_message || `${historyValue(change.before_value)} → ${historyValue(change.after_value)}`;
+    return `<article class="drawer-history-item"><div><span class="drawer-history-kind ${escapeHtml(status || '')}">${escapeHtml(drawerStatusLabel(status))}</span><time>${formatLiveTime(item.at)}</time></div><b>${escapeHtml(sourceLabel)} · ${escapeHtml(drawerFieldLabel(change.field_key))}</b><p>${escapeHtml(description || '-')}</p></article>`;
+  }).join('');
+}
+
+async function loadDrawerHistory({force = false} = {}) {
+  const sku = productDrawer.dataset.sku;
+  if (!sku || !liveData?.loadProductHistory) return;
+  if (!force && drawerState.historySku === sku) return;
+  const requestId = ++drawerState.historyRequestId;
+  const list = document.getElementById('drawer-history-list');
+  list.innerHTML = '<div class="drawer-empty-state loading"><b>변경이력을 불러오는 중입니다.</b><span>변경대기와 연결 감사로그를 조회합니다.</span></div>';
+  try {
+    const history = await liveData.loadProductHistory(sku);
+    if (requestId !== drawerState.historyRequestId || productDrawer.dataset.sku !== sku) return;
+    drawerState.historySku = sku;
+    renderDrawerHistory(history);
+  } catch (error) {
+    console.error('drawer product history load failed', error);
+    if (requestId === drawerState.historyRequestId) list.innerHTML = `<div class="drawer-empty-state error"><b>변경이력을 불러오지 못했습니다.</b><span>${escapeHtml(error?.message || error)}</span></div>`;
+  }
+}
+
+function setDrawerTab(tabName, {loadHistory = true} = {}) {
+  drawerState.activeTab = tabName;
+  document.querySelectorAll('[data-drawer-tab]').forEach(button => {
+    const active = button.dataset.drawerTab === tabName;
+    button.classList.toggle('active', active);
+    button.setAttribute('aria-selected', String(active));
+  });
+  document.querySelectorAll('[data-drawer-panel]').forEach(panel => {
+    const active = panel.dataset.drawerPanel === tabName;
+    panel.hidden = !active;
+    panel.classList.toggle('active', active);
+  });
+  document.getElementById('drawer-foot-status').textContent = {
+    connections:'판매처명 초안과 실제 반영 대기를 분리해 저장합니다.',
+    inventory:'재고·가격 수정안은 변경대기에 저장한 뒤 원본 내보내기로 반영합니다.',
+    attributes:'속성·태그 DB는 다음 개발 단계에서 연결합니다.',
+    history:'SKU 단위 연결·수정·검증·내보내기 이력을 표시합니다.'
+  }[tabName] || '';
+  if (tabName === 'history' && loadHistory) loadDrawerHistory();
 }
 
 function openProductDrawer(row) {
@@ -717,22 +840,21 @@ function openProductDrawer(row) {
   const drawerThumb = document.querySelector('.drawer-product .product-thumb');
   drawerThumb.className = 'product-thumb live-thumb';
   drawerThumb.innerHTML = product.image ? `<img src="${escapeHtml(product.image)}" alt="${escapeHtml(product.sku)} 상품 이미지">` : 'NO';
-  document.querySelectorAll('[data-drawer-field]').forEach(input => { input.value = ''; input.disabled = true; });
   fillDrawerChannel('smart', 'smartstore', '스마트스토어', liveProduct);
   fillDrawerChannel('make', 'makeshop', '메이크샵', liveProduct);
   fillDrawerChannel('ably', 'ably', '에이블리', liveProduct);
+  renderDrawerInventory(liveProduct);
   const connectedCount = ['smartstore','makeshop','ably'].filter(channel => liveProduct[`${channel}_match_tier`]).length;
   document.getElementById('drawer-stock').textContent = formatNullableNumber(liveProduct.sellpia_current_stock);
   document.getElementById('drawer-price').textContent = formatNullableNumber(liveProduct.sellpia_sale_price);
   document.getElementById('drawer-channel-count').textContent = `${connectedCount}곳`;
-  const attributeSection = document.querySelector('.compact-section');
-  attributeSection.querySelectorAll('select,input').forEach(input => { input.disabled = true; });
-  attributeSection.querySelector('.wide-label input').value = '속성 DB 적재 전';
   productDrawer.dataset.sku = product.sku;
+  drawerState.historySku = '';
   matrixBody.querySelectorAll('tr').forEach(item => item.classList.toggle('selected-row', item === row));
   productDrawer.classList.add('open');
   drawerBackdrop.classList.add('open');
   productDrawer.setAttribute('aria-hidden', 'false');
+  setDrawerTab(drawerState.activeTab);
 }
 
 function closeProductDrawer() {
@@ -1779,7 +1901,16 @@ document.querySelectorAll('[data-drawer-link-source]').forEach(button => button.
 }));
 
 document.querySelectorAll('.drawer-section textarea[data-seller-name]').forEach(input => input.addEventListener('input', () => {
-  delete input.closest('.drawer-section').dataset.queueBatchId;
+  const section = input.closest('.drawer-section');
+  delete section.dataset.queueBatchId;
+  const sectionKey = CHANNEL_SECTION_KEYS[section.dataset.source];
+  const changed = document.getElementById(`drawer-${sectionKey}-name`).value !== section.dataset.savedProductName
+    || document.getElementById(`drawer-${sectionKey}-option-name`).value !== section.dataset.savedOptionName;
+  const status = section.querySelector('.matrix-status');
+  if (changed) {
+    status.className = 'matrix-status pending';
+    status.textContent = '입력 변경됨';
+  }
 }));
 
 document.querySelectorAll('.seller-draft-save').forEach(button => button.addEventListener('click', async () => {
@@ -1818,6 +1949,60 @@ document.querySelectorAll('.seller-draft-save').forEach(button => button.addEven
   }
 }));
 
+document.getElementById('drawer-inventory-list').addEventListener('input', event => {
+  const input = event.target.closest('[data-drawer-value]');
+  if (!input) return;
+  const section = input.closest('.drawer-inventory-channel');
+  const changed = [...section.querySelectorAll('[data-drawer-value]')].some(item => item.value.trim() !== item.dataset.savedValue);
+  section.classList.toggle('drawer-dirty', changed);
+  const status = section.querySelector('.matrix-status');
+  if (changed) {
+    status.className = 'matrix-status pending';
+    status.textContent = '입력 변경됨';
+  }
+});
+
+document.getElementById('drawer-inventory-list').addEventListener('click', async event => {
+  const button = event.target.closest('.drawer-value-save');
+  if (!button) return;
+  const section = button.closest('.drawer-inventory-channel');
+  const source = section.dataset.source;
+  const sku = productDrawer.dataset.sku;
+  const changes = [...section.querySelectorAll('[data-drawer-value]')]
+    .filter(input => !input.disabled && input.value.trim() !== input.dataset.savedValue)
+    .map(input => ({fieldKey:input.dataset.drawerValue, after:input.value.trim()}));
+  if (!changes.length) {
+    showToast('바뀐 재고·가격 값이 없습니다.');
+    return;
+  }
+  if (changes.some(change => !/^\d+(\.\d+)?$/.test(change.after))) {
+    showToast('재고와 판매가는 0 이상의 숫자로 입력해주세요.');
+    return;
+  }
+  const batchId = createRequestId();
+  const originalLabel = button.textContent;
+  button.disabled = true;
+  button.textContent = '수정안 저장 중…';
+  try {
+    const results = [];
+    for (const change of changes) {
+      results.push(await liveData.saveSellerValueDraft({sku, source, fieldKey:change.fieldKey, after:change.after, batchId}));
+    }
+    await Promise.all([loadLiveMatrix(), loadChangeQueue({silent:true})]);
+    const row = matrixBody.querySelector(`tr[data-sku="${CSS.escape(sku)}"]`);
+    if (row) openProductDrawer(row);
+    const savedCount = results.filter(result => result?.draft_status === 'pending').length;
+    const cancelledCount = results.filter(result => result?.draft_status === 'unchanged').length;
+    showToast(`${CHANNEL_LABELS[source]} 수정안 ${savedCount}건 저장${cancelledCount ? ` · 원본값 복귀 ${cancelledCount}건` : ''}`);
+  } catch (error) {
+    console.error('drawer seller value save failed', error);
+    showToast(`재고·가격 수정안 저장 실패: ${error?.message || error}`);
+  } finally {
+    button.disabled = false;
+    button.textContent = originalLabel;
+  }
+});
+
 function moveDrawerSelection(direction) {
   const rows = [...matrixBody.querySelectorAll('tr[data-sku]')];
   const currentIndex = rows.findIndex(row => row.dataset.sku === productDrawer.dataset.sku);
@@ -1828,10 +2013,11 @@ function moveDrawerSelection(direction) {
 document.getElementById('drawer-prev').addEventListener('click', () => moveDrawerSelection(-1));
 document.getElementById('drawer-next').addEventListener('click', () => moveDrawerSelection(1));
 
-document.querySelectorAll('.drawer-tabs button').forEach(button => button.addEventListener('click', () => {
-  document.querySelectorAll('.drawer-tabs button').forEach(item => item.classList.toggle('active', item === button));
-  if (button.textContent !== '판매처 연결') showToast(`${button.textContent} 화면은 다음 목업 단계에서 확장됩니다.`);
-}));
+document.querySelectorAll('[data-drawer-tab]').forEach(button => button.addEventListener('click', () => setDrawerTab(button.dataset.drawerTab)));
+document.getElementById('drawer-history-refresh').addEventListener('click', () => {
+  drawerState.historySku = '';
+  loadDrawerHistory({force:true});
+});
 
 document.getElementById('discard-changes').addEventListener('click', () => {
   clearPendingChanges();

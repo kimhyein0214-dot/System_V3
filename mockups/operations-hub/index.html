@@ -7,7 +7,7 @@
     <title>System V3 · 상품 운영 허브</title>
     <link rel="preconnect" href="https://cdnjs.cloudflare.com" crossorigin>
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/pretendard/1.3.9/static/pretendard.css">
-    <link rel="stylesheet" href="./style.css?v=20260818-mappingadapter1">
+    <link rel="stylesheet" href="./style.css?v=20260818-drawerdata1">
   </head>
   <body>
     <div class="app-shell">
@@ -272,15 +272,28 @@
     <aside id="product-drawer" class="product-drawer" aria-hidden="true">
       <div class="drawer-head"><div><span>상품 상세 편집</span><h3 id="drawer-sku">1014-1</h3></div><div class="drawer-head-actions"><button id="drawer-prev" aria-label="이전 SKU">‹</button><button id="drawer-next" aria-label="다음 SKU">›</button><button id="close-drawer" aria-label="상세창 닫기">×</button></div></div>
       <div class="drawer-product"><span class="product-thumb blue">★</span><p><b id="drawer-name">NEW 컬러 큐빅 별 피어싱</b><em id="drawer-option">크리스탈 [PC-7-01]</em></p></div>
-      <div class="drawer-tabs"><button class="active">판매처 연결</button><button>재고·가격</button><button>속성·태그</button><button>변경이력</button></div>
+      <div class="drawer-tabs" role="tablist" aria-label="상품 상세 메뉴"><button class="active" data-drawer-tab="connections" role="tab" aria-selected="true">판매처 연결</button><button data-drawer-tab="inventory" role="tab" aria-selected="false">재고·가격</button><button data-drawer-tab="attributes" role="tab" aria-selected="false">속성·태그</button><button data-drawer-tab="history" role="tab" aria-selected="false">변경이력</button></div>
       <div class="drawer-body">
         <div class="drawer-summary"><div><span>셀피아 재고</span><b id="drawer-stock">-</b></div><div><span>판매가</span><b id="drawer-price">-</b></div><div><span>연결 판매처</span><b id="drawer-channel-count">-</b></div></div>
-        <section class="drawer-section" id="drawer-smart" data-source="smartstore"><div class="drawer-section-title"><h4><i class="dot smart"></i>스마트스토어</h4><span class="matrix-status pending">조회 중</span></div><div class="form-grid"><label>상품코드<input id="drawer-smart-product" disabled></label><label>옵션코드<input id="drawer-smart-option" disabled></label><label class="form-wide">판매처 상품명<textarea id="drawer-smart-name" data-seller-name="product" rows="2"></textarea></label><label class="form-wide">판매처 옵션명<textarea id="drawer-smart-option-name" data-seller-name="option" rows="2"></textarea></label><label>판매처 재고<input data-drawer-field="스마트스토어 재고" disabled></label><label>판매가격<input data-drawer-field="스마트스토어 가격" disabled></label></div><div class="drawer-section-actions"><button class="drawer-link-btn" data-drawer-link-source="smartstore">원본에서 연결 변경</button><button class="btn seller-draft-save" data-queue="false">초안 저장</button><button class="btn primary seller-draft-save" data-queue="true">반영 대기 추가</button></div></section>
-        <section class="drawer-section" id="drawer-make" data-source="makeshop"><div class="drawer-section-title"><h4><i class="dot make"></i>메이크샵</h4><span class="matrix-status pending">조회 중</span></div><div class="form-grid"><label>상품코드<input id="drawer-make-product" disabled></label><label>옵션코드<input id="drawer-make-option" disabled></label><label class="form-wide">판매처 상품명<textarea id="drawer-make-name" data-seller-name="product" rows="2"></textarea></label><label class="form-wide">판매처 옵션명<textarea id="drawer-make-option-name" data-seller-name="option" rows="2"></textarea></label><label>판매처 재고<input data-drawer-field="메이크샵 재고" disabled></label><label>판매가격<input data-drawer-field="메이크샵 가격" disabled></label></div><div class="drawer-section-actions"><button class="drawer-link-btn" data-drawer-link-source="makeshop">원본에서 연결 변경</button><button class="btn seller-draft-save" data-queue="false">초안 저장</button><button class="btn primary seller-draft-save" data-queue="true">반영 대기 추가</button></div></section>
-        <section class="drawer-section" id="drawer-ably" data-source="ably"><div class="drawer-section-title"><h4><i class="dot ably"></i>에이블리</h4><span class="matrix-status pending">조회 중</span></div><div class="form-grid"><label>상품코드<input id="drawer-ably-product" disabled></label><label>옵션코드<input id="drawer-ably-option" disabled></label><label class="form-wide">판매처 상품명<textarea id="drawer-ably-name" data-seller-name="product" rows="2"></textarea></label><label class="form-wide">판매처 옵션명<textarea id="drawer-ably-option-name" data-seller-name="option" rows="2"></textarea></label><label>판매처 재고<input data-drawer-field="에이블리 재고" disabled></label><label>판매가격<input data-drawer-field="에이블리 가격" disabled></label></div><div class="drawer-section-actions"><button class="drawer-link-btn" data-drawer-link-source="ably">원본에서 연결 변경</button><button class="btn seller-draft-save" data-queue="false">초안 저장</button><button class="btn primary seller-draft-save" data-queue="true">반영 대기 추가</button></div></section>
-        <section class="drawer-section compact-section"><h4>상품 속성</h4><div class="form-grid"><label>소재<select><option>써지컬스틸</option><option>14K 골드</option><option>실버925</option></select></label><label>상품군<select><option>피어싱</option><option>귀걸이</option><option>목걸이</option></select></label></div><label class="wide-label">태그<input value="큐빅, 베스트"></label></section>
+        <div class="drawer-tab-panel active" data-drawer-panel="connections">
+          <div class="drawer-panel-guide"><b>판매처별 SEO 상품명과 옵션명</b><span>초안 저장은 DB에만 보관하고, 반영 대기 추가는 최신 원본 내보내기 대상으로 등록합니다.</span></div>
+          <section class="drawer-section" id="drawer-smart" data-source="smartstore"><div class="drawer-section-title"><h4><i class="dot smart"></i>스마트스토어</h4><span class="matrix-status pending">조회 중</span></div><div class="form-grid"><label>상품코드<input id="drawer-smart-product" disabled></label><label>옵션코드<input id="drawer-smart-option" disabled></label><label class="form-wide">판매처 상품명<textarea id="drawer-smart-name" data-seller-name="product" rows="2"></textarea></label><label class="form-wide">판매처 옵션명<textarea id="drawer-smart-option-name" data-seller-name="option" rows="2"></textarea></label></div><div class="drawer-section-actions"><button class="drawer-link-btn" data-drawer-link-source="smartstore">원본에서 연결 변경</button><button class="btn seller-draft-save" data-queue="false">초안 저장</button><button class="btn primary seller-draft-save" data-queue="true">반영 대기 추가</button></div></section>
+          <section class="drawer-section" id="drawer-make" data-source="makeshop"><div class="drawer-section-title"><h4><i class="dot make"></i>메이크샵</h4><span class="matrix-status pending">조회 중</span></div><div class="form-grid"><label>상품코드<input id="drawer-make-product" disabled></label><label>옵션코드<input id="drawer-make-option" disabled></label><label class="form-wide">판매처 상품명<textarea id="drawer-make-name" data-seller-name="product" rows="2"></textarea></label><label class="form-wide">판매처 옵션명<textarea id="drawer-make-option-name" data-seller-name="option" rows="2"></textarea></label></div><div class="drawer-section-actions"><button class="drawer-link-btn" data-drawer-link-source="makeshop">원본에서 연결 변경</button><button class="btn seller-draft-save" data-queue="false">초안 저장</button><button class="btn primary seller-draft-save" data-queue="true">반영 대기 추가</button></div></section>
+          <section class="drawer-section" id="drawer-ably" data-source="ably"><div class="drawer-section-title"><h4><i class="dot ably"></i>에이블리</h4><span class="matrix-status pending">조회 중</span></div><div class="form-grid"><label>상품코드<input id="drawer-ably-product" disabled></label><label>옵션코드<input id="drawer-ably-option" disabled></label><label class="form-wide">판매처 상품명<textarea id="drawer-ably-name" data-seller-name="product" rows="2"></textarea></label><label class="form-wide">판매처 옵션명<textarea id="drawer-ably-option-name" data-seller-name="option" rows="2"></textarea></label></div><div class="drawer-section-actions"><button class="drawer-link-btn" data-drawer-link-source="ably">원본에서 연결 변경</button><button class="btn seller-draft-save" data-queue="false">초안 저장</button><button class="btn primary seller-draft-save" data-queue="true">반영 대기 추가</button></div></section>
+        </div>
+        <div class="drawer-tab-panel" data-drawer-panel="inventory" hidden>
+          <div class="drawer-panel-guide"><b>판매처 원본 기준 재고·가격 수정안</b><span>값을 저장해도 원본 파일은 즉시 바뀌지 않습니다. 매트릭스에서 검토한 뒤 내보내기 단계에서 반영됩니다.</span></div>
+          <div id="drawer-inventory-list" class="drawer-inventory-list"></div>
+        </div>
+        <div class="drawer-tab-panel" data-drawer-panel="attributes" hidden>
+          <section class="drawer-section compact-section"><div class="drawer-section-title"><h4>상품 속성·태그</h4><span class="matrix-status pending">DB 설계 대기</span></div><div class="drawer-empty-state"><b>다음 개발 단계에서 연결합니다.</b><span>소재·상품군·형태·다중 태그를 셀피아 SKU 기준으로 영구 저장할 예정입니다.</span></div></section>
+        </div>
+        <div class="drawer-tab-panel" data-drawer-panel="history" hidden>
+          <div class="drawer-history-head"><div><b>SKU 변경이력</b><span>판매처 연결과 변경대기 감사로그를 최신순으로 표시합니다.</span></div><button id="drawer-history-refresh" class="btn">새로고침</button></div>
+          <div id="drawer-history-list" class="drawer-history-list"><div class="drawer-empty-state"><b>변경이력을 불러오지 않았습니다.</b><span>탭을 열면 Supabase에서 조회합니다.</span></div></div>
+        </div>
       </div>
-      <div class="drawer-foot"><p>판매처명은 초안과 실제 반영 대기를 분리해 저장합니다.</p><button class="btn" id="drawer-cancel">닫기</button></div>
+      <div class="drawer-foot"><p id="drawer-foot-status">판매처명 초안과 실제 반영 대기를 분리해 저장합니다.</p><button class="btn" id="drawer-cancel">닫기</button></div>
     </aside>
     <div id="drawer-backdrop" class="drawer-backdrop"></div>
     <div id="view-settings-modal" class="modal-backdrop" hidden>
@@ -352,9 +365,9 @@
     <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.112.3/dist/umd/supabase.js"></script>
-    <script src="./seller-source-parsers.js?v=20260818-mappingadapter1"></script>
-    <script src="./seller-export-adapter.js?v=20260818-mappingadapter1"></script>
-    <script src="./data-service.js?v=20260818-mappingadapter1"></script>
-    <script src="./app.js?v=20260818-mappingadapter1"></script>
+    <script src="./seller-source-parsers.js?v=20260818-drawerdata1"></script>
+    <script src="./seller-export-adapter.js?v=20260818-drawerdata1"></script>
+    <script src="./data-service.js?v=20260818-drawerdata1"></script>
+    <script src="./app.js?v=20260818-drawerdata1"></script>
   </body>
 </html>
