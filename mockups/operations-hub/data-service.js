@@ -148,7 +148,7 @@
     return Array.isArray(data) ? data[0] : data;
   }
 
-  async function loadProducts({ page = 1, search = '', searchSources = ['sellpia','smartstore','makeshop','ably'], status = 'all', sort = 'sku_asc', skus = [], codeListRows = [] } = {}) {
+  async function loadProducts({ page = 1, search = '', searchSources = ['sellpia','smartstore','makeshop','ably'], status = 'all', sort = 'sku_asc', skus = [], codeListRows = [], advancedFilter = null } = {}) {
     const safePage = Math.max(1, Number(page) || 1);
     const orderedCodeRows = Array.isArray(codeListRows) ? codeListRows : [];
     if (orderedCodeRows.length) {
@@ -186,6 +186,31 @@
         p_page_size:PAGE_SIZE,
         p_status:status,
         p_sort:'input_order'
+      });
+      if (error) throw error;
+      return {
+        rows:await attachProductMetadata(Array.isArray(data?.rows) ? data.rows : []),
+        count:Number(data?.count || 0),
+        page:Number(data?.page || safePage),
+        pageSize:Number(data?.pageSize || data?.page_size || PAGE_SIZE)
+      };
+    }
+    const filterPayload = advancedFilter && typeof advancedFilter === 'object'
+      ? {
+          logic:String(advancedFilter.logic || 'and').toLowerCase() === 'or' ? 'or' : 'and',
+          conditions:Array.isArray(advancedFilter.conditions) ? advancedFilter.conditions.slice(0, 12) : []
+        }
+      : {logic:'and', conditions:[]};
+    if (filterPayload.conditions.length) {
+      const {data, error} = await db.rpc('load_operations_hub_matrix_filtered', {
+        p_page:safePage,
+        p_page_size:PAGE_SIZE,
+        p_search:normalizedSearch(search),
+        p_search_sources:searchSources,
+        p_status:status,
+        p_sort:sort,
+        p_filter:filterPayload,
+        p_skus:[]
       });
       if (error) throw error;
       return {

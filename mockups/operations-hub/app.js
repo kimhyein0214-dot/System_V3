@@ -81,7 +81,7 @@ let sellpiaSavingCount = 0;
 let sellpiaSaveError = '';
 const SELLPIA_AUTOSAVE_DELAY_MS = 450;
 const liveData = window.SystemV3Data;
-const matrixState = {page:1, search:'', searchSources:['sellpia','smartstore','makeshop','ably'], status:'all', sort:'sku_asc', total:0, loading:false, requestId:0, codeListSkus:[], codeListRows:[], codeListName:''};
+const matrixState = {page:1, search:'', searchSources:['sellpia','smartstore','makeshop','ably'], status:'all', sort:'sku_asc', advancedFilter:{logic:'and', conditions:[]}, total:0, loading:false, requestId:0, codeListSkus:[], codeListRows:[], codeListName:''};
 const multiLinkState = {page:1, pageSize:50, search:'', source:'all', relationType:'complex', total:0, loading:false, requestId:0, rows:[], selected:null, loaded:false};
 const mappingSyncState = {displayedVersion:'', checking:false, autoRefreshing:false, latest:null};
 const matrixRowsBySku = new Map();
@@ -117,8 +117,48 @@ const DEFAULT_VIEW_OPTIONS = {
   imageSize:'default',
   status:'all',
   sort:'sku_asc',
+  advancedFilter:{logic:'and', conditions:[]},
   zoom:100
 };
+const ADVANCED_FILTER_FIELDS = Object.freeze([
+  {group:'셀피아', field:'sellpia_sku_code', label:'셀피아 SKU', type:'text'},
+  {group:'셀피아', field:'sellpia_own_code', label:'자사코드', type:'text'},
+  {group:'셀피아', field:'sellpia_product_name', label:'상품명', type:'text'},
+  {group:'셀피아', field:'sellpia_option_name', label:'옵션명', type:'text'},
+  {group:'셀피아', field:'sellpia_current_stock', label:'현재재고', type:'number'},
+  {group:'셀피아', field:'sellpia_sale_price', label:'판매가', type:'number'},
+  {group:'스마트스토어', field:'smartstore_product_code', label:'상품코드', type:'text'},
+  {group:'스마트스토어', field:'smartstore_option_code', label:'옵션코드', type:'text'},
+  {group:'스마트스토어', field:'smartstore_name', label:'상품명', type:'text'},
+  {group:'스마트스토어', field:'smartstore_option_name', label:'옵션명', type:'text'},
+  {group:'스마트스토어', field:'smartstore_stock', label:'판매처재고', type:'number'},
+  {group:'스마트스토어', field:'smartstore_price', label:'판매가격', type:'number'},
+  {group:'스마트스토어', field:'smartstore_sale_status', label:'판매상태', type:'text'},
+  {group:'메이크샵', field:'makeshop_product_code', label:'상품코드', type:'text'},
+  {group:'메이크샵', field:'makeshop_option_code', label:'옵션코드', type:'text'},
+  {group:'메이크샵', field:'makeshop_name', label:'상품명', type:'text'},
+  {group:'메이크샵', field:'makeshop_option_name', label:'옵션명', type:'text'},
+  {group:'메이크샵', field:'makeshop_stock', label:'판매처재고', type:'number'},
+  {group:'메이크샵', field:'makeshop_price', label:'판매가격', type:'number'},
+  {group:'메이크샵', field:'makeshop_sale_status', label:'판매상태', type:'text'},
+  {group:'에이블리', field:'ably_product_code', label:'상품코드', type:'text'},
+  {group:'에이블리', field:'ably_option_code', label:'옵션코드', type:'text'},
+  {group:'에이블리', field:'ably_name', label:'상품명', type:'text'},
+  {group:'에이블리', field:'ably_option_name', label:'옵션명', type:'text'},
+  {group:'에이블리', field:'ably_stock', label:'판매처재고', type:'number'},
+  {group:'에이블리', field:'ably_price', label:'판매가격', type:'number'},
+  {group:'에이블리', field:'ably_sale_status', label:'판매상태', type:'text'},
+  {group:'운영정보', field:'overall_status', label:'연결상태', type:'status'},
+  {group:'속성·태그', field:'material', label:'소재', type:'text'},
+  {group:'속성·태그', field:'product_group', label:'상품군', type:'text'},
+  {group:'속성·태그', field:'shape', label:'형태', type:'text'},
+  {group:'속성·태그', field:'tag_summary', label:'태그', type:'text'}
+]);
+const ADVANCED_FILTER_OPERATORS = Object.freeze({
+  text:[['contains','포함'],['not_contains','미포함'],['eq','같음'],['neq','같지 않음'],['empty','비어 있음'],['not_empty','비어 있지 않음']],
+  number:[['gte','이상'],['lte','이하'],['gt','초과'],['lt','미만'],['eq','같음'],['neq','같지 않음'],['empty','비어 있음'],['not_empty','비어 있지 않음']],
+  status:[['eq','같음'],['neq','같지 않음']]
+});
 const BUILTIN_PRESETS = Object.freeze({
   all:{id:'all', name:'전체 현황', ...DEFAULT_VIEW_OPTIONS},
   matching:{id:'matching', name:'매칭 검토', ...DEFAULT_VIEW_OPTIONS, showInventory:false, showPrice:false, showAttributes:false, wrapNames:true, status:'attention'},
@@ -127,14 +167,21 @@ const BUILTIN_PRESETS = Object.freeze({
   attributes:{id:'attributes', name:'속성·태그', ...DEFAULT_VIEW_OPTIONS, channels:{smartstore:false, makeshop:false, ably:false}, showStatus:false, showCodes:false, showSellerNames:false, showInventory:false, showPrice:false, status:'all'}
 });
 
+function cloneAdvancedFilter(filter) {
+  return {
+    logic:String(filter?.logic || 'and').toLowerCase() === 'or' ? 'or' : 'and',
+    conditions:Array.isArray(filter?.conditions) ? filter.conditions.map(condition => ({...condition})) : []
+  };
+}
+
 function cloneView(view) {
-  return {...view, channels:{...view.channels}};
+  return {...view, channels:{...view.channels}, advancedFilter:cloneAdvancedFilter(view.advancedFilter)};
 }
 
 function readCustomPresets() {
   try {
     const parsed = JSON.parse(localStorage.getItem(MATRIX_PRESETS_KEY) || '[]');
-    return Array.isArray(parsed) ? parsed.filter(item => item?.id && item?.name).map(item => ({...cloneView(DEFAULT_VIEW_OPTIONS), ...item, channels:{...DEFAULT_VIEW_OPTIONS.channels, ...item.channels}})) : [];
+    return Array.isArray(parsed) ? parsed.filter(item => item?.id && item?.name).map(item => cloneView({...cloneView(DEFAULT_VIEW_OPTIONS), ...item, channels:{...DEFAULT_VIEW_OPTIONS.channels, ...item.channels}})) : [];
   } catch (error) {
     console.warn('matrix preset storage reset', error);
     return [];
@@ -278,9 +325,11 @@ function applyViewPreset(view, {id = null, reload = true, announce = true} = {})
   }
   matrixState.status = activeView.status;
   matrixState.sort = activeView.sort;
+  matrixState.advancedFilter = cloneAdvancedFilter(activeView.advancedFilter);
   document.getElementById('matrix-status-filter').value = activeView.status;
   applyMatrixZoom(activeView.zoom, {syncView:false});
   applyColumnVisibility(activeView);
+  renderAdvancedFilterBar();
   setActivePresetUi();
   if (reload) loadLiveMatrix({resetPage:true});
   if (announce) showToast(`${activeView.name} 보기를 적용했습니다.`);
@@ -550,7 +599,8 @@ async function loadLiveMatrix({resetPage = false} = {}) {
       status:matrixState.status,
       sort:matrixState.sort,
       skus:matrixState.codeListSkus,
-      codeListRows:matrixState.codeListRows
+      codeListRows:matrixState.codeListRows,
+      advancedFilter:matrixState.advancedFilter
     });
     if (requestId !== matrixState.requestId) return false;
     matrixState.total = result.count;
@@ -1522,7 +1572,8 @@ function readViewSettingsForm() {
     status:document.getElementById('preset-status').value,
     sort:document.getElementById('preset-sort').value,
     zoom:Number(document.getElementById('preset-zoom').value) || 100,
-    imageSize:document.getElementById('preset-image-size').value
+    imageSize:document.getElementById('preset-image-size').value,
+    advancedFilter:cloneAdvancedFilter(activeView.advancedFilter)
   };
 }
 
@@ -1589,6 +1640,178 @@ document.getElementById('delete-preset').addEventListener('click', () => {
   applyViewPreset(BUILTIN_PRESETS.all, {id:'all'});
   showToast(`${preset.name} 프리셋을 삭제했습니다.`);
 });
+
+const advancedFilterModal = document.getElementById('advanced-filter-modal');
+const advancedFilterRows = document.getElementById('advanced-filter-rows');
+let advancedFilterDraft = cloneAdvancedFilter(activeView.advancedFilter);
+
+function advancedFilterField(field) {
+  return ADVANCED_FILTER_FIELDS.find(item => item.field === field) || ADVANCED_FILTER_FIELDS[0];
+}
+
+function advancedFilterFieldOptions(selectedField) {
+  const groups = new Map();
+  ADVANCED_FILTER_FIELDS.forEach(item => {
+    if (!groups.has(item.group)) groups.set(item.group, []);
+    groups.get(item.group).push(item);
+  });
+  return [...groups.entries()].map(([group, fields]) => `<optgroup label="${escapeHtml(group)}">${fields.map(item => `<option value="${item.field}"${item.field === selectedField ? ' selected' : ''}>${escapeHtml(item.label)}</option>`).join('')}</optgroup>`).join('');
+}
+
+function advancedFilterOperatorOptions(type, selectedOperator) {
+  return (ADVANCED_FILTER_OPERATORS[type] || ADVANCED_FILTER_OPERATORS.text).map(([value, label]) => `<option value="${value}"${value === selectedOperator ? ' selected' : ''}>${label}</option>`).join('');
+}
+
+function advancedFilterValueControl(condition, fieldInfo, index) {
+  const noValue = ['empty','not_empty'].includes(condition.operator);
+  if (fieldInfo.type === 'status') {
+    const options = [['connected','연결 완료'],['review','검토 필요'],['unmatched','미매칭']];
+    return `<select class="advanced-filter-value" data-filter-part="value" data-filter-index="${index}">${options.map(([value, label]) => `<option value="${value}"${value === condition.value ? ' selected' : ''}>${label}</option>`).join('')}</select>`;
+  }
+  const inputMode = fieldInfo.type === 'number' ? 'decimal' : 'text';
+  const placeholder = fieldInfo.type === 'number' ? '숫자 입력' : '비교할 텍스트 입력';
+  return `<input class="advanced-filter-value" data-filter-part="value" data-filter-index="${index}" inputmode="${inputMode}" value="${escapeHtml(condition.value || '')}" placeholder="${noValue ? '비교값 불필요' : placeholder}"${noValue ? ' disabled' : ''}>`;
+}
+
+function renderAdvancedFilterRows() {
+  advancedFilterRows.innerHTML = advancedFilterDraft.conditions.map((rawCondition, index) => {
+    const fieldInfo = advancedFilterField(rawCondition.field);
+    const operators = ADVANCED_FILTER_OPERATORS[fieldInfo.type] || ADVANCED_FILTER_OPERATORS.text;
+    const operator = operators.some(([value]) => value === rawCondition.operator) ? rawCondition.operator : operators[0][0];
+    const condition = {...rawCondition, field:fieldInfo.field, operator};
+    advancedFilterDraft.conditions[index] = condition;
+    return `<div class="advanced-filter-row" data-filter-index="${index}">
+      <select data-filter-part="field" data-filter-index="${index}" aria-label="필터 필드">${advancedFilterFieldOptions(condition.field)}</select>
+      <select data-filter-part="operator" data-filter-index="${index}" aria-label="필터 조건">${advancedFilterOperatorOptions(fieldInfo.type, condition.operator)}</select>
+      ${advancedFilterValueControl(condition, fieldInfo, index)}
+      <button class="advanced-filter-remove" type="button" data-filter-remove="${index}" aria-label="조건 삭제">×</button>
+    </div>`;
+  }).join('') || '<div class="drawer-empty-state"><b>설정된 조건이 없습니다.</b><span>조건 추가를 눌러 상세 필터를 만드세요.</span></div>';
+  document.getElementById('advanced-filter-add').disabled = advancedFilterDraft.conditions.length >= 12;
+}
+
+function advancedFilterOperatorLabel(type, operator) {
+  return (ADVANCED_FILTER_OPERATORS[type] || []).find(([value]) => value === operator)?.[1] || operator;
+}
+
+function advancedFilterConditionLabel(condition) {
+  const fieldInfo = advancedFilterField(condition.field);
+  const operator = advancedFilterOperatorLabel(fieldInfo.type, condition.operator);
+  const statusLabels = {connected:'연결 완료', review:'검토 필요', unmatched:'미매칭'};
+  const value = ['empty','not_empty'].includes(condition.operator) ? '' : ` ${statusLabels[condition.value] || condition.value}`;
+  return `${fieldInfo.group} ${fieldInfo.label} · ${operator}${value}`;
+}
+
+function renderAdvancedFilterBar() {
+  const filter = cloneAdvancedFilter(matrixState.advancedFilter);
+  const count = filter.conditions.length;
+  const button = document.getElementById('advanced-filter-btn');
+  const bar = document.getElementById('advanced-filter-bar');
+  document.getElementById('advanced-filter-count').textContent = String(count);
+  button.classList.toggle('active', count > 0);
+  button.disabled = matrixState.codeListRows.length > 0;
+  button.title = button.disabled ? '엑셀 코드목록 보기에서는 업로드 행 순서를 우선합니다.' : '상품명·가격·재고·상태·태그 조건을 조합합니다.';
+  bar.hidden = count === 0;
+  document.getElementById('advanced-filter-logic-label').textContent = filter.logic === 'or' ? '하나 이상 만족' : '모두 만족';
+  document.getElementById('advanced-filter-chips').innerHTML = filter.conditions.map((condition, index) => `<span class="advanced-filter-chip">${escapeHtml(advancedFilterConditionLabel(condition))}<button type="button" data-filter-chip-remove="${index}" aria-label="조건 해제">×</button></span>`).join('');
+}
+
+function validateAdvancedFilter(filter) {
+  if (filter.conditions.length > 12) return '상세 필터는 최대 12개까지 사용할 수 있습니다.';
+  for (const condition of filter.conditions) {
+    const fieldInfo = ADVANCED_FILTER_FIELDS.find(item => item.field === condition.field);
+    if (!fieldInfo) return '선택할 수 없는 필드가 포함되어 있습니다.';
+    const operators = ADVANCED_FILTER_OPERATORS[fieldInfo.type] || [];
+    if (!operators.some(([value]) => value === condition.operator)) return `${fieldInfo.label} 조건을 다시 선택해주세요.`;
+    if (!['empty','not_empty'].includes(condition.operator) && !String(condition.value || '').trim()) return `${fieldInfo.group} ${fieldInfo.label}의 비교값을 입력해주세요.`;
+    if (fieldInfo.type === 'number' && !['empty','not_empty'].includes(condition.operator) && !Number.isFinite(Number(condition.value))) return `${fieldInfo.group} ${fieldInfo.label}에는 숫자를 입력해주세요.`;
+  }
+  return '';
+}
+
+function openAdvancedFilter() {
+  if (matrixState.codeListRows.length) {
+    showToast('엑셀 코드목록 보기를 해제한 뒤 상세 필터를 사용해주세요.');
+    return;
+  }
+  advancedFilterDraft = cloneAdvancedFilter(matrixState.advancedFilter);
+  if (!advancedFilterDraft.conditions.length) advancedFilterDraft.conditions.push({field:'sellpia_product_name', operator:'contains', value:''});
+  document.getElementById('advanced-filter-logic').value = advancedFilterDraft.logic;
+  renderAdvancedFilterRows();
+  advancedFilterModal.hidden = false;
+  advancedFilterRows.querySelector('input:not(:disabled),select')?.focus();
+}
+
+function closeAdvancedFilter() {
+  advancedFilterModal.hidden = true;
+}
+
+function setAdvancedFilter(filter, {reload = true, announce = true} = {}) {
+  const normalized = cloneAdvancedFilter(filter);
+  activeView.advancedFilter = cloneAdvancedFilter(normalized);
+  matrixState.advancedFilter = normalized;
+  markViewModified();
+  renderAdvancedFilterBar();
+  if (reload) loadLiveMatrix({resetPage:true});
+  if (announce) showToast(normalized.conditions.length ? `상세 조건 ${normalized.conditions.length}개를 적용했습니다.` : '상세 필터를 모두 해제했습니다.');
+}
+
+document.getElementById('advanced-filter-btn').addEventListener('click', openAdvancedFilter);
+document.getElementById('advanced-filter-close').addEventListener('click', closeAdvancedFilter);
+document.getElementById('advanced-filter-cancel').addEventListener('click', closeAdvancedFilter);
+advancedFilterModal.addEventListener('click', event => { if (event.target === advancedFilterModal) closeAdvancedFilter(); });
+document.getElementById('advanced-filter-logic').addEventListener('change', event => { advancedFilterDraft.logic = event.target.value === 'or' ? 'or' : 'and'; });
+document.getElementById('advanced-filter-add').addEventListener('click', () => {
+  if (advancedFilterDraft.conditions.length >= 12) return;
+  advancedFilterDraft.conditions.push({field:'sellpia_product_name', operator:'contains', value:''});
+  renderAdvancedFilterRows();
+  advancedFilterRows.querySelector(`[data-filter-index="${advancedFilterDraft.conditions.length - 1}"][data-filter-part="field"]`)?.focus();
+});
+document.getElementById('advanced-filter-reset').addEventListener('click', () => {
+  advancedFilterDraft = {logic:'and', conditions:[]};
+  document.getElementById('advanced-filter-logic').value = 'and';
+  renderAdvancedFilterRows();
+});
+document.getElementById('advanced-filter-apply').addEventListener('click', () => {
+  const normalized = cloneAdvancedFilter(advancedFilterDraft);
+  const error = validateAdvancedFilter(normalized);
+  if (error) { showToast(error); return; }
+  setAdvancedFilter(normalized);
+  closeAdvancedFilter();
+});
+advancedFilterRows.addEventListener('input', event => {
+  const index = Number(event.target.dataset.filterIndex);
+  const part = event.target.dataset.filterPart;
+  if (!Number.isInteger(index) || !part || !advancedFilterDraft.conditions[index]) return;
+  advancedFilterDraft.conditions[index][part] = event.target.value;
+});
+advancedFilterRows.addEventListener('change', event => {
+  const index = Number(event.target.dataset.filterIndex);
+  const part = event.target.dataset.filterPart;
+  if (!Number.isInteger(index) || !part || !advancedFilterDraft.conditions[index]) return;
+  advancedFilterDraft.conditions[index][part] = event.target.value;
+  if (part === 'field') {
+    const fieldInfo = advancedFilterField(event.target.value);
+    advancedFilterDraft.conditions[index].operator = ADVANCED_FILTER_OPERATORS[fieldInfo.type][0][0];
+    advancedFilterDraft.conditions[index].value = fieldInfo.type === 'status' ? 'connected' : '';
+  }
+  if (part === 'operator' && ['empty','not_empty'].includes(event.target.value)) advancedFilterDraft.conditions[index].value = '';
+  if (part !== 'value') renderAdvancedFilterRows();
+});
+advancedFilterRows.addEventListener('click', event => {
+  const button = event.target.closest('[data-filter-remove]');
+  if (!button) return;
+  advancedFilterDraft.conditions.splice(Number(button.dataset.filterRemove), 1);
+  renderAdvancedFilterRows();
+});
+document.getElementById('advanced-filter-chips').addEventListener('click', event => {
+  const button = event.target.closest('[data-filter-chip-remove]');
+  if (!button) return;
+  const filter = cloneAdvancedFilter(matrixState.advancedFilter);
+  filter.conditions.splice(Number(button.dataset.filterChipRemove), 1);
+  setAdvancedFilter(filter);
+});
+document.getElementById('advanced-filter-clear').addEventListener('click', () => setAdvancedFilter({logic:'and', conditions:[]}));
 
 matrixBody.addEventListener('click', event => {
   const multiLinkButton = event.target.closest('[data-open-multi-link]');
@@ -1927,6 +2150,7 @@ function updateCodeListFilterUi() {
   codeListSearchInput.placeholder = active
     ? `${matrixState.codeListName || '엑셀 목록'} 순서로 모아보는 중`
     : 'SKU / 자사코드 / 상품명 / 상품코드-옵션코드 검색';
+  renderAdvancedFilterBar();
 }
 
 function clearCodeListFilter() {
@@ -1959,6 +2183,11 @@ codeListFileInput.addEventListener('change', () => importCodeListFile(codeListFi
 }));
 codeListApply.addEventListener('click', () => {
   if (!codeListSession.resultRows.length) return;
+  if (matrixState.advancedFilter.conditions.length) {
+    activeView.advancedFilter = {logic:'and', conditions:[]};
+    matrixState.advancedFilter = {logic:'and', conditions:[]};
+    markViewModified();
+  }
   matrixState.codeListSkus = [...codeListSession.skus];
   matrixState.codeListRows = codeListSession.resultRows.map(item => ({...item}));
   matrixState.codeListName = codeListSession.fileName;
@@ -3133,6 +3362,7 @@ function showToast(message) {
 document.addEventListener('keydown', event => {
   if (event.key === 'Escape' && !sellerExportModal.hidden) closeSellerExport();
   if (event.key === 'Escape' && !viewSettingsModal.hidden) closeViewSettings();
+  if (event.key === 'Escape' && !advancedFilterModal.hidden) closeAdvancedFilter();
   if (event.key === 'Escape' && !codeListModal.hidden) closeCodeListModal();
   if (event.key === 'Escape' && !mappingPopover.hidden) closeMappingSearch();
   if (event.key === 'Escape' && !document.getElementById('queue-event-panel').hidden) document.getElementById('queue-event-panel').hidden = true;
