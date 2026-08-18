@@ -430,6 +430,43 @@
     return Array.isArray(data) ? data[0] : data;
   }
 
+  async function loadPricePolicies() {
+    const {data, error} = await db
+      .from('operations_hub_price_policies')
+      .select('source_channel,policy_name,is_active,base_field,replace_price,modify_type,modify_value,min_price,max_price,rounding_unit,rounding_mode,source_note,updated_by,updated_at')
+      .order('source_channel', {ascending:true});
+    if (error) throw error;
+    return Object.fromEntries((data || []).map(policy => [policy.source_channel, policy]));
+  }
+
+  async function previewPricePolicy({sku, source}) {
+    const {data, error} = await db.rpc('preview_operations_hub_price_policy', {
+      p_sku:cleanText(sku),
+      p_source:cleanText(source)
+    });
+    if (error) throw error;
+    return Array.isArray(data) ? data[0] : data;
+  }
+
+  async function savePricePolicy({source, policyName, active, replacePrice, modifyType, modifyValue, minPrice, maxPrice, roundingUnit, roundingMode}) {
+    const optionalNumber = value => value === '' || value === null || value === undefined ? null : Number(value);
+    const {data, error} = await db.rpc('save_operations_hub_price_policy', {
+      p_source:cleanText(source),
+      p_policy_name:cleanText(policyName),
+      p_is_active:Boolean(active),
+      p_replace_price:optionalNumber(replacePrice),
+      p_modify_type:cleanText(modifyType) || 'none',
+      p_modify_value:Number(modifyValue || 0),
+      p_min_price:optionalNumber(minPrice),
+      p_max_price:optionalNumber(maxPrice),
+      p_rounding_unit:Number(roundingUnit || 1),
+      p_rounding_mode:cleanText(roundingMode) || 'nearest',
+      p_updated_by:'operations-hub'
+    });
+    if (error) throw error;
+    return Array.isArray(data) ? data[0] : data;
+  }
+
   async function stageSellerInventoryDrafts({sources = [], skus = [], batchId = null} = {}) {
     const {data, error} = await db.rpc('stage_operations_hub_seller_inventory_match', {
       p_sources:(sources || []).map(cleanText),
@@ -955,6 +992,9 @@
     cancelChangeQueue,
     retryChangeQueue,
     saveSellerValueDraft,
+    loadPricePolicies,
+    previewPricePolicy,
+    savePricePolicy,
     stageSellerInventoryDrafts,
     stageSellerInventoryDraftBatch,
     validateSellerDraftsForExport,

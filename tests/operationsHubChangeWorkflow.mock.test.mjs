@@ -23,7 +23,7 @@ assert.match(migration, /status_message = '더 최신 변경으로 대체됨'/, 
 for (const id of ["queue-status-filter", "queue-source-filter", "queue-refresh", "queue-retry", "queue-cancel", "queue-validate", "queue-body", "queue-event-panel"]) {
   assert.match(html, new RegExp(`id="${id}"`), `queue UI must include ${id}`);
 }
-assert.equal((html.match(/20260818-productprofiles1/g) || []).length, 5, "all deployed assets must share the current operations hub version");
+assert.equal((html.match(/20260818-pricepolicy1/g) || []).length, 5, "all deployed assets must share the current operations hub version");
 assert.match(data, /loadChangeQueue[\s\S]*?loadChangeQueueStats[\s\S]*?loadChangeEvents[\s\S]*?validateChangeQueue[\s\S]*?cancelChangeQueue[\s\S]*?retryChangeQueue/, "the frontend data adapter must expose the complete queue workflow");
 assert.match(data, /p_batch_id:batchId/, "writes must send their stable request batch ID to the database");
 assert.match(app, /const batchId = pendingChangeBatchId \|\| createRequestId\(\)[\s\S]*?saveSellpiaChanges\(snapshot, batchId\)[\s\S]*?pendingChangeBatchId = batchId/, "Sellpia automatic-save retries must reuse the same batch ID after failure");
