@@ -46,7 +46,7 @@ assert.match(source, /MATRIX_PRESETS_KEY = 'system-v3-matrix-presets-v1'/, "pers
 assert.match(source, /modifiedPresetSourceId = activePresetId;[\s\S]*?findIndex\(item => item\.id === editablePresetId\)/, "editing a selected personal preset must update that preset instead of creating a stray copy");
 assert.match(source, /function applyColumnVisibility\([\s\S]*?function applyViewPreset\(/, "presets must control matrix columns and view state");
 assert.match(dataSource, /status === 'attention'[\s\S]*?query\.in\('overall_status'/, "attention presets must filter across the server result set");
-assert.match(dataSource, /\.from\('operations_hub_matrix_live'\)/, "the UI must read the Sellpia-enriched live matrix view");
+assert.match(dataSource, /\.from\('operations_hub_matrix_cached'\)/, "the UI must read the non-blocking Sellpia-enriched matrix cache");
 assert.match(migration, /with \(security_invoker = true\)/, "the live matrix view must honor underlying RLS");
 assert.match(presetMigration, /end::text as overall_status/, "the live matrix view must expose server-filterable overall status");
 assert.match(html, /id="live-connected-sku"[\s\S]*?id="live-inventory-mismatch"[\s\S]*?id="live-today-picked"/, "dashboard header metrics must have live-data targets");

@@ -163,7 +163,7 @@
       let products = [];
       if (pageSkus.length) {
         const {data, error} = await db
-          .from('operations_hub_matrix_live')
+          .from('operations_hub_matrix_cached')
           .select(MATRIX_SELECT)
           .in('sellpia_sku_code', pageSkus);
         if (error) throw error;
@@ -232,7 +232,7 @@
     const allowedSearchSources = ['sellpia','smartstore','makeshop','ably'];
     const activeSearchSources = [...new Set((searchSources || []).map(source => cleanText(source).toLowerCase()).filter(source => allowedSearchSources.includes(source)))];
     let query = db
-      .from('operations_hub_matrix_live')
+      .from('operations_hub_matrix_cached')
       .select(MATRIX_SELECT, { count: 'exact' });
 
     if (intersection) {
@@ -260,7 +260,9 @@
         listingMatches = result.data || [];
       }
       const listingSkus = [...new Set((listingMatches || []).map(item => cleanText(item.sellpia_sku_code)).filter(Boolean))];
-      if (listingSkus.length) query = query.in('sellpia_sku_code', listingSkus);
+      const directSellpiaSku = activeSearchSources.includes('sellpia') && /^\d+-\d+$/.test(keyword) ? keyword : '';
+      const exactMatchSkus = [...new Set([...listingSkus, directSellpiaSku].filter(Boolean))];
+      if (exactMatchSkus.length) query = query.in('sellpia_sku_code', exactMatchSkus);
       else {
         const searchFields = {
           sellpia:['sellpia_sku_code','own_code','display_name','sellpia_own_code','sellpia_product_name','sellpia_option_name'],
@@ -874,7 +876,9 @@
       title: `${file.name} 읽는 중`,
       detail: `${fileIndex + 1}/${fileCount} 파일의 셀피아 헤더와 SKU를 확인합니다.`
     });
-    const workbook = global.XLSX.read(await file.arrayBuffer(), {type:'array', cellDates:false});
+    const readOptions = {type:'array', cellDates:false};
+    if (/\.(csv|tsv|txt)$/i.test(cleanText(file.name))) readOptions.raw = true;
+    const workbook = global.XLSX.read(await file.arrayBuffer(), readOptions);
     const worksheet = workbook.Sheets[workbook.SheetNames[0]];
     if (!worksheet?.['!ref']) throw new Error(`${file.name}: 첫 시트에 데이터가 없습니다.`);
     const range = global.XLSX.utils.decode_range(worksheet['!ref']);
@@ -911,6 +915,9 @@
       const sourceRowNo = cleanNumber(row[0]);
       const sku = cleanText(row[2]);
       if (!sourceRowNo && !sku) return [];
+      if (sourceRowNo && sku && !/^\d+-\d+$/.test(sku)) {
+        throw new Error(`${file.name}: ${sourceRowNo}행 SKU '${sku}' 형식이 올바르지 않습니다. CSV 날짜 자동변환 여부를 확인해 주세요.`);
+      }
       if (!sourceRowNo || !sku) throw new Error(`${file.name}: 행번호 또는 상품코드가 비어 있는 행이 있습니다.`);
       const productCode = sku.replace(/-\d+$/, '');
       const soldOut = cleanText(row[21]);
@@ -986,7 +993,7 @@
           upload_status: 'uploading',
           uploaded_by: 'system_v1_frontend',
           metadata: {
-            parser_version: 'operations-hub-sellpia-2026.08.20-v2',
+            parser_version: 'operations-hub-sellpia-2026.08.20-v3',
             source_files: selectedFiles.map(file => ({name:file.name, size:file.size})),
             selected_fields: fields,
             row_number_min: normalizedRows[0].source_row_no,

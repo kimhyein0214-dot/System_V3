@@ -594,7 +594,7 @@ async function loadLiveMatrix({resetPage = false} = {}) {
   setMatrixConnection('loading', 'DB 조회 중');
   matrixBody.innerHTML = '<tr class="matrix-empty-row loading"><td colspan="29"><b>Supabase에서 실제 SKU를 불러오는 중입니다.</b><span>이미지와 자사코드를 함께 연결합니다.</span></td></tr>';
   try {
-    const result = await liveData.loadProducts({
+    const request = {
       page:matrixState.page,
       search:matrixState.search,
       searchSources:matrixState.searchSources,
@@ -603,7 +603,24 @@ async function loadLiveMatrix({resetPage = false} = {}) {
       skus:matrixState.codeListSkus,
       codeListRows:matrixState.codeListRows,
       advancedFilter:matrixState.advancedFilter
-    });
+    };
+    let result;
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      try {
+        result = await liveData.loadProducts(request);
+        break;
+      } catch (error) {
+        const message = `${error?.code || ''} ${error?.message || error}`.toLowerCase();
+        const transient = message.includes('57014')
+          || message.includes('statement timeout')
+          || message.includes('canceling statement')
+          || message.includes('fetch failed')
+          || message.includes('failed to fetch');
+        if (!transient || attempt > 0 || requestId !== matrixState.requestId) throw error;
+        setMatrixConnection('loading', 'DB 재시도 중');
+        await new Promise(resolve => setTimeout(resolve, 450));
+      }
+    }
     if (requestId !== matrixState.requestId) return false;
     matrixState.total = result.count;
     renderLiveMatrixRows(result.rows);

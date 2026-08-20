@@ -22,6 +22,9 @@ assert.match(app, /searchSources:\['sellpia','smartstore','makeshop','ably'\]/, 
 assert.match(app, /if \(!selected\.length\)[\s\S]*?event\.target\.checked = true/, "the last search source cannot be unchecked");
 assert.match(html, /class="matrix-search-group"[\s\S]*?id="matrix-search"[\s\S]*?id="matrix-search-sources"/, "search input and source filters must read as one grouped control");
 assert.match(css, /\.matrix-search-sources label\{[^}]*border:0[^}]*background:transparent/, "search source labels must not use individual pill outlines");
+assert.match(css, /\.matrix-action-panel-head>span:first-child\{[^}]*font-size:15px/, "the persistent work-tools heading must use the enlarged readable size");
+assert.match(css, /\.matrix-search-group \.matrix-search input\{[^}]*font-size:15px/, "the matrix search input must use the enlarged readable size");
+assert.match(css, /\.matrix-search-sources label\{[^}]*font-size:12px/, "search-source labels must scale with the enlarged search header");
 assert.match(html, /class="matrix-action-panel"[\s\S]*?id="matrix-refresh-btn"[\s\S]*?id="matrix-bulk-btn"[\s\S]*?id="code-list-open"/, "matrix actions and saved views must live in the persistent right panel");
 assert.match(app, /if \(matrixState\.search\) loadLiveMatrix/, "changing a source reloads only an active search");
 assert.match(data, /find_operations_hub_listing_skus_by_sources/, "combined-code lookup must honor selected seller sources");
