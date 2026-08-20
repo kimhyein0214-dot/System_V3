@@ -611,6 +611,65 @@
     return Array.isArray(data) ? data[0] : data;
   }
 
+  async function loadPriceRuleTags() {
+    const {data, error} = await db
+      .from('operations_hub_price_rule_tags')
+      .select('price_rule_tag_id,tag_code,tag_name,color,replace_price,modify_type,modify_value,min_price,max_price,rounding_unit,rounding_mode,is_active,note,updated_at')
+      .eq('is_active', true)
+      .order('price_rule_tag_id', {ascending:true});
+    if (error) throw error;
+    return data || [];
+  }
+
+  async function loadPriceRuleSets() {
+    const {data, error} = await db
+      .from('operations_hub_price_rule_set_live')
+      .select('price_rule_set_id,set_code,set_name,color,note,updated_at,tags')
+      .order('price_rule_set_id', {ascending:true});
+    if (error) throw error;
+    return data || [];
+  }
+
+  async function loadPriceRuleQaCases() {
+    const {data, error} = await db
+      .from('operations_hub_price_rule_qa_live')
+      .select('qa_case_id,case_code,case_name,scenario_type,source_channel,virtual_product_code,virtual_option_code,seller_original_price,price_rule_set_id,set_code,set_name,color,base_price,expected_final_price,calculated_final_price,passed,steps,components,note,updated_at')
+      .order('qa_case_id', {ascending:true});
+    if (error) throw error;
+    return data || [];
+  }
+
+  async function savePriceRuleTag({tagId = null, tagName, color, replacePrice, modifyType, modifyValue, minPrice, maxPrice, roundingUnit, roundingMode, note = ''}) {
+    const optionalNumber = value => value === '' || value === null || value === undefined ? null : Number(value);
+    const {data, error} = await db.rpc('save_operations_hub_price_rule_tag', {
+      p_tag_id:tagId ? Number(tagId) : null,
+      p_tag_name:cleanText(tagName),
+      p_color:cleanText(color) || '#2f6fd1',
+      p_replace_price:optionalNumber(replacePrice),
+      p_modify_type:cleanText(modifyType) || 'none',
+      p_modify_value:Number(modifyValue || 0),
+      p_min_price:optionalNumber(minPrice),
+      p_max_price:optionalNumber(maxPrice),
+      p_rounding_unit:Number(roundingUnit || 1),
+      p_rounding_mode:cleanText(roundingMode) || 'nearest',
+      p_note:cleanText(note) || null
+    });
+    if (error) throw error;
+    return Array.isArray(data) ? data[0] : data;
+  }
+
+  async function savePriceRuleSet({ruleSetId = null, setName, color, tagIds = [], note = ''}) {
+    const {data, error} = await db.rpc('save_operations_hub_price_rule_set', {
+      p_rule_set_id:ruleSetId ? Number(ruleSetId) : null,
+      p_set_name:cleanText(setName),
+      p_color:cleanText(color) || '#1558c0',
+      p_tag_ids:(tagIds || []).map(Number),
+      p_note:cleanText(note) || null
+    });
+    if (error) throw error;
+    return Array.isArray(data) ? data[0] : data;
+  }
+
   async function stageSellerInventoryDrafts({sources = [], skus = [], batchId = null} = {}) {
     const {data, error} = await db.rpc('stage_operations_hub_seller_inventory_match', {
       p_sources:(sources || []).map(cleanText),
@@ -1400,6 +1459,11 @@
     loadPricePolicies,
     previewPricePolicy,
     savePricePolicy,
+    loadPriceRuleTags,
+    loadPriceRuleSets,
+    loadPriceRuleQaCases,
+    savePriceRuleTag,
+    savePriceRuleSet,
     stageSellerInventoryDrafts,
     stageSellerInventoryDraftBatch,
     validateSellerDraftsForExport,

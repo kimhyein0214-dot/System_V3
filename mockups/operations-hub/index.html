@@ -7,8 +7,9 @@
     <title>System V3 · 상품 운영 허브</title>
     <link rel="preconnect" href="https://cdnjs.cloudflare.com" crossorigin>
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/pretendard/1.3.9/static/pretendard.css">
-    <link rel="stylesheet" href="./style.css?v=20260820-pricerule1">
-    <link rel="stylesheet" href="./inventory.css?v=20260820-pricerule1">
+    <link rel="stylesheet" href="./style.css?v=20260820-pricelab1">
+    <link rel="stylesheet" href="./inventory.css?v=20260820-pricelab1">
+    <link rel="stylesheet" href="./price-rule-lab.css?v=20260820-pricelab1">
   </head>
   <body>
     <div class="app-shell">
@@ -176,6 +177,7 @@
               <div class="matrix-action-divider"></div>
               <label class="custom-preset-picker">내 프리셋<select id="custom-preset-select" aria-label="내 프리셋 선택"><option value="">선택</option></select></label>
               <button id="code-list-open" class="matrix-panel-action code-list-tab" type="button"><span>▦</span><b>엑셀 코드목록</b></button>
+              <button id="price-rule-lab-open" class="matrix-panel-action" type="button"><span>ƒx</span><b>가격 규칙<br>태그·QA</b></button>
             </aside>
 
             <div class="matrix-view-tabs">
@@ -480,14 +482,60 @@
         <div class="modal-foot"><button class="btn" id="matrix-csv-cancel">취소</button><button class="btn primary" id="matrix-csv-run">CSV 만들기</button></div>
       </section>
     </div>
+    <div id="price-rule-lab-modal" class="modal-backdrop" hidden>
+      <section class="price-rule-lab-modal" role="dialog" aria-modal="true" aria-labelledby="price-rule-lab-title">
+        <div class="modal-head"><div><span>가상 옵션으로 안전하게 계산 검증</span><h3 id="price-rule-lab-title">가격 규칙 태그·QA</h3></div><button id="price-rule-lab-close" aria-label="가격 규칙 QA 닫기">×</button></div>
+        <div class="price-rule-lab-body">
+          <div class="price-rule-lab-summary" aria-live="polite">
+            <div><span>작은 태그</span><b id="price-rule-tag-count">-</b></div>
+            <div><span>큰 태그</span><b id="price-rule-set-count">-</b></div>
+            <div><span>가상 QA</span><b id="price-rule-qa-count">-</b></div>
+            <button id="price-rule-lab-refresh" class="btn" type="button">다시 확인</button>
+          </div>
+          <div id="price-rule-lab-error" class="price-rule-lab-error" hidden></div>
+          <div class="price-rule-lab-grid">
+            <section class="price-rule-lab-panel">
+              <div class="price-rule-lab-panel-head"><div><b>작은 태그</b><span>한 번에 한 가지 계산만 담당합니다.</span></div></div>
+              <div id="price-rule-tag-list" class="price-rule-tag-list"></div>
+              <form id="price-rule-tag-form" class="price-rule-editor-form">
+                <input id="price-rule-tag-id" type="hidden">
+                <label>태그 이름<input id="price-rule-tag-name" required maxlength="40" placeholder="예: 10% 할인"></label>
+                <label>계산 방식<select id="price-rule-tag-mode"><option value="none">기준가 그대로</option><option value="percent_discount">퍼센트 할인</option><option value="percent_markup">퍼센트 인상</option><option value="amount_discount">금액 할인</option><option value="amount_add">금액 추가</option><option value="fixed">최종가 고정</option></select></label>
+                <label>값<input id="price-rule-tag-value" type="number" min="0" step="1" value="0"></label>
+                <label>색상<input id="price-rule-tag-color" type="color" value="#2f6fd1"></label>
+                <details><summary>최저·최고·끝자리 설정</summary><div><label>최저가<input id="price-rule-tag-min" type="number" min="0"></label><label>최고가<input id="price-rule-tag-max" type="number" min="0"></label><label>끝자리 단위<input id="price-rule-tag-round-unit" type="number" min="1" value="1"></label><label>끝자리 방식<select id="price-rule-tag-round-mode"><option value="nearest">반올림</option><option value="up">올림</option><option value="down">내림</option></select></label></div></details>
+                <div class="price-rule-form-actions"><button id="price-rule-tag-reset" class="btn" type="button">새 태그</button><button class="btn primary" type="submit">작은 태그 저장</button></div>
+              </form>
+            </section>
+            <section class="price-rule-lab-panel">
+              <div class="price-rule-lab-panel-head"><div><b>큰 태그</b><span>작은 태그를 위에서 아래 순서로 계산합니다.</span></div></div>
+              <div id="price-rule-set-list" class="price-rule-set-list"></div>
+              <form id="price-rule-set-form" class="price-rule-editor-form">
+                <input id="price-rule-set-id" type="hidden">
+                <label>큰 태그 이름<input id="price-rule-set-name" required maxlength="50" placeholder="예: 10% 할인 + 고정가 + 배송비"></label>
+                <label>색상<input id="price-rule-set-color" type="color" value="#1558c0"></label>
+                <div class="price-rule-set-builder"><b>계산 순서</b><div id="price-rule-set-selected" class="price-rule-set-selected"></div><select id="price-rule-set-add"><option value="">작은 태그 추가…</option></select></div>
+                <div class="price-rule-form-actions"><button id="price-rule-set-reset" class="btn" type="button">새 큰 태그</button><button class="btn primary" type="submit">큰 태그 저장</button></div>
+              </form>
+            </section>
+          </div>
+          <section class="price-rule-qa-panel">
+            <div class="price-rule-lab-panel-head"><div><b>가상 옵션 QA</b><span>실제 SKU·원본·내보내기에는 들어가지 않는 QA 전용 계산입니다.</span></div><strong id="price-rule-qa-status">확인 중</strong></div>
+            <div id="price-rule-qa-list" class="price-rule-qa-list"></div>
+          </section>
+        </div>
+        <div class="modal-foot"><span class="price-rule-lab-foot">큰 태그의 작은 태그 순서가 최종 가격을 결정합니다.</span><button id="price-rule-lab-done" class="btn primary" type="button">확인</button></div>
+      </section>
+    </div>
     <div id="toast" class="toast" role="status"></div>
     <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.112.3/dist/umd/supabase.js"></script>
-    <script src="./seller-source-parsers.js?v=20260820-pricerule1"></script>
-    <script src="./seller-export-adapter.js?v=20260820-pricerule1"></script>
-    <script src="./matrix-csv-export.js?v=20260820-pricerule1"></script>
-    <script src="./data-service.js?v=20260820-pricerule1"></script>
-    <script src="./app.js?v=20260820-pricerule1"></script>
+    <script src="./seller-source-parsers.js?v=20260820-pricelab1"></script>
+    <script src="./seller-export-adapter.js?v=20260820-pricelab1"></script>
+    <script src="./matrix-csv-export.js?v=20260820-pricelab1"></script>
+    <script src="./data-service.js?v=20260820-pricelab1"></script>
+    <script src="./app.js?v=20260820-pricelab1"></script>
+    <script src="./price-rule-lab.js?v=20260820-pricelab1"></script>
   </body>
 </html>
