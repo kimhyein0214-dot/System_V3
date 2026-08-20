@@ -27,12 +27,15 @@ assert.match(migration, /status in \('pending', 'validated', 'processing', 'expo
 assert.match(migration, /else[\s\S]*?sellpia_current_stock is distinct from t\.seller_stock/, 'inventory reconciliation must export only stock differences');
 assert.match(partialMigration, /blocking_reason is null[\s\S]*?then 'exported' else 'failed'/, 'valid rows must export while unresolved original rows remain failed');
 
-for (const id of ['matrix-match-stock-btn','matrix-export-btn','queue-export','queue-confirm-applied','seller-export-modal','seller-export-run']) {
+for (const id of ['matrix-match-stock-btn','matrix-export-btn','queue-export','queue-confirm-applied','seller-export-modal','seller-export-run','seller-export-scope','seller-export-preview','seller-export-selected-scope']) {
   assert.match(html, new RegExp(`id="${id}"`), `export UI must include ${id}`);
 }
 assert.match(html, /seller-source-parsers\.js[\s\S]*?seller-export-adapter\.js[\s\S]*?data-service\.js/, 'the export adapter must load before application startup');
-assert.equal((html.match(/20260820-inlineprice1/g) || []).length, 9, 'all local assets must share the export deployment version');
+const localAssetVersions = [...html.matchAll(/(?:href|src)="\.\/[^\"]+\?v=([^\"]+)"/g)].map(match => match[1]);
+assert.equal(localAssetVersions.length, 9, 'all local export assets must be versioned');
+assert.equal(new Set(localAssetVersions).size, 1, 'all local assets must share the export deployment version');
 assert.doesNotMatch(html, /class="seller-export-files"/, 'export must reuse the latest stored originals instead of asking for files again');
+for (const scope of ['filtered','selected','all']) assert.match(html, new RegExp(`name="seller-export-scope" value="${scope}"`), `export scope must include ${scope}`);
 assert.match(draftMigration, /source_storage_files jsonb[^]*?seller-originals/, 'seller snapshots must retain immutable original file references');
 assert.match(draftMigration, /save_operations_hub_seller_value_draft[^]*?stage_operations_hub_seller_inventory_match/, 'seller cells and bulk stock matching must create reviewable drafts');
 assert.match(aliasMigration, /source\.source_channel as export_source_channel[^]*?r\.export_source_channel/, 'queue source and expanded export source must never share an ambiguous alias');
@@ -43,6 +46,11 @@ assert.match(bulkMigration, /alter function public\.complete_operations_hub_expo
 assert.match(conflictMigration, /p_skipped_items jsonb[^]*?jsonb_to_recordset[^]*?blocking_reason[^]*?status = 'failed'/, 'runtime source conflicts must be finalized as item-level failures');
 assert.doesNotMatch(conflictMigration, /security definer/i, 'runtime conflict finalization must not bypass RLS');
 assert.match(data, /downloadLatestSellerOriginals[^]*?storage\.from\('seller-originals'\)\.download/, 'export must download the latest stored originals');
+assert.match(data, /loadSellerDraftRows\(\{sources = \[\], statuses = \['pending','validated','failed'\], skus = null\}/, 'draft lookup must accept an optional SKU scope');
+assert.match(data, /sellpia_sku_code,status,field_key[^]*?selectedSkus\.has\(cleanText\(row\.sellpia_sku_code\)\)/, 'draft lookup must filter saved changes by Sellpia SKU');
+assert.match(app, /matrixHasActiveExportFilter\(\)[^]*?defaultScope = matrixHasActiveExportFilter\(\) \? 'filtered'/, 'an active matrix filter must become the default export scope');
+assert.match(app, /scope === 'selected'[^]*?scope === 'filtered'[^]*?collectSellerExportFilteredSkus/, 'checked and filtered SKU scopes must resolve separately');
+assert.match(app, /validateSellerDraftsForExport\(sources, scopeSkus\)/, 'export validation must receive the resolved SKU scope');
 assert.match(app, /stageSellerInventoryDraftBatch[^]*?loadLiveMatrix/, 'inventory matching must stop at a reviewable matrix draft');
 assert.match(data, /stageSellerInventoryDraftBatch[^]*?p_after_sku:[^]*?p_batch_size:/, 'the frontend must stage large inventory matches through cursor batches');
 assert.match(app, /while \(hasMore\)[^]*?processed \/ total[^]*?수정안 생성 중/, 'bulk inventory matching must show real SKU progress for each committed batch');

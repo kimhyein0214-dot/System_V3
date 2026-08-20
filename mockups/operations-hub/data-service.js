@@ -726,32 +726,38 @@
     return Array.isArray(data) ? data[0] : data;
   }
 
-  async function loadSellerDraftRows({sources = [], statuses = ['pending','validated','failed']} = {}) {
+  async function loadSellerDraftRows({sources = [], statuses = ['pending','validated','failed'], skus = null} = {}) {
     const selectedSources = (sources || []).map(cleanText).filter(Boolean);
     if (!selectedSources.length) return [];
+    const selectedSkus = Array.isArray(skus) ? new Set(skus.map(cleanText).filter(Boolean)) : null;
+    if (selectedSkus && !selectedSkus.size) return [];
     const rows = [];
     const pageSize = 1000;
     for (let from = 0; ; from += pageSize) {
       const {data, error} = await db
         .from('operations_hub_change_queue')
-        .select('change_id,source_channel,status,field_key')
+        .select('change_id,source_channel,sellpia_sku_code,status,field_key')
         .in('source_channel', selectedSources)
         .in('status', statuses)
         .order('change_id', {ascending:true})
         .range(from, from + pageSize - 1);
       if (error) throw error;
-      rows.push(...(data || []));
+      rows.push(...(data || []).filter(row => !selectedSkus || selectedSkus.has(cleanText(row.sellpia_sku_code))));
       if (!data || data.length < pageSize) break;
     }
     return rows;
   }
 
-  async function validateSellerDraftsForExport(sources = []) {
-    const reviewRows = await loadSellerDraftRows({sources, statuses:['pending','failed']});
+  async function countSellerDraftsForExport(sources = [], skus = null) {
+    return (await loadSellerDraftRows({sources, skus, statuses:['pending','validated','failed']})).length;
+  }
+
+  async function validateSellerDraftsForExport(sources = [], skus = null) {
+    const reviewRows = await loadSellerDraftRows({sources, skus, statuses:['pending','failed']});
     for (let offset = 0; offset < reviewRows.length; offset += 300) {
       await validateChangeQueue(reviewRows.slice(offset, offset + 300).map(row => row.change_id));
     }
-    const validatedRows = await loadSellerDraftRows({sources, statuses:['validated']});
+    const validatedRows = await loadSellerDraftRows({sources, skus, statuses:['validated']});
     return validatedRows.map(row => Number(row.change_id));
   }
 
@@ -1052,7 +1058,9 @@
 
   async function uploadSellpiaSnapshot(files, fields = {}, onProgress) {
     const selectedFiles = Array.from(files || []);
-    if (selectedFiles.length !== 3) throw new Error('셀피아 분할 원본 3개가 모두 필요합니다.');
+    const uploadMode = fields.mode === 'patch' ? 'patch' : 'full';
+    if (uploadMode === 'full' && selectedFiles.length !== 3) throw new Error('셀피아 전체 교체는 분할 원본 3개가 모두 필요합니다.');
+    if (uploadMode === 'patch' && (selectedFiles.length < 1 || selectedFiles.length > 3)) throw new Error('셀피아 부분 갱신 파일을 1개 이상 선택해주세요.');
     const normalizedRows = [];
     for (let index = 0; index < selectedFiles.length; index += 1) {
       normalizedRows.push(...await parseSellpiaFile(selectedFiles[index], index, selectedFiles.length, onProgress));
@@ -1062,7 +1070,7 @@
     for (let index = 0; index < normalizedRows.length; index += 1) {
       const row = normalizedRows[index];
       const expectedRowNo = index + 1;
-      if (row.source_row_no !== expectedRowNo) {
+      if (uploadMode === 'full' && row.source_row_no !== expectedRowNo) {
         throw new Error(`셀피아 행번호가 ${expectedRowNo}에서 이어지지 않습니다. 실제 값: ${row.source_row_no}`);
       }
       if (seenSku.has(row.sellpia_sku_code)) throw new Error(`중복 셀피아 SKU가 있습니다: ${row.sellpia_sku_code}`);
@@ -1070,7 +1078,13 @@
     }
     if (!normalizedRows.length) throw new Error('저장할 셀피아 상품 행이 없습니다.');
 
-    onProgress?.({percent:22, title:'DB 작업 생성 중', detail:`${normalizedRows.length.toLocaleString('ko-KR')}개 SKU를 새 스냅샷으로 준비합니다.`});
+    onProgress?.({
+      percent:22,
+      title:'DB 작업 생성 중',
+      detail:uploadMode === 'patch'
+        ? `${normalizedRows.length.toLocaleString('ko-KR')}개 SKU를 기존 셀피아 원본에 부분 병합할 준비를 합니다.`
+        : `${normalizedRows.length.toLocaleString('ko-KR')}개 SKU를 새 전체 스냅샷으로 준비합니다.`
+    });
     const sourceFileName = selectedFiles.map(file => file.name).join(' | ');
     const sourceFileSize = selectedFiles.reduce((sum, file) => sum + Number(file.size || 0), 0);
     let snapshotId = null;
@@ -1089,6 +1103,8 @@
             parser_version: 'operations-hub-sellpia-2026.08.20-v3',
             source_files: selectedFiles.map(file => ({name:file.name, size:file.size})),
             selected_fields: fields,
+            upload_mode: uploadMode,
+            uploaded_row_count: normalizedRows.length,
             row_number_min: normalizedRows[0].source_row_no,
             row_number_max: normalizedRows[normalizedRows.length - 1].source_row_no
           }
@@ -1111,18 +1127,39 @@
         });
       }
 
-      const {error: completeError} = await db
-        .from('sellpia_stock_snapshots')
-        .update({
-          valid_row_count: normalizedRows.length,
-          invalid_row_count: 0,
-          upload_status: 'ready',
-          completed_at: new Date().toISOString()
-        })
-        .eq('snapshot_id', snapshotId);
-      if (completeError) throw completeError;
+      let finalRowCount = normalizedRows.length;
+      if (uploadMode === 'patch') {
+        onProgress?.({percent:95, title:'셀피아 부분 원본 병합 중', detail:'선택하지 않은 필드와 파일에 없는 SKU를 직전 전체 원본에서 유지합니다.'});
+        const {data: mergeResult, error: mergeError} = await db.rpc('finalize_operations_hub_sellpia_patch', {
+          p_patch_snapshot_id:snapshotId,
+          p_selected_fields:{
+            inventory:Boolean(fields.inventory),
+            price:Boolean(fields.price),
+            basic:Boolean(fields.basic),
+            status:Boolean(fields.status)
+          }
+        });
+        if (mergeError) throw mergeError;
+        finalRowCount = Number(mergeResult?.row_count || normalizedRows.length);
+      } else {
+        const {error: completeError} = await db
+          .from('sellpia_stock_snapshots')
+          .update({
+            valid_row_count: normalizedRows.length,
+            invalid_row_count: 0,
+            upload_status: 'ready',
+            completed_at: new Date().toISOString()
+          })
+          .eq('snapshot_id', snapshotId);
+        if (completeError) throw completeError;
+      }
       onProgress?.({percent:97, title:'매트릭스 연결 중', detail:'최신 셀피아 스냅샷을 통합 매트릭스에 반영합니다.'});
-      return {snapshotId, rowCount:normalizedRows.length};
+      return {
+        snapshotId,
+        uploadMode,
+        uploadedRowCount:normalizedRows.length,
+        rowCount:finalRowCount
+      };
     } catch (error) {
       if (snapshotId) {
         await db.from('sellpia_stock_snapshots').update({
@@ -1503,6 +1540,7 @@
     savePriceRuleAssignment,
     stageSellerInventoryDrafts,
     stageSellerInventoryDraftBatch,
+    countSellerDraftsForExport,
     validateSellerDraftsForExport,
     loadLatestSellerOriginalStatus,
     downloadLatestSellerOriginals,

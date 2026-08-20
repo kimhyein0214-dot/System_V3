@@ -3154,10 +3154,142 @@ document.getElementById('queue-event-close').addEventListener('click', () => { d
 
 const sellerExport = window.SystemV3SellerExport;
 const sellerExportModal = document.getElementById('seller-export-modal');
-const sellerExportState = {rows:[], action:'export', running:false};
+const sellerExportState = {
+  rows:[],
+  action:'export',
+  running:false,
+  selectedSkus:[],
+  filter:null,
+  filteredSkus:null,
+  filteredSkusPromise:null,
+  previewRequestId:0
+};
 
 function selectedExportSources() {
   return [...sellerExportModal.querySelectorAll('.seller-export-source-check:checked')].map(input => input.value);
+}
+
+function selectedSellerExportScope() {
+  return sellerExportModal.querySelector('input[name="seller-export-scope"]:checked')?.value || 'all';
+}
+
+function matrixHasActiveExportFilter() {
+  return Boolean(
+    String(matrixState.search || '').trim()
+    || matrixState.status !== 'all'
+    || matrixState.advancedFilter.conditions.length
+    || matrixState.codeListRows.length
+  );
+}
+
+function snapshotMatrixExportFilter() {
+  return {
+    search:matrixState.search,
+    searchSources:[...matrixState.searchSources],
+    status:matrixState.status,
+    sort:matrixState.sort,
+    advancedFilter:cloneAdvancedFilter(matrixState.advancedFilter),
+    codeListSkus:[...matrixState.codeListSkus],
+    total:Number(matrixState.total || 0)
+  };
+}
+
+async function collectSellerExportFilteredSkus() {
+  if (sellerExportState.filteredSkus) return sellerExportState.filteredSkus;
+  if (sellerExportState.filteredSkusPromise) return sellerExportState.filteredSkusPromise;
+  const filter = sellerExportState.filter || snapshotMatrixExportFilter();
+  sellerExportState.filteredSkusPromise = (async () => {
+    const skus = [];
+    const seen = new Set();
+    const appendRows = rows => {
+      (rows || []).forEach(row => {
+        const sku = String(row.sellpia_sku_code || '').trim();
+        if (sku && !seen.has(sku)) { seen.add(sku); skus.push(sku); }
+      });
+    };
+    const baseRequest = {
+      search:filter.search,
+      searchSources:filter.searchSources,
+      status:filter.status,
+      sort:filter.sort,
+      advancedFilter:filter.advancedFilter
+    };
+    if (filter.codeListSkus.length) {
+      for (let offset = 0; offset < filter.codeListSkus.length; offset += 1000) {
+        const skuBatch = filter.codeListSkus.slice(offset, offset + 1000);
+        const result = await liveData.loadMatrixExportChunk({...baseRequest, offset:0, limit:1000, skus:skuBatch});
+        appendRows(result.rows);
+      }
+    } else {
+      let offset = 0;
+      const chunkSize = 400;
+      while (offset < filter.total) {
+        const result = await loadMatrixCsvChunk({...baseRequest, offset, limit:chunkSize, skus:[]});
+        appendRows(result.rows);
+        const loaded = result.rows?.length || 0;
+        if (!loaded) break;
+        offset += loaded;
+        const detail = document.getElementById('seller-export-preview-detail');
+        if (detail && !sellerExportModal.hidden) detail.textContent = `현재 필터 SKU 확인 ${formatNumber(Math.min(offset, filter.total))} / ${formatNumber(filter.total)}`;
+        if (loaded < Number(result.limit || chunkSize)) break;
+      }
+    }
+    sellerExportState.filteredSkus = skus;
+    return skus;
+  })().finally(() => { sellerExportState.filteredSkusPromise = null; });
+  return sellerExportState.filteredSkusPromise;
+}
+
+async function resolveSellerExportScopeSkus() {
+  const scope = selectedSellerExportScope();
+  if (scope === 'selected') return [...sellerExportState.selectedSkus];
+  if (scope === 'filtered') return collectSellerExportFilteredSkus();
+  return null;
+}
+
+function sellerExportRowsForSources(rows, sources) {
+  const allowed = new Set(sources);
+  return (rows || []).filter(row => {
+    if (row.source_channel) return allowed.has(row.source_channel);
+    return (row.target_channels || []).some(source => allowed.has(source));
+  });
+}
+
+async function refreshSellerExportPreview() {
+  const preview = document.getElementById('seller-export-preview');
+  if (sellerExportState.action === 'draft') { preview.hidden = true; return; }
+  preview.hidden = false;
+  const requestId = ++sellerExportState.previewRequestId;
+  const sources = selectedExportSources();
+  const countNode = document.getElementById('seller-export-preview-count');
+  const detailNode = document.getElementById('seller-export-preview-detail');
+  if (!sources.length) {
+    countNode.textContent = '0건';
+    detailNode.textContent = '판매처를 하나 이상 선택해주세요.';
+    return;
+  }
+  countNode.textContent = '확인 중';
+  detailNode.textContent = sellerExportState.rows.length ? '선택한 변경대기를 확인합니다.' : '선택한 범위의 저장된 수정안을 확인합니다.';
+  try {
+    let count;
+    if (sellerExportState.rows.length) {
+      count = sellerExportRowsForSources(sellerExportState.rows, sources).length;
+    } else {
+      const scope = selectedSellerExportScope();
+      const scopeSkus = await resolveSellerExportScopeSkus();
+      if (requestId !== sellerExportState.previewRequestId) return;
+      count = await liveData.countSellerDraftsForExport(sources, scopeSkus);
+      if (requestId !== sellerExportState.previewRequestId) return;
+      const scopeLabels = {filtered:'현재 검색·필터 결과', selected:'체크한 SKU', all:'전체 변경대기'};
+      detailNode.textContent = `${scopeLabels[scope]} · ${sources.map(source => CHANNEL_LABELS[source] || source).join('·')}`;
+    }
+    countNode.textContent = `${formatNumber(count)}건`;
+    if (sellerExportState.rows.length) detailNode.textContent = `변경대기에서 선택한 항목 · ${sources.map(source => CHANNEL_LABELS[source] || source).join('·')}`;
+  } catch (error) {
+    if (requestId !== sellerExportState.previewRequestId) return;
+    countNode.textContent = '확인 실패';
+    detailNode.textContent = error?.message || String(error);
+  }
 }
 
 function showSellerExportProgress(percent, title, detail) {
@@ -3194,6 +3326,8 @@ async function refreshSellerOriginalStates() {
     }
   } catch (error) {
     nodes.forEach(node => { node.querySelector('.seller-original-state').textContent = '원본 상태 조회 실패'; });
+  } finally {
+    refreshSellerExportPreview();
   }
 }
 
@@ -3206,12 +3340,32 @@ function selectedMatrixSkus() {
 function openSellerExport({action = 'export', rows = []} = {}) {
   sellerExportState.rows = rows;
   sellerExportState.action = action;
+  sellerExportState.selectedSkus = selectedMatrixSkus();
+  sellerExportState.filter = snapshotMatrixExportFilter();
+  sellerExportState.filteredSkus = null;
+  sellerExportState.filteredSkusPromise = null;
+  sellerExportState.previewRequestId += 1;
   const rowSources = new Set(rows.flatMap(row => row.source_channel ? [row.source_channel] : (row.target_channels || [])));
   sellerExportModal.querySelectorAll('.seller-export-source-check').forEach(input => {
     input.disabled = false;
     input.checked = !rowSources.size || rowSources.has(input.value);
   });
-  const skus = selectedMatrixSkus();
+  const skus = sellerExportState.selectedSkus;
+  const scopePanel = document.getElementById('seller-export-scope');
+  const previewPanel = document.getElementById('seller-export-preview');
+  const showScope = action === 'export' && !rows.length;
+  scopePanel.hidden = !showScope;
+  previewPanel.hidden = action === 'draft';
+  const filteredCount = sellerExportState.filter.codeListSkus.length
+    ? sellerExportState.filter.codeListSkus.length
+    : sellerExportState.filter.total;
+  document.getElementById('seller-export-filtered-count').textContent = `현재 조건 ${formatNumber(filteredCount)}개 SKU`;
+  document.getElementById('seller-export-selected-count').textContent = skus.length ? `체크한 ${formatNumber(skus.length)}개 SKU` : '체크한 SKU 없음';
+  const selectedScope = document.getElementById('seller-export-selected-scope');
+  selectedScope.disabled = !skus.length;
+  const defaultScope = matrixHasActiveExportFilter() ? 'filtered' : (skus.length ? 'selected' : 'all');
+  const defaultScopeInput = sellerExportModal.querySelector(`input[name="seller-export-scope"][value="${defaultScope}"]`);
+  if (defaultScopeInput) defaultScopeInput.checked = true;
   document.getElementById('seller-export-title').textContent = action === 'draft' ? '셀피아 기준 재고 수정안' : '검토한 수정본 내보내기';
   document.getElementById('seller-export-kicker').textContent = action === 'draft' ? '매트릭스 수정안 생성' : '판매처 원본 파일 생성';
   document.getElementById('seller-export-guide-title').textContent = action === 'draft'
@@ -3223,6 +3377,7 @@ function openSellerExport({action = 'export', rows = []} = {}) {
   document.getElementById('seller-export-run').textContent = action === 'draft' ? '매트릭스에 수정안 만들기' : '검토한 수정본 ZIP 만들기';
   document.getElementById('seller-export-progress').hidden = true;
   sellerExportModal.hidden = false;
+  refreshSellerExportPreview();
   refreshSellerOriginalStates();
 }
 
@@ -3280,11 +3435,15 @@ async function runSellerExport() {
     showSellerExportProgress(4, '수정안 확인 중', '검토한 판매처 수정안을 내보내기 상태로 확정합니다.');
     let changeIds;
     if (sellerExportState.rows.length) {
-      const reviewIds = sellerExportState.rows.filter(row => ['pending','failed'].includes(row.status)).map(row => Number(row.change_id));
+      const scopedRows = sellerExportRowsForSources(sellerExportState.rows, sources);
+      const reviewIds = scopedRows.filter(row => ['pending','failed'].includes(row.status)).map(row => Number(row.change_id));
       if (reviewIds.length) await liveData.validateChangeQueue(reviewIds);
-      changeIds = sellerExportState.rows.map(row => Number(row.change_id));
+      changeIds = scopedRows.map(row => Number(row.change_id));
     } else {
-      changeIds = await liveData.validateSellerDraftsForExport(sources);
+      const scope = selectedSellerExportScope();
+      const scopeSkus = await resolveSellerExportScopeSkus();
+      if (scope !== 'all' && !scopeSkus.length) throw new Error(scope === 'selected' ? '체크한 SKU가 없습니다.' : '현재 검색·필터 결과에 해당하는 SKU가 없습니다.');
+      changeIds = await liveData.validateSellerDraftsForExport(sources, scopeSkus);
     }
     if (!changeIds.length) throw new Error('매트릭스에서 검토할 판매처 수정안이 없습니다. 먼저 재고 수정안을 만들어주세요.');
     showSellerExportProgress(9, '최신 원본 불러오는 중', '마지막 업로드 때 시스템에 보관한 원본 파일을 자동으로 가져옵니다.');
@@ -3329,6 +3488,8 @@ document.getElementById('queue-export').addEventListener('click', () => openSell
 document.getElementById('seller-export-close').addEventListener('click', closeSellerExport);
 document.getElementById('seller-export-cancel').addEventListener('click', closeSellerExport);
 document.getElementById('seller-export-run').addEventListener('click', runSellerExport);
+sellerExportModal.querySelectorAll('.seller-export-source-check').forEach(input => input.addEventListener('change', refreshSellerExportPreview));
+sellerExportModal.querySelectorAll('input[name="seller-export-scope"]').forEach(input => input.addEventListener('change', refreshSellerExportPreview));
 
 const matrixCsvModal = document.getElementById('matrix-csv-modal');
 const matrixCsvState = {running:false, cancelRequested:false};
@@ -3920,17 +4081,17 @@ const uploadCapabilityBadge = document.getElementById('upload-capability-badge')
 const sellerUploadMode = document.getElementById('seller-upload-mode');
 let selectedFiles = [];
 
-function isSellerUploadSource(source = sourceSelect.value) {
-  return ['smartstore','makeshop','ably'].includes(source);
+function isPatchableUploadSource(source = sourceSelect.value) {
+  return ['sellpia','smartstore','makeshop','ably'].includes(source);
 }
 
-function currentSellerUploadMode() {
+function currentUploadMode() {
   return sellerUploadMode?.querySelector('input[name="seller-upload-mode"]:checked')?.value === 'full' ? 'full' : 'patch';
 }
 
 function requiredUploadFileCount() {
   const config = sourceConfig[sourceSelect.value];
-  return isSellerUploadSource() && currentSellerUploadMode() === 'patch' ? 1 : config.files;
+  return isPatchableUploadSource() && currentUploadMode() === 'patch' ? 1 : config.files;
 }
 
 function setUploadCapability() {
@@ -3946,10 +4107,14 @@ function updateSource() {
   selectedFiles = [];
   document.getElementById('mock-file').value = '';
   sourceInfo.innerHTML = `<span class="channel-logo ${config.cls}">${config.initial}</span><div><b>${config.name}</b><p>${config.detail}</p></div><em>필수</em>`;
-  sellerUploadMode.hidden = !isSellerUploadSource();
-  if (isSellerUploadSource()) sellerUploadMode.querySelector('input[value="patch"]').checked = true;
-  fileGuide.textContent = isSellerUploadSource()
-    ? '부분 갱신은 수정한 파일만 올리면 되고, 전체 교체는 판매처 전체 파일이 필요합니다.'
+  sellerUploadMode.hidden = !isPatchableUploadSource();
+  if (isPatchableUploadSource()) {
+    sellerUploadMode.querySelector(`input[value="${sourceSelect.value === 'sellpia' ? 'full' : 'patch'}"]`).checked = true;
+  }
+  fileGuide.textContent = isPatchableUploadSource()
+    ? sourceSelect.value === 'sellpia'
+      ? '셀피아 전체 교체는 분할 원본 3개, 부분 갱신은 수정한 행이 든 파일 1개 이상이 필요합니다.'
+      : '부분 갱신은 수정한 파일만 올리면 되고, 전체 교체는 판매처 전체 파일이 필요합니다.'
     : config.guide;
   renderFiles([]);
   document.querySelector('.upload-options').hidden = sourceSelect.value === 'survey';
@@ -3958,8 +4123,8 @@ function updateSource() {
 sourceSelect.addEventListener('change', updateSource);
 sellerUploadMode?.addEventListener('change', () => {
   const config = sourceConfig[sourceSelect.value];
-  fileGuide.textContent = currentSellerUploadMode() === 'patch'
-    ? `부분 갱신 · ${config.name}에서 수정한 파일 ${config.files > 1 ? '1개 이상' : '1개'}만 올려도 됩니다.`
+  fileGuide.textContent = currentUploadMode() === 'patch'
+    ? `부분 갱신 · ${config.name}에서 수정한 행이 든 파일 ${config.files > 1 ? '1개 이상' : '1개'}만 올려도 됩니다. 파일에 없는 항목은 유지됩니다.`
     : `전체 교체 · ${config.guide}`;
   renderFiles(selectedFiles);
 });
@@ -4002,7 +4167,7 @@ uploadButton.addEventListener('click', async () => {
   }
   const requiredFiles = requiredUploadFileCount();
   if (selectedFiles.length < requiredFiles || (requiredFiles === config.files && selectedFiles.length !== config.files)) {
-    showToast(isSellerUploadSource() && currentSellerUploadMode() === 'patch'
+    showToast(isPatchableUploadSource() && currentUploadMode() === 'patch'
       ? `${config.name} 부분 갱신 파일을 1개 이상 선택해주세요.`
       : `${config.name} 전체 파일 ${config.files}개를 모두 선택해주세요.`);
     return;
@@ -4021,7 +4186,7 @@ uploadButton.addEventListener('click', async () => {
     price: document.getElementById('upload-field-price').checked,
     basic: document.getElementById('upload-field-basic').checked,
     status: document.getElementById('upload-field-status').checked,
-    mode: isSellerUploadSource() ? currentSellerUploadMode() : 'full'
+    mode: isPatchableUploadSource() ? currentUploadMode() : 'full'
   };
   if (sourceSelect.value !== 'survey' && ![fields.inventory, fields.price, fields.basic, fields.status].some(Boolean)) {
     showToast('갱신할 항목을 하나 이상 선택해주세요.');
@@ -4035,7 +4200,9 @@ uploadButton.addEventListener('click', async () => {
     percent:1,
     title:'파일 확인 중',
     detail:sourceSelect.value === 'sellpia'
-      ? '헤더, 행번호, SKU 중복을 검사합니다.'
+      ? fields.mode === 'patch'
+        ? '셀피아 부분 갱신 SKU와 선택 필드를 검사합니다. 파일에 없는 SKU는 유지합니다.'
+        : '헤더, 연속 행번호, SKU 중복을 검사합니다.'
       : sourceSelect.value === 'survey'
         ? '셀피아 SKU, 자사코드, 조사수량 헤더를 검사합니다.'
         : fields.mode === 'patch'
@@ -4067,7 +4234,9 @@ uploadButton.addEventListener('click', async () => {
       percent:100,
       title:sourceSelect.value === 'sellpia' ? '업로드·매트릭스 재구성 완료' : 'DB 업로드 완료',
       detail:sourceSelect.value === 'sellpia'
-        ? `${formatNumber(result.rowCount)}개 최신 셀피아 SKU로 매트릭스를 완전히 교체했습니다.`
+        ? result.uploadMode === 'patch'
+          ? `업로드 ${formatNumber(result.uploadedRowCount)}개 SKU의 선택 항목만 갱신하고, 전체 ${formatNumber(result.rowCount)}개 SKU를 유지했습니다.`
+          : `${formatNumber(result.rowCount)}개 최신 셀피아 SKU로 매트릭스를 완전히 교체했습니다.`
         : result.uploadMode === 'patch'
           ? `업로드 ${formatNumber(result.uploadedRowCount)}개만 갱신하고, 최신 판매처 원본 ${formatNumber(result.rowCount)}개를 유지했습니다.`
           : `${formatNumber(result.rowCount)}개 ${rowLabel}으로 판매처 원본을 전체 교체했습니다.`

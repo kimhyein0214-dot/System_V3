@@ -13,7 +13,7 @@ test('inventory survey page exposes live separated quantities', () => {
   assert.match(html, /id="inventory-metric-picked"/);
   assert.match(html, /id="inventory-metric-drawer"/);
   assert.match(html, /조사수량 \+ 오늘 피킹완료 \+ 현재 미송서랍 완료수량/);
-  assert.match(html, /inventory\.css\?v=20260820-inlineprice1/);
+  assert.match(html, /inventory\.css\?v=[^"']+/);
 });
 
 test('survey upload parser persists snapshots and joins picking activity', () => {

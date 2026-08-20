@@ -6,8 +6,9 @@ const app = fs.readFileSync(new URL('../mockups/operations-hub/app.js', import.m
 const data = fs.readFileSync(new URL('../mockups/operations-hub/data-service.js', import.meta.url), 'utf8');
 const migration = fs.readFileSync(new URL('../supabase/migrations/20260820054207_seller_patch_upload_and_price_layers.sql', import.meta.url), 'utf8');
 
-assert.match(html, /id="seller-upload-mode"[\s\S]*?value="patch" checked[\s\S]*?부분 갱신[\s\S]*?value="full"[\s\S]*?전체 교체/, 'seller uploads must default to a clearly explained patch mode');
-assert.match(app, /function requiredUploadFileCount[\s\S]*?currentSellerUploadMode\(\) === 'patch' \? 1 : config\.files/, 'patch uploads must accept one edited seller file while full uploads keep the complete file requirement');
+assert.match(html, /id="seller-upload-mode"[\s\S]*?value="patch"[\s\S]*?부분 갱신[\s\S]*?value="full"[\s\S]*?전체 교체/, 'upload mode must clearly expose patch and full replacement');
+assert.match(app, /sourceSelect\.value === 'sellpia' \? 'full' : 'patch'/, 'seller uploads must default to patch while Sellpia defaults to authoritative full replacement');
+assert.match(app, /function requiredUploadFileCount[\s\S]*?currentUploadMode\(\) === 'patch' \? 1 : config\.files/, 'patch uploads must accept one edited file while full uploads keep the complete file requirement');
 assert.match(data, /const uploadMode = fields\.mode === 'full' \? 'full' : 'patch'[\s\S]*?upload_mode:uploadMode/, 'seller snapshots must persist the chosen upload mode');
 assert.match(migration, /upload_mode in \('full', 'patch'\)[\s\S]*?if v_upload_mode = 'patch'[\s\S]*?insert into public\.seller_inventory_snapshot_rows[\s\S]*?_patch_preserved/, 'patch finalization must carry forward seller rows omitted from the edited upload');
 assert.match(migration, /selected_fields[\s\S]*?previous_row\.stock[\s\S]*?previous_row\.price/, 'field selection must still preserve unselected values by seller key');

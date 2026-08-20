@@ -7,9 +7,9 @@
     <title>System V3 · 상품 운영 허브</title>
     <link rel="preconnect" href="https://cdnjs.cloudflare.com" crossorigin>
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/pretendard/1.3.9/static/pretendard.css">
-    <link rel="stylesheet" href="./style.css?v=20260820-atomictagedit1">
-    <link rel="stylesheet" href="./inventory.css?v=20260820-atomictagedit1">
-    <link rel="stylesheet" href="./price-rule-lab.css?v=20260820-atomictagedit1">
+    <link rel="stylesheet" href="./style.css?v=20260820-exportscope1">
+    <link rel="stylesheet" href="./inventory.css?v=20260820-exportscope1">
+    <link rel="stylesheet" href="./price-rule-lab.css?v=20260820-exportscope1">
   </head>
   <body>
     <div class="app-shell">
@@ -119,10 +119,10 @@
                 <div class="select-wrap"><select id="source-select"><option value="sellpia">셀피아 기준 원본</option><option value="smartstore">스마트스토어 상품 원본</option><option value="makeshop">메이크샵 상품 원본</option><option value="ably">에이블리 상품 원본</option><option value="survey">재고조사 완료 파일</option></select></div>
                 <div id="source-info" class="source-info"><span class="channel-logo sellpia">S</span><div><b>셀피아 기준 원본</b><p>분할된 파일 3개 · XLSX 또는 CSV</p></div><em>필수</em></div>
 
-                <div id="seller-upload-mode" class="seller-upload-mode" hidden>
-                  <p><b>판매처 원본 반영 방식</b><small>엑셀에서 일부 상품만 일괄 수정했다면 부분 갱신을 사용하세요.</small></p>
-                  <label><input type="radio" name="seller-upload-mode" value="patch" checked><span><b>부분 갱신 <em>권장</em></b><small>파일에 있는 상품·옵션만 바꾸고 나머지는 유지</small></span></label>
-                  <label><input type="radio" name="seller-upload-mode" value="full"><span><b>전체 교체</b><small>파일에 없는 판매처 상품·옵션은 최신 원본에서 제외</small></span></label>
+                <div id="seller-upload-mode" class="seller-upload-mode">
+                  <p><b>원본 반영 방식</b><small>일부 행만 수정했다면 부분 갱신, 상품 목록 자체가 바뀌었다면 전체 교체를 사용하세요.</small></p>
+                  <label><input type="radio" name="seller-upload-mode" value="patch"><span><b>부분 갱신 <em>권장</em></b><small>파일에 있는 상품·옵션만 바꾸고 나머지는 유지</small></span></label>
+                  <label><input type="radio" name="seller-upload-mode" value="full" checked><span><b>전체 교체</b><small>파일에 없는 상품·옵션은 최신 원본에서 제외</small></span></label>
                 </div>
 
                 <div class="step-head second"><span>2</span><div><h3>파일 등록</h3><p id="file-guide">행번호가 이어지는 셀피아 파일 3개를 올려주세요.</p></div></div>
@@ -457,6 +457,13 @@
             <label data-export-source="makeshop"><input class="seller-export-source-check" type="checkbox" value="makeshop" checked><i class="dot make"></i><span><b>메이크샵</b><em>가장 마지막 업로드 원본</em></span><strong class="seller-original-state">최신 원본 확인 중</strong></label>
             <label data-export-source="ably"><input class="seller-export-source-check" type="checkbox" value="ably" checked><i class="dot ably"></i><span><b>에이블리</b><em>가장 마지막 업로드 원본</em></span><strong class="seller-original-state">최신 원본 확인 중</strong></label>
           </div>
+          <fieldset id="seller-export-scope" class="seller-export-scope">
+            <legend>내보내기 범위</legend>
+            <label><input type="radio" name="seller-export-scope" value="filtered"><span><b>현재 검색·필터 결과</b><em id="seller-export-filtered-count">현재 조건에 해당하는 SKU만 반영</em></span></label>
+            <label><input id="seller-export-selected-scope" type="radio" name="seller-export-scope" value="selected"><span><b>체크한 SKU만</b><em id="seller-export-selected-count">체크한 SKU 없음</em></span></label>
+            <label><input type="radio" name="seller-export-scope" value="all"><span><b>전체 변경대기</b><em>현재 검색·필터와 관계없이 저장된 수정안 전체</em></span></label>
+          </fieldset>
+          <div id="seller-export-preview" class="seller-export-preview"><span id="seller-export-preview-label">예상 반영 건수</span><b id="seller-export-preview-count">확인 중</b><em id="seller-export-preview-detail">선택한 판매처와 범위를 확인합니다.</em></div>
           <div id="seller-export-progress" class="seller-export-progress" hidden><div><b id="seller-export-progress-title">준비 중</b><span id="seller-export-progress-percent">0%</span></div><i><span id="seller-export-progress-bar"></span></i><p id="seller-export-progress-detail">원본을 확인합니다.</p></div>
         </div>
         <div class="modal-foot"><button class="btn" id="seller-export-cancel">취소</button><button class="btn primary" id="seller-export-run">검토한 수정본 ZIP 만들기</button></div>
@@ -531,11 +538,11 @@
     <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.112.3/dist/umd/supabase.js"></script>
-    <script src="./seller-source-parsers.js?v=20260820-atomictagedit1"></script>
-    <script src="./seller-export-adapter.js?v=20260820-atomictagedit1"></script>
-    <script src="./matrix-csv-export.js?v=20260820-atomictagedit1"></script>
-    <script src="./data-service.js?v=20260820-atomictagedit1"></script>
-    <script src="./app.js?v=20260820-atomictagedit1"></script>
-    <script src="./price-rule-lab.js?v=20260820-atomictagedit1"></script>
+    <script src="./seller-source-parsers.js?v=20260820-exportscope1"></script>
+    <script src="./seller-export-adapter.js?v=20260820-exportscope1"></script>
+    <script src="./matrix-csv-export.js?v=20260820-exportscope1"></script>
+    <script src="./data-service.js?v=20260820-exportscope1"></script>
+    <script src="./app.js?v=20260820-exportscope1"></script>
+    <script src="./price-rule-lab.js?v=20260820-exportscope1"></script>
   </body>
 </html>
