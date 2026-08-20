@@ -86,7 +86,11 @@ const matrixState = {page:1, search:'', searchSources:['sellpia','smartstore','m
 const multiLinkState = {page:1, pageSize:50, search:'', source:'all', relationType:'complex', total:0, loading:false, requestId:0, rows:[], selected:null, loaded:false};
 const mappingSyncState = {displayedVersion:'', checking:false, autoRefreshing:false, latest:null};
 const matrixRowsBySku = new Map();
-const drawerState = {activeTab:'connections', historyRequestId:0, historySku:'', attributeRequestId:0, priceRequestId:0, tags:null, attributeDraft:null, priceRuleSets:[], priceRuleAssignments:{}};
+const drawerState = {
+  activeTab:'connections', historyRequestId:0, historySku:'', attributeRequestId:0, priceRequestId:0,
+  tags:null, attributeDraft:null, priceRuleTags:[], priceRuleSets:[], priceRuleAssignments:{},
+  priceRulePreviews:{}, priceRuleSelections:{}, priceComposers:{}
+};
 const inventoryState = {loaded:false, loading:false, rows:[], snapshot:null, activityRefreshedAt:'', requestId:0};
 const ATTRIBUTE_OPTIONS = Object.freeze({
   material:['14K','925 실버','써지컬','티타늄','아크릴/투명','실버','기타'],
@@ -811,7 +815,60 @@ function renderPriceRuleSetSteps(ruleSet, preview) {
   }).join('')}</div>`;
 }
 
-function renderDrawerPricePolicy(source, label, originalPrice, draftPrice, sellpiaPrice, ruleSets = null, assignment = null, preview = null, selectedRuleSetId = null) {
+function priceRuleTagSummary(tag) {
+  if (!tag) return '-';
+  if (tag.replace_price !== null && tag.replace_price !== undefined) return `${formatNullableNumber(tag.replace_price)}원 고정`;
+  const value = Number(tag.modify_value || 0);
+  if (tag.modify_type === 'percent') return `${Math.abs(value)}% ${value < 0 ? '할인' : '인상'}`;
+  if (tag.modify_type === 'add') return `${formatNullableNumber(Math.abs(value))}원 ${value < 0 ? '할인' : '추가'}`;
+  return '기준가 그대로';
+}
+
+function calculateLocalPriceRule(basePrice, tag) {
+  const base = Number(basePrice);
+  if (!Number.isFinite(base) || !tag) return null;
+  let value = tag.replace_price !== null && tag.replace_price !== undefined ? Number(tag.replace_price) : base;
+  const modifyValue = Number(tag.modify_value || 0);
+  if (tag.modify_type === 'percent') value *= 1 + modifyValue / 100;
+  if (tag.modify_type === 'add') value += modifyValue;
+  if (tag.min_price !== null && tag.min_price !== undefined) value = Math.max(value, Number(tag.min_price));
+  if (tag.max_price !== null && tag.max_price !== undefined) value = Math.min(value, Number(tag.max_price));
+  const unit = Math.max(1, Number(tag.rounding_unit || 1));
+  const scaled = value / unit;
+  value = (tag.rounding_mode === 'up' ? Math.ceil(scaled) : tag.rounding_mode === 'down' ? Math.floor(scaled) : Math.round(scaled)) * unit;
+  return Math.max(0, value);
+}
+
+function priceComposerFor(source) {
+  if (!drawerState.priceComposers[source]) drawerState.priceComposers[source] = {name:'', tagIds:[], open:false};
+  return drawerState.priceComposers[source];
+}
+
+function renderPriceTagComposer(source, basePrice, ruleTags) {
+  const composer = priceComposerFor(source);
+  const tagsById = new Map((ruleTags || []).map(tag => [Number(tag.price_rule_tag_id), tag]));
+  let current = Number(basePrice);
+  const selectedRows = composer.tagIds.map((tagId, index) => {
+    const tag = tagsById.get(Number(tagId));
+    if (!tag) return '';
+    const before = current;
+    current = calculateLocalPriceRule(current, tag);
+    return `<article data-composer-index="${index}"><i>${index + 1}</i><span><b>${escapeHtml(tag.tag_name)}</b><em>${escapeHtml(priceRuleTagSummary(tag))} · ${formatNullableNumber(before)}원 → ${formatNullableNumber(current)}원</em></span><div><button type="button" data-composer-move="up" aria-label="위로">↑</button><button type="button" data-composer-move="down" aria-label="아래로">↓</button><button type="button" data-composer-remove aria-label="삭제">×</button></div></article>`;
+  }).join('');
+  const canSave = composer.name.trim() && composer.tagIds.length;
+  return `<details class="price-tag-composer" ${composer.open ? 'open' : ''}>
+    <summary>+ 새 조합 태그를 여기서 바로 만들기</summary>
+    <div class="price-tag-composer-body">
+      <label><span>조합 태그 이름</span><input data-price-composer-name maxlength="50" value="${escapeHtml(composer.name)}" placeholder="예: 10% 할인 + 배송비"></label>
+      <label><span>계산 단계 추가</span><select data-price-composer-add><option value="">작은 태그 선택…</option>${(ruleTags || []).filter(tag => !composer.tagIds.includes(Number(tag.price_rule_tag_id))).map(tag => `<option value="${tag.price_rule_tag_id}">${escapeHtml(tag.tag_name)} · ${escapeHtml(priceRuleTagSummary(tag))}</option>`).join('')}</select></label>
+      <div class="price-tag-composer-steps">${selectedRows || '<p>계산 단계를 하나 이상 추가해주세요.</p>'}</div>
+      <div class="price-tag-composer-result"><span>셀피아 기준가 ${formatNullableNumber(basePrice)}원</span><b>${composer.tagIds.length ? `미리보기 ${formatNullableNumber(current)}원` : '단계 미선택'}</b></div>
+      <button type="button" class="btn primary price-tag-composer-save" ${canSave ? '' : 'disabled'}>조합 저장 · 현재 상품에 배정</button>
+    </div>
+  </details>`;
+}
+
+function renderDrawerPricePolicy(source, label, originalPrice, draftPrice, sellpiaPrice, ruleSets = null, assignment = null, preview = null, selectedRuleSetId = null, ruleTags = []) {
   const current = Number(originalPrice);
   const base = Number(sellpiaPrice);
   const draft = Number(draftPrice);
@@ -833,6 +890,7 @@ function renderDrawerPricePolicy(source, label, originalPrice, draftPrice, sellp
     <div class="drawer-price-layer-summary"><span>판매처 원본가<b>${hasCurrent ? formatNullableNumber(current) : '-'}원</b></span><span>셀피아 기준가<b>${hasBase ? formatNullableNumber(base) : '-'}원</b></span><span class="policy">계산 최종가<b>${calculatedPrice === null ? '-' : `${formatNullableNumber(calculatedPrice)}원`}</b></span><span class="draft">반영 예정가<b>${hasDraft ? `${formatNullableNumber(draft)}원` : '-'}</b></span></div>
     <label class="price-tag-selector"><span>이 상품에 적용할 큰 태그</span><select data-price-rule-set><option value="">태그 사용 안 함</option>${ruleSets.map(ruleSet => `<option value="${ruleSet.price_rule_set_id}" ${String(ruleSet.price_rule_set_id) === selectedId ? 'selected' : ''}>${escapeHtml(ruleSet.set_name)}</option>`).join('')}</select></label>
     <div data-price-tag-preview>${renderPriceRuleSetSteps(selectedSet, preview)}</div>
+    ${renderPriceTagComposer(source, sellpiaPrice, ruleTags)}
     <div class="price-formula"><span>현재 가격 비교</span><code>${escapeHtml(currentFormula)}</code></div>
     <p class="price-policy-summary">${selectedSet ? `셀피아 ${formatNullableNumber(base)}원에 ‘${escapeHtml(selectedSet.set_name)}’ 태그를 순서대로 계산합니다.` : '태그를 배정하지 않으면 판매처 가격 수정안이 자동 생성되지 않습니다.'}</p>
     <div class="price-policy-actions"><button class="btn price-tag-assignment-save" ${dirty ? '' : 'disabled'}>${selectedId ? '태그 배정 저장' : '태그 배정 해제'}</button><button class="btn primary price-tag-apply" ${selectedSet && !dirty && calculatedPrice !== null ? '' : 'disabled'}>${dirty ? '태그 배정을 먼저 저장' : applyLabel}</button></div>
@@ -840,22 +898,48 @@ function renderDrawerPricePolicy(source, label, originalPrice, draftPrice, sellp
   </div>`;
 }
 
+function renderCurrentPricePolicy(source, product, selectedRuleSetId = null) {
+  const host = document.querySelector(`[data-price-policy-host="${source}"]`);
+  if (!host || !product) return;
+  const selectedId = selectedRuleSetId === null
+    ? (drawerState.priceRuleSelections[source] ?? drawerState.priceRuleAssignments[source]?.price_rule_set_id ?? '')
+    : selectedRuleSetId;
+  host.innerHTML = renderDrawerPricePolicy(
+    source,
+    CHANNEL_LABELS[source],
+    product?.[`${source}_price`],
+    product?.__sellerDrafts?.[`${source}:sellpia_sale_price`]?.after_value,
+    product.sellpia_sale_price,
+    drawerState.priceRuleSets,
+    drawerState.priceRuleAssignments[source],
+    drawerState.priceRulePreviews[source] || null,
+    selectedId,
+    drawerState.priceRuleTags
+  );
+}
+
 async function loadDrawerPriceRuleAssignments(product) {
-  if (!liveData?.loadPriceRuleSets || !liveData?.loadPriceRuleAssignment || !liveData?.previewPriceRuleSet) return;
+  if (!liveData?.loadPriceRuleTags || !liveData?.loadPriceRuleSets || !liveData?.loadPriceRuleAssignment || !liveData?.previewPriceRuleSet) return;
   const requestId = ++drawerState.priceRequestId;
   const sku = product.sellpia_sku_code;
   try {
-    const ruleSets = await liveData.loadPriceRuleSets();
-    const assignments = await Promise.all(['smartstore','makeshop','ably'].map(source => liveData.loadPriceRuleAssignment({sku, source})));
+    const [ruleTags, ruleSets, ...assignments] = await Promise.all([
+      liveData.loadPriceRuleTags(),
+      liveData.loadPriceRuleSets(),
+      ...['smartstore','makeshop','ably'].map(source => liveData.loadPriceRuleAssignment({sku, source}))
+    ]);
     const previews = await Promise.all(assignments.map(assignment => assignment
       ? liveData.previewPriceRuleSet({basePrice:product.sellpia_sale_price, ruleSetId:assignment.price_rule_set_id})
       : Promise.resolve(null)));
     if (requestId !== drawerState.priceRequestId || productDrawer.dataset.sku !== sku) return;
+    drawerState.priceRuleTags = ruleTags;
     drawerState.priceRuleSets = ruleSets;
     drawerState.priceRuleAssignments = Object.fromEntries(['smartstore','makeshop','ably'].map((source, index) => [source, assignments[index]]));
+    drawerState.priceRulePreviews = Object.fromEntries(['smartstore','makeshop','ably'].map((source, index) => [source, previews[index]]));
+    drawerState.priceRuleSelections = Object.fromEntries(['smartstore','makeshop','ably'].map((source, index) => [source, assignments[index]?.price_rule_set_id || '']));
     ['smartstore','makeshop','ably'].forEach((source, index) => {
       const host = document.querySelector(`[data-price-policy-host="${source}"]`);
-      if (host) host.innerHTML = renderDrawerPricePolicy(source, CHANNEL_LABELS[source], product?.[`${source}_price`], product?.__sellerDrafts?.[`${source}:sellpia_sale_price`]?.after_value, product.sellpia_sale_price, ruleSets, assignments[index], previews[index]);
+      if (host) host.innerHTML = renderDrawerPricePolicy(source, CHANNEL_LABELS[source], product?.[`${source}_price`], product?.__sellerDrafts?.[`${source}:sellpia_sale_price`]?.after_value, product.sellpia_sale_price, ruleSets, assignments[index], previews[index], assignments[index]?.price_rule_set_id || '', ruleTags);
     });
   } catch (error) {
     console.error('price rule assignment load failed', error);
@@ -1056,6 +1140,9 @@ function openProductDrawer(row) {
   fillDrawerChannel('make', 'makeshop', '메이크샵', liveProduct);
   fillDrawerChannel('ably', 'ably', '에이블리', liveProduct);
   productDrawer.dataset.sku = product.sku;
+  drawerState.priceComposers = {};
+  drawerState.priceRulePreviews = {};
+  drawerState.priceRuleSelections = {};
   renderDrawerInventory(liveProduct);
   loadDrawerPriceRuleAssignments(liveProduct);
   const connectedCount = ['smartstore','makeshop','ably'].filter(channel => liveProduct[`${channel}_match_tier`]).length;
@@ -1079,6 +1166,84 @@ function closeProductDrawer() {
 
 const CHANNEL_LABELS = {smartstore:'스마트스토어', makeshop:'메이크샵', ably:'에이블리'};
 const CHANNEL_SECTION_KEYS = {smartstore:'smart', makeshop:'make', ably:'ably'};
+
+function applyLocalSellerDraft(product, source, fieldKey, after, result) {
+  if (!product) return null;
+  product.__sellerDrafts = product.__sellerDrafts || {};
+  const key = `${source}:${fieldKey}`;
+  if (result?.draft_status === 'unchanged') {
+    delete product.__sellerDrafts[key];
+    return null;
+  }
+  const draft = {
+    change_id:result?.change_id || null,
+    sellpia_sku_code:product.sellpia_sku_code,
+    source_channel:source,
+    field_key:fieldKey,
+    before_value:fieldKey === 'sellpia_current_stock' ? product[`${source}_stock`] : product[`${source}_price`],
+    after_value:Number(after),
+    status:result?.draft_status || 'pending',
+    updated_at:new Date().toISOString()
+  };
+  product.__sellerDrafts[key] = draft;
+  return draft;
+}
+
+function syncMatrixSellerDraftCell(product, source, fieldKey) {
+  if (!product) return;
+  const row = matrixBody.querySelector(`tr[data-sku="${CSS.escape(product.sellpia_sku_code)}"]`);
+  const button = row?.querySelector(`.seller-edit[data-source="${source}"][data-field-key="${fieldKey}"]`);
+  if (!button) return;
+  const draft = product.__sellerDrafts?.[`${source}:${fieldKey}`];
+  const original = fieldKey === 'sellpia_current_stock' ? product[`${source}_stock`] : product[`${source}_price`];
+  const display = draft?.after_value ?? original;
+  button.dataset.value = display ?? '';
+  button.dataset.changeId = draft?.change_id || '';
+  button.dataset.draftStatus = draft?.status || '';
+  button.classList.remove('pending', 'draft-pending', 'draft-validated', 'draft-failed', 'diff');
+  if (draft) button.classList.add('pending', `draft-${draft.status}`);
+  if (fieldKey === 'sellpia_current_stock') {
+    button.textContent = formatNullableNumber(display);
+    button.title = draft ? `수정안 ${formatNullableNumber(display)} · 원본 ${formatNullableNumber(original)}` : '수정 가능한 판매처 재고';
+    return;
+  }
+  button.dataset.draftPrice = draft?.after_value ?? '';
+  const policyRaw = button.dataset.policyPrice;
+  const policyVisible = button.dataset.policyActive === 'true' && policyRaw !== '';
+  button.innerHTML = `<span class="price-layer original"><span>원본</span><b>${formatNullableNumber(original)}</b></span>${policyVisible ? `<span class="price-layer policy"><span>수식</span><b>${formatNullableNumber(policyRaw)}</b></span>` : ''}${draft ? `<span class="price-layer draft"><span>반영</span><b>${formatNullableNumber(draft.after_value)}</b></span>` : ''}`;
+  button.title = draft ? `반영 예정 ${formatNullableNumber(display)} · 원본 ${formatNullableNumber(original)}` : '수정 가능한 판매처 원본 가격';
+}
+
+function syncDrawerSellerDraftUi(product, source) {
+  const section = document.querySelector(`.drawer-inventory-channel[data-source="${source}"]`);
+  if (!section || !product) return;
+  const stockDraft = product.__sellerDrafts?.[`${source}:sellpia_current_stock`];
+  const priceDraft = product.__sellerDrafts?.[`${source}:sellpia_sale_price`];
+  const state = drawerDraftState([stockDraft, priceDraft]);
+  const status = section.querySelector('.drawer-section-title .matrix-status');
+  if (status) {
+    status.className = `matrix-status ${state.key}`;
+    status.textContent = state.label;
+  }
+  section.querySelectorAll('[data-drawer-value]').forEach(input => {
+    const fieldKey = input.dataset.drawerValue;
+    const draft = product.__sellerDrafts?.[`${source}:${fieldKey}`];
+    const original = fieldKey === 'sellpia_current_stock' ? product[`${source}_stock`] : product[`${source}_price`];
+    const value = draft?.after_value ?? original ?? '';
+    input.value = value;
+    input.dataset.savedValue = String(value);
+  });
+  section.classList.remove('drawer-dirty');
+  const actionCopy = section.querySelector('.drawer-section-actions>span');
+  if (actionCopy) actionCopy.textContent = stockDraft || priceDraft ? '파란 수정안은 변경대기에 저장됨' : '수정하면 변경대기에 즉시 저장됨';
+  const draftPrice = section.querySelector('[data-policy-source] .drawer-price-layer-summary .draft b');
+  if (draftPrice) draftPrice.textContent = priceDraft ? `${formatNullableNumber(priceDraft.after_value)}원` : '-';
+}
+
+function refreshChangeQueueInBackground() {
+  window.setTimeout(() => { void loadChangeQueue({silent:true}); }, 250);
+}
+
 const mappingPopover = document.getElementById('mapping-popover');
 const mappingSearchInput = document.getElementById('mapping-search-input');
 const mappingSearchResults = document.getElementById('mapping-search-results');
@@ -2362,6 +2527,17 @@ document.querySelectorAll('.seller-draft-save').forEach(button => button.addEven
 }));
 
 document.getElementById('drawer-inventory-list').addEventListener('input', event => {
+  const composerName = event.target.closest('[data-price-composer-name]');
+  if (composerName) {
+    const source = composerName.closest('[data-policy-source]')?.dataset.policySource;
+    if (!source) return;
+    const composer = priceComposerFor(source);
+    composer.name = composerName.value;
+    composer.open = true;
+    const save = composerName.closest('.price-tag-composer')?.querySelector('.price-tag-composer-save');
+    if (save) save.disabled = !(composer.name.trim() && composer.tagIds.length);
+    return;
+  }
   const input = event.target.closest('[data-drawer-value]');
   if (!input) return;
   const section = input.closest('.drawer-inventory-channel');
@@ -2375,6 +2551,18 @@ document.getElementById('drawer-inventory-list').addEventListener('input', event
 });
 
 document.getElementById('drawer-inventory-list').addEventListener('change', async event => {
+  const composerAdd = event.target.closest('[data-price-composer-add]');
+  if (composerAdd) {
+    const source = composerAdd.closest('[data-policy-source]')?.dataset.policySource;
+    const tagId = Number(composerAdd.value);
+    if (!source || !tagId) return;
+    const composer = priceComposerFor(source);
+    if (!composer.tagIds.includes(tagId)) composer.tagIds.push(tagId);
+    composer.open = true;
+    const product = matrixRowsBySku.get(productDrawer.dataset.sku);
+    renderCurrentPricePolicy(source, product);
+    return;
+  }
   const selector = event.target.closest('[data-price-rule-set]');
   if (!selector) return;
   const policyBox = selector.closest('[data-policy-source]');
@@ -2384,34 +2572,17 @@ document.getElementById('drawer-inventory-list').addEventListener('change', asyn
   const selectedRuleSetId = selector.value;
   const host = policyBox.parentElement;
   try {
-    host.innerHTML = renderDrawerPricePolicy(
-      source,
-      CHANNEL_LABELS[source],
-      product?.[`${source}_price`],
-      product?.__sellerDrafts?.[`${source}:sellpia_sale_price`]?.after_value,
-      product?.sellpia_sale_price,
-      drawerState.priceRuleSets,
-      drawerState.priceRuleAssignments[source],
-      null,
-      selectedRuleSetId
-    );
+    drawerState.priceRuleSelections[source] = selectedRuleSetId;
+    drawerState.priceRulePreviews[source] = null;
+    renderCurrentPricePolicy(source, product, selectedRuleSetId);
     if (!selectedRuleSetId) return;
     const preview = await liveData.previewPriceRuleSet({
       basePrice:product?.sellpia_sale_price,
       ruleSetId:selectedRuleSetId
     });
     if (productDrawer.dataset.sku !== sku) return;
-    host.innerHTML = renderDrawerPricePolicy(
-      source,
-      CHANNEL_LABELS[source],
-      product?.[`${source}_price`],
-      product?.__sellerDrafts?.[`${source}:sellpia_sale_price`]?.after_value,
-      product?.sellpia_sale_price,
-      drawerState.priceRuleSets,
-      drawerState.priceRuleAssignments[source],
-      preview,
-      selectedRuleSetId
-    );
+    drawerState.priceRulePreviews[source] = preview;
+    renderCurrentPricePolicy(source, product, selectedRuleSetId);
   } catch (error) {
     console.error('price tag preview failed', error);
     showToast(`가격 태그 계산 실패: ${error?.message || error}`);
@@ -2419,6 +2590,57 @@ document.getElementById('drawer-inventory-list').addEventListener('change', asyn
 });
 
 document.getElementById('drawer-inventory-list').addEventListener('click', async event => {
+  const composerRow = event.target.closest('[data-composer-index]');
+  const composerSave = event.target.closest('.price-tag-composer-save');
+  if (composerRow || composerSave) {
+    const policyBox = event.target.closest('[data-policy-source]');
+    const source = policyBox?.dataset.policySource;
+    const sku = productDrawer.dataset.sku;
+    const product = matrixRowsBySku.get(sku);
+    if (!source || !product) return;
+    const composer = priceComposerFor(source);
+    if (composerRow) {
+      const index = Number(composerRow.dataset.composerIndex);
+      if (event.target.matches('[data-composer-remove]')) composer.tagIds.splice(index, 1);
+      if (event.target.dataset.composerMove === 'up' && index > 0) [composer.tagIds[index - 1], composer.tagIds[index]] = [composer.tagIds[index], composer.tagIds[index - 1]];
+      if (event.target.dataset.composerMove === 'down' && index < composer.tagIds.length - 1) [composer.tagIds[index + 1], composer.tagIds[index]] = [composer.tagIds[index], composer.tagIds[index + 1]];
+      composer.open = true;
+      renderCurrentPricePolicy(source, product);
+      return;
+    }
+    if (!composer.name.trim() || !composer.tagIds.length) {
+      showToast('조합 태그 이름과 계산 단계를 입력해주세요.');
+      return;
+    }
+    const originalLabel = composerSave.textContent;
+    composerSave.disabled = true;
+    composerSave.textContent = '조합 저장 중…';
+    try {
+      const savedSet = await liveData.savePriceRuleSet({
+        setName:composer.name.trim(),
+        color:'#1558c0',
+        tagIds:composer.tagIds
+      });
+      const [ruleSets, savedAssignment] = await Promise.all([
+        liveData.loadPriceRuleSets(),
+        liveData.savePriceRuleAssignment({sku, source, ruleSetId:savedSet.price_rule_set_id})
+      ]);
+      const preview = await liveData.previewPriceRuleSet({basePrice:product.sellpia_sale_price, ruleSetId:savedSet.price_rule_set_id});
+      drawerState.priceRuleSets = ruleSets;
+      drawerState.priceRuleAssignments[source] = savedAssignment;
+      drawerState.priceRuleSelections[source] = savedSet.price_rule_set_id;
+      drawerState.priceRulePreviews[source] = preview;
+      drawerState.priceComposers[source] = {name:'', tagIds:[], open:false};
+      renderCurrentPricePolicy(source, product, savedSet.price_rule_set_id);
+      showToast(`‘${savedSet.set_name}’ 조합 태그를 만들고 ${CHANNEL_LABELS[source]} 현재 상품에 배정했습니다.`);
+    } catch (error) {
+      console.error('inline price tag composer save failed', error);
+      composerSave.disabled = false;
+      composerSave.textContent = originalLabel;
+      showToast(`조합 태그 저장 실패: ${error?.message || error}`);
+    }
+    return;
+  }
   const assignmentSave = event.target.closest('.price-tag-assignment-save');
   const tagApply = event.target.closest('.price-tag-apply');
   if (assignmentSave || tagApply) {
@@ -2440,10 +2662,10 @@ document.getElementById('drawer-inventory-list').addEventListener('click', async
           after:finalPrice,
           batchId:createRequestId()
         });
-        await Promise.all([loadLiveMatrix(), loadChangeQueue({silent:true}), loadLiveDashboardMetrics()]);
-        const row = matrixBody.querySelector(`tr[data-sku="${CSS.escape(sku)}"]`);
-        if (row) openProductDrawer(row);
-        setDrawerTab('inventory', {loadHistory:false});
+        applyLocalSellerDraft(product, source, 'sellpia_sale_price', finalPrice, result);
+        syncMatrixSellerDraftCell(product, source, 'sellpia_sale_price');
+        syncDrawerSellerDraftUi(product, source);
+        refreshChangeQueueInBackground();
         showToast(result?.draft_status === 'unchanged'
           ? `${CHANNEL_LABELS[source]} 원본가와 계산 최종가가 같아 기존 가격 수정안을 취소했습니다.`
           : `${CHANNEL_LABELS[source]} 계산 최종가 ${formatNullableNumber(finalPrice)}원을 수정안으로 저장했습니다.`);
@@ -2467,17 +2689,9 @@ document.getElementById('drawer-inventory-list').addEventListener('click', async
       });
       const preview = saved ? await liveData.previewPriceRuleSet({basePrice:product?.sellpia_sale_price, ruleSetId:saved.price_rule_set_id}) : null;
       drawerState.priceRuleAssignments = {...drawerState.priceRuleAssignments, [source]:saved};
-      policyBox.parentElement.innerHTML = renderDrawerPricePolicy(
-        source,
-        CHANNEL_LABELS[source],
-        product?.[`${source}_price`],
-        product?.__sellerDrafts?.[`${source}:sellpia_sale_price`]?.after_value,
-        product?.sellpia_sale_price,
-        drawerState.priceRuleSets,
-        saved,
-        preview,
-        saved?.price_rule_set_id || ''
-      );
+      drawerState.priceRuleSelections[source] = saved?.price_rule_set_id || '';
+      drawerState.priceRulePreviews[source] = preview;
+      renderCurrentPricePolicy(source, product, saved?.price_rule_set_id || '');
       const selectedSet = drawerState.priceRuleSets.find(ruleSet => String(ruleSet.price_rule_set_id) === String(saved?.price_rule_set_id || ''));
       showToast(saved
         ? `${CHANNEL_LABELS[source]}의 현재 SKU에 ‘${selectedSet?.set_name || '가격 태그'}’를 배정했습니다.`
@@ -2513,11 +2727,13 @@ document.getElementById('drawer-inventory-list').addEventListener('click', async
   try {
     const results = [];
     for (const change of changes) {
-      results.push(await liveData.saveSellerValueDraft({sku, source, fieldKey:change.fieldKey, after:change.after, batchId}));
+      const result = await liveData.saveSellerValueDraft({sku, source, fieldKey:change.fieldKey, after:change.after, batchId});
+      results.push(result);
+      applyLocalSellerDraft(matrixRowsBySku.get(sku), source, change.fieldKey, change.after, result);
+      syncMatrixSellerDraftCell(matrixRowsBySku.get(sku), source, change.fieldKey);
     }
-    await Promise.all([loadLiveMatrix(), loadChangeQueue({silent:true})]);
-    const row = matrixBody.querySelector(`tr[data-sku="${CSS.escape(sku)}"]`);
-    if (row) openProductDrawer(row);
+    syncDrawerSellerDraftUi(matrixRowsBySku.get(sku), source);
+    refreshChangeQueueInBackground();
     const savedCount = results.filter(result => result?.draft_status === 'pending').length;
     const cancelledCount = results.filter(result => result?.draft_status === 'unchanged').length;
     showToast(`${CHANNEL_LABELS[source]} 수정안 ${savedCount}건 저장${cancelledCount ? ` · 원본값 복귀 ${cancelledCount}건` : ''}`);

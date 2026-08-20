@@ -20,7 +20,7 @@ assert.ok(csv, 'the CSV serializer must expose a browser module');
 for (const id of ['matrix-csv-btn','matrix-csv-modal','matrix-csv-count','matrix-csv-progress','matrix-csv-cancel','matrix-csv-run']) {
   assert.match(html, new RegExp(`id="${id}"`), `CSV UI must include ${id}`);
 }
-assert.match(html, /matrix-csv-export\.js\?v=20260820-pricetag2/, 'the serializer must load before the data and app modules');
+assert.match(html, /matrix-csv-export\.js\?v=20260820-inlineprice1/, 'the serializer must load before the data and app modules');
 assert.match(data, /function loadMatrixExportChunk[\s\S]*?rpc\('export_operations_hub_matrix_chunk'/, 'the data adapter must expose the chunk RPC');
 assert.match(app, /while \(processed < total\)[\s\S]*?matrixCsvState\.cancelRequested[\s\S]*?loadMatrixCsvChunk/, 'large exports must page and honor cancellation between chunks');
 assert.match(app, /const chunkSize = codeListMode \? 200 : 400/, 'wide matrix exports must stay below the observed 1,000-row statement-timeout boundary');

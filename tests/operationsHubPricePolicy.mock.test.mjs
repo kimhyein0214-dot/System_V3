@@ -14,6 +14,11 @@ assert.doesNotMatch(migration, /\beval\s*\(/, "price policies must never evaluat
 assert.match(data, /loadPriceRuleAssignment[\s\S]*?previewPriceRuleSet[\s\S]*?savePriceRuleAssignment/, "the frontend adapter must expose per-SKU price tag assignment methods");
 assert.match(app, /이 상품에 적용할 큰 태그[\s\S]*?태그 배정 저장[\s\S]*?수정안으로 적용/, "the drawer must select and save a composite tag before applying its calculated price");
 assert.match(app, /tagApply[\s\S]*?saveSellerValueDraft\([\s\S]*?fieldKey:'sellpia_sale_price'/, "applying a tagged final price must persist a source-specific seller draft");
+assert.match(app, /새 조합 태그를 여기서 바로 만들기[\s\S]*?data-price-composer-add[\s\S]*?조합 저장 · 현재 상품에 배정/, "the drawer must build and assign a reusable composite tag without leaving the current product");
+assert.match(app, /composerSave[\s\S]*?savePriceRuleSet\([\s\S]*?savePriceRuleAssignment\([\s\S]*?previewPriceRuleSet/, "inline composite creation must save the ordered set, assign it to the current SKU, and verify its calculated price");
+assert.match(app, /tagApply[\s\S]*?applyLocalSellerDraft[\s\S]*?syncMatrixSellerDraftCell[\s\S]*?syncDrawerSellerDraftUi[\s\S]*?refreshChangeQueueInBackground/, "tagged price application must update the current matrix cell and drawer without a blocking matrix reload");
+const taggedApplyBlock = app.slice(app.indexOf('if (tagApply)'), app.indexOf('const selectedRuleSetId', app.indexOf('if (tagApply)')));
+assert.doesNotMatch(taggedApplyBlock, /loadLiveMatrix\(/, "tagged price application must not reload the full matrix page");
 assert.doesNotMatch(app, /가격 규칙 저장·계산/, "the product drawer must not present a seller-wide legacy policy as if it were product-specific");
 assert.match(assignmentMigration, /target_type = 'sellpia_sku'[\s\S]*?source_channel = p_source[\s\S]*?sellpia_sku_code = v_sku/, "price tag assignments must be scoped by Sellpia SKU and seller channel");
 assert.doesNotMatch(assignmentMigration, /operations_hub_change_queue/, "saving a price tag assignment must not create an export draft implicitly");

@@ -20,6 +20,8 @@ assert.match(app, /function renderDrawerPricePolicy[\s\S]*?이 상품에 적용�
 assert.match(app, /function renderDrawerAttributesPanel[\s\S]*?상품 공통 태그[\s\S]*?현재 SKU 예외 태그[\s\S]*?drawer-save-attributes/, "drawer attributes must separate product-level values from SKU exceptions");
 assert.match(data, /operations_hub_product_profiles[\s\S]*?ensure_operations_hub_product_profile[\s\S]*?save_operations_hub_product_profile/, "product profiles must load and save through the durable Supabase profile API");
 assert.match(app, /drawer-value-save[\s\S]*?saveSellerValueDraft\(\{sku, source, fieldKey:change\.fieldKey, after:change\.after, batchId\}\)/, "drawer stock and price writes must reuse the durable draft RPC with one batch ID");
+assert.match(app, /drawer-value-save[\s\S]*?applyLocalSellerDraft[\s\S]*?syncMatrixSellerDraftCell[\s\S]*?syncDrawerSellerDraftUi/, "drawer seller writes must reflect locally in the matrix and open drawer");
+assert.match(css, /\.price-tag-composer[\s\S]*?\.price-tag-composer-steps[\s\S]*?\.price-tag-composer-result/, "inline composite tags must have a compact ordered builder and preview");
 assert.match(app, /function renderDrawerHistory[\s\S]*?CHANNEL_LABELS[\s\S]*?drawerStatusLabel/, "drawer history must render source, field, status, and time context");
 assert.match(css, /\.drawer-tab-panel\[hidden\]/, "inactive drawer panels must be hidden");
 assert.match(css, /\.drawer-inventory-channel\.drawer-dirty/, "edited inventory sections must expose a dirty state");
