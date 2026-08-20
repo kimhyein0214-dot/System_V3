@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 
 const migration = fs.readFileSync(new URL("../supabase/migrations/20260818031045_operations_hub_price_policy_engine.sql", import.meta.url), "utf8");
+const baselineMigration = fs.readFileSync(new URL("../supabase/migrations/20260820061850_simplify_price_rules_and_baseline_save.sql", import.meta.url), "utf8");
 const data = fs.readFileSync(new URL("../mockups/operations-hub/data-service.js", import.meta.url), "utf8");
 const app = fs.readFileSync(new URL("../mockups/operations-hub/app.js", import.meta.url), "utf8");
 
@@ -10,7 +11,10 @@ assert.match(migration, /preview_operations_hub_price_policy[\s\S]*?BASE[\s\S]*?
 assert.match(migration, /enable row level security[\s\S]*?security invoker[\s\S]*?grant execute/i, "policy storage and RPCs must keep explicit client permissions");
 assert.doesNotMatch(migration, /\beval\s*\(/, "price policies must never evaluate free-form code");
 assert.match(data, /loadPricePolicies[\s\S]*?previewPricePolicy[\s\S]*?savePricePolicy/, "the frontend adapter must expose policy load, preview, and save separately");
-assert.match(app, /price-policy-pipeline[\s\S]*?정책 저장·다시 계산[\s\S]*?미리보기 값을 입력/, "the drawer must separate policy preview from seller draft persistence");
-assert.match(app, /policyApply[\s\S]*?dispatchEvent\(new Event\('input'/, "applying a preview must only stage the value in the existing editable input");
+assert.match(app, /function priceRulePayload[\s\S]*?percent_discount[\s\S]*?amount_discount[\s\S]*?fixed/, "simple price rule modes must map to constrained policy fields");
+assert.match(app, /가격 규칙 저장·계산[\s\S]*?수정안으로 적용/, "the drawer must separate global rule persistence from per-SKU draft application");
+assert.match(app, /policyApply[\s\S]*?saveSellerValueDraft\([\s\S]*?fieldKey:'sellpia_sale_price'/, "applying a calculated final price must persist a source-specific seller draft");
+assert.match(baselineMigration, /v_field = 'sellpia_current_stock'[\s\S]*?then 'pending'[\s\S]*?else 'saved'/, "Sellpia price edits must save as DB-only base values while stock retains its queue behavior");
+assert.match(baselineMigration, /field_key = 'sellpia_sale_price'[\s\S]*?source_channel is null[\s\S]*?status in \('pending', 'validated', 'failed'\)/, "legacy raw-price seller queues must be cancelled during the workflow transition");
 
 console.log("Operations hub structured price policy contract: passed");
