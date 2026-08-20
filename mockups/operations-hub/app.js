@@ -2982,6 +2982,24 @@ async function loadCodeListCsvChunk(offset, limit) {
   });
 }
 
+function isMatrixCsvTimeout(error) {
+  const message = String(error?.message || error || '').toLowerCase();
+  return message.includes('statement timeout') || message.includes('canceling statement') || message.includes('57014');
+}
+
+async function loadMatrixCsvChunk(options, onRetry) {
+  let limit = Math.max(50, Math.min(Number(options.limit) || 400, 400));
+  while (true) {
+    try {
+      return await liveData.loadMatrixExportChunk({...options, limit});
+    } catch (error) {
+      if (!isMatrixCsvTimeout(error) || limit <= 100) throw error;
+      limit = Math.max(100, Math.floor(limit / 2));
+      onRetry?.(limit);
+    }
+  }
+}
+
 async function runMatrixCsvExport() {
   if (matrixCsvState.running || !matrixState.total) return;
   const codeListMode = matrixState.codeListRows.length > 0;
@@ -2989,7 +3007,10 @@ async function runMatrixCsvExport() {
   const columns = matrixCsv.buildColumns({scope, view:cloneView(activeView), codeListMode});
   const chunks = [matrixCsv.serializeHeader(columns)];
   const total = matrixState.total;
-  const chunkSize = codeListMode ? 500 : 1000;
+  // The wide live matrix can exceed the hosted Postgres statement timeout at
+  // 1,000 rows even though the browser writes the CSV incrementally. Keep each
+  // request comfortably below that boundary and split again if the DB is busy.
+  const chunkSize = codeListMode ? 200 : 400;
   const runButton = document.getElementById('matrix-csv-run');
   const closeButton = document.getElementById('matrix-csv-close');
   matrixCsvState.running = true;
@@ -3004,7 +3025,7 @@ async function runMatrixCsvExport() {
       if (matrixCsvState.cancelRequested) throw new Error('사용자가 CSV 생성을 취소했습니다.');
       const rows = codeListMode
         ? await loadCodeListCsvChunk(processed, chunkSize)
-        : (await liveData.loadMatrixExportChunk({
+        : (await loadMatrixCsvChunk({
             offset:processed,
             limit:Math.min(chunkSize, total - processed),
             search:matrixState.search,
@@ -3012,7 +3033,11 @@ async function runMatrixCsvExport() {
             status:matrixState.status,
             sort:matrixState.sort,
             advancedFilter:cloneAdvancedFilter(matrixState.advancedFilter)
-          })).rows;
+          }, retryLimit => showMatrixCsvProgress(
+            total ? Math.min(96, Math.max(2, (processed / total) * 96)) : 2,
+            '서버 응답 재시도 중',
+            `서버가 혼잡해 ${formatNumber(retryLimit)}행 단위로 자동 축소했습니다. 완료된 ${formatNumber(processed)}행부터 이어갑니다.`
+          ))).rows;
       if (!rows.length) break;
       chunks.push(matrixCsv.serializeRows(rows, columns));
       processed += rows.length;
