@@ -670,6 +670,40 @@
     return Array.isArray(data) ? data[0] : data;
   }
 
+  async function loadPriceRuleAssignment({sku, source}) {
+    const {data, error} = await db
+      .from('operations_hub_price_rule_assignments')
+      .select('price_rule_assignment_id,source_channel,target_type,sellpia_sku_code,price_rule_set_id,is_active,updated_at')
+      .eq('target_type', 'sellpia_sku')
+      .eq('sellpia_sku_code', cleanText(sku))
+      .eq('source_channel', cleanText(source))
+      .eq('is_active', true)
+      .maybeSingle();
+    if (error) throw error;
+    return data || null;
+  }
+
+  async function previewPriceRuleSet({basePrice, ruleSetId}) {
+    if (!ruleSetId) return {final_price:null, steps:[]};
+    const {data, error} = await db.rpc('calculate_operations_hub_price_rule_set', {
+      p_base_price:Number(basePrice),
+      p_rule_set_id:Number(ruleSetId)
+    });
+    if (error) throw error;
+    return Array.isArray(data) ? data[0] : data;
+  }
+
+  async function savePriceRuleAssignment({sku, source, ruleSetId = null}) {
+    const {data, error} = await db.rpc('save_operations_hub_price_rule_assignment', {
+      p_sku:cleanText(sku),
+      p_source:cleanText(source),
+      p_rule_set_id:ruleSetId ? Number(ruleSetId) : null,
+      p_updated_by:'operations-hub'
+    });
+    if (error) throw error;
+    return Array.isArray(data) ? (data[0] || null) : data;
+  }
+
   async function stageSellerInventoryDrafts({sources = [], skus = [], batchId = null} = {}) {
     const {data, error} = await db.rpc('stage_operations_hub_seller_inventory_match', {
       p_sources:(sources || []).map(cleanText),
@@ -1464,6 +1498,9 @@
     loadPriceRuleQaCases,
     savePriceRuleTag,
     savePriceRuleSet,
+    loadPriceRuleAssignment,
+    previewPriceRuleSet,
+    savePriceRuleAssignment,
     stageSellerInventoryDrafts,
     stageSellerInventoryDraftBatch,
     validateSellerDraftsForExport,

@@ -12,7 +12,7 @@ test('price rule lab exposes atomic, composite and virtual QA UI', () => {
   assert.match(html, /id="price-rule-tag-form"/);
   assert.match(html, /id="price-rule-set-form"/);
   assert.match(html, /id="price-rule-qa-list"/);
-  assert.match(html, /price-rule-lab\.js\?v=20260820-pricelab1/);
+  assert.match(html, /price-rule-lab\.js\?v=20260820-pricetag2/);
 });
 
 test('data service keeps tag saves behind dedicated RPCs', () => {

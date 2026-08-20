@@ -86,7 +86,7 @@ const matrixState = {page:1, search:'', searchSources:['sellpia','smartstore','m
 const multiLinkState = {page:1, pageSize:50, search:'', source:'all', relationType:'complex', total:0, loading:false, requestId:0, rows:[], selected:null, loaded:false};
 const mappingSyncState = {displayedVersion:'', checking:false, autoRefreshing:false, latest:null};
 const matrixRowsBySku = new Map();
-const drawerState = {activeTab:'connections', historyRequestId:0, historySku:'', attributeRequestId:0, priceRequestId:0, tags:null, attributeDraft:null, pricePolicies:null};
+const drawerState = {activeTab:'connections', historyRequestId:0, historySku:'', attributeRequestId:0, priceRequestId:0, tags:null, attributeDraft:null, priceRuleSets:[], priceRuleAssignments:{}};
 const inventoryState = {loaded:false, loading:false, rows:[], snapshot:null, activityRefreshedAt:'', requestId:0};
 const ATTRIBUTE_OPTIONS = Object.freeze({
   material:['14K','925 실버','써지컬','티타늄','아크릴/투명','실버','기타'],
@@ -801,82 +801,17 @@ function drawerDraftState(drafts) {
   return {key:'pending', label:`수정안 ${values.length}건`};
 }
 
-function priceRuleMode(policy) {
-  const replacePrice = policy?.replace_price;
-  const modifyType = policy?.modify_type || 'none';
-  const modifyValue = Number(policy?.modify_value || 0);
-  if (replacePrice !== null && replacePrice !== undefined && replacePrice !== '') return 'fixed';
-  if (modifyType === 'percent' && modifyValue < 0) return 'percent_discount';
-  if (modifyType === 'percent' && modifyValue > 0) return 'percent_markup';
-  if (modifyType === 'add' && modifyValue < 0) return 'amount_discount';
-  if (modifyType === 'add' && modifyValue > 0) return 'amount_add';
-  return 'same';
+function renderPriceRuleSetSteps(ruleSet, preview) {
+  if (!ruleSet) return '<div class="price-tag-empty">적용할 가격 태그를 선택해주세요.</div>';
+  const steps = Array.isArray(preview?.steps) ? preview.steps : [];
+  return `<div class="price-tag-step-list">${(ruleSet.tags || []).map((tag, index) => {
+    const step = steps[index];
+    const calculation = step ? `${formatNullableNumber(step.before)}원 → ${formatNullableNumber(step.after)}원` : '계산 대기';
+    return `<span class="price-tag-step" style="--price-tag-color:${escapeHtml(tag.color || ruleSet.color || '#2f6fd1')}"><i>${index + 1}</i><b>${escapeHtml(tag.tag_name)}</b><em>${escapeHtml(calculation)}</em></span>`;
+  }).join('')}</div>`;
 }
 
-function priceRuleValue(policy, mode = priceRuleMode(policy)) {
-  if (mode === 'fixed') return policy?.replace_price ?? '';
-  if (mode === 'same') return '';
-  return Math.abs(Number(policy?.modify_value || 0));
-}
-
-function priceRuleValueGuide(mode) {
-  return {
-    same:{label:'추가 설정', suffix:'', placeholder:'설정 없음'},
-    percent_discount:{label:'할인율', suffix:'%', placeholder:'예: 10'},
-    percent_markup:{label:'인상률', suffix:'%', placeholder:'예: 15'},
-    amount_discount:{label:'할인 금액', suffix:'원', placeholder:'예: 2000'},
-    amount_add:{label:'추가 금액', suffix:'원', placeholder:'예: 3000'},
-    fixed:{label:'판매처 최종가', suffix:'원', placeholder:'예: 17900'}
-  }[mode] || {label:'설정값', suffix:'', placeholder:''};
-}
-
-function priceRulePayload(mode, value) {
-  const amount = Math.abs(Number(value || 0));
-  if (mode === 'fixed') return {replacePrice:value, modifyType:'none', modifyValue:0};
-  if (mode === 'percent_discount') return {replacePrice:'', modifyType:'percent', modifyValue:-amount};
-  if (mode === 'percent_markup') return {replacePrice:'', modifyType:'percent', modifyValue:amount};
-  if (mode === 'amount_discount') return {replacePrice:'', modifyType:'add', modifyValue:-amount};
-  if (mode === 'amount_add') return {replacePrice:'', modifyType:'add', modifyValue:amount};
-  return {replacePrice:'', modifyType:'none', modifyValue:0};
-}
-
-function priceRuleSummary(policy, preview) {
-  if (!policy?.is_active) return '가격 규칙을 켜고 저장하면 계산 최종가가 표시됩니다.';
-  const mode = priceRuleMode(policy);
-  const value = priceRuleValue(policy, mode);
-  const base = formatNullableNumber(preview?.base_price);
-  const finalPrice = formatNullableNumber(preview?.final_price);
-  const rule = {
-    same:'셀피아 기준가 그대로',
-    percent_discount:`${formatNullableNumber(value)}% 할인`,
-    percent_markup:`${formatNullableNumber(value)}% 인상`,
-    amount_discount:`${formatNullableNumber(value)}원 할인`,
-    amount_add:`${formatNullableNumber(value)}원 추가`,
-    fixed:`최종가 ${formatNullableNumber(value)}원으로 지정`
-  }[mode] || '셀피아 기준가 그대로';
-  const guards = [];
-  if (policy.min_price !== null && policy.min_price !== undefined) guards.push(`최저 ${formatNullableNumber(policy.min_price)}원`);
-  if (policy.max_price !== null && policy.max_price !== undefined) guards.push(`최고 ${formatNullableNumber(policy.max_price)}원`);
-  if (Number(policy.rounding_unit || 1) > 1) {
-    guards.push(`${formatNullableNumber(policy.rounding_unit)}원 단위 ${policy.rounding_mode === 'up' ? '올림' : policy.rounding_mode === 'down' ? '내림' : '반올림'}`);
-  }
-  return `셀피아 ${base}원 → ${rule} → 최종 ${finalPrice}원${guards.length ? ` · ${guards.join(' · ')}` : ''}`;
-}
-
-function updatePriceRuleValueField(policyBox) {
-  const mode = policyBox.querySelector('[data-price-rule-mode]')?.value || 'same';
-  const guide = priceRuleValueGuide(mode);
-  const wrap = policyBox.querySelector('[data-price-rule-value-wrap]');
-  const input = policyBox.querySelector('[data-price-rule-value]');
-  if (!wrap || !input) return;
-  wrap.querySelector('span').textContent = guide.label;
-  wrap.querySelector('em').textContent = guide.suffix;
-  input.placeholder = guide.placeholder;
-  input.disabled = mode === 'same';
-  if (mode === 'same') input.value = '';
-}
-
-function renderDrawerPricePolicy(source, label, originalPrice, draftPrice, sellpiaPrice, preview = null, policy = null) {
+function renderDrawerPricePolicy(source, label, originalPrice, draftPrice, sellpiaPrice, ruleSets = null, assignment = null, preview = null, selectedRuleSetId = null) {
   const current = Number(originalPrice);
   const base = Number(sellpiaPrice);
   const draft = Number(draftPrice);
@@ -886,60 +821,45 @@ function renderDrawerPricePolicy(source, label, originalPrice, draftPrice, sellp
   const difference = hasCurrent && hasBase ? current - base : null;
   const differenceText = difference === null ? '-' : `${difference > 0 ? '+' : ''}${formatNullableNumber(difference)}원`;
   const currentFormula = `${label} 원본가 ${hasCurrent ? formatNullableNumber(current) : '-'}원 · 셀피아 기준가 ${hasBase ? formatNullableNumber(base) : '-'}원 · 차이 ${differenceText}`;
-  if (!preview) return `<div class="drawer-price-policy loading"><div class="drawer-price-policy-head"><b>판매처 가격 규칙</b><span>불러오는 중</span></div><div class="price-formula"><span>현재 가격 비교</span><code>${escapeHtml(currentFormula)}</code></div></div>`;
-  const configured = Boolean(preview.is_configured);
-  const active = Boolean(policy?.is_active);
-  const calculatedPrice = active && preview?.final_price !== null && preview?.final_price !== undefined ? preview.final_price : null;
-  const mode = priceRuleMode(policy);
-  const ruleValue = priceRuleValue(policy, mode);
-  const valueGuide = priceRuleValueGuide(mode);
+  if (!ruleSets) return `<div class="drawer-price-policy loading"><div class="drawer-price-policy-head"><b>판매처 가격 태그</b><span>불러오는 중</span></div><div class="price-formula"><span>현재 가격 비교</span><code>${escapeHtml(currentFormula)}</code></div></div>`;
+  const savedRuleSetId = assignment?.price_rule_set_id ? String(assignment.price_rule_set_id) : '';
+  const selectedId = selectedRuleSetId === null ? savedRuleSetId : String(selectedRuleSetId || '');
+  const selectedSet = ruleSets.find(ruleSet => String(ruleSet.price_rule_set_id) === selectedId) || null;
+  const dirty = selectedId !== savedRuleSetId;
+  const calculatedPrice = selectedSet && preview?.final_price !== null && preview?.final_price !== undefined ? preview.final_price : null;
   const applyLabel = calculatedPrice === null ? '계산 최종가 없음' : `${formatNullableNumber(calculatedPrice)}원을 수정안으로 적용`;
-  return `<div class="drawer-price-policy${active ? ' active-policy' : ''}" data-policy-source="${source}" data-final-price="${escapeHtml(preview.final_price ?? '')}">
-    <div class="drawer-price-policy-head"><b>판매처 가격 규칙</b><span>${active ? '가격 규칙 사용 중' : configured ? '가격 규칙 꺼짐' : '가격 규칙 미설정'}</span></div>
+  return `<div class="drawer-price-policy${selectedSet ? ' active-policy' : ''}" data-policy-source="${source}" data-final-price="${escapeHtml(calculatedPrice ?? '')}" data-saved-rule-set-id="${escapeHtml(savedRuleSetId)}">
+    <div class="drawer-price-policy-head"><b>판매처 가격 태그</b><span>${savedRuleSetId ? '상품에 배정됨' : '태그 미배정'}</span></div>
     <div class="drawer-price-layer-summary"><span>판매처 원본가<b>${hasCurrent ? formatNullableNumber(current) : '-'}원</b></span><span>셀피아 기준가<b>${hasBase ? formatNullableNumber(base) : '-'}원</b></span><span class="policy">계산 최종가<b>${calculatedPrice === null ? '-' : `${formatNullableNumber(calculatedPrice)}원`}</b></span><span class="draft">반영 예정가<b>${hasDraft ? `${formatNullableNumber(draft)}원` : '-'}</b></span></div>
-    <div class="price-rule-editor">
-      <label class="policy-active"><input type="checkbox" data-policy-field="active" ${active ? 'checked' : ''}><span><b>이 판매처 가격 규칙 사용</b><em>규칙 저장만으로 원본은 바뀌지 않습니다.</em></span></label>
-      <label><span>가격 적용 방식</span><select data-price-rule-mode>
-        <option value="same" ${mode === 'same' ? 'selected' : ''}>셀피아 기준가 그대로</option>
-        <option value="percent_discount" ${mode === 'percent_discount' ? 'selected' : ''}>퍼센트 할인</option>
-        <option value="percent_markup" ${mode === 'percent_markup' ? 'selected' : ''}>퍼센트 인상</option>
-        <option value="amount_discount" ${mode === 'amount_discount' ? 'selected' : ''}>금액 할인</option>
-        <option value="amount_add" ${mode === 'amount_add' ? 'selected' : ''}>금액 추가</option>
-        <option value="fixed" ${mode === 'fixed' ? 'selected' : ''}>판매처 최종가 직접 지정</option>
-      </select></label>
-      <label class="price-rule-value" data-price-rule-value-wrap><span>${valueGuide.label}</span><div><input type="number" min="0" step="0.01" data-price-rule-value value="${escapeHtml(ruleValue)}" placeholder="${escapeHtml(valueGuide.placeholder)}" ${mode === 'same' ? 'disabled' : ''}><em>${valueGuide.suffix}</em></div></label>
-    </div>
-    <details class="price-rule-advanced"><summary>상세 설정 · 최저가, 최고가, 끝자리 처리</summary>
-      <div class="price-policy-editor">
-        <label>최저가<input type="number" min="0" data-policy-field="minPrice" value="${escapeHtml(policy?.min_price ?? '')}" placeholder="선택"></label>
-        <label>최고가<input type="number" min="0" data-policy-field="maxPrice" value="${escapeHtml(policy?.max_price ?? '')}" placeholder="선택"></label>
-        <label>끝자리 단위<input type="number" min="1" data-policy-field="roundingUnit" value="${escapeHtml(policy?.rounding_unit ?? 1)}"></label>
-        <label>끝자리 처리<select data-policy-field="roundingMode"><option value="nearest" ${policy?.rounding_mode === 'nearest' ? 'selected' : ''}>반올림</option><option value="up" ${policy?.rounding_mode === 'up' ? 'selected' : ''}>올림</option><option value="down" ${policy?.rounding_mode === 'down' ? 'selected' : ''}>내림</option></select></label>
-      </div>
-    </details>
+    <label class="price-tag-selector"><span>이 상품에 적용할 큰 태그</span><select data-price-rule-set><option value="">태그 사용 안 함</option>${ruleSets.map(ruleSet => `<option value="${ruleSet.price_rule_set_id}" ${String(ruleSet.price_rule_set_id) === selectedId ? 'selected' : ''}>${escapeHtml(ruleSet.set_name)}</option>`).join('')}</select></label>
+    <div data-price-tag-preview>${renderPriceRuleSetSteps(selectedSet, preview)}</div>
     <div class="price-formula"><span>현재 가격 비교</span><code>${escapeHtml(currentFormula)}</code></div>
-    <p class="price-policy-summary">${escapeHtml(priceRuleSummary(policy, preview))}</p>
-    <div class="price-policy-actions"><button class="btn price-policy-save">가격 규칙 저장·계산</button><button class="btn primary price-policy-apply" ${active && preview.final_price !== null ? '' : 'disabled'}>${applyLabel}</button></div>
-    <footer>가격 규칙은 ${label} 전체의 계산 기준입니다. 실제 판매처 수정은 현재 상품에서 ‘수정안으로 적용’을 누른 뒤 원본 내보내기를 해야 합니다.</footer>
+    <p class="price-policy-summary">${selectedSet ? `셀피아 ${formatNullableNumber(base)}원에 ‘${escapeHtml(selectedSet.set_name)}’ 태그를 순서대로 계산합니다.` : '태그를 배정하지 않으면 판매처 가격 수정안이 자동 생성되지 않습니다.'}</p>
+    <div class="price-policy-actions"><button class="btn price-tag-assignment-save" ${dirty ? '' : 'disabled'}>${selectedId ? '태그 배정 저장' : '태그 배정 해제'}</button><button class="btn primary price-tag-apply" ${selectedSet && !dirty && calculatedPrice !== null ? '' : 'disabled'}>${dirty ? '태그 배정을 먼저 저장' : applyLabel}</button></div>
+    <footer>태그 배정은 ${label}의 현재 SKU에만 저장됩니다. 계산 결과를 검토한 뒤 ‘수정안으로 적용’을 눌러야 변경대기와 원본 내보내기에 포함됩니다.</footer>
   </div>`;
 }
 
-async function loadDrawerPricePolicies(product) {
-  if (!liveData?.loadPricePolicies || !liveData?.previewPricePolicy) return;
+async function loadDrawerPriceRuleAssignments(product) {
+  if (!liveData?.loadPriceRuleSets || !liveData?.loadPriceRuleAssignment || !liveData?.previewPriceRuleSet) return;
   const requestId = ++drawerState.priceRequestId;
   const sku = product.sellpia_sku_code;
   try {
-    const policies = await liveData.loadPricePolicies();
-    const previews = await Promise.all(['smartstore','makeshop','ably'].map(source => liveData.previewPricePolicy({sku, source})));
+    const ruleSets = await liveData.loadPriceRuleSets();
+    const assignments = await Promise.all(['smartstore','makeshop','ably'].map(source => liveData.loadPriceRuleAssignment({sku, source})));
+    const previews = await Promise.all(assignments.map(assignment => assignment
+      ? liveData.previewPriceRuleSet({basePrice:product.sellpia_sale_price, ruleSetId:assignment.price_rule_set_id})
+      : Promise.resolve(null)));
     if (requestId !== drawerState.priceRequestId || productDrawer.dataset.sku !== sku) return;
-    drawerState.pricePolicies = policies;
+    drawerState.priceRuleSets = ruleSets;
+    drawerState.priceRuleAssignments = Object.fromEntries(['smartstore','makeshop','ably'].map((source, index) => [source, assignments[index]]));
     ['smartstore','makeshop','ably'].forEach((source, index) => {
       const host = document.querySelector(`[data-price-policy-host="${source}"]`);
-      if (host) host.innerHTML = renderDrawerPricePolicy(source, CHANNEL_LABELS[source], product?.[`${source}_price`], product?.__sellerDrafts?.[`${source}:sellpia_sale_price`]?.after_value, product.sellpia_sale_price, previews[index], policies[source]);
+      if (host) host.innerHTML = renderDrawerPricePolicy(source, CHANNEL_LABELS[source], product?.[`${source}_price`], product?.__sellerDrafts?.[`${source}:sellpia_sale_price`]?.after_value, product.sellpia_sale_price, ruleSets, assignments[index], previews[index]);
     });
   } catch (error) {
-    console.error('price policy load failed', error);
-    document.querySelectorAll('[data-price-policy-host]').forEach(host => { host.innerHTML = `<div class="drawer-empty-state error"><b>가격정책을 불러오지 못했습니다.</b><span>${escapeHtml(error?.message || error)}</span></div>`; });
+    console.error('price rule assignment load failed', error);
+    document.querySelectorAll('[data-price-policy-host]').forEach(host => { host.innerHTML = `<div class="drawer-empty-state error"><b>가격 태그를 불러오지 못했습니다.</b><span>${escapeHtml(error?.message || error)}</span></div>`; });
   }
 }
 
@@ -1137,7 +1057,7 @@ function openProductDrawer(row) {
   fillDrawerChannel('ably', 'ably', '에이블리', liveProduct);
   productDrawer.dataset.sku = product.sku;
   renderDrawerInventory(liveProduct);
-  loadDrawerPricePolicies(liveProduct);
+  loadDrawerPriceRuleAssignments(liveProduct);
   const connectedCount = ['smartstore','makeshop','ably'].filter(channel => liveProduct[`${channel}_match_tier`]).length;
   document.getElementById('drawer-stock').textContent = formatNullableNumber(liveProduct.sellpia_current_stock);
   document.getElementById('drawer-price').textContent = formatNullableNumber(liveProduct.sellpia_sale_price);
@@ -2442,11 +2362,6 @@ document.querySelectorAll('.seller-draft-save').forEach(button => button.addEven
 }));
 
 document.getElementById('drawer-inventory-list').addEventListener('input', event => {
-  const ruleMode = event.target.closest('[data-price-rule-mode]');
-  if (ruleMode) {
-    updatePriceRuleValueField(ruleMode.closest('[data-policy-source]'));
-    return;
-  }
   const input = event.target.closest('[data-drawer-value]');
   if (!input) return;
   const section = input.closest('.drawer-inventory-channel');
@@ -2459,21 +2374,64 @@ document.getElementById('drawer-inventory-list').addEventListener('input', event
   }
 });
 
+document.getElementById('drawer-inventory-list').addEventListener('change', async event => {
+  const selector = event.target.closest('[data-price-rule-set]');
+  if (!selector) return;
+  const policyBox = selector.closest('[data-policy-source]');
+  const source = policyBox.dataset.policySource;
+  const sku = productDrawer.dataset.sku;
+  const product = matrixRowsBySku.get(sku);
+  const selectedRuleSetId = selector.value;
+  const host = policyBox.parentElement;
+  try {
+    host.innerHTML = renderDrawerPricePolicy(
+      source,
+      CHANNEL_LABELS[source],
+      product?.[`${source}_price`],
+      product?.__sellerDrafts?.[`${source}:sellpia_sale_price`]?.after_value,
+      product?.sellpia_sale_price,
+      drawerState.priceRuleSets,
+      drawerState.priceRuleAssignments[source],
+      null,
+      selectedRuleSetId
+    );
+    if (!selectedRuleSetId) return;
+    const preview = await liveData.previewPriceRuleSet({
+      basePrice:product?.sellpia_sale_price,
+      ruleSetId:selectedRuleSetId
+    });
+    if (productDrawer.dataset.sku !== sku) return;
+    host.innerHTML = renderDrawerPricePolicy(
+      source,
+      CHANNEL_LABELS[source],
+      product?.[`${source}_price`],
+      product?.__sellerDrafts?.[`${source}:sellpia_sale_price`]?.after_value,
+      product?.sellpia_sale_price,
+      drawerState.priceRuleSets,
+      drawerState.priceRuleAssignments[source],
+      preview,
+      selectedRuleSetId
+    );
+  } catch (error) {
+    console.error('price tag preview failed', error);
+    showToast(`가격 태그 계산 실패: ${error?.message || error}`);
+  }
+});
+
 document.getElementById('drawer-inventory-list').addEventListener('click', async event => {
-  const policySave = event.target.closest('.price-policy-save');
-  const policyApply = event.target.closest('.price-policy-apply');
-  if (policySave || policyApply) {
+  const assignmentSave = event.target.closest('.price-tag-assignment-save');
+  const tagApply = event.target.closest('.price-tag-apply');
+  if (assignmentSave || tagApply) {
     const policyBox = event.target.closest('[data-policy-source]');
-    const section = event.target.closest('.drawer-inventory-channel');
     const source = policyBox.dataset.policySource;
     const sku = productDrawer.dataset.sku;
     const product = matrixRowsBySku.get(sku);
-    if (policyApply) {
+    if (tagApply) {
       const finalPrice = policyBox.dataset.finalPrice;
       if (finalPrice === '') return;
-      const originalLabel = policyApply.textContent;
-      policyApply.disabled = true;
-      policyApply.textContent = '수정안 저장 중…';
+      const originalLabel = tagApply.textContent;
+      tagApply.disabled = true;
+      tagApply.textContent = '수정안 저장 중…';
       try {
         const result = await liveData.saveSellerValueDraft({
           sku,
@@ -2490,51 +2448,45 @@ document.getElementById('drawer-inventory-list').addEventListener('click', async
           ? `${CHANNEL_LABELS[source]} 원본가와 계산 최종가가 같아 기존 가격 수정안을 취소했습니다.`
           : `${CHANNEL_LABELS[source]} 계산 최종가 ${formatNullableNumber(finalPrice)}원을 수정안으로 저장했습니다.`);
       } catch (error) {
-        console.error('price rule draft save failed', error);
-        policyApply.disabled = false;
-        policyApply.textContent = originalLabel;
+        console.error('price tag draft save failed', error);
+        tagApply.disabled = false;
+        tagApply.textContent = originalLabel;
         showToast(`가격 수정안 저장 실패: ${error?.message || error}`);
       }
       return;
     }
-    const field = name => policyBox.querySelector(`[data-policy-field="${name}"]`);
-    const mode = policyBox.querySelector('[data-price-rule-mode]')?.value || 'same';
-    const ruleValue = policyBox.querySelector('[data-price-rule-value]')?.value.trim() || '';
-    const numericRuleValue = Number(ruleValue);
-    if (mode !== 'same' && (!ruleValue || !Number.isFinite(numericRuleValue) || numericRuleValue < 0)) {
-      showToast(`${priceRuleValueGuide(mode).label}을 0 이상의 숫자로 입력해주세요.`);
-      return;
-    }
-    if (mode === 'percent_discount' && numericRuleValue > 100) {
-      showToast('할인율은 0~100% 사이로 입력해주세요.');
-      return;
-    }
-    const rulePayload = priceRulePayload(mode, ruleValue);
-    const originalLabel = policySave.textContent;
-    policySave.disabled = true;
-    policySave.textContent = '정책 저장 중…';
+    const selectedRuleSetId = policyBox.querySelector('[data-price-rule-set]')?.value || '';
+    const originalLabel = assignmentSave.textContent;
+    assignmentSave.disabled = true;
+    assignmentSave.textContent = '태그 저장 중…';
     try {
-      const saved = await liveData.savePricePolicy({
+      const saved = await liveData.savePriceRuleAssignment({
+        sku,
         source,
-        policyName:`${CHANNEL_LABELS[source]} 기본 가격 규칙`,
-        active:field('active').checked,
-        replacePrice:rulePayload.replacePrice,
-        modifyType:rulePayload.modifyType,
-        modifyValue:rulePayload.modifyValue,
-        minPrice:field('minPrice').value.trim(),
-        maxPrice:field('maxPrice').value.trim(),
-        roundingUnit:field('roundingUnit').value.trim(),
-        roundingMode:field('roundingMode').value
+        ruleSetId:selectedRuleSetId || null
       });
-      const preview = await liveData.previewPricePolicy({sku, source});
-      drawerState.pricePolicies = {...(drawerState.pricePolicies || {}), [source]:saved};
-      policyBox.parentElement.innerHTML = renderDrawerPricePolicy(source, CHANNEL_LABELS[source], product?.[`${source}_price`], product?.__sellerDrafts?.[`${source}:sellpia_sale_price`]?.after_value, product?.sellpia_sale_price, preview, saved);
-      showToast(`${CHANNEL_LABELS[source]} 가격 규칙을 저장하고 최종가를 다시 계산했습니다.`);
+      const preview = saved ? await liveData.previewPriceRuleSet({basePrice:product?.sellpia_sale_price, ruleSetId:saved.price_rule_set_id}) : null;
+      drawerState.priceRuleAssignments = {...drawerState.priceRuleAssignments, [source]:saved};
+      policyBox.parentElement.innerHTML = renderDrawerPricePolicy(
+        source,
+        CHANNEL_LABELS[source],
+        product?.[`${source}_price`],
+        product?.__sellerDrafts?.[`${source}:sellpia_sale_price`]?.after_value,
+        product?.sellpia_sale_price,
+        drawerState.priceRuleSets,
+        saved,
+        preview,
+        saved?.price_rule_set_id || ''
+      );
+      const selectedSet = drawerState.priceRuleSets.find(ruleSet => String(ruleSet.price_rule_set_id) === String(saved?.price_rule_set_id || ''));
+      showToast(saved
+        ? `${CHANNEL_LABELS[source]}의 현재 SKU에 ‘${selectedSet?.set_name || '가격 태그'}’를 배정했습니다.`
+        : `${CHANNEL_LABELS[source]}의 현재 SKU 가격 태그를 해제했습니다.`);
     } catch (error) {
-      console.error('price policy save failed', error);
-      showToast(`가격정책 저장 실패: ${error?.message || error}`);
-      policySave.disabled = false;
-      policySave.textContent = originalLabel;
+      console.error('price tag assignment save failed', error);
+      showToast(`가격 태그 저장 실패: ${error?.message || error}`);
+      assignmentSave.disabled = false;
+      assignmentSave.textContent = originalLabel;
     }
     return;
   }
