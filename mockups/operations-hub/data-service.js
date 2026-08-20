@@ -6,7 +6,7 @@
   const PICKING_SUPABASE_URL = 'https://vgxocngpykhlkosiaeew.supabase.co';
   const PICKING_SUPABASE_KEY = 'sb_publishable_XVnKGJo66GZiYTq5Ivu8dA_SjBVvX0g';
   const PAGE_SIZE = 50;
-  const MATRIX_SELECT = 'sellpia_sku_code,own_code,image_url,display_name,smartstore_name,smartstore_option_name,smartstore_product_code,smartstore_option_code,smartstore_match_tier,smartstore_match_score,smartstore_listing_count,smartstore_name_is_draft,smartstore_sale_status,makeshop_name,makeshop_option_name,makeshop_product_code,makeshop_option_code,makeshop_match_tier,makeshop_match_score,makeshop_listing_count,makeshop_name_is_draft,makeshop_sale_status,ably_name,ably_option_name,ably_product_code,ably_option_code,ably_match_tier,ably_match_score,ably_listing_count,ably_name_is_draft,ably_sale_status,updated_at,sellpia_product_name,sellpia_option_name,sellpia_own_code,sellpia_current_stock,sellpia_available_stock,sellpia_safety_stock,sellpia_sale_price,sellpia_inventory_at,smartstore_stock,smartstore_price,smartstore_inventory_at,makeshop_stock,makeshop_price,makeshop_inventory_at,ably_stock,ably_price,ably_inventory_at,overall_status,sellpia_override_image_url,sellpia_override_updated_at';
+  const MATRIX_SELECT = 'sellpia_sku_code,own_code,image_url,display_name,smartstore_name,smartstore_option_name,smartstore_product_code,smartstore_option_code,smartstore_match_tier,smartstore_match_score,smartstore_listing_count,smartstore_name_is_draft,smartstore_sale_status,makeshop_name,makeshop_option_name,makeshop_product_code,makeshop_option_code,makeshop_match_tier,makeshop_match_score,makeshop_listing_count,makeshop_name_is_draft,makeshop_sale_status,ably_name,ably_option_name,ably_product_code,ably_option_code,ably_match_tier,ably_match_score,ably_listing_count,ably_name_is_draft,ably_sale_status,updated_at,sellpia_product_name,sellpia_option_name,sellpia_own_code,sellpia_current_stock,sellpia_available_stock,sellpia_safety_stock,sellpia_sale_price,sellpia_inventory_at,smartstore_stock,smartstore_price,smartstore_policy_price,smartstore_policy_active,smartstore_policy_name,smartstore_inventory_at,makeshop_stock,makeshop_price,makeshop_policy_price,makeshop_policy_active,makeshop_policy_name,makeshop_inventory_at,ably_stock,ably_price,ably_policy_price,ably_policy_active,ably_policy_name,ably_inventory_at,overall_status,sellpia_override_image_url,sellpia_override_updated_at';
 
   function requireClient() {
     if (!global.supabase?.createClient) {
@@ -1051,6 +1051,7 @@
       basic:Boolean(fields.basic),
       status:Boolean(fields.status)
     };
+    const uploadMode = fields.mode === 'full' ? 'full' : 'patch';
     const {normalizedRows, sourceRowCount, duplicateRowCount, parserVersion} = await sellerParsers.parseSellerFiles(
       source,
       selectedFiles,
@@ -1075,10 +1076,12 @@
           valid_row_count:0,
           invalid_row_count:0,
           upload_status:'uploading',
+          upload_mode:uploadMode,
           selected_fields:selectedFields,
           uploaded_by:'operations_hub_frontend',
           metadata:{
             parser_version:parserVersion,
+            upload_mode:uploadMode,
             duplicate_row_count:duplicateRowCount,
             source_files:selectedFiles.map(file => ({name:file.name, size:file.size}))
           }
@@ -1123,12 +1126,24 @@
         });
       }
 
-      onProgress?.({percent:94, title:'선택 갱신 병합 중', detail:'선택하지 않은 기존 필드는 상품·옵션 코드 기준으로 보존합니다.'});
+      onProgress?.({
+        percent:94,
+        title:uploadMode === 'patch' ? '부분 원본 병합 중' : '선택 필드 병합 중',
+        detail:uploadMode === 'patch'
+          ? '파일에 없는 판매처 상품·옵션은 이전 최신 원본에서 그대로 보존합니다.'
+          : '파일에 없는 판매처 상품·옵션은 최신 원본에서 제외하고, 선택하지 않은 필드만 보존합니다.'
+      });
       const {data:finalizedRows, error:finalizeError} = await db.rpc('finalize_seller_inventory_snapshot', {p_snapshot_id:snapshotId});
       if (finalizeError) throw finalizeError;
       const finalized = Array.isArray(finalizedRows) ? finalizedRows[0] : finalizedRows;
       onProgress?.({percent:97, title:'매트릭스 연결 중', detail:'최신 판매처 재고·가격을 통합 매트릭스에 반영합니다.'});
-      return {snapshotId, source, rowCount:Number(finalized?.row_count || normalizedRows.length)};
+      return {
+        snapshotId,
+        source,
+        uploadMode,
+        uploadedRowCount:normalizedRows.length,
+        rowCount:Number(finalized?.row_count || normalizedRows.length)
+      };
     } catch (error) {
       if (snapshotId) {
         await db.from('seller_inventory_snapshots').update({

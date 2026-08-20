@@ -400,6 +400,9 @@ function channelInventoryCells(product, prefix, label) {
   const codeCells = `<td class="mapping-code-cell"${title}>${mappingCodeButton(product, prefix, label, 'product', productCode, state)}</td><td class="mapping-code-cell">${mappingCodeButton(product, prefix, label, 'option', optionCode, state)}</td>`;
   const stock = product[`${prefix}_stock`];
   const price = product[`${prefix}_price`];
+  const policyPrice = product[`${prefix}_policy_price`];
+  const policyActive = Boolean(product[`${prefix}_policy_active`]);
+  const policyName = product[`${prefix}_policy_name`] || '';
   const sellpiaStock = product.sellpia_current_stock;
   const sellpiaPrice = product.sellpia_sale_price;
   const stockDiff = stock !== null && stock !== undefined && sellpiaStock !== null && sellpiaStock !== undefined && Number(stock) !== Number(sellpiaStock);
@@ -412,9 +415,10 @@ function channelInventoryCells(product, prefix, label) {
   const stockCell = stock === null || stock === undefined
     ? '<td class="data-gap">-</td>'
     : `<td><button class="editable-cell seller-edit${stockDiff && !stockDraft ? ' diff' : ''}${draftClass(stockDraft)}" data-source="${prefix}" data-field-key="sellpia_current_stock" data-field="${label} 재고" data-value="${escapeHtml(stockDisplay)}" data-baseline="${escapeHtml(stock)}" data-value-type="number" data-change-id="${stockDraft?.change_id || ''}" data-draft-status="${stockDraft?.status || ''}" title="${stockDraft ? `수정안 ${formatNullableNumber(stockDisplay)} · 원본 ${formatNullableNumber(stock)}` : '수정 가능한 판매처 재고 · 변경하면 매트릭스 수정안으로 저장됩니다.'}">${formatNullableNumber(stockDisplay)}</button></td>`;
+  const priceLayers = `<span class="price-layer original"><span>원본</span><b>${formatNullableNumber(price)}</b></span>${policyActive && policyPrice !== null && policyPrice !== undefined ? `<span class="price-layer policy"><span>수식</span><b>${formatNullableNumber(policyPrice)}</b></span>` : ''}${priceDraft ? `<span class="price-layer draft"><span>반영</span><b>${formatNullableNumber(priceDraft.after_value)}</b></span>` : ''}`;
   const priceCell = price === null || price === undefined
     ? '<td class="data-gap">-</td>'
-    : `<td><button class="editable-cell seller-edit price-hover-target${priceDiff && !priceDraft ? ' diff' : ''}${draftClass(priceDraft)}" data-source="${prefix}" data-field-key="sellpia_sale_price" data-field="${label} 판매가" data-value="${escapeHtml(priceDisplay)}" data-baseline="${escapeHtml(price)}" data-value-type="number" data-change-id="${priceDraft?.change_id || ''}" data-draft-status="${priceDraft?.status || ''}" tabindex="0" data-price-source="${prefix}" data-price-label="${label}" data-current-price="${escapeHtml(priceDisplay)}" data-base-price="${escapeHtml(sellpiaPrice ?? '')}" data-price-updated="${escapeHtml(product[`${prefix}_inventory_at`] || '')}" title="${priceDraft ? `수정안 ${formatNullableNumber(priceDisplay)} · 원본 ${formatNullableNumber(price)}` : '수정 가능한 판매처 가격 · 변경하면 매트릭스 수정안으로 저장됩니다.'}">${formatNullableNumber(priceDisplay)}</button></td>`;
+    : `<td><button class="editable-cell seller-edit price-hover-target price-layer-cell${priceDiff && !priceDraft ? ' diff' : ''}${draftClass(priceDraft)}" data-source="${prefix}" data-field-key="sellpia_sale_price" data-field="${label} 판매가" data-value="${escapeHtml(priceDisplay)}" data-baseline="${escapeHtml(price)}" data-value-type="number" data-change-id="${priceDraft?.change_id || ''}" data-draft-status="${priceDraft?.status || ''}" tabindex="0" data-price-source="${prefix}" data-price-label="${label}" data-original-price="${escapeHtml(price)}" data-policy-price="${escapeHtml(policyPrice ?? '')}" data-policy-active="${policyActive ? 'true' : 'false'}" data-policy-name="${escapeHtml(policyName)}" data-draft-price="${escapeHtml(priceDraft?.after_value ?? '')}" data-base-price="${escapeHtml(sellpiaPrice ?? '')}" data-price-updated="${escapeHtml(product[`${prefix}_inventory_at`] || '')}" title="${priceDraft ? `반영 예정 ${formatNullableNumber(priceDisplay)} · 원본 ${formatNullableNumber(price)}` : policyActive ? `원본 ${formatNullableNumber(price)} · 수식 계산 ${formatNullableNumber(policyPrice)}` : '수정 가능한 판매처 원본 가격'}">${priceLayers}</button></td>`;
   return `<td><span class="matrix-status ${state.key}">${state.label}</span>${relationBadge}</td>${codeCells}${sellerNameCell(product, prefix)}${stockCell}${priceCell}`;
 }
 
@@ -797,17 +801,20 @@ function drawerDraftState(drafts) {
   return {key:'pending', label:`수정안 ${values.length}건`};
 }
 
-function renderDrawerPricePolicy(source, label, priceValue, sellpiaPrice, preview = null, policy = null) {
-  const current = Number(priceValue);
+function renderDrawerPricePolicy(source, label, originalPrice, draftPrice, sellpiaPrice, preview = null, policy = null) {
+  const current = Number(originalPrice);
   const base = Number(sellpiaPrice);
-  const hasCurrent = priceValue !== '' && priceValue !== null && priceValue !== undefined && Number.isFinite(current);
+  const draft = Number(draftPrice);
+  const hasCurrent = originalPrice !== '' && originalPrice !== null && originalPrice !== undefined && Number.isFinite(current);
   const hasBase = sellpiaPrice !== '' && sellpiaPrice !== null && sellpiaPrice !== undefined && Number.isFinite(base);
+  const hasDraft = draftPrice !== '' && draftPrice !== null && draftPrice !== undefined && Number.isFinite(draft);
   const difference = hasCurrent && hasBase ? current - base : null;
   const differenceText = difference === null ? '-' : `${difference > 0 ? '+' : ''}${formatNullableNumber(difference)}원`;
   const currentFormula = `${label} 판매가 ${hasCurrent ? formatNullableNumber(current) : '-'} − 셀피아 기준가 ${hasBase ? formatNullableNumber(base) : '-'} = ${differenceText}`;
   if (!preview) return `<div class="drawer-price-policy loading"><div class="drawer-price-policy-head"><b>가격 계산 기준</b><span>정책 조회 중</span></div><div class="price-formula"><span>현재 확인식</span><code>${escapeHtml(currentFormula)}</code></div></div>`;
   const configured = Boolean(preview.is_configured);
   const active = Boolean(policy?.is_active);
+  const calculatedPrice = active && preview?.final_price !== null && preview?.final_price !== undefined ? preview.final_price : null;
   const legacyPolicy = source === 'smartstore'
     ? `<div class="drawer-policy-formulas">
         <p><span>정책 판매가</span><code>ROUND(현재 판매가 × (1 − 상품 할인율), 0)</code></p>
@@ -822,6 +829,7 @@ function renderDrawerPricePolicy(source, label, priceValue, sellpiaPrice, previe
   ].map(([stage, value]) => `<span><b>${stage}</b>${formatNullableNumber(value)}</span>`).join('');
   return `<div class="drawer-price-policy${active ? ' active-policy' : ''}" data-policy-source="${source}" data-final-price="${escapeHtml(preview.final_price ?? '')}">
     <div class="drawer-price-policy-head"><b>가격 계산 기준</b><span>${active ? '정책 적용 중' : configured ? '정책 꺼짐 · 원본 기준' : '정책 미설정'}</span></div>
+    <div class="drawer-price-layer-summary"><span>판매처 원본가<b>${hasCurrent ? formatNullableNumber(current) : '-'}</b></span><span class="policy">수식 계산가<b>${calculatedPrice === null ? '-' : formatNullableNumber(calculatedPrice)}</b></span><span class="draft">반영 예정가<b>${hasDraft ? formatNullableNumber(draft) : '-'}</b></span></div>
     <div class="price-formula"><span>현재 확인식</span><code>${escapeHtml(currentFormula)}</code></div>
     <div class="price-policy-pipeline">${pipeline}</div>
     <details ${source === 'smartstore' ? 'open' : ''}><summary>수식 설정·정책 편집</summary>
@@ -838,7 +846,7 @@ function renderDrawerPricePolicy(source, label, priceValue, sellpiaPrice, previe
       <p class="price-policy-summary">${escapeHtml(preview.formula_summary || 'BASE · 활성 정책 없음')}</p>
       <div class="price-policy-actions"><button class="btn price-policy-save">정책 저장·다시 계산</button><button class="btn primary price-policy-apply" ${active && preview.final_price !== null ? '' : 'disabled'}>미리보기 값을 입력</button></div>
       ${legacyPolicy}
-      <footer>공통 정책 저장은 모든 ${label} SKU에 적용됩니다. 가격 수정안은 별도로 저장해야 합니다.</footer>
+      <footer>공통 정책 저장은 모든 ${label} SKU의 수식 계산가를 바꿉니다. 판매처 원본가는 보존되며, 미리보기 입력 후 수정안을 저장해야 내보내기에 반영됩니다.</footer>
     </details>
   </div>`;
 }
@@ -854,7 +862,7 @@ async function loadDrawerPricePolicies(product) {
     drawerState.pricePolicies = policies;
     ['smartstore','makeshop','ably'].forEach((source, index) => {
       const host = document.querySelector(`[data-price-policy-host="${source}"]`);
-      if (host) host.innerHTML = renderDrawerPricePolicy(source, CHANNEL_LABELS[source], product?.__sellerDrafts?.[`${source}:sellpia_sale_price`]?.after_value ?? product?.[`${source}_price`], product.sellpia_sale_price, previews[index], policies[source]);
+      if (host) host.innerHTML = renderDrawerPricePolicy(source, CHANNEL_LABELS[source], product?.[`${source}_price`], product?.__sellerDrafts?.[`${source}:sellpia_sale_price`]?.after_value, product.sellpia_sale_price, previews[index], policies[source]);
     });
   } catch (error) {
     console.error('price policy load failed', error);
@@ -881,7 +889,7 @@ function renderDrawerInventoryChannel(source, label, product) {
       <label>판매가격<input type="number" min="0" step="1" data-drawer-value="sellpia_sale_price" data-saved-value="${escapeHtml(priceValue)}" data-original-value="${escapeHtml(price ?? '')}" value="${escapeHtml(priceValue)}" ${priceDisabled ? 'disabled' : ''}></label>
     </div>
     <div class="drawer-value-comparison"><span>셀피아 재고 <b>${formatNullableNumber(product?.sellpia_current_stock)}</b></span><span>셀피아 판매가 <b>${formatNullableNumber(product?.sellpia_sale_price)}</b></span></div>
-    <div data-price-policy-host="${source}">${renderDrawerPricePolicy(source, label, priceValue, product?.sellpia_sale_price)}</div>
+    <div data-price-policy-host="${source}">${renderDrawerPricePolicy(source, label, price, priceDraft?.after_value, product?.sellpia_sale_price)}</div>
     <div class="drawer-section-actions"><span>${stockDraft || priceDraft ? '파란 수정안은 변경대기에 저장됨' : '수정하면 변경대기에 즉시 저장됨'}</span><button class="btn primary drawer-value-save" ${state.key === 'unmatched' || (stockDisabled && priceDisabled) ? 'disabled' : ''}>수정안 저장</button></div>
   </section>`;
 }
@@ -1210,15 +1218,22 @@ const pricePopover = document.getElementById('price-popover');
 let pricePopoverTimer;
 function showPricePopover(target) {
   clearTimeout(pricePopoverTimer);
-  const current = Number(target.dataset.currentPrice);
+  const originalRaw = target.dataset.originalPrice;
+  const policyRaw = target.dataset.policyPrice;
+  const draftRaw = target.dataset.draftPrice;
+  const original = Number(originalRaw);
+  const policy = Number(policyRaw);
+  const draft = Number(draftRaw);
   const base = Number(target.dataset.basePrice);
-  const hasBase = Number.isFinite(base);
-  const difference = hasBase ? current - base : null;
-  const diffClass = difference === 0 ? 'ok' : 'warn';
-  pricePopover.innerHTML = `<div class="price-popover-head"><b>${escapeHtml(target.dataset.priceLabel)} 가격 정보</b><span>${difference === 0 ? '기준가 일치' : '가격 확인'}</span></div>
-    <div class="price-popover-values"><p><span>현재 판매처가</span><b>${formatNullableNumber(current)}원</b></p><p><span>셀피아 기준가</span><b>${hasBase ? `${formatNullableNumber(base)}원` : '-'}</b></p><p class="${diffClass}"><span>가격 차이</span><b>${difference === null ? '-' : `${difference > 0 ? '+' : ''}${formatNullableNumber(difference)}원`}</b></p></div>
-    <div class="price-formula"><span>현재 확인식</span><code>판매처가 ${formatNullableNumber(current)} − 셀피아 기준가 ${hasBase ? formatNullableNumber(base) : '-'} = ${difference === null ? '-' : formatNullableNumber(difference)}</code></div>
-    <p class="price-policy-note">가격정책 DB는 아직 연결 전입니다. 현재는 실제 판매처가와 셀피아 기준가의 차이를 표시합니다.</p>
+  const hasOriginal = originalRaw !== '' && Number.isFinite(original);
+  const hasPolicy = target.dataset.policyActive === 'true' && policyRaw !== '' && Number.isFinite(policy);
+  const hasDraft = draftRaw !== '' && Number.isFinite(draft);
+  const hasBase = target.dataset.basePrice !== '' && Number.isFinite(base);
+  const difference = hasOriginal && hasBase ? original - base : null;
+  pricePopover.innerHTML = `<div class="price-popover-head"><b>${escapeHtml(target.dataset.priceLabel)} 가격 단계</b><span>${hasDraft ? '반영안 확인' : hasPolicy ? '수식 계산됨' : '원본 기준'}</span></div>
+    <div class="price-popover-values"><p><span>판매처 원본가</span><b>${hasOriginal ? `${formatNullableNumber(original)}원` : '-'}</b></p><p><span>셀피아 기준가</span><b>${hasBase ? `${formatNullableNumber(base)}원` : '-'}</b></p><p class="policy"><span>판매처별 수식 계산가</span><b>${hasPolicy ? `${formatNullableNumber(policy)}원` : '정책 꺼짐'}</b></p><p class="draft"><span>반영 예정가</span><b>${hasDraft ? `${formatNullableNumber(draft)}원` : '수정안 없음'}</b></p></div>
+    <div class="price-formula"><span>원본 비교</span><code>판매처 원본가 ${hasOriginal ? formatNullableNumber(original) : '-'} − 셀피아 기준가 ${hasBase ? formatNullableNumber(base) : '-'} = ${difference === null ? '-' : formatNullableNumber(difference)}</code></div>
+    <p class="price-policy-note">${hasPolicy ? `${escapeHtml(target.dataset.policyName || '판매처 공통 가격정책')} 결과입니다. ` : ''}수식 계산가는 원본을 덮어쓰지 않습니다. 검토 후 반영 예정가로 저장해야 내보내기에 사용됩니다.</p>
     <footer>원본 갱신 ${formatLiveTime(target.dataset.priceUpdated)}</footer>`;
   pricePopover.hidden = false;
   positionFloatingPanel(pricePopover, target, 360);
@@ -1881,6 +1896,7 @@ matrixBody.addEventListener('dblclick', event => {
   }
   if (cell.querySelector('input')) return;
   const before = cell.dataset.value ?? cell.textContent.trim();
+  const beforeHtml = cell.innerHTML;
   const numeric = cell.dataset.valueType === 'number';
   const input = document.createElement('input');
   input.className = `inline-editor${numeric ? '' : ' text-editor'}`;
@@ -1924,7 +1940,7 @@ matrixBody.addEventListener('dblclick', event => {
       } catch (error) {
         console.error('seller draft save failed', error);
         cell.dataset.value = before;
-        cell.textContent = formatNullableNumber(before);
+        cell.innerHTML = beforeHtml;
         cell.classList.remove('pending');
         cell.disabled = false;
         showToast(`판매처 수정안 저장 실패: ${error?.message || error}`);
@@ -1932,7 +1948,8 @@ matrixBody.addEventListener('dblclick', event => {
       return;
     }
     cell.dataset.value = before;
-    cell.textContent = numeric ? formatNullableNumber(before) : (before || '-');
+    if (cell.classList.contains('price-layer-cell')) cell.innerHTML = beforeHtml;
+    else cell.textContent = numeric ? formatNullableNumber(before) : (before || '-');
   };
   input.addEventListener('keydown', keyEvent => {
     if (keyEvent.key === 'Enter') finish(true);
@@ -2396,7 +2413,7 @@ document.getElementById('drawer-inventory-list').addEventListener('click', async
       });
       const preview = await liveData.previewPricePolicy({sku, source});
       drawerState.pricePolicies = {...(drawerState.pricePolicies || {}), [source]:saved};
-      policyBox.parentElement.innerHTML = renderDrawerPricePolicy(source, CHANNEL_LABELS[source], product?.__sellerDrafts?.[`${source}:sellpia_sale_price`]?.after_value ?? product?.[`${source}_price`], product?.sellpia_sale_price, preview, saved);
+      policyBox.parentElement.innerHTML = renderDrawerPricePolicy(source, CHANNEL_LABELS[source], product?.[`${source}_price`], product?.__sellerDrafts?.[`${source}:sellpia_sale_price`]?.after_value, product?.sellpia_sale_price, preview, saved);
       showToast(`${CHANNEL_LABELS[source]} 공통 가격정책을 저장하고 다시 계산했습니다.`);
     } catch (error) {
       console.error('price policy save failed', error);
@@ -3514,10 +3531,24 @@ const fileGuide = document.getElementById('file-guide');
 const fileSlots = document.getElementById('file-slots');
 const uploadButton = document.getElementById('mock-upload-btn');
 const uploadCapabilityBadge = document.getElementById('upload-capability-badge');
+const sellerUploadMode = document.getElementById('seller-upload-mode');
 let selectedFiles = [];
 
+function isSellerUploadSource(source = sourceSelect.value) {
+  return ['smartstore','makeshop','ably'].includes(source);
+}
+
+function currentSellerUploadMode() {
+  return sellerUploadMode?.querySelector('input[name="seller-upload-mode"]:checked')?.value === 'full' ? 'full' : 'patch';
+}
+
+function requiredUploadFileCount() {
+  const config = sourceConfig[sourceSelect.value];
+  return isSellerUploadSource() && currentSellerUploadMode() === 'patch' ? 1 : config.files;
+}
+
 function setUploadCapability() {
-  const supported = ['sellpia','smartstore','makeshop','ably','survey'].includes(sourceSelect.value);
+  const supported = ['sellpia','smartstore','makeshop','ably'].includes(sourceSelect.value) || sourceSelect.value === 'survey';
   const label = sourceConfig[sourceSelect.value]?.name || '원본';
   uploadButton.disabled = !supported;
   uploadButton.textContent = supported ? 'DB 업로드 시작' : '업로드 연결 예정';
@@ -3529,12 +3560,23 @@ function updateSource() {
   selectedFiles = [];
   document.getElementById('mock-file').value = '';
   sourceInfo.innerHTML = `<span class="channel-logo ${config.cls}">${config.initial}</span><div><b>${config.name}</b><p>${config.detail}</p></div><em>필수</em>`;
-  fileGuide.textContent = config.guide;
-  fileSlots.innerHTML = Array.from({length:config.files},(_,i)=>`<div><i>${i+1}</i><span><b>파일 ${i+1}</b><em>선택된 파일 없음</em></span><button type="button" class="slot-button">파일 선택</button></div>`).join('');
+  sellerUploadMode.hidden = !isSellerUploadSource();
+  if (isSellerUploadSource()) sellerUploadMode.querySelector('input[value="patch"]').checked = true;
+  fileGuide.textContent = isSellerUploadSource()
+    ? '부분 갱신은 수정한 파일만 올리면 되고, 전체 교체는 판매처 전체 파일이 필요합니다.'
+    : config.guide;
+  renderFiles([]);
   document.querySelector('.upload-options').hidden = sourceSelect.value === 'survey';
   setUploadCapability();
 }
 sourceSelect.addEventListener('change', updateSource);
+sellerUploadMode?.addEventListener('change', () => {
+  const config = sourceConfig[sourceSelect.value];
+  fileGuide.textContent = currentSellerUploadMode() === 'patch'
+    ? `부분 갱신 · ${config.name}에서 수정한 파일 ${config.files > 1 ? '1개 이상' : '1개'}만 올려도 됩니다.`
+    : `전체 교체 · ${config.guide}`;
+  renderFiles(selectedFiles);
+});
 
 const fileInput = document.getElementById('mock-file');
 const dropZone = document.getElementById('drop-zone');
@@ -3547,9 +3589,11 @@ fileInput.addEventListener('change', () => renderFiles(fileInput.files));
 function renderFiles(files) {
   const config = sourceConfig[sourceSelect.value];
   selectedFiles = Array.from(files || []).slice(0, config.files);
+  const required = requiredUploadFileCount();
   fileSlots.innerHTML = Array.from({length:config.files},(_,i)=>{
     const file = selectedFiles[i];
-    return `<div><i>${file?'✓':i+1}</i><span><b>${file?file.name:`파일 ${i+1}`}</b><em>${file?`${(file.size/1024/1024).toFixed(1)}MB · 업로드 준비됨`:'선택된 파일 없음'}</em></span><button type="button" class="slot-button">${file?'교체':'파일 선택'}</button></div>`;
+    const optional = i >= required;
+    return `<div><i>${file?'✓':i+1}</i><span><b>${file?file.name:`파일 ${i+1}${optional ? ' · 선택' : ' · 필수'}`}</b><em>${file?`${(file.size/1024/1024).toFixed(1)}MB · 업로드 준비됨`:optional?'부분 갱신에서는 생략 가능':'선택된 파일 없음'}</em></span><button type="button" class="slot-button">${file?'교체':'파일 선택'}</button></div>`;
   }).join('');
 }
 
@@ -3565,13 +3609,16 @@ function showUploadProgress({percent = 0, title = '처리 중', detail = ''} = {
 
 uploadButton.addEventListener('click', async () => {
   const config = sourceConfig[sourceSelect.value];
-  const supported = ['sellpia','smartstore','makeshop','ably','survey'].includes(sourceSelect.value);
+  const supported = ['sellpia','smartstore','makeshop','ably'].includes(sourceSelect.value) || sourceSelect.value === 'survey';
   if (!supported) {
     showToast('이 원본은 아직 업로드할 수 없습니다.');
     return;
   }
-  if (selectedFiles.length !== config.files) {
-    showToast(`${config.name} 파일 ${config.files}개를 모두 선택해주세요.`);
+  const requiredFiles = requiredUploadFileCount();
+  if (selectedFiles.length < requiredFiles || (requiredFiles === config.files && selectedFiles.length !== config.files)) {
+    showToast(isSellerUploadSource() && currentSellerUploadMode() === 'patch'
+      ? `${config.name} 부분 갱신 파일을 1개 이상 선택해주세요.`
+      : `${config.name} 전체 파일 ${config.files}개를 모두 선택해주세요.`);
     return;
   }
   const uploadMethod = sourceSelect.value === 'sellpia'
@@ -3587,9 +3634,10 @@ uploadButton.addEventListener('click', async () => {
     inventory: document.getElementById('upload-field-inventory').checked,
     price: document.getElementById('upload-field-price').checked,
     basic: document.getElementById('upload-field-basic').checked,
-    status: document.getElementById('upload-field-status').checked
+    status: document.getElementById('upload-field-status').checked,
+    mode: isSellerUploadSource() ? currentSellerUploadMode() : 'full'
   };
-  if (sourceSelect.value !== 'survey' && !Object.values(fields).some(Boolean)) {
+  if (sourceSelect.value !== 'survey' && ![fields.inventory, fields.price, fields.basic, fields.status].some(Boolean)) {
     showToast('갱신할 항목을 하나 이상 선택해주세요.');
     return;
   }
@@ -3604,7 +3652,9 @@ uploadButton.addEventListener('click', async () => {
       ? '헤더, 행번호, SKU 중복을 검사합니다.'
       : sourceSelect.value === 'survey'
         ? '셀피아 SKU, 자사코드, 조사수량 헤더를 검사합니다.'
-        : '헤더와 상품·옵션 코드 중복을 검사합니다.'
+        : fields.mode === 'patch'
+          ? '부분 갱신 키를 검사합니다. 파일에 없는 기존 판매처 상품은 삭제하지 않습니다.'
+          : '전체 교체용 헤더와 상품·옵션 코드 중복을 검사합니다.'
   });
   try {
     const result = sourceSelect.value === 'sellpia'
@@ -3632,9 +3682,13 @@ uploadButton.addEventListener('click', async () => {
       title:sourceSelect.value === 'sellpia' ? '업로드·매트릭스 재구성 완료' : 'DB 업로드 완료',
       detail:sourceSelect.value === 'sellpia'
         ? `${formatNumber(result.rowCount)}개 최신 셀피아 SKU로 매트릭스를 완전히 교체했습니다.`
-        : `${formatNumber(result.rowCount)}개 ${rowLabel}을 새 스냅샷으로 저장했습니다.`
+        : result.uploadMode === 'patch'
+          ? `업로드 ${formatNumber(result.uploadedRowCount)}개만 갱신하고, 최신 판매처 원본 ${formatNumber(result.rowCount)}개를 유지했습니다.`
+          : `${formatNumber(result.rowCount)}개 ${rowLabel}으로 판매처 원본을 전체 교체했습니다.`
     });
-    showToast(`${config.name} ${formatNumber(result.rowCount)}개 ${rowLabel} 업로드 완료`);
+    showToast(result.uploadMode === 'patch'
+      ? `${config.name} ${formatNumber(result.uploadedRowCount)}개 부분 갱신 완료`
+      : `${config.name} ${formatNumber(result.rowCount)}개 ${rowLabel} 업로드 완료`);
     if (sourceSelect.value === 'survey') {
       inventoryState.loaded = false;
       await loadInventorySurvey();
