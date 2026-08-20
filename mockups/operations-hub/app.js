@@ -3235,6 +3235,8 @@ async function collectSellerExportFilteredSkus() {
       }
     }
     sellerExportState.filteredSkus = skus;
+    const filteredCountNode = document.getElementById('seller-export-filtered-count');
+    if (filteredCountNode && !sellerExportModal.hidden) filteredCountNode.textContent = `현재 조건 ${formatNumber(skus.length)}개 SKU`;
     return skus;
   })().finally(() => { sellerExportState.filteredSkusPromise = null; });
   return sellerExportState.filteredSkusPromise;
@@ -3359,7 +3361,9 @@ function openSellerExport({action = 'export', rows = []} = {}) {
   const filteredCount = sellerExportState.filter.codeListSkus.length
     ? sellerExportState.filter.codeListSkus.length
     : sellerExportState.filter.total;
-  document.getElementById('seller-export-filtered-count').textContent = `현재 조건 ${formatNumber(filteredCount)}개 SKU`;
+  document.getElementById('seller-export-filtered-count').textContent = matrixState.loading
+    ? '현재 조건 SKU 확인 중'
+    : `현재 조건 ${formatNumber(filteredCount)}개 SKU`;
   document.getElementById('seller-export-selected-count').textContent = skus.length ? `체크한 ${formatNumber(skus.length)}개 SKU` : '체크한 SKU 없음';
   const selectedScope = document.getElementById('seller-export-selected-scope');
   selectedScope.disabled = !skus.length;
