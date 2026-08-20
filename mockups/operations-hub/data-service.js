@@ -287,6 +287,40 @@
     return { rows: await attachProductMetadata(data || []), count: count || 0, page: safePage, pageSize: PAGE_SIZE };
   }
 
+  async function loadMatrixExportChunk({
+    offset = 0,
+    limit = 1000,
+    search = '',
+    searchSources = ['sellpia','smartstore','makeshop','ably'],
+    status = 'all',
+    sort = 'sku_asc',
+    advancedFilter = null,
+    skus = []
+  } = {}) {
+    const filterPayload = advancedFilter && typeof advancedFilter === 'object'
+      ? {
+          logic:String(advancedFilter.logic || 'and').toLowerCase() === 'or' ? 'or' : 'and',
+          conditions:Array.isArray(advancedFilter.conditions) ? advancedFilter.conditions.slice(0, 12) : []
+        }
+      : {logic:'and', conditions:[]};
+    const {data, error} = await db.rpc('export_operations_hub_matrix_chunk', {
+      p_offset:Math.max(0, Math.trunc(Number(offset) || 0)),
+      p_limit:Math.max(1, Math.min(Math.trunc(Number(limit) || 1000), 1000)),
+      p_search:normalizedSearch(search),
+      p_search_sources:Array.isArray(searchSources) ? searchSources : [],
+      p_status:cleanText(status) || 'all',
+      p_sort:cleanText(sort) || 'sku_asc',
+      p_filter:filterPayload,
+      p_skus:[...new Set((skus || []).map(cleanText).filter(Boolean))].slice(0, 1000)
+    });
+    if (error) throw error;
+    return {
+      rows:Array.isArray(data?.rows) ? data.rows : [],
+      offset:Number(data?.offset || offset || 0),
+      limit:Number(data?.limit || limit || 1000)
+    };
+  }
+
   async function loadSourceStatus() {
     const { data, error } = await db
       .from('operations_hub_source_status')
@@ -1075,6 +1109,7 @@
   global.SystemV3Data = Object.freeze({
     pageSize: PAGE_SIZE,
     loadProducts,
+    loadMatrixExportChunk,
     loadListingGraph,
     saveListingComponent,
     deactivateListingComponent,

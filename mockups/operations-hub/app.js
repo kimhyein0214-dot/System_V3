@@ -81,6 +81,7 @@ let sellpiaSavingCount = 0;
 let sellpiaSaveError = '';
 const SELLPIA_AUTOSAVE_DELAY_MS = 450;
 const liveData = window.SystemV3Data;
+const matrixCsv = window.SystemV3MatrixCsv;
 const matrixState = {page:1, search:'', searchSources:['sellpia','smartstore','makeshop','ably'], status:'all', sort:'sku_asc', advancedFilter:{logic:'and', conditions:[]}, total:0, loading:false, requestId:0, codeListSkus:[], codeListRows:[], codeListName:''};
 const multiLinkState = {page:1, pageSize:50, search:'', source:'all', relationType:'complex', total:0, loading:false, requestId:0, rows:[], selected:null, loaded:false};
 const mappingSyncState = {displayedVersion:'', checking:false, autoRefreshing:false, latest:null};
@@ -2907,6 +2908,145 @@ document.getElementById('queue-export').addEventListener('click', () => openSell
 document.getElementById('seller-export-close').addEventListener('click', closeSellerExport);
 document.getElementById('seller-export-cancel').addEventListener('click', closeSellerExport);
 document.getElementById('seller-export-run').addEventListener('click', runSellerExport);
+
+const matrixCsvModal = document.getElementById('matrix-csv-modal');
+const matrixCsvState = {running:false, cancelRequested:false};
+
+function matrixCsvFilterSummary() {
+  if (matrixState.codeListRows.length) {
+    return `${matrixState.codeListName || '엑셀 코드목록'} · 입력 행 순서와 중복, 미발견 행을 그대로 저장합니다.`;
+  }
+  const parts = [];
+  if (matrixState.search) parts.push(`검색 “${matrixState.search}”`);
+  if (matrixState.searchSources.length < 4) parts.push(`검색처 ${matrixState.searchSources.map(source => CHANNEL_LABELS[source] || (source === 'sellpia' ? '셀피아' : source)).join('·')}`);
+  const statusLabels = {all:'전체 연결상태', attention:'미매칭+검토', connected:'연결 완료', review:'검토 필요', unmatched:'미매칭'};
+  parts.push(statusLabels[matrixState.status] || matrixState.status);
+  if (matrixState.advancedFilter.conditions.length) parts.push(`상세조건 ${matrixState.advancedFilter.conditions.length}개 ${matrixState.advancedFilter.logic === 'or' ? 'OR' : 'AND'}`);
+  const sortLabels = {sku_asc:'SKU 오름차순', stock_desc:'재고 많은 순', price_desc:'가격 높은 순', updated_desc:'최근 갱신 순'};
+  parts.push(sortLabels[matrixState.sort] || matrixState.sort);
+  return parts.join(' · ');
+}
+
+function showMatrixCsvProgress(percent, title, detail) {
+  const panel = document.getElementById('matrix-csv-progress');
+  panel.hidden = false;
+  const safePercent = Math.max(0, Math.min(100, Math.round(percent)));
+  document.getElementById('matrix-csv-progress-title').textContent = title;
+  document.getElementById('matrix-csv-progress-percent').textContent = `${safePercent}%`;
+  document.getElementById('matrix-csv-progress-bar').style.width = `${safePercent}%`;
+  document.getElementById('matrix-csv-progress-detail').textContent = detail;
+}
+
+function openMatrixCsvExport() {
+  if (!matrixCsv || !liveData?.loadMatrixExportChunk) {
+    showToast('CSV 내보내기 모듈을 불러오지 못했습니다. 새로고침 후 다시 시도해주세요.');
+    return;
+  }
+  matrixCsvState.cancelRequested = false;
+  document.getElementById('matrix-csv-count').textContent = `${formatNumber(matrixState.total)}행`;
+  document.getElementById('matrix-csv-filter-summary').textContent = matrixCsvFilterSummary();
+  document.getElementById('matrix-csv-progress').hidden = true;
+  document.getElementById('matrix-csv-run').disabled = matrixState.total === 0;
+  matrixCsvModal.hidden = false;
+}
+
+function closeMatrixCsvExport() {
+  if (matrixCsvState.running) {
+    matrixCsvState.cancelRequested = true;
+    showMatrixCsvProgress(0, '취소 요청됨', '현재 데이터 묶음이 끝나면 CSV 생성을 중단합니다.');
+    return;
+  }
+  matrixCsvModal.hidden = true;
+}
+
+function matrixCsvFileName(codeListMode) {
+  const timestamp = new Date().toISOString().replace(/[-:T]/g, '').slice(0, 12);
+  const base = codeListMode && matrixState.codeListName
+    ? matrixState.codeListName.replace(/\.[^.]+$/, '').replace(/[\\/:*?"<>|]+/g, '_').slice(0, 60)
+    : '상세필터';
+  return `SystemV3_${base}_${timestamp}.csv`;
+}
+
+async function loadCodeListCsvChunk(offset, limit) {
+  const codeRows = matrixState.codeListRows.slice(offset, offset + limit).map(item => ({...item}));
+  const skus = [...new Set(codeRows.map(item => String(item.sellpia_sku_code || '').trim()).filter(Boolean))];
+  const result = skus.length
+    ? await liveData.loadMatrixExportChunk({offset:0, limit:Math.max(1, skus.length), status:'all', advancedFilter:{logic:'and', conditions:[]}, skus})
+    : {rows:[]};
+  const bySku = new Map((result.rows || []).map(row => [String(row.sellpia_sku_code || '').trim(), row]));
+  return codeRows.map(codeRow => {
+    const product = bySku.get(String(codeRow.sellpia_sku_code || '').trim());
+    return product
+      ? {...product, __codeList:codeRow}
+      : {sellpia_sku_code:'', __codeList:codeRow, __codeListPlaceholder:true};
+  });
+}
+
+async function runMatrixCsvExport() {
+  if (matrixCsvState.running || !matrixState.total) return;
+  const codeListMode = matrixState.codeListRows.length > 0;
+  const scope = matrixCsvModal.querySelector('input[name="matrix-csv-scope"]:checked')?.value || 'visible';
+  const columns = matrixCsv.buildColumns({scope, view:cloneView(activeView), codeListMode});
+  const chunks = [matrixCsv.serializeHeader(columns)];
+  const total = matrixState.total;
+  const chunkSize = codeListMode ? 500 : 1000;
+  const runButton = document.getElementById('matrix-csv-run');
+  const closeButton = document.getElementById('matrix-csv-close');
+  matrixCsvState.running = true;
+  matrixCsvState.cancelRequested = false;
+  runButton.disabled = true;
+  closeButton.disabled = true;
+  runButton.textContent = 'CSV 생성 중…';
+  let processed = 0;
+  try {
+    showMatrixCsvProgress(1, '서버 조회 준비', `${formatNumber(total)}행을 ${formatNumber(chunkSize)}행 단위로 안전하게 불러옵니다.`);
+    while (processed < total) {
+      if (matrixCsvState.cancelRequested) throw new Error('사용자가 CSV 생성을 취소했습니다.');
+      const rows = codeListMode
+        ? await loadCodeListCsvChunk(processed, chunkSize)
+        : (await liveData.loadMatrixExportChunk({
+            offset:processed,
+            limit:Math.min(chunkSize, total - processed),
+            search:matrixState.search,
+            searchSources:[...matrixState.searchSources],
+            status:matrixState.status,
+            sort:matrixState.sort,
+            advancedFilter:cloneAdvancedFilter(matrixState.advancedFilter)
+          })).rows;
+      if (!rows.length) break;
+      chunks.push(matrixCsv.serializeRows(rows, columns));
+      processed += rows.length;
+      const percent = total ? Math.min(96, Math.max(2, (processed / total) * 96)) : 96;
+      showMatrixCsvProgress(percent, 'CSV 데이터 작성 중', `${formatNumber(processed)} / ${formatNumber(total)}행 완료 · 현재 조건과 정렬 순서 유지`);
+      await new Promise(resolve => window.setTimeout(resolve, 0));
+    }
+    if (matrixCsvState.cancelRequested) throw new Error('사용자가 CSV 생성을 취소했습니다.');
+    if (!processed) throw new Error('현재 조건으로 내보낼 데이터가 없습니다.');
+    showMatrixCsvProgress(98, '파일 저장 준비', `${formatNumber(processed)}행을 한글·코드 보호 형식으로 묶고 있습니다.`);
+    const bytes = matrixCsv.downloadChunks(chunks, matrixCsvFileName(codeListMode));
+    showMatrixCsvProgress(100, 'CSV 저장 완료', `${formatNumber(processed)}행 · ${(bytes / 1024 / 1024).toFixed(1)}MB 파일을 내려받았습니다.`);
+    showToast(`현재 결과 ${formatNumber(processed)}행 CSV 저장 완료`);
+  } catch (error) {
+    const cancelled = matrixCsvState.cancelRequested || /취소/.test(String(error?.message || error));
+    showMatrixCsvProgress(0, cancelled ? 'CSV 생성 취소' : 'CSV 생성 실패', cancelled ? `${formatNumber(processed)}행 처리 후 중단했습니다. 파일은 저장되지 않았습니다.` : (error?.message || String(error)));
+    if (!cancelled) {
+      console.error('matrix csv export failed', error);
+      showToast(`CSV 저장 실패: ${error?.message || error}`);
+    }
+  } finally {
+    matrixCsvState.running = false;
+    matrixCsvState.cancelRequested = false;
+    runButton.disabled = false;
+    closeButton.disabled = false;
+    runButton.textContent = 'CSV 만들기';
+  }
+}
+
+document.getElementById('matrix-csv-btn').addEventListener('click', openMatrixCsvExport);
+document.getElementById('matrix-csv-close').addEventListener('click', closeMatrixCsvExport);
+document.getElementById('matrix-csv-cancel').addEventListener('click', closeMatrixCsvExport);
+document.getElementById('matrix-csv-run').addEventListener('click', runMatrixCsvExport);
+matrixCsvModal.addEventListener('click', event => { if (event.target === matrixCsvModal) closeMatrixCsvExport(); });
 document.getElementById('queue-confirm-applied').addEventListener('click', async event => {
   const rows = selectedQueueRows().filter(row => row.status === 'exported');
   if (!rows.length || !window.confirm(`${rows.length}건이 판매처에 실제 업로드 완료되었음을 확인할까요?`)) return;
@@ -3361,6 +3501,7 @@ function showToast(message) {
 
 document.addEventListener('keydown', event => {
   if (event.key === 'Escape' && !sellerExportModal.hidden) closeSellerExport();
+  if (event.key === 'Escape' && !matrixCsvModal.hidden) closeMatrixCsvExport();
   if (event.key === 'Escape' && !viewSettingsModal.hidden) closeViewSettings();
   if (event.key === 'Escape' && !advancedFilterModal.hidden) closeAdvancedFilter();
   if (event.key === 'Escape' && !codeListModal.hidden) closeCodeListModal();
