@@ -3223,7 +3223,9 @@ async function collectSellerExportFilteredSkus() {
     } else {
       let offset = 0;
       const chunkSize = 400;
-      while (offset < filter.total) {
+      let firstChunk = true;
+      while (firstChunk || offset < filter.total) {
+        firstChunk = false;
         const result = await loadMatrixCsvChunk({...baseRequest, offset, limit:chunkSize, skus:[]});
         appendRows(result.rows);
         const loaded = result.rows?.length || 0;

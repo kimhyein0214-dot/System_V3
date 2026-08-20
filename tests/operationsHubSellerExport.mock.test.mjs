@@ -50,6 +50,7 @@ assert.match(data, /loadSellerDraftRows\(\{sources = \[\], statuses = \['pending
 assert.match(data, /sellpia_sku_code,status,field_key[^]*?selectedSkus\.has\(cleanText\(row\.sellpia_sku_code\)\)/, 'draft lookup must filter saved changes by Sellpia SKU');
 assert.match(app, /matrixHasActiveExportFilter\(\)[^]*?defaultScope = matrixHasActiveExportFilter\(\) \? 'filtered'/, 'an active matrix filter must become the default export scope');
 assert.match(app, /scope === 'selected'[^]*?scope === 'filtered'[^]*?collectSellerExportFilteredSkus/, 'checked and filtered SKU scopes must resolve separately');
+assert.match(app, /let firstChunk = true[^]*?while \(firstChunk \|\| offset < filter\.total\)/, 'filtered export must query once even when the matrix total is still loading');
 assert.match(app, /validateSellerDraftsForExport\(sources, scopeSkus\)/, 'export validation must receive the resolved SKU scope');
 assert.match(app, /stageSellerInventoryDraftBatch[^]*?loadLiveMatrix/, 'inventory matching must stop at a reviewable matrix draft');
 assert.match(data, /stageSellerInventoryDraftBatch[^]*?p_after_sku:[^]*?p_batch_size:/, 'the frontend must stage large inventory matches through cursor batches');
