@@ -3595,8 +3595,28 @@ uploadButton.addEventListener('click', async () => {
       : sourceSelect.value === 'survey'
         ? await uploadMethod(selectedFiles[0], showUploadProgress)
         : await uploadMethod(sourceSelect.value, selectedFiles, fields, showUploadProgress);
+    if (sourceSelect.value === 'sellpia') {
+      try {
+        await liveData.waitForSellpiaMatrixRebuild(result.snapshotId, showUploadProgress);
+      } catch (rebuildError) {
+        console.warn('sellpia matrix rebuild is still pending', rebuildError);
+        showUploadProgress({
+          percent:98,
+          title:'업로드 완료 · 매트릭스 재구성 대기',
+          detail:rebuildError?.message || '자동 재구성이 아직 완료되지 않았습니다.'
+        });
+        showToast('셀피아 업로드 완료 · 매트릭스 자동 재구성 대기 중');
+        return;
+      }
+    }
     const rowLabel = ['sellpia','survey'].includes(sourceSelect.value) ? 'SKU' : '상품·옵션';
-    showUploadProgress({percent:100, title:'DB 업로드 완료', detail:`${formatNumber(result.rowCount)}개 ${rowLabel}을 새 스냅샷으로 저장했습니다.`});
+    showUploadProgress({
+      percent:100,
+      title:sourceSelect.value === 'sellpia' ? '업로드·매트릭스 재구성 완료' : 'DB 업로드 완료',
+      detail:sourceSelect.value === 'sellpia'
+        ? `${formatNumber(result.rowCount)}개 최신 셀피아 SKU로 매트릭스를 완전히 교체했습니다.`
+        : `${formatNumber(result.rowCount)}개 ${rowLabel}을 새 스냅샷으로 저장했습니다.`
+    });
     showToast(`${config.name} ${formatNumber(result.rowCount)}개 ${rowLabel} 업로드 완료`);
     if (sourceSelect.value === 'survey') {
       inventoryState.loaded = false;

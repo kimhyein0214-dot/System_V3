@@ -889,8 +889,23 @@
       range
     });
     const header = rows[0] || [];
-    if (cleanText(header[0]) !== '#' || cleanText(header[2]) !== '상품코드' || cleanText(header[5]) !== '상품명') {
-      throw new Error(`${file.name}: 셀피아 원본 헤더가 아닙니다. A1=#, C1=상품코드, F1=상품명을 확인해주세요.`);
+    const expectedHeaders = new Map([
+      [0, '#'],
+      [2, '상품코드'],
+      [5, '상품명'],
+      [26, '매입처코드'],
+      [27, '매입처'],
+      [28, '매입처그룹'],
+      [29, '매입처주소'],
+      [30, '상가명'],
+      [31, '매입처전화'],
+      [32, '매입상품명'],
+      [33, '매입옵션명']
+    ]);
+    const invalidHeader = [...expectedHeaders].find(([index, label]) => cleanText(header[index]) !== label);
+    if (invalidHeader) {
+      const [index, label] = invalidHeader;
+      throw new Error(`${file.name}: 셀피아 원본 ${global.XLSX.utils.encode_col(index)}1 헤더가 '${label}'이 아닙니다.`);
     }
     return rows.slice(1).flatMap(row => {
       const sourceRowNo = cleanNumber(row[0]);
@@ -914,6 +929,14 @@
         integrated_available_stock: available,
         safety_stock: cleanNumber(row[38], 0),
         source_row_no: sourceRowNo,
+        supplier_code: cleanText(row[26]) || null,
+        supplier_name: cleanText(row[27]) || null,
+        supplier_group: cleanText(row[28]) || null,
+        supplier_address: cleanText(row[29]) || null,
+        supplier_market_name: cleanText(row[30]) || null,
+        supplier_phone: cleanText(row[31]) || null,
+        purchase_product_name: cleanText(row[32]) || null,
+        purchase_option_name: cleanText(row[33]) || null,
         raw_payload: {
           base_price: salePrice,
           sell_price: salePrice,
@@ -963,7 +986,7 @@
           upload_status: 'uploading',
           uploaded_by: 'system_v1_frontend',
           metadata: {
-            parser_version: 'operations-hub-sellpia-2026.08.12-v1',
+            parser_version: 'operations-hub-sellpia-2026.08.20-v2',
             source_files: selectedFiles.map(file => ({name:file.name, size:file.size})),
             selected_fields: fields,
             row_number_min: normalizedRows[0].source_row_no,
@@ -1227,6 +1250,42 @@
     }
   }
 
+  async function loadSellpiaMatrixSyncStatus() {
+    const {data, error} = await db
+      .from('operations_hub_sellpia_matrix_sync_status')
+      .select('*')
+      .maybeSingle();
+    if (error) throw error;
+    return data || null;
+  }
+
+  async function waitForSellpiaMatrixRebuild(snapshotId, onProgress, options = {}) {
+    const expectedSnapshotId = cleanText(snapshotId);
+    if (!expectedSnapshotId) throw new Error('재구성할 셀피아 스냅샷 ID가 없습니다.');
+    const timeoutMs = Math.max(30000, Number(options.timeoutMs) || 150000);
+    const pollMs = Math.max(1000, Number(options.pollMs) || 2000);
+    const startedAt = Date.now();
+    while (Date.now() - startedAt < timeoutMs) {
+      const status = await loadSellpiaMatrixSyncStatus();
+      if (cleanText(status?.matrix_snapshot_id) === expectedSnapshotId && !status?.rebuild_pending) {
+        onProgress?.({
+          percent:99,
+          title:'매트릭스 전체 재구성 완료',
+          detail:`최신 셀피아 ${Number(status?.matrix_row_count || 0).toLocaleString('ko-KR')}개 SKU 기준으로 재구성했습니다.`
+        });
+        return status;
+      }
+      const elapsedSeconds = Math.max(1, Math.round((Date.now() - startedAt) / 1000));
+      onProgress?.({
+        percent:98,
+        title:'매트릭스 전체 재구성 중',
+        detail:`최신 셀피아 SKU로 행을 교체하고 저장된 매칭코드를 다시 연결하는 중입니다. ${elapsedSeconds}초 경과`
+      });
+      await new Promise(resolve => global.setTimeout(resolve, pollMs));
+    }
+    throw new Error('셀피아 업로드는 완료됐지만 매트릭스 재구성이 아직 대기 중입니다. 잠시 후 DB 새로고침을 눌러주세요.');
+  }
+
   async function loadLatestInventorySurveyRows() {
     const {data:snapshot, error:snapshotError} = await db
       .from('operations_hub_inventory_survey_snapshots')
@@ -1329,6 +1388,8 @@
     confirmChangesApplied,
     uploadSellpiaImage,
     uploadSellpiaSnapshot,
+    loadSellpiaMatrixSyncStatus,
+    waitForSellpiaMatrixRebuild,
     uploadSellerSnapshot,
     uploadInventorySurvey,
     loadInventorySurveyData
