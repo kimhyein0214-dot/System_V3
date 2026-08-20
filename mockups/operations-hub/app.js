@@ -87,6 +87,7 @@ const multiLinkState = {page:1, pageSize:50, search:'', source:'all', relationTy
 const mappingSyncState = {displayedVersion:'', checking:false, autoRefreshing:false, latest:null};
 const matrixRowsBySku = new Map();
 const drawerState = {activeTab:'connections', historyRequestId:0, historySku:'', attributeRequestId:0, priceRequestId:0, tags:null, attributeDraft:null, pricePolicies:null};
+const inventoryState = {loaded:false, loading:false, rows:[], snapshot:null, activityRefreshedAt:'', requestId:0};
 const ATTRIBUTE_OPTIONS = Object.freeze({
   material:['14K','925 실버','써지컬','티타늄','아크릴/투명','실버','기타'],
   productGroup:['부품/소모품','피어싱','귀걸이','목걸이','반지','팔찌/발찌','헤어/잡화','기타'],
@@ -3389,6 +3390,88 @@ document.getElementById('multi-link-refresh').addEventListener('click', async ev
 document.getElementById('multi-link-prev').addEventListener('click', () => {if (multiLinkState.page > 1 && !multiLinkState.loading) {multiLinkState.page -= 1; loadMultiLinks();}});
 document.getElementById('multi-link-next').addEventListener('click', () => {if (multiLinkState.page * multiLinkState.pageSize < multiLinkState.total && !multiLinkState.loading) {multiLinkState.page += 1; loadMultiLinks();}});
 
+function inventoryFilteredRows() {
+  const query = document.getElementById('inventory-search').value.trim().toLowerCase();
+  const activityFilter = document.getElementById('inventory-activity-filter').value;
+  return inventoryState.rows.filter(row => {
+    const matchesSearch = !query || `${row.sellpia_sku_code || ''} ${row.own_code || ''}`.toLowerCase().includes(query);
+    const added = Number(row.picked_qty || 0) + Number(row.shortage_drawer_qty || 0);
+    const matchesActivity = activityFilter === 'all' || (activityFilter === 'changed' ? added > 0 : added === 0);
+    return matchesSearch && matchesActivity;
+  });
+}
+
+function renderInventorySurvey() {
+  const rows = inventoryFilteredRows();
+  const allRows = inventoryState.rows;
+  const snapshot = inventoryState.snapshot;
+  document.getElementById('inventory-snapshot-name').textContent = snapshot?.source_file_name || '업로드된 조사파일 없음';
+  document.getElementById('inventory-snapshot-time').textContent = snapshot
+    ? `${snapshot.survey_date || '-'} 조사 · ${formatLiveTime(snapshot.completed_at)} 업로드`
+    : '원본 업로드에서 재고조사 파일을 등록하세요.';
+  document.getElementById('inventory-metric-skus').textContent = formatNumber(allRows.length);
+  document.getElementById('inventory-metric-counted').textContent = formatNumber(allRows.reduce((sum, row) => sum + Number(row.counted_qty || 0), 0));
+  document.getElementById('inventory-metric-picked').textContent = formatNumber(allRows.reduce((sum, row) => sum + Number(row.picked_qty || 0), 0));
+  document.getElementById('inventory-metric-drawer').textContent = formatNumber(allRows.reduce((sum, row) => sum + Number(row.shortage_drawer_qty || 0), 0));
+  document.getElementById('inventory-metric-actual').textContent = formatNumber(allRows.reduce((sum, row) => sum + Number(row.actual_stock || 0), 0));
+  document.getElementById('inventory-row-count').textContent = `${formatNumber(rows.length)}행 / 전체 ${formatNumber(allRows.length)}행`;
+  document.getElementById('inventory-last-refresh').textContent = `마지막 갱신 ${formatLiveTime(inventoryState.activityRefreshedAt)}`;
+  const liveBadge = document.getElementById('inventory-live-status');
+  liveBadge.textContent = inventoryState.activityRefreshedAt ? '피킹 DB · 1분 갱신' : '피킹 DB 데이터 대기';
+  document.getElementById('inventory-body').innerHTML = rows.length
+    ? rows.map(row => {
+      const picked = Number(row.picked_qty || 0);
+      const drawer = Number(row.shortage_drawer_qty || 0);
+      return `<tr>
+        <td class="code-cell">${escapeHtml(row.sellpia_sku_code)}</td>
+        <td>${escapeHtml(row.own_code || '-')}</td>
+        <td>${formatNumber(row.counted_qty)}</td>
+        <td class="${picked ? 'inventory-added' : 'inventory-zero'}">${formatNumber(picked)}</td>
+        <td class="${drawer ? 'inventory-added' : 'inventory-zero'}">${formatNumber(drawer)}</td>
+        <td class="inventory-actual">${formatNumber(row.actual_stock)}</td>
+        <td class="inventory-event">${formatLiveTime(row.last_event_at)}</td>
+      </tr>`;
+    }).join('')
+    : `<tr><td colspan="7" class="inventory-empty">${snapshot ? '조건에 맞는 SKU가 없습니다.' : '재고조사 파일을 먼저 업로드해주세요.'}</td></tr>`;
+}
+
+async function loadInventorySurvey({silent = false} = {}) {
+  if (inventoryState.loading || !liveData?.loadInventorySurveyData) return;
+  inventoryState.loading = true;
+  const requestId = ++inventoryState.requestId;
+  const panel = document.querySelector('.inventory-table-panel');
+  if (!silent) panel.classList.add('inventory-loading');
+  try {
+    const result = await liveData.loadInventorySurveyData();
+    if (requestId !== inventoryState.requestId) return;
+    inventoryState.rows = result.rows || [];
+    inventoryState.snapshot = result.snapshot || null;
+    inventoryState.activityRefreshedAt = result.activityRefreshedAt || '';
+    inventoryState.loaded = true;
+    renderInventorySurvey();
+  } catch (error) {
+    console.error('inventory survey load failed', error);
+    document.getElementById('inventory-live-status').textContent = '피킹 DB 연결 오류';
+    document.getElementById('inventory-body').innerHTML = `<tr><td colspan="7" class="inventory-empty">${escapeHtml(error?.message || '재고조사 데이터를 불러오지 못했습니다.')}</td></tr>`;
+    if (!silent) showToast('재고조사 데이터를 불러오지 못했습니다.');
+  } finally {
+    inventoryState.loading = false;
+    panel.classList.remove('inventory-loading');
+  }
+}
+
+document.getElementById('inventory-search').addEventListener('input', renderInventorySurvey);
+document.getElementById('inventory-activity-filter').addEventListener('change', renderInventorySurvey);
+document.getElementById('inventory-refresh').addEventListener('click', () => loadInventorySurvey());
+document.getElementById('inventory-upload-open').addEventListener('click', () => {
+  sourceSelect.value = 'survey';
+  updateSource();
+  showPage('upload');
+});
+window.setInterval(() => {
+  if (document.getElementById('inventory').classList.contains('active-page')) loadInventorySurvey({silent:true});
+}, 60000);
+
 function showPage(pageId) {
   document.querySelectorAll('.page').forEach(page => page.classList.remove('active-page'));
   document.querySelectorAll('.nav-item').forEach(item => item.classList.toggle('active', item.dataset.page === pageId));
@@ -3396,6 +3479,7 @@ function showPage(pageId) {
   if (target) target.classList.add('active-page');
   if (pageId === 'jobs') loadChangeQueue();
   if (pageId === 'multi-links' && !multiLinkState.loaded) loadMultiLinks({resetPage:true});
+  if (pageId === 'inventory') loadInventorySurvey({silent:inventoryState.loaded});
   document.querySelector('.content-area').scrollTop = 0;
 }
 
@@ -3416,11 +3500,11 @@ const uploadCapabilityBadge = document.getElementById('upload-capability-badge')
 let selectedFiles = [];
 
 function setUploadCapability() {
-  const supported = ['sellpia','smartstore','makeshop','ably'].includes(sourceSelect.value);
+  const supported = ['sellpia','smartstore','makeshop','ably','survey'].includes(sourceSelect.value);
   const label = sourceConfig[sourceSelect.value]?.name || '원본';
   uploadButton.disabled = !supported;
   uploadButton.textContent = supported ? 'DB 업로드 시작' : '업로드 연결 예정';
-  uploadCapabilityBadge.textContent = supported ? `${label} 실데이터 업로드 연결` : '재고조사 업로드 연결 예정';
+  uploadCapabilityBadge.textContent = supported ? `${label} 실데이터 업로드 연결` : '업로드 연결 예정';
 }
 
 function updateSource() {
@@ -3430,6 +3514,7 @@ function updateSource() {
   sourceInfo.innerHTML = `<span class="channel-logo ${config.cls}">${config.initial}</span><div><b>${config.name}</b><p>${config.detail}</p></div><em>필수</em>`;
   fileGuide.textContent = config.guide;
   fileSlots.innerHTML = Array.from({length:config.files},(_,i)=>`<div><i>${i+1}</i><span><b>파일 ${i+1}</b><em>선택된 파일 없음</em></span><button type="button" class="slot-button">파일 선택</button></div>`).join('');
+  document.querySelector('.upload-options').hidden = sourceSelect.value === 'survey';
   setUploadCapability();
 }
 sourceSelect.addEventListener('change', updateSource);
@@ -3463,16 +3548,20 @@ function showUploadProgress({percent = 0, title = '처리 중', detail = ''} = {
 
 uploadButton.addEventListener('click', async () => {
   const config = sourceConfig[sourceSelect.value];
-  const supported = ['sellpia','smartstore','makeshop','ably'].includes(sourceSelect.value);
+  const supported = ['sellpia','smartstore','makeshop','ably','survey'].includes(sourceSelect.value);
   if (!supported) {
-    showToast('재고조사 파일 업로드는 재고조사 화면과 함께 연결할 예정입니다.');
+    showToast('이 원본은 아직 업로드할 수 없습니다.');
     return;
   }
   if (selectedFiles.length !== config.files) {
     showToast(`${config.name} 파일 ${config.files}개를 모두 선택해주세요.`);
     return;
   }
-  const uploadMethod = sourceSelect.value === 'sellpia' ? liveData?.uploadSellpiaSnapshot : liveData?.uploadSellerSnapshot;
+  const uploadMethod = sourceSelect.value === 'sellpia'
+    ? liveData?.uploadSellpiaSnapshot
+    : sourceSelect.value === 'survey'
+      ? liveData?.uploadInventorySurvey
+      : liveData?.uploadSellerSnapshot;
   if (!uploadMethod) {
     showToast('업로드 모듈을 불러오지 못했습니다. 새로고침 후 다시 시도해주세요.');
     return;
@@ -3483,7 +3572,7 @@ uploadButton.addEventListener('click', async () => {
     basic: document.getElementById('upload-field-basic').checked,
     status: document.getElementById('upload-field-status').checked
   };
-  if (!Object.values(fields).some(Boolean)) {
+  if (sourceSelect.value !== 'survey' && !Object.values(fields).some(Boolean)) {
     showToast('갱신할 항목을 하나 이상 선택해주세요.');
     return;
   }
@@ -3494,17 +3583,29 @@ uploadButton.addEventListener('click', async () => {
   showUploadProgress({
     percent:1,
     title:'파일 확인 중',
-    detail:sourceSelect.value === 'sellpia' ? '헤더, 행번호, SKU 중복을 검사합니다.' : '헤더와 상품·옵션 코드 중복을 검사합니다.'
+    detail:sourceSelect.value === 'sellpia'
+      ? '헤더, 행번호, SKU 중복을 검사합니다.'
+      : sourceSelect.value === 'survey'
+        ? '셀피아 SKU, 자사코드, 조사수량 헤더를 검사합니다.'
+        : '헤더와 상품·옵션 코드 중복을 검사합니다.'
   });
   try {
     const result = sourceSelect.value === 'sellpia'
       ? await uploadMethod(selectedFiles, fields, showUploadProgress)
-      : await uploadMethod(sourceSelect.value, selectedFiles, fields, showUploadProgress);
-    const rowLabel = sourceSelect.value === 'sellpia' ? 'SKU' : '상품·옵션';
+      : sourceSelect.value === 'survey'
+        ? await uploadMethod(selectedFiles[0], showUploadProgress)
+        : await uploadMethod(sourceSelect.value, selectedFiles, fields, showUploadProgress);
+    const rowLabel = ['sellpia','survey'].includes(sourceSelect.value) ? 'SKU' : '상품·옵션';
     showUploadProgress({percent:100, title:'DB 업로드 완료', detail:`${formatNumber(result.rowCount)}개 ${rowLabel}을 새 스냅샷으로 저장했습니다.`});
     showToast(`${config.name} ${formatNumber(result.rowCount)}개 ${rowLabel} 업로드 완료`);
-    await refreshLiveData({resetPage:true});
-    window.setTimeout(() => showPage('matching'), 500);
+    if (sourceSelect.value === 'survey') {
+      inventoryState.loaded = false;
+      await loadInventorySurvey();
+      window.setTimeout(() => showPage('inventory'), 350);
+    } else {
+      await refreshLiveData({resetPage:true});
+      window.setTimeout(() => showPage('matching'), 500);
+    }
   } catch (error) {
     console.error(`${sourceSelect.value} snapshot upload failed`, error);
     showUploadProgress({percent:0, title:'업로드 실패', detail:error?.message || '원본 파일을 다시 확인해주세요.'});

@@ -3,6 +3,8 @@
 
   const SUPABASE_URL = 'https://bpgvqmtsjgegnrdzmpep.supabase.co';
   const SUPABASE_KEY = 'sb_publishable__NVp6Ra227_e1TQqQE40oA_O2PVwv5C';
+  const PICKING_SUPABASE_URL = 'https://vgxocngpykhlkosiaeew.supabase.co';
+  const PICKING_SUPABASE_KEY = 'sb_publishable_XVnKGJo66GZiYTq5Ivu8dA_SjBVvX0g';
   const PAGE_SIZE = 50;
   const MATRIX_SELECT = 'sellpia_sku_code,own_code,image_url,display_name,smartstore_name,smartstore_option_name,smartstore_product_code,smartstore_option_code,smartstore_match_tier,smartstore_match_score,smartstore_listing_count,smartstore_name_is_draft,smartstore_sale_status,makeshop_name,makeshop_option_name,makeshop_product_code,makeshop_option_code,makeshop_match_tier,makeshop_match_score,makeshop_listing_count,makeshop_name_is_draft,makeshop_sale_status,ably_name,ably_option_name,ably_product_code,ably_option_code,ably_match_tier,ably_match_score,ably_listing_count,ably_name_is_draft,ably_sale_status,updated_at,sellpia_product_name,sellpia_option_name,sellpia_own_code,sellpia_current_stock,sellpia_available_stock,sellpia_safety_stock,sellpia_sale_price,sellpia_inventory_at,smartstore_stock,smartstore_price,smartstore_inventory_at,makeshop_stock,makeshop_price,makeshop_inventory_at,ably_stock,ably_price,ably_inventory_at,overall_status,sellpia_override_image_url,sellpia_override_updated_at';
 
@@ -16,6 +18,9 @@
   }
 
   const db = requireClient();
+  const pickingDb = global.supabase.createClient(PICKING_SUPABASE_URL, PICKING_SUPABASE_KEY, {
+    auth: { persistSession: false, autoRefreshToken: false, detectSessionInUrl: false }
+  });
   const sellerParsers = global.SystemV3SellerParsers;
 
   function normalizedSearch(value) {
@@ -1106,6 +1111,182 @@
     }
   }
 
+  function normalizeSurveyHeader(value) {
+    return cleanText(value).toLowerCase().replace(/[\s_\-./()[\]{}]+/g, '');
+  }
+
+  function findSurveyColumn(header, aliases) {
+    const normalized = header.map(normalizeSurveyHeader);
+    return normalized.findIndex(value => aliases.includes(value));
+  }
+
+  async function parseInventorySurveyFile(file, onProgress) {
+    if (!global.XLSX) throw new Error('XLSX 파일 해석 모듈을 불러오지 못했습니다.');
+    onProgress?.({percent:5, title:'재고조사 파일 읽는 중', detail:`${file.name}의 헤더와 수량을 확인합니다.`});
+    const workbook = global.XLSX.read(await file.arrayBuffer(), {type:'array', cellDates:false});
+    const worksheet = workbook.Sheets[workbook.SheetNames[0]];
+    if (!worksheet?.['!ref']) throw new Error('첫 번째 시트에 데이터가 없습니다.');
+    const rows = global.XLSX.utils.sheet_to_json(worksheet, {header:1, raw:false, defval:'', blankrows:false});
+    const skuAliases = ['셀피아sku','셀피아상품코드','상품코드','품목코드','sku'];
+    const ownCodeAliases = ['자사코드','자체상품코드','자사상품코드','관리코드'];
+    const quantityAliases = ['조사수량','실사수량','실재고수량','실재고','재고수량','수량'];
+    let headerRowIndex = -1;
+    let skuIndex = -1;
+    let ownCodeIndex = -1;
+    let quantityIndex = -1;
+    for (let index = 0; index < Math.min(rows.length, 30); index += 1) {
+      const header = rows[index] || [];
+      const nextSkuIndex = findSurveyColumn(header, skuAliases);
+      const nextQuantityIndex = findSurveyColumn(header, quantityAliases);
+      if (nextSkuIndex >= 0 && nextQuantityIndex >= 0) {
+        headerRowIndex = index;
+        skuIndex = nextSkuIndex;
+        quantityIndex = nextQuantityIndex;
+        ownCodeIndex = findSurveyColumn(header, ownCodeAliases);
+        break;
+      }
+    }
+    if (headerRowIndex < 0) {
+      throw new Error('셀피아 SKU와 조사수량 헤더를 찾지 못했습니다. 헤더명을 확인해주세요.');
+    }
+    const normalizedRows = [];
+    const seen = new Set();
+    for (let index = headerRowIndex + 1; index < rows.length; index += 1) {
+      const row = rows[index] || [];
+      const sku = cleanText(row[skuIndex]);
+      const rawQuantity = cleanText(row[quantityIndex]);
+      if (!sku && !rawQuantity) continue;
+      if (!sku) throw new Error(`${index + 1}행의 셀피아 SKU가 비어 있습니다.`);
+      const countedQty = cleanNumber(rawQuantity);
+      if (!Number.isInteger(countedQty) || countedQty < 0) {
+        throw new Error(`${index + 1}행 ${sku}의 조사수량이 0 이상의 정수가 아닙니다.`);
+      }
+      if (seen.has(sku)) throw new Error(`중복 셀피아 SKU가 있습니다: ${sku}`);
+      seen.add(sku);
+      normalizedRows.push({
+        sellpia_sku_code:sku,
+        own_code:ownCodeIndex >= 0 ? cleanText(row[ownCodeIndex]) || null : null,
+        counted_qty:countedQty,
+        source_row_no:index + 1,
+        raw_payload:{source_file_name:file.name}
+      });
+    }
+    if (!normalizedRows.length) throw new Error('저장할 재고조사 행이 없습니다.');
+    return {rows:normalizedRows, headerRowNo:headerRowIndex + 1};
+  }
+
+  async function uploadInventorySurvey(file, onProgress) {
+    if (!file) throw new Error('재고조사 파일 1개를 선택해주세요.');
+    const parsed = await parseInventorySurveyFile(file, onProgress);
+    let snapshotId = null;
+    try {
+      const {data:snapshot, error:snapshotError} = await db
+        .from('operations_hub_inventory_survey_snapshots')
+        .insert({
+          source_file_name:file.name,
+          source_file_size:Number(file.size || 0),
+          source_row_count:parsed.rows.length,
+          valid_row_count:0,
+          upload_status:'uploading',
+          uploaded_by:'operations_hub_frontend',
+          metadata:{parser_version:'inventory-survey-2026.08.20-v1', header_row_no:parsed.headerRowNo}
+        })
+        .select('snapshot_id')
+        .single();
+      if (snapshotError) throw snapshotError;
+      snapshotId = snapshot.snapshot_id;
+      const chunkSize = 500;
+      for (let offset = 0; offset < parsed.rows.length; offset += chunkSize) {
+        const chunk = parsed.rows.slice(offset, offset + chunkSize).map(row => ({snapshot_id:snapshotId, ...row}));
+        const {error} = await db.from('operations_hub_inventory_survey_rows').insert(chunk);
+        if (error) throw error;
+        const loaded = Math.min(offset + chunk.length, parsed.rows.length);
+        onProgress?.({
+          percent:15 + Math.round((loaded / parsed.rows.length) * 80),
+          title:'재고조사 DB 저장 중',
+          detail:`${loaded.toLocaleString('ko-KR')} / ${parsed.rows.length.toLocaleString('ko-KR')} SKU 저장 완료`
+        });
+      }
+      const completedAt = new Date().toISOString();
+      const {error:completeError} = await db
+        .from('operations_hub_inventory_survey_snapshots')
+        .update({valid_row_count:parsed.rows.length, upload_status:'ready', completed_at:completedAt})
+        .eq('snapshot_id', snapshotId);
+      if (completeError) throw completeError;
+      onProgress?.({percent:100, title:'재고조사 업로드 완료', detail:'피킹·미송서랍 수량과 결합할 준비가 끝났습니다.'});
+      return {snapshotId, rowCount:parsed.rows.length};
+    } catch (error) {
+      if (snapshotId) {
+        await db.from('operations_hub_inventory_survey_snapshots').update({
+          upload_status:'failed',
+          upload_note:String(error?.message || error).slice(0, 1000),
+          completed_at:new Date().toISOString()
+        }).eq('snapshot_id', snapshotId);
+      }
+      throw error;
+    }
+  }
+
+  async function loadLatestInventorySurveyRows() {
+    const {data:snapshot, error:snapshotError} = await db
+      .from('operations_hub_inventory_survey_snapshots')
+      .select('snapshot_id,survey_date,source_file_name,valid_row_count,completed_at')
+      .eq('upload_status', 'ready')
+      .order('completed_at', {ascending:false})
+      .order('created_at', {ascending:false})
+      .limit(1)
+      .maybeSingle();
+    if (snapshotError) throw snapshotError;
+    if (!snapshot) return {snapshot:null, rows:[]};
+    const rows = [];
+    const chunkSize = 1000;
+    for (let offset = 0; ; offset += chunkSize) {
+      const {data, error} = await db
+        .from('operations_hub_inventory_survey_rows')
+        .select('sellpia_sku_code,own_code,counted_qty,source_row_no')
+        .eq('snapshot_id', snapshot.snapshot_id)
+        .order('source_row_no', {ascending:true})
+        .range(offset, offset + chunkSize - 1);
+      if (error) throw error;
+      rows.push(...(data || []));
+      if (!data || data.length < chunkSize) break;
+    }
+    return {snapshot, rows};
+  }
+
+  async function loadPickingInventoryActivity() {
+    const {data, error} = await pickingDb.rpc('get_system_v3_inventory_activity');
+    if (error) throw error;
+    return data || [];
+  }
+
+  async function loadInventorySurveyData() {
+    const [{snapshot, rows}, activityRows] = await Promise.all([
+      loadLatestInventorySurveyRows(),
+      loadPickingInventoryActivity()
+    ]);
+    const activityBySku = new Map(activityRows.map(row => [cleanText(row.sellpia_sku_code), row]));
+    const joinedRows = rows.map(row => {
+      const activity = activityBySku.get(cleanText(row.sellpia_sku_code));
+      const pickedQty = Number(activity?.picked_qty || 0);
+      const drawerQty = Number(activity?.shortage_drawer_qty || 0);
+      const countedQty = Number(row.counted_qty || 0);
+      return {
+        ...row,
+        picked_qty:pickedQty,
+        shortage_drawer_qty:drawerQty,
+        actual_stock:countedQty + pickedQty + drawerQty,
+        last_event_at:activity?.last_event_at || null,
+        activity_date:activity?.activity_date || null
+      };
+    });
+    const activityRefreshedAt = activityRows.reduce((latest, row) => {
+      const value = row.refreshed_at || '';
+      return value > latest ? value : latest;
+    }, '');
+    return {snapshot, rows:joinedRows, activityRefreshedAt};
+  }
+
   global.SystemV3Data = Object.freeze({
     pageSize: PAGE_SIZE,
     loadProducts,
@@ -1148,6 +1329,8 @@
     confirmChangesApplied,
     uploadSellpiaImage,
     uploadSellpiaSnapshot,
-    uploadSellerSnapshot
+    uploadSellerSnapshot,
+    uploadInventorySurvey,
+    loadInventorySurveyData
   });
 })(window);

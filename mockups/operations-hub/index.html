@@ -7,7 +7,8 @@
     <title>System V3 · 상품 운영 허브</title>
     <link rel="preconnect" href="https://cdnjs.cloudflare.com" crossorigin>
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/pretendard/1.3.9/static/pretendard.css">
-    <link rel="stylesheet" href="./style.css?v=20260820-filtercsv2">
+    <link rel="stylesheet" href="./style.css?v=20260820-inventory1">
+    <link rel="stylesheet" href="./inventory.css?v=20260820-inventory1">
   </head>
   <body>
     <div class="app-shell">
@@ -285,7 +286,32 @@
               </aside>
             </div>
           </div>
-          <div id="inventory" class="page table-page" data-title="재고조사" data-copy="조사수량과 오늘 피킹·미송서랍 수량을 합산해 실재고를 계산합니다."></div>
+          <div id="inventory" class="page">
+            <div class="page-head">
+              <div><h2>재고조사</h2><p>조사수량 + 오늘 피킹완료 + 현재 미송서랍 완료수량으로 실재고를 계산합니다.</p></div>
+              <div id="inventory-live-status" class="mock-badge">피킹 DB 연결 확인 중</div>
+            </div>
+            <section class="panel inventory-summary-panel">
+              <div class="inventory-summary-head">
+                <div><span>사용 중인 조사파일</span><b id="inventory-snapshot-name">업로드된 조사파일 없음</b><em id="inventory-snapshot-time">원본 업로드에서 재고조사 파일을 등록하세요.</em></div>
+                <div class="inventory-summary-actions"><button id="inventory-upload-open" class="btn" type="button">조사파일 업로드</button><button id="inventory-refresh" class="btn primary" type="button">지금 갱신</button></div>
+              </div>
+              <div class="inventory-metrics">
+                <article><span>조사 SKU</span><strong id="inventory-metric-skus">-</strong></article>
+                <article><span>조사수량 합계</span><strong id="inventory-metric-counted">-</strong></article>
+                <article><span>오늘 피킹완료</span><strong id="inventory-metric-picked">-</strong></article>
+                <article><span>미송서랍 완료</span><strong id="inventory-metric-drawer">-</strong></article>
+                <article class="accent"><span>실재고 합계</span><strong id="inventory-metric-actual">-</strong></article>
+              </div>
+            </section>
+            <section class="panel inventory-table-panel">
+              <div class="inventory-toolbar"><input id="inventory-search" class="search-box" placeholder="셀피아 SKU / 자사코드 검색"><select id="inventory-activity-filter"><option value="all">전체</option><option value="changed">피킹·미송 있음</option><option value="none">추가수량 없음</option></select><span id="inventory-row-count">0행</span></div>
+              <div class="inventory-table-wrap">
+                <table class="data-table inventory-table"><thead><tr><th>셀피아 SKU</th><th>자사코드</th><th>조사수량</th><th>오늘 피킹완료</th><th>미송서랍 내 수량</th><th>실재고수량</th><th>마지막 이벤트</th></tr></thead><tbody id="inventory-body"><tr><td colspan="7" class="inventory-empty">재고조사 데이터를 불러오는 중입니다.</td></tr></tbody></table>
+              </div>
+              <div class="inventory-foot"><span>피킹 DB는 1분마다 집계되고 이 화면은 60초마다 자동 갱신됩니다.</span><b id="inventory-last-refresh">마지막 갱신 -</b></div>
+            </section>
+          </div>
           <div id="channels" class="page table-page" data-title="판매처 동기화" data-copy="판매처별 재고·가격 반영 범위와 실행 상태를 관리합니다."></div>
           <div id="attributes" class="page table-page" data-title="상품 속성·태그" data-copy="소재·상품군·형태와 운영 태그를 상품코드 기준으로 관리합니다."></div>
           <div id="jobs" class="page queue-page">
@@ -452,10 +478,10 @@
     <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.112.3/dist/umd/supabase.js"></script>
-    <script src="./seller-source-parsers.js?v=20260820-filtercsv2"></script>
-    <script src="./seller-export-adapter.js?v=20260820-filtercsv2"></script>
-    <script src="./matrix-csv-export.js?v=20260820-filtercsv2"></script>
-    <script src="./data-service.js?v=20260820-filtercsv2"></script>
-    <script src="./app.js?v=20260820-filtercsv2"></script>
+    <script src="./seller-source-parsers.js?v=20260820-inventory1"></script>
+    <script src="./seller-export-adapter.js?v=20260820-inventory1"></script>
+    <script src="./matrix-csv-export.js?v=20260820-inventory1"></script>
+    <script src="./data-service.js?v=20260820-inventory1"></script>
+    <script src="./app.js?v=20260820-inventory1"></script>
   </body>
 </html>
