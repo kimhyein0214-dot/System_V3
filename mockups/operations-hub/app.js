@@ -839,9 +839,46 @@ function calculateLocalPriceRule(basePrice, tag) {
   return Math.max(0, value);
 }
 
+function priceRuleTagSimpleMode(tag) {
+  if (tag?.replace_price !== null && tag?.replace_price !== undefined) return {mode:'fixed', value:Number(tag.replace_price)};
+  const value = Number(tag?.modify_value || 0);
+  if (tag?.modify_type === 'percent') return {mode:value < 0 ? 'percent_discount' : 'percent_markup', value:Math.abs(value)};
+  if (tag?.modify_type === 'add') return {mode:value < 0 ? 'amount_discount' : 'amount_add', value:Math.abs(value)};
+  return {mode:'none', value:0};
+}
+
+function applyPriceRuleTagSimpleMode(tag, mode, rawValue) {
+  const value = Math.max(0, Number(rawValue || 0));
+  const next = {...tag, replace_price:null, modify_type:'none', modify_value:0};
+  if (mode === 'fixed') next.replace_price = value;
+  if (mode === 'percent_discount') { next.modify_type = 'percent'; next.modify_value = -value; }
+  if (mode === 'percent_markup') { next.modify_type = 'percent'; next.modify_value = value; }
+  if (mode === 'amount_discount') { next.modify_type = 'add'; next.modify_value = -value; }
+  if (mode === 'amount_add') { next.modify_type = 'add'; next.modify_value = value; }
+  return next;
+}
+
+function priceRuleTagSavePayload(tag) {
+  return {
+    tagId:null,
+    tagName:tag.tag_name,
+    color:tag.color || '#2f6fd1',
+    replacePrice:tag.replace_price,
+    modifyType:tag.modify_type || 'none',
+    modifyValue:Number(tag.modify_value || 0),
+    minPrice:tag.min_price,
+    maxPrice:tag.max_price,
+    roundingUnit:Number(tag.rounding_unit || 1),
+    roundingMode:tag.rounding_mode || 'nearest',
+    note:'상품 상세에서 만든 조합 태그 단계'
+  };
+}
+
 function priceComposerFor(source) {
-  if (!drawerState.priceComposers[source]) drawerState.priceComposers[source] = {name:'', tagIds:[], open:false};
-  return drawerState.priceComposers[source];
+  if (!drawerState.priceComposers[source]) drawerState.priceComposers[source] = {name:'', tagIds:[], tagEdits:{}, editingTagId:null, open:false};
+  const composer = drawerState.priceComposers[source];
+  if (!composer.tagEdits) composer.tagEdits = {};
+  return composer;
 }
 
 function renderPriceTagComposer(source, basePrice, ruleTags) {
@@ -849,11 +886,24 @@ function renderPriceTagComposer(source, basePrice, ruleTags) {
   const tagsById = new Map((ruleTags || []).map(tag => [Number(tag.price_rule_tag_id), tag]));
   let current = Number(basePrice);
   const selectedRows = composer.tagIds.map((tagId, index) => {
-    const tag = tagsById.get(Number(tagId));
+    const tag = composer.tagEdits[String(tagId)] || tagsById.get(Number(tagId));
     if (!tag) return '';
     const before = current;
     current = calculateLocalPriceRule(current, tag);
-    return `<article data-composer-index="${index}"><i>${index + 1}</i><span><b>${escapeHtml(tag.tag_name)}</b><em>${escapeHtml(priceRuleTagSummary(tag))} · ${formatNullableNumber(before)}원 → ${formatNullableNumber(current)}원</em></span><div><button type="button" data-composer-move="up" aria-label="위로">↑</button><button type="button" data-composer-move="down" aria-label="아래로">↓</button><button type="button" data-composer-remove aria-label="삭제">×</button></div></article>`;
+    const simple = priceRuleTagSimpleMode(tag);
+    const editing = String(composer.editingTagId || '') === String(tagId);
+    return `<article data-composer-index="${index}" data-composer-tag-id="${tagId}" class="${editing ? 'editing' : ''}">
+      <div class="price-tag-composer-step-summary"><i>${index + 1}</i><span><b>${escapeHtml(tag.tag_name)}</b><em>${escapeHtml(priceRuleTagSummary(tag))} · ${formatNullableNumber(before)}원 → ${formatNullableNumber(current)}원</em></span><div><button type="button" data-composer-edit aria-label="작은 태그 수정">✎</button><button type="button" data-composer-move="up" aria-label="위로">↑</button><button type="button" data-composer-move="down" aria-label="아래로">↓</button><button type="button" data-composer-remove aria-label="삭제">×</button></div></div>
+      ${editing ? `<div class="price-tag-composer-step-editor">
+        <label><span>작은 태그 이름</span><input data-composer-tag-name maxlength="40" value="${escapeHtml(tag.tag_name)}"></label>
+        <label><span>계산 방식</span><select data-composer-tag-mode>
+          <option value="none" ${simple.mode === 'none' ? 'selected' : ''}>기준가 그대로</option><option value="percent_discount" ${simple.mode === 'percent_discount' ? 'selected' : ''}>퍼센트 할인</option><option value="percent_markup" ${simple.mode === 'percent_markup' ? 'selected' : ''}>퍼센트 인상</option><option value="amount_discount" ${simple.mode === 'amount_discount' ? 'selected' : ''}>금액 할인</option><option value="amount_add" ${simple.mode === 'amount_add' ? 'selected' : ''}>금액 추가</option><option value="fixed" ${simple.mode === 'fixed' ? 'selected' : ''}>최종가 고정</option>
+        </select></label>
+        <label><span>값</span><input data-composer-tag-value type="number" min="0" step="1" value="${simple.value}"></label>
+        <details><summary>최저·최고·끝자리</summary><div><label><span>최저가</span><input data-composer-tag-min type="number" min="0" value="${escapeHtml(tag.min_price ?? '')}"></label><label><span>최고가</span><input data-composer-tag-max type="number" min="0" value="${escapeHtml(tag.max_price ?? '')}"></label><label><span>끝자리 단위</span><input data-composer-tag-round-unit type="number" min="1" value="${escapeHtml(tag.rounding_unit ?? 1)}"></label><label><span>처리</span><select data-composer-tag-round-mode><option value="nearest" ${tag.rounding_mode === 'nearest' ? 'selected' : ''}>반올림</option><option value="up" ${tag.rounding_mode === 'up' ? 'selected' : ''}>올림</option><option value="down" ${tag.rounding_mode === 'down' ? 'selected' : ''}>내림</option></select></label></div></details>
+        <p>수정본은 새 작은 태그로 저장되어 기존 조합에는 영향을 주지 않습니다.</p>
+      </div>` : ''}
+    </article>`;
   }).join('');
   const canSave = composer.name.trim() && composer.tagIds.length;
   return `<details class="price-tag-composer" ${composer.open ? 'open' : ''}>
@@ -2551,6 +2601,38 @@ document.getElementById('drawer-inventory-list').addEventListener('input', event
 });
 
 document.getElementById('drawer-inventory-list').addEventListener('change', async event => {
+  const composerTagField = event.target.closest('[data-composer-tag-name],[data-composer-tag-mode],[data-composer-tag-value],[data-composer-tag-min],[data-composer-tag-max],[data-composer-tag-round-unit],[data-composer-tag-round-mode]');
+  if (composerTagField) {
+    const policyBox = composerTagField.closest('[data-policy-source]');
+    const source = policyBox?.dataset.policySource;
+    const row = composerTagField.closest('[data-composer-tag-id]');
+    const tagId = Number(row?.dataset.composerTagId);
+    if (!source || !tagId) return;
+    const composer = priceComposerFor(source);
+    const original = drawerState.priceRuleTags.find(tag => Number(tag.price_rule_tag_id) === tagId);
+    let draft = {...(composer.tagEdits[String(tagId)] || original)};
+    if (!draft.price_rule_tag_id) return;
+    if (composerTagField.matches('[data-composer-tag-name]')) draft.tag_name = composerTagField.value.trim() || original.tag_name;
+    if (composerTagField.matches('[data-composer-tag-mode],[data-composer-tag-value]')) {
+      const mode = row.querySelector('[data-composer-tag-mode]').value;
+      const value = row.querySelector('[data-composer-tag-value]').value;
+      draft = applyPriceRuleTagSimpleMode(draft, mode, value);
+    }
+    const optionalNumber = selector => {
+      const value = row.querySelector(selector)?.value;
+      return value === '' || value === undefined ? null : Math.max(0, Number(value));
+    };
+    if (composerTagField.matches('[data-composer-tag-min]')) draft.min_price = optionalNumber('[data-composer-tag-min]');
+    if (composerTagField.matches('[data-composer-tag-max]')) draft.max_price = optionalNumber('[data-composer-tag-max]');
+    if (composerTagField.matches('[data-composer-tag-round-unit]')) draft.rounding_unit = Math.max(1, optionalNumber('[data-composer-tag-round-unit]') || 1);
+    if (composerTagField.matches('[data-composer-tag-round-mode]')) draft.rounding_mode = composerTagField.value;
+    composer.tagEdits[String(tagId)] = draft;
+    composer.editingTagId = tagId;
+    composer.open = true;
+    const product = matrixRowsBySku.get(productDrawer.dataset.sku);
+    renderCurrentPricePolicy(source, product);
+    return;
+  }
   const composerAdd = event.target.closest('[data-price-composer-add]');
   if (composerAdd) {
     const source = composerAdd.closest('[data-policy-source]')?.dataset.policySource;
@@ -2558,6 +2640,7 @@ document.getElementById('drawer-inventory-list').addEventListener('change', asyn
     if (!source || !tagId) return;
     const composer = priceComposerFor(source);
     if (!composer.tagIds.includes(tagId)) composer.tagIds.push(tagId);
+    composer.editingTagId = tagId;
     composer.open = true;
     const product = matrixRowsBySku.get(productDrawer.dataset.sku);
     renderCurrentPricePolicy(source, product);
@@ -2601,9 +2684,17 @@ document.getElementById('drawer-inventory-list').addEventListener('click', async
     const composer = priceComposerFor(source);
     if (composerRow) {
       const index = Number(composerRow.dataset.composerIndex);
-      if (event.target.matches('[data-composer-remove]')) composer.tagIds.splice(index, 1);
-      if (event.target.dataset.composerMove === 'up' && index > 0) [composer.tagIds[index - 1], composer.tagIds[index]] = [composer.tagIds[index], composer.tagIds[index - 1]];
-      if (event.target.dataset.composerMove === 'down' && index < composer.tagIds.length - 1) [composer.tagIds[index + 1], composer.tagIds[index]] = [composer.tagIds[index], composer.tagIds[index + 1]];
+      const tagId = Number(composerRow.dataset.composerTagId);
+      const action = event.target.closest('[data-composer-edit],[data-composer-remove],[data-composer-move]');
+      if (!action) return;
+      if (action.matches('[data-composer-edit]')) composer.editingTagId = Number(composer.editingTagId) === tagId ? null : tagId;
+      if (action.matches('[data-composer-remove]')) {
+        composer.tagIds.splice(index, 1);
+        delete composer.tagEdits[String(tagId)];
+        if (Number(composer.editingTagId) === tagId) composer.editingTagId = null;
+      }
+      if (action.dataset.composerMove === 'up' && index > 0) [composer.tagIds[index - 1], composer.tagIds[index]] = [composer.tagIds[index], composer.tagIds[index - 1]];
+      if (action.dataset.composerMove === 'down' && index < composer.tagIds.length - 1) [composer.tagIds[index + 1], composer.tagIds[index]] = [composer.tagIds[index], composer.tagIds[index + 1]];
       composer.open = true;
       renderCurrentPricePolicy(source, product);
       return;
@@ -2616,21 +2707,33 @@ document.getElementById('drawer-inventory-list').addEventListener('click', async
     composerSave.disabled = true;
     composerSave.textContent = '조합 저장 중…';
     try {
+      const savedTagIds = [];
+      for (const tagId of composer.tagIds) {
+        const editedTag = composer.tagEdits[String(tagId)];
+        if (!editedTag) {
+          savedTagIds.push(Number(tagId));
+          continue;
+        }
+        const savedTag = await liveData.savePriceRuleTag(priceRuleTagSavePayload(editedTag));
+        savedTagIds.push(Number(savedTag.price_rule_tag_id));
+      }
       const savedSet = await liveData.savePriceRuleSet({
         setName:composer.name.trim(),
         color:'#1558c0',
-        tagIds:composer.tagIds
+        tagIds:savedTagIds
       });
-      const [ruleSets, savedAssignment] = await Promise.all([
+      const [ruleTags, ruleSets, savedAssignment] = await Promise.all([
+        liveData.loadPriceRuleTags(),
         liveData.loadPriceRuleSets(),
         liveData.savePriceRuleAssignment({sku, source, ruleSetId:savedSet.price_rule_set_id})
       ]);
       const preview = await liveData.previewPriceRuleSet({basePrice:product.sellpia_sale_price, ruleSetId:savedSet.price_rule_set_id});
+      drawerState.priceRuleTags = ruleTags;
       drawerState.priceRuleSets = ruleSets;
       drawerState.priceRuleAssignments[source] = savedAssignment;
       drawerState.priceRuleSelections[source] = savedSet.price_rule_set_id;
       drawerState.priceRulePreviews[source] = preview;
-      drawerState.priceComposers[source] = {name:'', tagIds:[], open:false};
+      drawerState.priceComposers[source] = {name:'', tagIds:[], tagEdits:{}, editingTagId:null, open:false};
       renderCurrentPricePolicy(source, product, savedSet.price_rule_set_id);
       showToast(`‘${savedSet.set_name}’ 조합 태그를 만들고 ${CHANNEL_LABELS[source]} 현재 상품에 배정했습니다.`);
     } catch (error) {
