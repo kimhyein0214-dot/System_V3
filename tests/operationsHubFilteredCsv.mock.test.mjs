@@ -8,6 +8,8 @@ const data = fs.readFileSync(new URL('../mockups/operations-hub/data-service.js'
 const csvSource = fs.readFileSync(new URL('../mockups/operations-hub/matrix-csv-export.js', import.meta.url), 'utf8');
 const migration = fs.readFileSync(new URL('../supabase/migrations/20260820093000_operations_hub_filtered_csv_export.sql', import.meta.url), 'utf8');
 const optimizationMigration = fs.readFileSync(new URL('../supabase/migrations/20260820094500_optimize_operations_hub_filtered_csv_export.sql', import.meta.url), 'utf8');
+const cacheMigration = fs.readFileSync(new URL('../supabase/migrations/20260820120500_cache_operations_hub_csv_export.sql', import.meta.url), 'utf8');
+const nonblockingCacheMigration = fs.readFileSync(new URL('../supabase/migrations/20260820123000_nonblocking_operations_hub_csv_cache.sql', import.meta.url), 'utf8');
 
 const context = {window:{}, Blob, URL, console, setTimeout};
 vm.createContext(context);
@@ -32,6 +34,11 @@ assert.match(migration, /operations_hub_product_profiles profile[\s\S]*?operatio
 assert.match(migration, /operations_hub_matrix_condition_matches/, 'CSV rows must use the same validated advanced-condition evaluator');
 assert.match(optimizationMigration, /v_needs_profile[\s\S]*?filter_profile on v_needs_profile/, 'profile filtering must be skipped for ordinary matrix-only conditions');
 assert.match(optimizationMigration, /offset v_offset[\s\S]*?limit v_limit[\s\S]*?operations_hub_product_profiles profile/, 'profile metadata must join only after the requested page is bounded');
+assert.match(cacheMigration, /operations_hub_matrix_export_cache[\s\S]*?enable row level security[\s\S]*?for select[\s\S]*?to anon, authenticated/, 'the initial public cache must be read-only through an explicit RLS policy');
+assert.match(nonblockingCacheMigration, /create materialized view operations_private\.operations_hub_matrix_export_cache[\s\S]*?create unique index/, 'the final CSV cache must use an indexed private materialized snapshot');
+assert.match(nonblockingCacheMigration, /refresh materialized view concurrently operations_private\.operations_hub_matrix_export_cache/, 'minute refreshes must not block CSV readers');
+assert.match(nonblockingCacheMigration, /drop table if exists public\.operations_hub_matrix_export_cache/, 'the temporary public cache table must be removed after the private snapshot is active');
+assert.doesNotMatch(cacheMigration + nonblockingCacheMigration, /security definer/i, 'CSV cache maintenance must not introduce definer privileges');
 
 const visible = csv.buildColumns({
   scope:'visible',
