@@ -9,6 +9,7 @@ const ambiguityFix = fs.readFileSync(new URL("../supabase/migrations/20260818034
 const upsertFix = fs.readFileSync(new URL("../supabase/migrations/20260818034857_fix_multilink_component_upsert_conflict.sql", import.meta.url), "utf8");
 const partialRefreshFix = fs.readFileSync(new URL("../supabase/migrations/20260818035322_global_identity_check_for_partial_link_refresh.sql", import.meta.url), "utf8");
 const inventoryDraftMigration = fs.readFileSync(new URL("../supabase/migrations/20260818045443_operations_hub_bundle_inventory_drafts.sql", import.meta.url), "utf8");
+const disconnectMigration = fs.readFileSync(new URL("../supabase/migrations/20260821200000_disconnect_legacy_listing_component.sql", import.meta.url), "utf8");
 
 assert.match(migration, /operations_hub_seller_listings[\s\S]*operations_hub_listing_components[\s\S]*component_qty integer[\s\S]*check \(component_qty > 0\)/, "bundle graph must have durable listing and positive-quantity component records");
 assert.match(migration, /operations_hub_listing_component_projection[\s\S]*explicit_components[\s\S]*legacy_components/, "explicit graph must retain current 1:1 mappings through a compatibility projection");
@@ -31,5 +32,10 @@ assert.match(data, /stageListingInventoryDraft[\s\S]*stage_operations_hub_listin
 assert.match(app, /renderMultiLinkInventoryAction[\s\S]*stageListingInventoryDraft[\s\S]*loadChangeQueue/, "staging bundle stock must refresh the listing, queue, dashboard, and matrix review surfaces");
 assert.match(html, /drawer-link-manager[\s\S]*drawer-open-multi-links/, "the product drawer must expose integrated component management without removing the full workspace");
 assert.match(app, /loadDrawerListingLinks[\s\S]*data-drawer-component-save[\s\S]*data-drawer-component-remove[\s\S]*data-drawer-stage-stock/, "the integrated drawer must add, edit, remove, and stage listing components");
+assert.match(disconnectMigration, /disconnect_operations_hub_legacy_listing_component[\s\S]*upsert_operations_hub_listing_component[\s\S]*deactivate_operations_hub_listing_component/, "legacy disconnect must promote and soft-deactivate the inferred edge atomically");
+assert.match(disconnectMigration, /v_legacy_count <= 1[\s\S]*마지막 연결/, "legacy disconnect must not remove the last remaining SKU edge");
+assert.match(data, /removeListingComponent[\s\S]*disconnect_operations_hub_legacy_listing_component/, "the data adapter must route inferred legacy removals through the atomic RPC");
+assert.match(app, /data-remove-component[\s\S]*removeListingComponent\(\{componentId:card\.dataset\.componentId \|\| null/, "the multi-link editor must let operators remove inferred as well as explicit components");
+assert.match(app, /data-drawer-component-remove[\s\S]*removeListingComponent\(\{componentId:component\.dataset\.componentId \|\| null/, "the product drawer must expose the same inferred-component removal action");
 
 console.log("Operations hub multi-link and bundle graph contract: passed");

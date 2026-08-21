@@ -665,6 +665,18 @@
     return Array.isArray(data) ? data[0] : data;
   }
 
+  async function removeListingComponent({componentId = null, source, productCode, optionCode = '', sku} = {}) {
+    if (componentId) return deactivateListingComponent(componentId);
+    const {data, error} = await db.rpc('disconnect_operations_hub_legacy_listing_component', {
+      p_source:cleanText(source),
+      p_product_code:cleanText(productCode),
+      p_option_code:cleanText(optionCode),
+      p_sellpia_sku_code:cleanText(sku)
+    });
+    if (error) throw error;
+    return Array.isArray(data) ? data[0] : data;
+  }
+
   async function saveSellerDiscountDraft({sku, source, discountTerms = [], inputMode = 'option', targetFinalPrice = null, optionPrice = null, batchId = null}) {
     const {data, error} = await db.rpc('save_operations_hub_seller_discount_draft', {
       p_sku:cleanText(sku),
@@ -1685,6 +1697,7 @@
     loadListingGraph,
     saveListingComponent,
     deactivateListingComponent,
+    removeListingComponent,
     stageListingInventoryDraft,
     loadDashboardMetrics,
     loadMappingSyncStatus,
