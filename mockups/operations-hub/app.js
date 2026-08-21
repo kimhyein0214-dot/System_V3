@@ -1099,6 +1099,8 @@ function renderDrawerInventoryChannel(source, label, product) {
   const state = matchState(product?.[`${source}_match_tier`]);
   const stock = product?.[`${source}_stock`];
   const component = product?.__sellerPriceComponents?.[source] || {};
+  const stockDraft = product?.__sellerDrafts?.[`${source}:sellpia_current_stock`];
+  const priceDraft = product?.__sellerDrafts?.[`${source}:sellpia_sale_price`];
   const sourceBasePrice = component.source_base_price ?? product?.[`${source}_base_price`] ?? product?.[`${source}_price`];
   const sourceDiscountTerms = component.source_discount_terms ?? product?.[`${source}_discount_terms`] ?? [];
   const savedDiscountTerms = priceDraft?.price_discount_terms_after ?? sourceDiscountTerms;
@@ -1106,8 +1108,6 @@ function renderDrawerInventoryChannel(source, label, product) {
   const sourceDiscountedBasePrice = component.source_discounted_base_price ?? product?.[`${source}_discounted_base_price`] ?? calculateNativeDiscountedBase(sourceBasePrice, sourceDiscountTerms);
   const sourceOptionPrice = component.source_option_price ?? product?.[`${source}_option_price`] ?? 0;
   const sourceFinalPrice = component.source_final_price ?? product?.[`${source}_final_price`] ?? product?.[`${source}_price`];
-  const stockDraft = product?.__sellerDrafts?.[`${source}:sellpia_current_stock`];
-  const priceDraft = product?.__sellerDrafts?.[`${source}:sellpia_sale_price`];
   const draftState = state.key === 'unmatched' ? state : drawerDraftState([stockDraft, priceDraft]);
   const stockValue = stockDraft?.after_value ?? stock ?? '';
   const basePriceValue = component.draft_base_price ?? priceDraft?.price_base_after ?? sourceBasePrice ?? '';
