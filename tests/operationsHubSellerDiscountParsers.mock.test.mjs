@@ -45,6 +45,7 @@ test('Smartstore baseline discount affects customer price while conditional disc
   assert.equal(parsed[1].final_price, 4880);
   assert.deepEqual(Array.from(parsed[0].discount_terms, term => [term.term_type, term.is_baseline]), [
     ['basic', true],
+    ['mobile', false],
     ['reservation', false],
     ['multi_buy', false]
   ]);

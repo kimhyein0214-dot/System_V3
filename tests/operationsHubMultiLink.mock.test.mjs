@@ -29,5 +29,7 @@ assert.doesNotMatch(inventoryDraftMigration, /security definer/i, "bundle invent
 assert.match(html, /multi-link-inventory-action[\s\S]*multi-link-open-queue[\s\S]*multi-link-stage-stock/, "the listing editor must show a reviewable inventory-draft action and queue entry point");
 assert.match(data, /stageListingInventoryDraft[\s\S]*stage_operations_hub_listing_inventory_draft/, "the data adapter must expose bundle inventory draft staging");
 assert.match(app, /renderMultiLinkInventoryAction[\s\S]*stageListingInventoryDraft[\s\S]*loadChangeQueue/, "staging bundle stock must refresh the listing, queue, dashboard, and matrix review surfaces");
+assert.match(html, /drawer-link-manager[\s\S]*drawer-open-multi-links/, "the product drawer must expose integrated component management without removing the full workspace");
+assert.match(app, /loadDrawerListingLinks[\s\S]*data-drawer-component-save[\s\S]*data-drawer-component-remove[\s\S]*data-drawer-stage-stock/, "the integrated drawer must add, edit, remove, and stage listing components");
 
 console.log("Operations hub multi-link and bundle graph contract: passed");

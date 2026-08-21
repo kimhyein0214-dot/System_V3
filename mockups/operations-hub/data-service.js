@@ -43,7 +43,7 @@
     if (!skus.length) return products;
     const {data, error} = await db
       .from('operations_hub_active_seller_drafts')
-      .select('change_id,sellpia_sku_code,source_channel,field_key,before_value,after_value,status,updated_at,price_base_before,price_base_after,price_option_before,price_option_after,price_final_before,price_final_after,option_price_source,price_rule_set_id')
+      .select('change_id,sellpia_sku_code,source_channel,field_key,before_value,after_value,status,updated_at,price_base_before,price_base_after,price_discounted_base_before,price_discounted_base_after,price_option_before,price_option_after,price_final_before,price_final_after,price_discount_terms_before,price_discount_terms_after,option_price_source,price_rule_set_id')
       .in('sellpia_sku_code', skus)
       .order('updated_at', {ascending:false})
       .order('change_id', {ascending:false});
@@ -665,6 +665,52 @@
     return Array.isArray(data) ? data[0] : data;
   }
 
+  async function saveSellerDiscountDraft({sku, source, discountTerms = [], inputMode = 'option', targetFinalPrice = null, optionPrice = null, batchId = null}) {
+    const {data, error} = await db.rpc('save_operations_hub_seller_discount_draft', {
+      p_sku:cleanText(sku),
+      p_source:cleanText(source),
+      p_discount_terms:Array.isArray(discountTerms) ? discountTerms : [],
+      p_input_mode:cleanText(inputMode) || 'option',
+      p_option_price:optionPrice === null || optionPrice === undefined || optionPrice === '' ? null : Number(optionPrice),
+      p_target_final_price:targetFinalPrice === null || targetFinalPrice === undefined || targetFinalPrice === '' ? null : Number(targetFinalPrice),
+      p_batch_id:batchId
+    });
+    if (error) throw error;
+    return Array.isArray(data) ? data[0] : data;
+  }
+
+  async function saveSellerProductDiscountDrafts({source, productCode, discountTerms = []}) {
+    const normalizedSource = cleanText(source);
+    const normalizedProductCode = cleanText(productCode);
+    const sourceField = {smartstore:'smartstore_product_code',makeshop:'makeshop_product_code',ably:'ably_product_code'}[normalizedSource];
+    if (!sourceField || !normalizedProductCode) throw new Error('판매처와 상품코드를 확인해주세요.');
+    const rows = [];
+    for (let from = 0; ; from += 1000) {
+      const {data, error} = await db.from('operations_hub_matrix_cached').select(`sellpia_sku_code,${sourceField}`).eq(sourceField, normalizedProductCode).range(from, from + 999);
+      if (error) throw error;
+      rows.push(...(data || []));
+      if ((data || []).length < 1000) break;
+    }
+    const products = await attachSellerPriceComponents(rows);
+    const batchId = global.crypto?.randomUUID?.() || `seller-discount-${Date.now()}`;
+    const items = [];
+    for (let offset = 0; offset < products.length; offset += 6) {
+      const saved = await Promise.all(products.slice(offset, offset + 6).map(product => {
+        const component = product.__sellerPriceComponents?.[normalizedSource] || {};
+        return saveSellerDiscountDraft({
+          sku:product.sellpia_sku_code,
+          source:normalizedSource,
+          discountTerms,
+          inputMode:'option',
+          optionPrice:component.draft_option_price ?? component.source_option_price ?? 0,
+          batchId
+        }).then(result => ({sku:product.sellpia_sku_code,result}));
+      }));
+      items.push(...saved);
+    }
+    return {items, count:items.length, batchId};
+  }
+
   async function saveSellerProductBaseDrafts({source, productCode, targetBasePrice}) {
     const normalizedSource = cleanText(source);
     const normalizedProductCode = cleanText(productCode);
@@ -956,7 +1002,7 @@
     for (let from = 0; ; from += pageSize) {
       const {data, error:loadError} = await db
         .from('operations_hub_export_items')
-        .select('export_item_id,export_batch_id,change_id,sellpia_sku_code,source_channel,field_key,before_value,after_value,seller_product_code,seller_option_code,source_file_name,source_row_no,expected_source_value,base_price,option_price,target_base_price,target_option_price,target_final_price,option_price_source,price_rule_set_id,blocking_reason,status')
+        .select('export_item_id,export_batch_id,change_id,sellpia_sku_code,source_channel,field_key,before_value,after_value,seller_product_code,seller_option_code,source_file_name,source_row_no,expected_source_value,base_price,option_price,target_base_price,target_discounted_base_price,target_option_price,target_final_price,source_discount_terms,target_discount_terms,option_price_source,price_rule_set_id,blocking_reason,status')
         .eq('export_batch_id', batchId)
         .order('export_item_id', {ascending:true})
         .range(from, from + pageSize - 1);
@@ -1662,6 +1708,8 @@
     retryChangeQueue,
     saveSellerValueDraft,
     saveSellerPriceDraft,
+    saveSellerDiscountDraft,
+    saveSellerProductDiscountDrafts,
     saveSellerProductBaseDrafts,
     loadPricePolicies,
     previewPricePolicy,

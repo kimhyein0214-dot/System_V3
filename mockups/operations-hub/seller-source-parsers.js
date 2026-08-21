@@ -229,6 +229,18 @@
         is_baseline:true,
         title:'즉시할인 기본할인'
       } : null;
+      const mobileDiscountValue = cleanNumber(row[59]);
+      const mobileDiscountUnit = normalizeDiscountUnit(row[60]);
+      const mobileDiscount = mobileDiscountValue !== null && mobileDiscountUnit ? {
+        term_key:'mobile',
+        term_type:'mobile',
+        value:mobileDiscountValue,
+        unit:mobileDiscountUnit,
+        rounding_mode:'nearest',
+        rounding_unit:1,
+        is_baseline:false,
+        title:'모바일 즉시할인'
+      } : null;
       const reservationDiscountValue = cleanNumber(row[61]);
       const reservationDiscountUnit = normalizeDiscountUnit(row[62]);
       const reservationDiscount = reservationDiscountValue !== null && reservationDiscountUnit ? {
@@ -256,7 +268,7 @@
         condition_unit:cleanText(row[65]) || null,
         title:'복수구매 할인'
       } : null;
-      const discountTerms = [basicDiscount, reservationDiscount, multiBuyDiscount].filter(Boolean);
+      const discountTerms = [basicDiscount, mobileDiscount, reservationDiscount, multiBuyDiscount].filter(Boolean);
       const discountedBasePrice = calculateDiscountedBasePrice(basePrice, basicDiscount);
       const optionCodes = splitLines(row[15]);
       const optionNames = splitLines(row[16]);

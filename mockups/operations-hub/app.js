@@ -93,7 +93,7 @@ const drawerState = {
   activeTab:'connections', historyRequestId:0, historySku:'', attributeRequestId:0, priceRequestId:0,
   linkRequestId:0, linkRows:[],
   tags:null, attributeDraft:null, priceRuleTags:[], priceRuleSets:[], priceRuleAssignments:{},
-  priceRulePreviews:{}, priceRuleSelections:{}, priceComposers:{}
+  priceRulePreviews:{}, priceRuleSelections:{}, priceComposers:{}, discountTerms:{}
 };
 const inventoryState = {loaded:false, loading:false, rows:[], snapshot:null, activityRefreshedAt:'', requestId:0};
 const ATTRIBUTE_OPTIONS = Object.freeze({
@@ -1101,6 +1101,8 @@ function renderDrawerInventoryChannel(source, label, product) {
   const component = product?.__sellerPriceComponents?.[source] || {};
   const sourceBasePrice = component.source_base_price ?? product?.[`${source}_base_price`] ?? product?.[`${source}_price`];
   const sourceDiscountTerms = component.source_discount_terms ?? product?.[`${source}_discount_terms`] ?? [];
+  const savedDiscountTerms = priceDraft?.price_discount_terms_after ?? sourceDiscountTerms;
+  drawerState.discountTerms[source] = structuredClone(Array.isArray(savedDiscountTerms) ? savedDiscountTerms : []);
   const sourceDiscountedBasePrice = component.source_discounted_base_price ?? product?.[`${source}_discounted_base_price`] ?? calculateNativeDiscountedBase(sourceBasePrice, sourceDiscountTerms);
   const sourceOptionPrice = component.source_option_price ?? product?.[`${source}_option_price`] ?? 0;
   const sourceFinalPrice = component.source_final_price ?? product?.[`${source}_final_price`] ?? product?.[`${source}_price`];
@@ -1114,7 +1116,7 @@ function renderDrawerInventoryChannel(source, label, product) {
   const finalPriceValue = component.draft_final_price ?? priceDraft?.price_final_after ?? priceDraft?.after_value ?? sourceFinalPrice ?? '';
   const stockDisabled = state.key === 'unmatched' || stock === null || stock === undefined;
   const priceDisabled = state.key === 'unmatched' || sourceFinalPrice === null || sourceFinalPrice === undefined;
-  return `<section class="drawer-section drawer-inventory-channel" data-source="${source}">
+  return `<section class="drawer-section drawer-inventory-channel" data-source="${source}" data-saved-discount-terms="${escapeHtml(JSON.stringify(savedDiscountTerms))}">
     <div class="drawer-section-title"><h4><i class="dot ${{smartstore:'smart',makeshop:'make',ably:'ably'}[source]}"></i>${label}</h4><span class="matrix-status ${draftState.key}">${draftState.label}</span></div>
     <div class="drawer-inventory-meta"><span>상품 ${escapeHtml(product?.[`${source}_product_code`] || '-')}</span><span>옵션 ${escapeHtml(product?.[`${source}_option_code`] || '-')}</span></div>
     <div class="form-grid drawer-stock-grid">
@@ -1126,6 +1128,7 @@ function renderDrawerInventoryChannel(source, label, product) {
       <label>옵션가 <small>${source === 'ably' ? '미사용' : '직접 수정'}</small><input type="number" step="1" data-drawer-price-component="option" data-saved-value="${escapeHtml(optionPriceValue)}" data-original-value="${escapeHtml(sourceOptionPrice ?? 0)}" value="${escapeHtml(optionPriceValue)}" ${priceDisabled || source === 'ably' ? 'disabled' : ''}></label>
       <label>최종구매가 <small>직접 입력 시 옵션가 자동 계산</small><input type="number" min="0" step="1" data-drawer-price-component="final" data-saved-value="${escapeHtml(finalPriceValue)}" data-original-value="${escapeHtml(sourceFinalPrice ?? '')}" value="${escapeHtml(finalPriceValue)}" ${priceDisabled ? 'disabled' : ''}></label>
     </div>
+    ${renderNativeDiscountEditor(source, drawerState.discountTerms[source], priceDisabled)}
     <p class="drawer-price-equation">판매가 ${formatNullableNumber(basePriceValue)} → 원본 할인 적용 ${formatNullableNumber(discountedBasePriceValue)} + 옵션가 ${formatNullableNumber(optionPriceValue)} = 최종구매가 ${formatNullableNumber(finalPriceValue)}</p>
     <div class="drawer-value-comparison"><span>셀피아 재고 <b>${formatNullableNumber(product?.sellpia_current_stock)}</b></span><span>셀피아 판매가 <b>${formatNullableNumber(product?.sellpia_sale_price)}</b></span></div>
     <div data-price-policy-host="${source}">${renderDrawerPricePolicy(source, label, sourceBasePrice, basePriceValue, product?.sellpia_sale_price)}</div>
@@ -1290,6 +1293,44 @@ function setDrawerTab(tabName, {loadHistory = true} = {}) {
   if (tabName === 'connections') loadDrawerListingLinks();
 }
 
+function discountTermTemplates(source) {
+  if (source === 'smartstore') return [
+    {term_key:'basic',term_type:'basic',title:'즉시할인 기본할인',unit:'percent',is_baseline:true,rounding_mode:'nearest',rounding_unit:1},
+    {term_key:'mobile',term_type:'mobile',title:'모바일 즉시할인',unit:'percent',is_baseline:false,rounding_mode:'nearest',rounding_unit:1},
+    {term_key:'reservation',term_type:'reservation',title:'예약 할인',unit:'percent',is_baseline:false,rounding_mode:'nearest',rounding_unit:1},
+    {term_key:'multi_buy',term_type:'multi_buy',title:'복수구매 할인',unit:'percent',is_baseline:false,rounding_mode:'nearest',rounding_unit:1}
+  ];
+  if (source === 'makeshop') return [
+    {term_key:'period',term_type:'period',title:'기간 할인',unit:'percent',is_baseline:true,rounding_mode:'none',rounding_unit:1},
+    {term_key:'membership',term_type:'membership',title:'회원등급 할인',unit:'percent',is_baseline:false,rounding_mode:'none',rounding_unit:1}
+  ];
+  return [{term_key:'reported_result',term_type:'reported_result',title:'원본 할인 차액',unit:'amount',is_baseline:true,rounding_mode:'none',rounding_unit:1}];
+}
+
+function editableDiscountTerms(source, terms) {
+  const byKey = new Map((Array.isArray(terms) ? terms : []).map(term => [term.term_key, term]));
+  const templates = discountTermTemplates(source).map(template => ({...template,...(byKey.get(template.term_key) || {}), enabled:byKey.has(template.term_key)}));
+  for (const term of Array.isArray(terms) ? terms : []) if (!templates.some(item => item.term_key === term.term_key)) templates.push({...term,enabled:true});
+  return templates;
+}
+
+function renderNativeDiscountEditor(source, terms, disabled) {
+  const rows = editableDiscountTerms(source, terms);
+  drawerState.discountTerms[source] = rows;
+  return `<details class="drawer-native-discounts" open><summary>판매처 원본 할인필드 <span>${escapeHtml(nativeDiscountSummary(terms))}</span></summary><p>체크된 할인만 원본에 반영됩니다. 조건부 할인은 보존하지만 최종구매가 계산에는 포함하지 않습니다.</p><div class="drawer-discount-rows">${rows.map((term,index) => `<label class="drawer-discount-row"><input type="checkbox" data-discount-enabled data-discount-index="${index}" ${term.enabled ? 'checked' : ''} ${disabled ? 'disabled' : ''}><span>${escapeHtml(term.title || term.term_key)}</span><input type="number" min="0" step="1" data-discount-value data-discount-index="${index}" value="${escapeHtml(term.value ?? '')}" placeholder="0" ${disabled ? 'disabled' : ''}><select data-discount-unit data-discount-index="${index}" ${disabled ? 'disabled' : ''}><option value="percent"${term.unit === 'percent' ? ' selected' : ''}>%</option><option value="amount"${term.unit === 'amount' ? ' selected' : ''}>원</option></select><em>${term.is_baseline ? '최종가 계산' : '조건부/표시용'}</em></label>`).join('')}</div></details>`;
+}
+
+function readDrawerDiscountTerms(section) {
+  const source = section.dataset.source;
+  const terms = drawerState.discountTerms[source] || [];
+  return terms.flatMap((term,index) => {
+    const enabled = section.querySelector(`[data-discount-enabled][data-discount-index="${index}"]`)?.checked;
+    const value = Number(section.querySelector(`[data-discount-value][data-discount-index="${index}"]`)?.value || 0);
+    const unit = section.querySelector(`[data-discount-unit][data-discount-index="${index}"]`)?.value || term.unit;
+    return enabled && value > 0 ? [{...term,enabled:undefined,value,unit}] : [];
+  });
+}
+
 function drawerRelationLabel(row) {
   return multiLinkRelationLabel(row?.relation_type, row?.component_count, row?.max_listing_count);
 }
@@ -1424,6 +1465,7 @@ function applyLocalSellerPriceDraft(product, source, result) {
     base_price_source:result?.saved_base_price_source || existing.base_price_source || 'source',
     price_rule_set_id:result?.saved_price_rule_set_id || existing.price_rule_set_id || null,
     pricing_input_mode:result?.saved_input_mode || existing.pricing_input_mode || 'option',
+    draft_discount_terms:result?.draft_status === 'unchanged' ? null : (result?.draft_discount_terms || existing.draft_discount_terms || null),
     price_calculation_version:2
   };
   product.__sellerPriceComponents[source] = component;
@@ -1438,6 +1480,8 @@ function applyLocalSellerPriceDraft(product, source, result) {
       price_option_after:component.draft_option_price,
       price_final_before:component.source_final_price,
       price_final_after:component.draft_final_price,
+      price_discount_terms_before:component.source_discount_terms || [],
+      price_discount_terms_after:component.draft_discount_terms || component.source_discount_terms || [],
       option_price_source:component.option_price_source,
       base_price_source:component.base_price_source,
       price_rule_set_id:component.price_rule_set_id
@@ -3109,10 +3153,12 @@ document.getElementById('drawer-inventory-list').addEventListener('input', event
     if (save) save.disabled = !(composer.name.trim() && composer.tagIds.length);
     return;
   }
-  const input = event.target.closest('[data-drawer-value],[data-drawer-price-component]');
+  const input = event.target.closest('[data-drawer-value],[data-drawer-price-component],[data-discount-enabled],[data-discount-value],[data-discount-unit]');
   if (!input) return;
   const section = input.closest('.drawer-inventory-channel');
-  const changed = [...section.querySelectorAll('[data-drawer-value],[data-drawer-price-component]')].some(item => item.value.trim() !== item.dataset.savedValue);
+  const discountTerms = readDrawerDiscountTerms(section);
+  const discountChanged = JSON.stringify(discountTerms) !== (section.dataset.savedDiscountTerms || '[]');
+  const changed = discountChanged || [...section.querySelectorAll('[data-drawer-value],[data-drawer-price-component]')].some(item => item.value.trim() !== item.dataset.savedValue);
   section.classList.toggle('drawer-dirty', changed);
   const baseInput = section.querySelector('[data-drawer-price-component="base"]');
   const optionInput = section.querySelector('[data-drawer-price-component="option"]');
@@ -3123,13 +3169,11 @@ document.getElementById('drawer-inventory-list').addEventListener('input', event
   if (optionInput && finalInput && baseInput) {
     const baseValue = Number(baseInput.value || 0);
     const source = section.dataset.source;
-    const product = matrixRowsBySku.get(productDrawer.dataset.sku);
-    const discountTerms = product?.__sellerPriceComponents?.[source]?.source_discount_terms || [];
     const discountedBase = calculateNativeDiscountedBase(baseValue, discountTerms);
     const option = Number(optionInput.value || 0);
     let finalPrice = Number(finalInput.value || 0);
     let calculatedOption = option;
-    if (input.dataset.drawerPriceComponent === 'base' || input.dataset.drawerPriceComponent === 'option') {
+    if (input.dataset.drawerPriceComponent === 'base' || input.dataset.drawerPriceComponent === 'option' || input.dataset.discountIndex !== undefined) {
       finalPrice = Number(discountedBase || 0) + option;
       finalInput.value = Number.isFinite(finalPrice) ? String(finalPrice) : '';
     } else if (input.dataset.drawerPriceComponent === 'final') {
@@ -3375,7 +3419,9 @@ document.getElementById('drawer-inventory-list').addEventListener('click', async
   const baseChanged = baseInput && !baseInput.disabled && baseInput.value.trim() !== baseInput.dataset.savedValue;
   const optionChanged = optionInput && !optionInput.disabled && optionInput.value.trim() !== optionInput.dataset.savedValue;
   const finalChanged = finalInput && !finalInput.disabled && finalInput.value.trim() !== finalInput.dataset.savedValue;
-  if (!stockChanged && !baseChanged && !optionChanged && !finalChanged) {
+  const discountTerms = readDrawerDiscountTerms(section);
+  const discountChanged = JSON.stringify(discountTerms) !== (section.dataset.savedDiscountTerms || '[]');
+  if (!stockChanged && !baseChanged && !optionChanged && !finalChanged && !discountChanged) {
     showToast('바뀐 재고·가격 값이 없습니다.');
     return;
   }
@@ -3401,7 +3447,13 @@ document.getElementById('drawer-inventory-list').addEventListener('click', async
       results.push(result);
       applyLocalSellerDraft(product, source, 'sellpia_current_stock', stockInput.value.trim(), result);
     }
-    if (baseChanged || optionChanged || finalChanged) {
+    if (baseChanged) {
+      const saved = await liveData.saveSellerProductBaseDrafts({source, productCode:product?.[`${source}_product_code`], targetBasePrice});
+      const currentResult = saved.items.find(item => item.sku === sku)?.result || saved.items[0]?.result;
+      results.push(...saved.items.map(item => item.result));
+      applyLocalSellerPriceDraft(product, source, currentResult);
+    }
+    if (optionChanged || finalChanged) {
       const result = await liveData.saveSellerPriceDraft({
         sku,
         source,
@@ -3415,6 +3467,16 @@ document.getElementById('drawer-inventory-list').addEventListener('click', async
         batchId
       });
       results.push(result);
+      applyLocalSellerPriceDraft(product, source, result);
+    }
+    if (discountChanged) {
+      const saved = await liveData.saveSellerProductDiscountDrafts({
+        source,
+        productCode:product?.[`${source}_product_code`],
+        discountTerms
+      });
+      const result = saved.items.find(item => item.sku === sku)?.result || saved.items[0]?.result;
+      results.push(...saved.items.map(item => item.result));
       applyLocalSellerPriceDraft(product, source, result);
     }
     renderLiveMatrixRows(matrixState.rows);

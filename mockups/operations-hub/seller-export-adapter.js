@@ -218,7 +218,28 @@
     const finalPrice=Number(item.target_final_price ?? scalar(item.after_value));
     if(!Number.isFinite(base)||!Number.isFinite(discountedBase)||!Number.isFinite(option)||!Number.isFinite(finalPrice)) throw exportConflict(item,`${SOURCE_LABELS[item.source_channel]} ${item.sellpia_sku_code}: 판매가·할인 적용 판매가·옵션가·최종구매가 계산값이 없습니다.`);
     if(base<0||discountedBase<0||finalPrice<0||discountedBase+option!==finalPrice) throw exportConflict(item,`${SOURCE_LABELS[item.source_channel]} ${item.sellpia_sku_code}: 할인 적용 판매가 ${discountedBase} + 옵션가 ${option}가 최종구매가 ${finalPrice}와 일치하지 않습니다.`);
-    return {base,discountedBase,option,finalPrice};
+    return {base,discountedBase,option,finalPrice,discountTerms:Array.isArray(item.target_discount_terms)?item.target_discount_terms:[]};
+  }
+
+  function discountTermMap(terms) { return new Map((Array.isArray(terms)?terms:[]).map(term=>[clean(term.term_key),term])); }
+  function discountUnitLabel(unit) { return unit==='percent'?'%':unit==='amount'?'원':''; }
+  function discountTermsChanged(item) { return JSON.stringify(item.source_discount_terms||[])!==JSON.stringify(item.target_discount_terms||[]); }
+  function patchSmartstoreDiscounts(rowXml,row,item) {
+    if(!discountTermsChanged(item)) return {rowXml,references:[]};
+    let output=rowXml; const terms=discountTermMap(item.target_discount_terms); const references=[];
+    for(const [key,valueRef,unitRef] of [['basic','BF','BG'],['mobile','BH','BI'],['reservation','BJ','BK'],['multi_buy','BO','BP']]) {
+      const term=terms.get(key); const value=term?.value??''; const unit=term?discountUnitLabel(term.unit):'';
+      output=setCellValue(output,`${valueRef}${row}`,value,value===''?'string':'number');
+      output=setCellValue(output,`${unitRef}${row}`,unit,'string');
+      references.push({reference:`${valueRef}${row}`},{reference:`${unitRef}${row}`});
+    }
+    return {rowXml:output,references};
+  }
+  function makeshopPeriodText(term) {
+    if(!term) return '';
+    const rounding={down:'절사',up:'올림',nearest:'반올림'}[term.rounding_mode]||'';
+    const roundingUnit=Number(term.rounding_unit||1)===100?'백원':Number(term.rounding_unit||1)===10?'십원':'';
+    return `${term.value}${discountUnitLabel(term.unit)}${roundingUnit||rounding?` ${roundingUnit}${rounding}`:''}`.trim();
   }
 
   function patchSmartstoreRow(rowXml, items, sharedStrings, onConflict, onApplied) {
@@ -243,6 +264,9 @@
           output=setCellValue(output,`F${row}`,targets.base,'number');
           if(optionCode) output=setCellValue(output,`R${row}`,replaceLine(cellValue(output,`R${row}`,sharedStrings),optionIndex,targets.option),'string');
           changedRef=optionCode?[{reference:`F${row}`},{reference:`R${row}`,lineIndex:optionIndex}]:[{reference:`F${row}`}];
+          const discountPatch=patchSmartstoreDiscounts(output,row,item);
+          output=discountPatch.rowXml;
+          changedRef=[...changedRef,...discountPatch.references];
         } else if(item.field_key==='seller_product_name') {
           changedRef=`D${row}`; verifyExpected(cellValue(output,changedRef,sharedStrings),item); output=setCellValue(output,changedRef,after,'string');
         } else if(item.field_key==='seller_option_name') {
@@ -279,6 +303,7 @@
       try {
         const targets=group.map(priceTargets);
         if(new Set(targets.map(value=>value.base)).size!==1) throw exportConflict(group[0],`${SOURCE_LABELS[source]} ${productCode}: 같은 상품의 목표 판매가가 서로 다릅니다.`);
+        if(new Set(targets.map(value=>JSON.stringify(value.discountTerms||[]))).size!==1) throw exportConflict(group[0],`${SOURCE_LABELS[source]} ${productCode}: 같은 상품의 목표 할인조건이 서로 다릅니다.`);
         let productRow=null;
         let originalBase=null;
         if(source==='makeshop') {
@@ -310,7 +335,15 @@
             item._product_row_no=productRow;
           }
         }
-        if(source==='makeshop') workingSheetXml=setCellValue(workingSheetXml,`AS${productRow}`,targets[0].base,'number');
+        if(source==='makeshop') {
+          workingSheetXml=setCellValue(workingSheetXml,`AS${productRow}`,targets[0].base,'number');
+          if(discountTermsChanged(group[0])) {
+            const terms=discountTermMap(group[0].target_discount_terms);
+            workingSheetXml=setCellValue(workingSheetXml,`DD${productRow}`,makeshopPeriodText(terms.get('period')),'string');
+            workingSheetXml=setCellValue(workingSheetXml,`AT${productRow}`,terms.get('membership')?.value??0,'number');
+            for(const item of group) item._shared_discount_refs=[{reference:`DD${productRow}`},{reference:`AT${productRow}`}];
+          }
+        }
       } catch(error) {
         if(!error?.exportConflict||!onConflict) throw error;
         for(const item of group) {
@@ -333,10 +366,10 @@
         } else if(item.field_key==='sellpia_sale_price') {
           const targets=priceTargets(item); const current=Number(scalar(item.expected_source_value)); verifyExpected(current,item);
           if(optionCode) {
-            changedRef=[{reference:`AS${Number(item._product_row_no)}`},{reference:`AF${row}`}];
+            changedRef=[{reference:`AS${Number(item._product_row_no)}`},{reference:`AF${row}`},...(item._shared_discount_refs||[])];
             output=setCellValue(output,`AF${row}`,targets.option,'number');
           } else {
-            changedRef=[{reference:`AS${row}`}];
+            changedRef=[{reference:`AS${row}`},...(item._shared_discount_refs||[])];
             output=setCellValue(output,`AS${row}`,targets.base,'number');
           }
         } else if(item.field_key==='seller_option_name') {
@@ -413,7 +446,7 @@
 
   function outputName(name) { const dot=name.lastIndexOf('.'); return dot<0?`${name}_SystemV3반영`:`${name.slice(0,dot)}_SystemV3반영${name.slice(dot)}`; }
   function csvCell(value){const text=String(value??'');return /[",\r\n]/.test(text)?`"${text.replace(/"/g,'""')}"`:text;}
-  function auditCsv(items){const rows=[['판매처','셀피아 SKU','변경항목','판매처 상품코드','옵션코드','변경 전','변경 후','원본 판매가','원본 옵션가','목표 판매가','할인 적용 판매가','목표 옵션가','목표 최종구매가','입력 기준','가격 태그','원본파일','원본행']];for(const item of items)rows.push([SOURCE_LABELS[item.source_channel],item.sellpia_sku_code,FIELD_LABELS[item.field_key]||item.field_key,item.seller_product_code,item.seller_option_code,scalar(item.expected_source_value),scalar(item.after_value),item.base_price,item.option_price,item.target_base_price,item.target_discounted_base_price,item.target_option_price,item.target_final_price,item.pricing_input_mode||'legacy_final',item.price_rule_set_id||'',item.source_file_name,item.source_row_no]);return '\uFEFF'+rows.map(row=>row.map(csvCell).join(',')).join('\r\n');}
+  function auditCsv(items){const rows=[['판매처','셀피아 SKU','변경항목','판매처 상품코드','옵션코드','변경 전','변경 후','원본 판매가','원본 옵션가','목표 판매가','할인 적용 판매가','목표 옵션가','목표 최종구매가','원본 할인조건','목표 할인조건','입력 기준','가격 태그','원본파일','원본행']];for(const item of items)rows.push([SOURCE_LABELS[item.source_channel],item.sellpia_sku_code,FIELD_LABELS[item.field_key]||item.field_key,item.seller_product_code,item.seller_option_code,scalar(item.expected_source_value),scalar(item.after_value),item.base_price,item.option_price,item.target_base_price,item.target_discounted_base_price,item.target_option_price,item.target_final_price,JSON.stringify(item.source_discount_terms||[]),JSON.stringify(item.target_discount_terms||[]),item.pricing_input_mode||'legacy_final',item.price_rule_set_id||'',item.source_file_name,item.source_row_no]);return '\uFEFF'+rows.map(row=>row.map(csvCell).join(',')).join('\r\n');}
   function conflictCsv(conflicts){const rows=[['판매처','셀피아 SKU','변경항목','판매처 상품코드','옵션코드','제외 사유','원본파일','원본행']];for(const conflict of conflicts){const item=conflict.item;rows.push([SOURCE_LABELS[item.source_channel],item.sellpia_sku_code,FIELD_LABELS[item.field_key]||item.field_key,item.seller_product_code,item.seller_option_code,conflict.reason,item.source_file_name,item.source_row_no]);}return '\uFEFF'+rows.map(row=>row.map(csvCell).join(',')).join('\r\n');}
 
   async function buildExportArchive(filesBySource,items,onProgress) {
