@@ -88,6 +88,15 @@ assert.equal(adapter.cellValue(smartPatched, 'S3', []), '2\n9');
 assert.equal(adapter.cellValue(smartPatched, 'F3', []), '5400');
 assert.equal(adapter.cellValue(smartPatched, 'R3', []), '0\n300');
 
+const smartDiscountRow = '<row r="5"><c r="F5"><v>5200</v></c><c r="P5" t="inlineStr"><is><t xml:space="preserve">op1\nop2</t></is></c><c r="Q5" t="inlineStr"><is><t xml:space="preserve">실버\n골드</t></is></c><c r="R5" t="inlineStr"><is><t xml:space="preserve">0\n200</t></is></c><c r="BF5"><v>10</v></c><c r="BG5" t="inlineStr"><is><t>%</t></is></c></row>';
+const smartDiscountPatched = adapter.patchSmartstoreRow(smartDiscountRow, [
+  {source_row_no:5, source_channel:'smartstore', sellpia_sku_code:'1014-2', seller_option_code:'op2', field_key:'sellpia_sale_price', expected_source_value:4880, after_value:5700, target_base_price:6000, target_discounted_base_price:5400, target_option_price:300, target_final_price:5700},
+], []);
+assert.equal(adapter.cellValue(smartDiscountPatched, 'F5', []), '6000', 'Smartstore export must write the pre-discount sale price');
+assert.equal(adapter.cellValue(smartDiscountPatched, 'R5', []), '0\n300', 'Smartstore export must derive the option against the discounted sale price');
+assert.equal(adapter.cellValue(smartDiscountPatched, 'BF5', []), '10', 'Smartstore native discount value must remain unchanged');
+assert.equal(adapter.cellValue(smartDiscountPatched, 'BG5', []), '%', 'Smartstore native discount unit must remain unchanged');
+
 const smartGroupSheet = `<worksheet><sheetData>${smartRow}</sheetData></worksheet>`;
 const smartGroupItems = [
   {source_row_no:3, source_channel:'smartstore', source_file_name:'smart.xlsx', sellpia_sku_code:'1014-1', seller_product_code:'product-1', seller_option_code:'op1', field_key:'sellpia_sale_price', expected_source_value:5200, after_value:5700, target_base_price:5400, target_option_price:300, target_final_price:5700},

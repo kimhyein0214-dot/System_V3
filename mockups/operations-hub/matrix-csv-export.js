@@ -98,14 +98,14 @@
     if (all || view?.showPrice !== false) columns.push(
       {key:`${source}_base_price_projected`, label:`${label} 판매가`, type:'number', value:row => sellerPriceComponent(row, source, 'base')},
       {key:`${source}_option_price_projected`, label:`${label} 옵션가`, type:'number', value:row => sellerPriceComponent(row, source, 'option')},
-      {key:`${source}_final_price_projected`, label:`${label} 최종판가`, type:'number', value:row => sellerPriceComponent(row, source, 'final')}
+      {key:`${source}_final_price_projected`, label:`${label} 최종구매가`, type:'number', value:row => sellerPriceComponent(row, source, 'final')}
     );
     if (all) columns.push(
       {key:`${source}_sale_status`, label:`${label} 판매상태`},
       {key:`${source}_stock`, label:`${label} 원본재고`, type:'number'},
       {key:`${source}_base_price`, label:`${label} 원본 판매가`, type:'number', value:row => sellerPriceComponent(row, source, 'base', false)},
       {key:`${source}_option_price`, label:`${label} 원본 옵션가`, type:'number', value:row => sellerPriceComponent(row, source, 'option', false)},
-      {key:`${source}_final_price`, label:`${label} 원본 최종판가`, type:'number', value:row => sellerPriceComponent(row, source, 'final', false)},
+      {key:`${source}_final_price`, label:`${label} 원본 최종구매가`, type:'number', value:row => sellerPriceComponent(row, source, 'final', false)},
       {key:`${source}_draft_status`, label:`${label} 수정안상태`, value:row => sellerDraftStatus(row, source)},
       {key:`${source}_inventory_at`, label:`${label} 재고기준시각`}
     );

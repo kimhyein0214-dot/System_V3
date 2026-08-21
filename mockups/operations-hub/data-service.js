@@ -122,8 +122,10 @@
         const component = components[source];
         if (!component) continue;
         projected[`${source}_base_price`] = component.source_base_price;
+        projected[`${source}_discounted_base_price`] = component.source_discounted_base_price;
         projected[`${source}_option_price`] = component.source_option_price;
         projected[`${source}_final_price`] = component.source_final_price;
+        projected[`${source}_discount_terms`] = component.source_discount_terms || [];
         if (component.source_final_price !== null && component.source_final_price !== undefined) {
           projected[`${source}_price`] = component.source_final_price;
         }
@@ -646,13 +648,16 @@
     return Array.isArray(data) ? data[0] : data;
   }
 
-  async function saveSellerPriceDraft({sku, source, targetFinalPrice, optionPrice = null, optionPriceSource = 'original', priceRuleSetId = null, batchId = null}) {
-    const {data, error} = await db.rpc('save_operations_hub_seller_price_draft', {
+  async function saveSellerPriceDraft({sku, source, targetBasePrice, inputMode = 'option', targetFinalPrice = null, optionPrice = null, optionPriceSource = 'original', basePriceSource = 'tag', priceRuleSetId = null, batchId = null}) {
+    const {data, error} = await db.rpc('save_operations_hub_seller_price_draft_v2', {
       p_sku:cleanText(sku),
       p_source:cleanText(source),
-      p_target_final_price:Number(targetFinalPrice),
+      p_target_base_price:Number(targetBasePrice),
+      p_input_mode:cleanText(inputMode) || 'option',
       p_option_price:optionPrice === null || optionPrice === undefined || optionPrice === '' ? null : Number(optionPrice),
+      p_target_final_price:targetFinalPrice === null || targetFinalPrice === undefined || targetFinalPrice === '' ? null : Number(targetFinalPrice),
       p_option_price_source:cleanText(optionPriceSource) || 'original',
+      p_base_price_source:cleanText(basePriceSource) || 'tag',
       p_price_rule_set_id:priceRuleSetId ? Number(priceRuleSetId) : null,
       p_batch_id:batchId
     });
@@ -1257,6 +1262,7 @@
     const selectedFields = {
       inventory:Boolean(fields.inventory),
       price:Boolean(fields.price),
+      discount:fields.discount === undefined ? Boolean(fields.price) : Boolean(fields.discount),
       basic:Boolean(fields.basic),
       status:Boolean(fields.status)
     };
