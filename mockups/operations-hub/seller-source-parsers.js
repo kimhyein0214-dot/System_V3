@@ -2,9 +2,9 @@
   'use strict';
 
   const SOURCE_RULES = Object.freeze({
-    smartstore:{files:2, maxColumn:19, parserVersion:'operations-hub-smartstore-2026.08.12-v1'},
-    makeshop:{files:1, maxColumn:47, parserVersion:'operations-hub-makeshop-2026.08.12-v1'},
-    ably:{files:1, maxColumn:28, parserVersion:'operations-hub-ably-2026.08.12-v1'}
+    smartstore:{files:2, maxColumn:67, parserVersion:'operations-hub-smartstore-2026.08.21-v2'},
+    makeshop:{files:1, maxColumn:123, parserVersion:'operations-hub-makeshop-2026.08.21-v2'},
+    ably:{files:1, maxColumn:28, parserVersion:'operations-hub-ably-2026.08.21-v2'}
   });
 
   function cleanText(value) {
@@ -20,6 +20,87 @@
   function splitLines(value) {
     const text = cleanText(value);
     return text ? text.split(/\r?\n/).map(item => item.trim()) : [];
+  }
+
+  function normalizeDiscountUnit(value) {
+    const unit = cleanText(value).toLowerCase();
+    if (!unit) return null;
+    if (unit.includes('%') || unit.includes('percent')) return 'percent';
+    if (unit.includes('원') || unit.includes('amount')) return 'amount';
+    return null;
+  }
+
+  function applyRounding(value, mode = 'none', unit = 1) {
+    if (!Number.isFinite(Number(value))) return null;
+    const normalizedUnit = Math.max(1, Number(unit) || 1);
+    if (mode === 'down') return Math.floor(Number(value) / normalizedUnit) * normalizedUnit;
+    if (mode === 'up') return Math.ceil(Number(value) / normalizedUnit) * normalizedUnit;
+    if (mode === 'nearest') return Math.round(Number(value) / normalizedUnit) * normalizedUnit;
+    return Number(value);
+  }
+
+  function calculateDiscountedBasePrice(basePrice, term) {
+    if (!Number.isFinite(Number(basePrice))) return null;
+    if (!term || !Number.isFinite(Number(term.value)) || !term.unit) return Number(basePrice);
+    const value = Math.abs(Number(term.value));
+    let discounted = Number(basePrice);
+    if (term.unit === 'percent') discounted *= (1 - value / 100);
+    if (term.unit === 'amount') discounted -= value;
+    return Math.max(0, applyRounding(discounted, term.rounding_mode, term.rounding_unit));
+  }
+
+  function parseMakeshopDiscountTerm({code, title, price, date}) {
+    const priceText = cleanText(price);
+    if (!cleanText(code) && !cleanText(title) && !priceText && !cleanText(date)) return null;
+    const valueMatch = priceText.match(/(-?[\d,.]+)\s*(%|원)/);
+    const roundingUnit = priceText.includes('백원') ? 100 : priceText.includes('십원') ? 10 : 1;
+    const roundingMode = priceText.includes('올림') ? 'up'
+      : priceText.includes('반올림') ? 'nearest'
+        : priceText.includes('절사') ? 'down' : 'none';
+    return {
+      term_key:'period',
+      term_type:'period',
+      value:cleanNumber(valueMatch?.[1]),
+      unit:normalizeDiscountUnit(valueMatch?.[2]),
+      rounding_mode:roundingMode,
+      rounding_unit:roundingUnit,
+      is_baseline:true,
+      title:cleanText(title) || null,
+      code:cleanText(code) || null,
+      period_text:cleanText(date) || null,
+      raw_text:priceText || null
+    };
+  }
+
+  function priceFields(fields, values) {
+    const priceSelected = Boolean(fields?.price);
+    const discountSelected = fields?.discount === undefined
+      ? priceSelected
+      : Boolean(fields.discount);
+    if (!priceSelected && !discountSelected) {
+      return {
+        price:null,
+        base_price:null,
+        option_price:null,
+        discounted_base_price:null,
+        final_price:null,
+        reported_final_price:null,
+        discount_calculation_status:null,
+        discount_terms:[],
+        price_calculation_version:null
+      };
+    }
+    return {
+      price:priceSelected ? values.price : null,
+      base_price:priceSelected ? values.base_price : null,
+      option_price:priceSelected ? values.option_price : null,
+      discounted_base_price:discountSelected ? values.discounted_base_price : null,
+      final_price:priceSelected ? values.final_price : null,
+      reported_final_price:discountSelected ? values.reported_final_price : null,
+      discount_calculation_status:discountSelected ? values.discount_calculation_status : null,
+      discount_terms:discountSelected ? values.discount_terms : [],
+      price_calculation_version:2
+    };
   }
 
   function decodeXmlText(value) {
@@ -136,6 +217,47 @@
       const sellerCode = cleanText(row[1]) || null;
       const productName = cleanText(row[3]) || null;
       const basePrice = cleanNumber(row[5]);
+      const basicDiscountValue = cleanNumber(row[57]);
+      const basicDiscountUnit = normalizeDiscountUnit(row[58]);
+      const basicDiscount = basicDiscountValue !== null && basicDiscountUnit ? {
+        term_key:'basic',
+        term_type:'basic',
+        value:basicDiscountValue,
+        unit:basicDiscountUnit,
+        rounding_mode:'nearest',
+        rounding_unit:1,
+        is_baseline:true,
+        title:'즉시할인 기본할인'
+      } : null;
+      const reservationDiscountValue = cleanNumber(row[61]);
+      const reservationDiscountUnit = normalizeDiscountUnit(row[62]);
+      const reservationDiscount = reservationDiscountValue !== null && reservationDiscountUnit ? {
+        term_key:'reservation',
+        term_type:'reservation',
+        value:reservationDiscountValue,
+        unit:reservationDiscountUnit,
+        rounding_mode:'nearest',
+        rounding_unit:1,
+        is_baseline:false,
+        period_text:cleanText(row[63]) || null,
+        title:'예약 할인'
+      } : null;
+      const multiBuyDiscountValue = cleanNumber(row[66]);
+      const multiBuyDiscountUnit = normalizeDiscountUnit(row[67]);
+      const multiBuyDiscount = multiBuyDiscountValue !== null && multiBuyDiscountUnit ? {
+        term_key:'multi_buy',
+        term_type:'multi_buy',
+        value:multiBuyDiscountValue,
+        unit:multiBuyDiscountUnit,
+        rounding_mode:'nearest',
+        rounding_unit:1,
+        is_baseline:false,
+        condition_value:cleanNumber(row[64]),
+        condition_unit:cleanText(row[65]) || null,
+        title:'복수구매 할인'
+      } : null;
+      const discountTerms = [basicDiscount, reservationDiscount, multiBuyDiscount].filter(Boolean);
+      const discountedBasePrice = calculateDiscountedBasePrice(basePrice, basicDiscount);
       const optionCodes = splitLines(row[15]);
       const optionNames = splitLines(row[16]);
       const optionPrices = splitLines(row[17]);
@@ -144,7 +266,17 @@
       const sourceRowNo = headerIndex + relativeIndex + 2;
 
       if (!optionCodes.length) {
-        const finalPrice = selectedValue(fields, 'price', basePrice);
+        const finalPrice = discountedBasePrice;
+        const prices = priceFields(fields, {
+          price:finalPrice,
+          base_price:basePrice,
+          option_price:0,
+          discounted_base_price:discountedBasePrice,
+          final_price:finalPrice,
+          reported_final_price:null,
+          discount_calculation_status:basicDiscount ? 'calculated' : 'none',
+          discount_terms:discountTerms
+        });
         output.push({
           product_code:productCode,
           option_code:'',
@@ -152,13 +284,26 @@
           product_name:selectedValue(fields, 'basic', productName),
           option_name:null,
           stock:selectedValue(fields, 'inventory', cleanNumber(row[12])),
-          price:finalPrice,
-          base_price:finalPrice,
-          option_price:selectedValue(fields, 'price', 0),
-          final_price:finalPrice,
+          ...prices,
           sale_status:selectedValue(fields, 'status', cleanText(row[4]) || null),
           source_row_no:sourceRowNo,
-          raw_payload:{source_file_name:fileName, base_price:basePrice, option_price:0}
+          raw_payload:{
+            source_file_name:fileName,
+            base_price:basePrice,
+            option_price:0,
+            undiscounted_final_price:basePrice,
+            smartstore_basic_discount_value:row[57] ?? null,
+            smartstore_basic_discount_unit:row[58] ?? null,
+            smartstore_mobile_discount_value:row[59] ?? null,
+            smartstore_mobile_discount_unit:row[60] ?? null,
+            smartstore_reservation_discount_value:row[61] ?? null,
+            smartstore_reservation_discount_unit:row[62] ?? null,
+            smartstore_reservation_discount_period:row[63] ?? null,
+            smartstore_multi_buy_condition_value:row[64] ?? null,
+            smartstore_multi_buy_condition_unit:row[65] ?? null,
+            smartstore_multi_buy_discount_value:row[66] ?? null,
+            smartstore_multi_buy_discount_unit:row[67] ?? null
+          }
         });
         return;
       }
@@ -166,9 +311,17 @@
       optionCodes.forEach((optionCode, index) => {
         if (!optionCode) return;
         const optionPrice = cleanNumber(optionPrices[index], 0);
-        const selectedBasePrice = selectedValue(fields, 'price', basePrice);
-        const selectedOptionPrice = selectedValue(fields, 'price', optionPrice);
-        const finalPrice = selectedBasePrice === null ? null : selectedBasePrice + Number(selectedOptionPrice || 0);
+        const finalPrice = discountedBasePrice === null ? null : discountedBasePrice + Number(optionPrice || 0);
+        const prices = priceFields(fields, {
+          price:finalPrice,
+          base_price:basePrice,
+          option_price:optionPrice,
+          discounted_base_price:discountedBasePrice,
+          final_price:finalPrice,
+          reported_final_price:null,
+          discount_calculation_status:basicDiscount ? 'calculated' : 'none',
+          discount_terms:discountTerms
+        });
         output.push({
           product_code:productCode,
           option_code:optionCode,
@@ -176,13 +329,26 @@
           product_name:selectedValue(fields, 'basic', productName),
           option_name:selectedValue(fields, 'basic', optionNames[index] || null),
           stock:selectedValue(fields, 'inventory', cleanNumber(optionStocks[index])),
-          price:finalPrice,
-          base_price:selectedBasePrice,
-          option_price:selectedOptionPrice,
-          final_price:finalPrice,
+          ...prices,
           sale_status:selectedValue(fields, 'status', optionUse[index] || cleanText(row[4]) || null),
           source_row_no:sourceRowNo,
-          raw_payload:{source_file_name:fileName, base_price:basePrice, option_price:optionPrice}
+          raw_payload:{
+            source_file_name:fileName,
+            base_price:basePrice,
+            option_price:optionPrice,
+            undiscounted_final_price:basePrice === null ? null : basePrice + Number(optionPrice || 0),
+            smartstore_basic_discount_value:row[57] ?? null,
+            smartstore_basic_discount_unit:row[58] ?? null,
+            smartstore_mobile_discount_value:row[59] ?? null,
+            smartstore_mobile_discount_unit:row[60] ?? null,
+            smartstore_reservation_discount_value:row[61] ?? null,
+            smartstore_reservation_discount_unit:row[62] ?? null,
+            smartstore_reservation_discount_period:row[63] ?? null,
+            smartstore_multi_buy_condition_value:row[64] ?? null,
+            smartstore_multi_buy_condition_unit:row[65] ?? null,
+            smartstore_multi_buy_discount_value:row[66] ?? null,
+            smartstore_multi_buy_discount_unit:row[67] ?? null
+          }
         });
       });
     });
@@ -206,7 +372,24 @@
           productName:cleanText(row[12]) || null,
           basePrice:cleanNumber(row[44]),
           productStock:cleanNumber(row[47]),
-          saleStatus:cleanText(row[41]) || null
+          saleStatus:cleanText(row[41]) || null,
+          periodDiscount:parseMakeshopDiscountTerm({
+            code:row[105],
+            title:row[106],
+            price:row[107],
+            date:row[108]
+          }),
+          membershipDiscount:cleanNumber(row[45], 0) ? {
+            term_key:'membership',
+            term_type:'membership',
+            value:cleanNumber(row[45], 0),
+            unit:'percent',
+            rounding_mode:'none',
+            rounding_unit:1,
+            is_baseline:false,
+            title:'회원등급 할인'
+          } : null,
+          powerappExcludedDiscount:cleanText(row[123]) || null
         };
       }
       if (!product) return;
@@ -214,9 +397,19 @@
       const hasOptionDetail = optionCode !== '';
       if (!hasOptionDetail && !productCode) return;
       const optionPrice = hasOptionDetail ? cleanNumber(row[31], 0) : 0;
-      const selectedBasePrice = selectedValue(fields, 'price', product.basePrice);
-      const selectedOptionPrice = selectedValue(fields, 'price', optionPrice);
-      const finalPrice = selectedBasePrice === null ? null : selectedBasePrice + Number(selectedOptionPrice || 0);
+      const discountTerms = [product.periodDiscount, product.membershipDiscount].filter(Boolean);
+      const discountedBasePrice = calculateDiscountedBasePrice(product.basePrice, product.periodDiscount);
+      const finalPrice = discountedBasePrice === null ? null : discountedBasePrice + Number(optionPrice || 0);
+      const prices = priceFields(fields, {
+        price:finalPrice,
+        base_price:product.basePrice,
+        option_price:optionPrice,
+        discounted_base_price:discountedBasePrice,
+        final_price:finalPrice,
+        reported_final_price:null,
+        discount_calculation_status:product.periodDiscount ? 'calculated' : 'none',
+        discount_terms:discountTerms
+      });
       output.push({
         product_code:product.productCode,
         option_code:optionCode,
@@ -224,13 +417,21 @@
         product_name:selectedValue(fields, 'basic', product.productName),
         option_name:selectedValue(fields, 'basic', hasOptionDetail ? (cleanText(row[29]) || cleanText(row[20]) || null) : null),
         stock:selectedValue(fields, 'inventory', hasOptionDetail ? cleanNumber(row[32]) : product.productStock),
-        price:finalPrice,
-        base_price:selectedBasePrice,
-        option_price:selectedOptionPrice,
-        final_price:finalPrice,
+        ...prices,
         sale_status:selectedValue(fields, 'status', cleanText(row[41]) || product.saleStatus),
         source_row_no:headerIndex + relativeIndex + 2,
-        raw_payload:{source_file_name:fileName, base_price:product.basePrice, option_price:optionPrice}
+        raw_payload:{
+          source_file_name:fileName,
+          base_price:product.basePrice,
+          option_price:optionPrice,
+          undiscounted_final_price:product.basePrice === null ? null : product.basePrice + Number(optionPrice || 0),
+          makeshop_membership_discount:product.membershipDiscount?.value ?? 0,
+          makeshop_discount_code:product.periodDiscount?.code ?? null,
+          makeshop_discount_title:product.periodDiscount?.title ?? null,
+          makeshop_discount_price:product.periodDiscount?.raw_text ?? null,
+          makeshop_discount_date:product.periodDiscount?.period_text ?? null,
+          makeshop_powerapp_excluded_discount:product.powerappExcludedDiscount
+        }
       });
     });
     return output;
@@ -246,8 +447,34 @@
       const productCode = cleanText(row[0]);
       const optionCode = cleanText(row[10]);
       if (!productCode || !optionCode) return [];
-      const price = cleanNumber(row[6], cleanNumber(row[5], cleanNumber(row[4])));
-      const selectedPrice = selectedValue(fields, 'price', price);
+      const basePrice = cleanNumber(row[4]);
+      const discountedBasePrice = cleanNumber(row[5], basePrice);
+      const reportedFinalPrice = cleanNumber(row[6], discountedBasePrice);
+      const discountAmount = basePrice !== null && discountedBasePrice !== null
+        ? Math.max(0, basePrice - discountedBasePrice) : null;
+      const discountTerm = discountAmount ? {
+        term_key:'reported_result',
+        term_type:'reported_result',
+        value:discountAmount,
+        unit:'amount',
+        rounding_mode:'none',
+        rounding_unit:1,
+        is_baseline:true,
+        title:'원본 할인 차액',
+        reported_discounted_price:discountedBasePrice
+      } : null;
+      const prices = priceFields(fields, {
+        price:reportedFinalPrice,
+        base_price:basePrice,
+        option_price:0,
+        discounted_base_price:discountedBasePrice,
+        final_price:reportedFinalPrice,
+        reported_final_price:reportedFinalPrice,
+        discount_calculation_status:discountTerm
+          ? (discountedBasePrice === reportedFinalPrice ? 'reported' : 'reported_mismatch')
+          : 'none',
+        discount_terms:discountTerm ? [discountTerm] : []
+      });
       return [{
         product_code:productCode,
         option_code:optionCode,
@@ -255,13 +482,19 @@
         product_name:selectedValue(fields, 'basic', cleanText(row[2]) || null),
         option_name:selectedValue(fields, 'basic', cleanText(row[14]) || cleanText(row[12]) || null),
         stock:selectedValue(fields, 'inventory', cleanNumber(row[15])),
-        price:selectedPrice,
-        base_price:selectedPrice,
-        option_price:selectedValue(fields, 'price', 0),
-        final_price:selectedPrice,
+        ...prices,
         sale_status:selectedValue(fields, 'status', [cleanText(row[18]), cleanText(row[19])].filter(Boolean).join(' · ') || null),
         source_row_no:headerIndex + relativeIndex + 2,
-        raw_payload:{source_file_name:fileName, base_price:price, option_price:0, safety_stock:cleanNumber(row[16])}
+        raw_payload:{
+          source_file_name:fileName,
+          base_price:basePrice,
+          option_price:0,
+          undiscounted_final_price:basePrice,
+          ably_sale_price:row[4] ?? null,
+          ably_discounted_sale_price:row[5] ?? null,
+          ably_reported_final_price:row[6] ?? null,
+          safety_stock:cleanNumber(row[16])
+        }
       }];
     });
   }
@@ -344,6 +577,9 @@
   global.SystemV3SellerParsers = Object.freeze({
     SOURCE_RULES,
     cleanNumber,
+    normalizeDiscountUnit,
+    calculateDiscountedBasePrice,
+    parseMakeshopDiscountTerm,
     parseRows,
     parseSmartstoreRows,
     parseMakeshopRows,
