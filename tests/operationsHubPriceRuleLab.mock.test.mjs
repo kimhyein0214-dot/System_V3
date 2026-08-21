@@ -9,10 +9,15 @@ const migration = fs.readFileSync('supabase/migrations/20260820200000_price_rule
 
 test('price rule lab exposes atomic, composite and virtual QA UI', () => {
   assert.match(html, /id="price-rule-lab-open"/);
+  assert.match(html, /data-page="price-rules"/);
+  assert.match(html, /id="price-rules" class="page price-rule-page"/);
   assert.match(html, /id="price-rule-tag-form"/);
   assert.match(html, /id="price-rule-set-form"/);
   assert.match(html, /id="price-rule-qa-list"/);
   assert.match(html, /price-rule-lab\.js\?v=[^"']+/);
+  assert.doesNotMatch(html, /id="price-rule-lab-modal"/);
+  assert.match(lab, /showPage\?\.\('price-rules'\)/);
+  assert.match(lab, /SystemV3PriceRuleLab = \{refresh\}/);
 });
 
 test('data service keeps tag saves behind dedicated RPCs', () => {

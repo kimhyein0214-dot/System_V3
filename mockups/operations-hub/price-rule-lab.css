@@ -1,13 +1,10 @@
-/* Price rule tag builder and isolated virtual-option QA */
-.price-rule-lab-modal{width:min(1180px,calc(100vw - 32px));max-height:calc(100vh - 32px);display:flex;flex-direction:column;border:1px solid #aebfd6;border-radius:14px;background:#fff;box-shadow:0 28px 80px rgba(15,35,66,.3);overflow:hidden}
-.price-rule-lab-modal .modal-head{flex:0 0 auto}
-.price-rule-lab-body{min-height:0;display:grid;gap:12px;overflow:auto;padding:14px 16px 18px}
-.price-rule-lab-summary{display:grid;grid-template-columns:repeat(3,minmax(120px,1fr)) auto;gap:8px}
+/* Persistent price-rule management page and isolated virtual-option QA */
+.price-rule-page.active-page{display:block}.price-rule-page-shell{padding:0;overflow:hidden}.price-rule-lab-body{min-height:0;display:grid;gap:12px;padding:14px 16px 18px}
+.price-rule-lab-summary{display:grid;grid-template-columns:repeat(3,minmax(120px,1fr));gap:8px}
 .price-rule-lab-summary>div{border:1px solid #d8e3f1;border-radius:9px;background:#f7faff;padding:9px 11px}
 .price-rule-lab-summary span,.price-rule-lab-summary b{display:block}
 .price-rule-lab-summary span{color:#687a92;font-size:10px}
 .price-rule-lab-summary b{margin-top:3px;color:#173f78;font-size:15px}
-.price-rule-lab-summary .btn{height:auto;min-height:52px}
 .price-rule-lab-error{border:1px solid #efb8b8;border-radius:8px;background:#fff2f2;padding:10px;color:#a21c1c;font-size:11px}
 .price-rule-lab-grid{display:grid;grid-template-columns:1fr 1fr;gap:12px}
 .price-rule-lab-panel,.price-rule-qa-panel{min-width:0;border:1px solid #d7e1ee;border-radius:10px;background:#fbfdff;padding:11px}
@@ -63,5 +60,5 @@
 .price-rule-qa-flow span{flex:0 0 auto;border:1px solid #d4e0ee;border-radius:6px;background:#f8fbff;padding:5px 6px;color:#53677e;font-size:8px}
 .price-rule-qa-flow i{color:#8ba0b8;font-size:9px;font-style:normal}
 .price-rule-empty{margin:0;border:1px dashed #cbd8e7;border-radius:7px;background:#f8fafc;padding:12px;color:#8492a6;font-size:9px;text-align:center}
-.price-rule-lab-foot{flex:1;color:#64748b;font-size:10px}
-@media(max-width:820px){.price-rule-lab-grid{grid-template-columns:1fr}.price-rule-lab-summary{grid-template-columns:repeat(3,1fr)}.price-rule-lab-summary .btn{grid-column:1/-1;min-height:36px}.price-rule-editor-form{grid-template-columns:1fr 1fr}.price-rule-editor-form details>div{grid-template-columns:1fr 1fr}}
+.price-rule-lab-foot{margin:0;border-radius:7px;background:#f4f7fb;padding:9px 11px;color:#64748b;font-size:10px}
+@media(max-width:820px){.price-rule-lab-grid{grid-template-columns:1fr}.price-rule-lab-summary{grid-template-columns:repeat(3,1fr)}.price-rule-editor-form{grid-template-columns:1fr 1fr}.price-rule-editor-form details>div{grid-template-columns:1fr 1fr}}

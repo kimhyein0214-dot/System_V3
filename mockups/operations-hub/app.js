@@ -4226,6 +4226,7 @@ function showPage(pageId) {
   if (pageId === 'jobs') loadChangeQueue();
   if (pageId === 'multi-links' && !multiLinkState.loaded) loadMultiLinks({resetPage:true});
   if (pageId === 'inventory') loadInventorySurvey({silent:inventoryState.loaded});
+  if (pageId === 'price-rules') window.SystemV3PriceRuleLab?.refresh();
   document.querySelector('.content-area').scrollTop = 0;
 }
 

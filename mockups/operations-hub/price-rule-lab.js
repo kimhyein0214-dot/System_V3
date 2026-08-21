@@ -2,9 +2,9 @@
   'use strict';
 
   const data = global.SystemV3Data;
-  const modal = document.getElementById('price-rule-lab-modal');
+  const page = document.getElementById('price-rules');
   const openButton = document.getElementById('price-rule-lab-open');
-  if (!data || !modal || !openButton) return;
+  if (!data || !page || !openButton) return;
 
   const state = {tags:[], sets:[], qa:[], selectedTagIds:[], loading:false};
   const byId = id => document.getElementById(id);
@@ -163,10 +163,8 @@
     renderSelectedTags();
   }
 
-  function close() { modal.hidden = true; }
-  openButton.addEventListener('click', () => { modal.hidden = false; refresh(); });
-  byId('price-rule-lab-close').addEventListener('click', close);
-  byId('price-rule-lab-done').addEventListener('click', close);
+  openButton.addEventListener('click', () => global.showPage?.('price-rules'));
+  byId('price-rule-lab-done').addEventListener('click', () => global.showPage?.('matching'));
   byId('price-rule-lab-refresh').addEventListener('click', refresh);
   byId('price-rule-tag-reset').addEventListener('click', resetTagForm);
   byId('price-rule-set-reset').addEventListener('click', resetSetForm);
@@ -222,4 +220,5 @@
     } catch (error) { toast(error?.message || '큰 태그 저장에 실패했습니다.'); }
     finally { submit.disabled = false; }
   });
+  global.SystemV3PriceRuleLab = {refresh};
 })(window);
