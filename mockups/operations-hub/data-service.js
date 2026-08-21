@@ -6,6 +6,7 @@
   const PICKING_SUPABASE_URL = 'https://vgxocngpykhlkosiaeew.supabase.co';
   const PICKING_SUPABASE_KEY = 'sb_publishable_XVnKGJo66GZiYTq5Ivu8dA_SjBVvX0g';
   const PAGE_SIZE = 50;
+  const MATRIX_PAGE_SIZES = new Set([50, 100, 200]);
   const MATRIX_SELECT = 'sellpia_sku_code,own_code,image_url,display_name,smartstore_name,smartstore_option_name,smartstore_product_code,smartstore_option_code,smartstore_match_tier,smartstore_match_score,smartstore_listing_count,smartstore_name_is_draft,smartstore_sale_status,makeshop_name,makeshop_option_name,makeshop_product_code,makeshop_option_code,makeshop_match_tier,makeshop_match_score,makeshop_listing_count,makeshop_name_is_draft,makeshop_sale_status,ably_name,ably_option_name,ably_product_code,ably_option_code,ably_match_tier,ably_match_score,ably_listing_count,ably_name_is_draft,ably_sale_status,updated_at,sellpia_product_name,sellpia_option_name,sellpia_own_code,sellpia_current_stock,sellpia_available_stock,sellpia_safety_stock,sellpia_sale_price,sellpia_inventory_at,smartstore_stock,smartstore_price,smartstore_policy_price,smartstore_policy_active,smartstore_policy_name,smartstore_inventory_at,makeshop_stock,makeshop_price,makeshop_policy_price,makeshop_policy_active,makeshop_policy_name,makeshop_inventory_at,ably_stock,ably_price,ably_policy_price,ably_policy_active,ably_policy_name,ably_inventory_at,overall_status,sellpia_override_image_url,sellpia_override_updated_at';
 
   function requireClient() {
@@ -184,12 +185,29 @@
     return Array.isArray(data) ? data[0] : data;
   }
 
-  async function loadProducts({ page = 1, search = '', searchSources = ['sellpia','smartstore','makeshop','ably'], status = 'all', sort = 'sku_asc', skus = [], codeListRows = [], advancedFilter = null } = {}) {
+  async function loadProducts({ page = 1, pageSize = PAGE_SIZE, search = '', searchSources = ['sellpia','smartstore','makeshop','ably'], status = 'all', sort = 'sku_asc', skus = [], codeListRows = [], advancedFilter = null } = {}) {
     const safePage = Math.max(1, Number(page) || 1);
+    const safePageSize = MATRIX_PAGE_SIZES.has(Number(pageSize)) ? Number(pageSize) : PAGE_SIZE;
+    const loadPagedRpc = async (rpcName, args) => {
+      const serverPageSize = Math.min(safePageSize, 100);
+      const requestsPerPage = safePageSize / serverPageSize;
+      const firstServerPage = ((safePage - 1) * requestsPerPage) + 1;
+      const rows = [];
+      let count = 0;
+      for (let offset = 0; offset < requestsPerPage; offset += 1) {
+        const {data, error} = await db.rpc(rpcName, {...args, p_page:firstServerPage + offset, p_page_size:serverPageSize});
+        if (error) throw error;
+        const pageRows = Array.isArray(data?.rows) ? data.rows : [];
+        rows.push(...pageRows);
+        count = Number(data?.count || count || 0);
+        if (pageRows.length < serverPageSize) break;
+      }
+      return {rows:rows.slice(0, safePageSize), count, page:safePage, pageSize:safePageSize};
+    };
     const orderedCodeRows = Array.isArray(codeListRows) ? codeListRows : [];
     if (orderedCodeRows.length) {
-      const from = (safePage - 1) * PAGE_SIZE;
-      const pageRows = orderedCodeRows.slice(from, from + PAGE_SIZE);
+      const from = (safePage - 1) * safePageSize;
+      const pageRows = orderedCodeRows.slice(from, from + safePageSize);
       const pageSkus = [...new Set(pageRows.map(item => cleanText(item.sellpia_sku_code)).filter(Boolean))];
       let products = [];
       if (pageSkus.length) {
@@ -211,24 +229,15 @@
         rows:await attachProductMetadata(orderedRows),
         count:orderedCodeRows.length,
         page:safePage,
-        pageSize:PAGE_SIZE
+        pageSize:safePageSize
       };
     }
     const codeListSkus = [...new Set((skus || []).map(cleanText).filter(Boolean))];
     if (codeListSkus.length) {
-      const {data, error} = await db.rpc('load_operations_hub_code_list', {
-        p_skus:codeListSkus,
-        p_page:safePage,
-        p_page_size:PAGE_SIZE,
-        p_status:status,
-        p_sort:'input_order'
-      });
-      if (error) throw error;
+      const result = await loadPagedRpc('load_operations_hub_code_list', {p_skus:codeListSkus, p_status:status, p_sort:'input_order'});
       return {
-        rows:await attachProductMetadata(Array.isArray(data?.rows) ? data.rows : []),
-        count:Number(data?.count || 0),
-        page:Number(data?.page || safePage),
-        pageSize:Number(data?.pageSize || data?.page_size || PAGE_SIZE)
+        ...result,
+        rows:await attachProductMetadata(result.rows)
       };
     }
     const filterPayload = advancedFilter && typeof advancedFilter === 'object'
@@ -238,9 +247,7 @@
         }
       : {logic:'and', conditions:[]};
     if (filterPayload.conditions.length) {
-      const {data, error} = await db.rpc('load_operations_hub_matrix_filtered', {
-        p_page:safePage,
-        p_page_size:PAGE_SIZE,
+      const result = await loadPagedRpc('load_operations_hub_matrix_filtered', {
         p_search:normalizedSearch(search),
         p_search_sources:searchSources,
         p_status:status,
@@ -248,16 +255,13 @@
         p_filter:filterPayload,
         p_skus:[]
       });
-      if (error) throw error;
       return {
-        rows:await attachProductMetadata(Array.isArray(data?.rows) ? data.rows : []),
-        count:Number(data?.count || 0),
-        page:Number(data?.page || safePage),
-        pageSize:Number(data?.pageSize || data?.page_size || PAGE_SIZE)
+        ...result,
+        rows:await attachProductMetadata(result.rows)
       };
     }
-    const from = (safePage - 1) * PAGE_SIZE;
-    const to = from + PAGE_SIZE - 1;
+    const from = (safePage - 1) * safePageSize;
+    const to = from + safePageSize - 1;
     const keyword = normalizedSearch(search);
     const intersection = splitIntersectionSearch(search);
     const allowedSearchSources = ['sellpia','smartstore','makeshop','ably'];
@@ -322,7 +326,7 @@
 
     const { data, error, count } = await query;
     if (error) throw error;
-    return { rows: await attachProductMetadata(data || []), count: count || 0, page: safePage, pageSize: PAGE_SIZE };
+    return { rows: await attachProductMetadata(data || []), count: count || 0, page: safePage, pageSize: safePageSize };
   }
 
   async function loadMatrixExportChunk({
@@ -671,15 +675,6 @@
       .from('operations_hub_price_rule_set_live')
       .select('price_rule_set_id,set_code,set_name,color,note,updated_at,tags')
       .order('price_rule_set_id', {ascending:true});
-    if (error) throw error;
-    return data || [];
-  }
-
-  async function loadPriceRuleQaCases() {
-    const {data, error} = await db
-      .from('operations_hub_price_rule_qa_live')
-      .select('qa_case_id,case_code,case_name,scenario_type,source_channel,virtual_product_code,virtual_option_code,seller_original_price,price_rule_set_id,set_code,set_name,color,base_price,expected_final_price,calculated_final_price,passed,steps,components,note,updated_at')
-      .order('qa_case_id', {ascending:true});
     if (error) throw error;
     return data || [];
   }
@@ -1617,7 +1612,6 @@
     savePricePolicy,
     loadPriceRuleTags,
     loadPriceRuleSets,
-    loadPriceRuleQaCases,
     savePriceRuleTag,
     savePriceRuleSet,
     deletePriceRuleTag,

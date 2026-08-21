@@ -121,6 +121,15 @@
 .matrix-table tbody td.matrix-cell-selected{outline:2px solid #4d8ee8;outline-offset:-2px;background:#eaf3ff}
 .matrix-table tbody td.matrix-cell-anchor{outline:3px solid var(--blue);outline-offset:-3px}
 .matrix-table tbody td.select-col,.matrix-table tbody td.image-drop-cell{cursor:default}
+.matrix-table .select-col{display:none}
+.matrix-page-size{display:flex;align-items:center;gap:5px;white-space:nowrap;color:#64748b;font-size:9px;font-weight:900}
+.matrix-page-size select{min-width:64px;padding-right:20px}
+.matrix-table .image-col{left:0}
+.matrix-table .sku-col{left:var(--image-col-width)}
+.matrix-table .own-code-col{left:calc(82px + var(--image-col-width))}
+.matrix-table .sellpia-name-col{left:calc(184px + var(--image-col-width))}
+.matrix-table .sellpia-stock-col{left:calc(524px + var(--image-col-width))}
+.matrix-table .sellpia-price-col{left:calc(604px + var(--image-col-width))}
 body.matrix-cell-selecting{user-select:none}
 .legend-selection{background:#eaf3ff;border:2px solid #4d8ee8!important}
 .mapping-code-cell{padding:0 4px!important}

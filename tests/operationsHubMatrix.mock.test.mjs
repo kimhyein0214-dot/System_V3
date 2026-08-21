@@ -35,7 +35,8 @@ assert.match(source, /MATRIX_ZOOM_MIN = 80;[\s\S]*?MATRIX_ZOOM_MAX = 140;[\s\S]*
 assert.match(source, /MATRIX_ZOOM_STEP = 5;/, "matrix zoom must move in five-percent steps");
 assert.match(html, /value="80">80%[\s\S]*?value="85">85%[\s\S]*?value="140">140%/, "preset zoom options must include five-percent increments");
 assert.match(css, /\.matrix-table\{zoom:var\(--matrix-zoom,1\)\}/, "zoom must apply to the matrix table only");
-assert.match(css, /\.matrix-table \.sellpia-price-col\{left:calc\(640px \+ var\(--image-col-width\)\);[\s\S]*?box-shadow:3px 0 0 var\(--blue\)/, "the Sellpia pane must keep its blue frozen right boundary while image width changes");
+assert.match(css, /\.matrix-table \.sellpia-price-col\{left:calc\(604px \+ var\(--image-col-width\)\)\}/, "removing row checkboxes must shift the Sellpia frozen pane to the image boundary");
+assert.match(css, /\.matrix-table \.select-col\{display:none\}/, "row-selection checkboxes must be removed from the visible matrix");
 assert.match(html, /id="matrix-freeze-toggle"[^>]*aria-pressed="true"[^>]*>셀피아 고정 ON/, "the toolbar must expose an accessible Sellpia freeze toggle");
 assert.match(source, /MATRIX_FREEZE_KEY = 'system-v3-matrix-sellpia-freeze'[\s\S]*?applyMatrixSellpiaFreeze[\s\S]*?localStorage\.setItem\(MATRIX_FREEZE_KEY/, "the Sellpia freeze preference must be applied and persisted");
 assert.match(css, /\.matrix-table\.sellpia-unfrozen \.sticky-col\{left:auto\}[\s\S]*?tbody \.sticky-col\{position:static\}[\s\S]*?sellpia-group\{box-shadow:none\}/, "unfrozen mode must remove horizontal sticky positioning and the frozen boundary");
