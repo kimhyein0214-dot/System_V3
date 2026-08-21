@@ -128,6 +128,7 @@
     byId('price-rule-tag-max').value = '';
     byId('price-rule-tag-round-unit').value = '1';
     byId('price-rule-tag-round-mode').value = 'nearest';
+    byId('price-rule-tag-delete').hidden = true;
   }
 
   function editTag(tagId) {
@@ -143,6 +144,7 @@
     byId('price-rule-tag-max').value = tag.max_price ?? '';
     byId('price-rule-tag-round-unit').value = tag.rounding_unit ?? 1;
     byId('price-rule-tag-round-mode').value = tag.rounding_mode || 'nearest';
+    byId('price-rule-tag-delete').hidden = false;
   }
 
   function resetSetForm() {
@@ -151,6 +153,7 @@
     byId('price-rule-set-color').value = '#1558c0';
     state.selectedTagIds = [];
     renderSelectedTags();
+    byId('price-rule-set-delete').hidden = true;
   }
 
   function editSet(setId) {
@@ -161,6 +164,7 @@
     byId('price-rule-set-color').value = ruleSet.color;
     state.selectedTagIds = (ruleSet.tags || []).slice().sort((left, right) => Number(left.order) - Number(right.order)).map(tag => Number(tag.tag_id));
     renderSelectedTags();
+    byId('price-rule-set-delete').hidden = false;
   }
 
   openButton.addEventListener('click', () => global.showPage?.('price-rules'));
@@ -168,6 +172,34 @@
   byId('price-rule-lab-refresh').addEventListener('click', refresh);
   byId('price-rule-tag-reset').addEventListener('click', resetTagForm);
   byId('price-rule-set-reset').addEventListener('click', resetSetForm);
+  byId('price-rule-tag-delete').addEventListener('click', async () => {
+    const tagId = cleanNumber(byId('price-rule-tag-id').value);
+    const tag = state.tags.find(item => Number(item.price_rule_tag_id) === Number(tagId));
+    if (!tagId || !tag || !global.confirm(`작은 태그 “${tag.tag_name}”을 삭제할까요?\n사용 중인 큰 태그가 있으면 삭제되지 않습니다.`)) return;
+    const button = byId('price-rule-tag-delete');
+    button.disabled = true;
+    try {
+      await data.deletePriceRuleTag(tagId);
+      resetTagForm();
+      await refresh();
+      toast('작은 가격 태그를 삭제했습니다.');
+    } catch (error) { toast(error?.message || '작은 태그 삭제에 실패했습니다.'); }
+    finally { button.disabled = false; }
+  });
+  byId('price-rule-set-delete').addEventListener('click', async () => {
+    const ruleSetId = cleanNumber(byId('price-rule-set-id').value);
+    const ruleSet = state.sets.find(item => Number(item.price_rule_set_id) === Number(ruleSetId));
+    if (!ruleSetId || !ruleSet || !global.confirm(`큰 태그 “${ruleSet.set_name}”을 삭제할까요?\n상품 배정 또는 가상 QA에서 사용 중이면 삭제되지 않습니다.`)) return;
+    const button = byId('price-rule-set-delete');
+    button.disabled = true;
+    try {
+      await data.deletePriceRuleSet(ruleSetId);
+      resetSetForm();
+      await refresh();
+      toast('큰 가격 태그를 삭제했습니다.');
+    } catch (error) { toast(error?.message || '큰 태그 삭제에 실패했습니다.'); }
+    finally { button.disabled = false; }
+  });
   byId('price-rule-tag-list').addEventListener('click', event => editTag(event.target.closest('[data-tag-id]')?.dataset.tagId));
   byId('price-rule-set-list').addEventListener('click', event => editSet(event.target.closest('[data-set-id]')?.dataset.setId));
   byId('price-rule-set-add').addEventListener('change', event => {

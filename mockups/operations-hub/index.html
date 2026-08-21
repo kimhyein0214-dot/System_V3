@@ -7,9 +7,9 @@
     <title>System V3 · 상품 운영 허브</title>
     <link rel="preconnect" href="https://cdnjs.cloudflare.com" crossorigin>
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/pretendard/1.3.9/static/pretendard.css">
-    <link rel="stylesheet" href="./style.css?v=20260821-pricerules1">
-    <link rel="stylesheet" href="./inventory.css?v=20260821-pricerules1">
-    <link rel="stylesheet" href="./price-rule-lab.css?v=20260821-pricerules1">
+    <link rel="stylesheet" href="./style.css?v=20260821-pricerules2">
+    <link rel="stylesheet" href="./inventory.css?v=20260821-pricerules2">
+    <link rel="stylesheet" href="./price-rule-lab.css?v=20260821-pricerules2">
   </head>
   <body>
     <div class="app-shell">
@@ -174,7 +174,7 @@
               <button class="matrix-panel-action" id="matrix-match-stock-btn"><span>⇄</span><b>셀피아→판매처<br>재고 맞추기</b></button>
               <button class="matrix-panel-action" id="matrix-export-btn"><span>⇩</span><b>검토한 수정본<br>내보내기</b></button>
               <button class="matrix-panel-action" id="matrix-csv-btn"><span>CSV</span><b>현재 결과<br>CSV 저장</b></button>
-              <button class="matrix-panel-action primary" id="matrix-bulk-btn"><span>✓</span><b>선택 일괄수정</b></button>
+              <button class="matrix-panel-action primary" id="matrix-bulk-btn"><span>ƒx</span><b>선택 가격규칙<br>일괄 배정</b></button>
               <div class="matrix-action-divider"></div>
               <label class="custom-preset-picker">내 프리셋<select id="custom-preset-select" aria-label="내 프리셋 선택"><option value="">선택</option></select></label>
               <button id="code-list-open" class="matrix-panel-action code-list-tab" type="button"><span>▦</span><b>엑셀 코드목록</b></button>
@@ -347,7 +347,7 @@
                       <label>값<input id="price-rule-tag-value" type="number" min="0" step="1" value="0"></label>
                       <label>색상<input id="price-rule-tag-color" type="color" value="#2f6fd1"></label>
                       <details><summary>최저·최고·끝자리 설정</summary><div><label>최저가<input id="price-rule-tag-min" type="number" min="0"></label><label>최고가<input id="price-rule-tag-max" type="number" min="0"></label><label>끝자리 단위<input id="price-rule-tag-round-unit" type="number" min="1" value="1"></label><label>끝자리 방식<select id="price-rule-tag-round-mode"><option value="nearest">반올림</option><option value="up">올림</option><option value="down">내림</option></select></label></div></details>
-                      <div class="price-rule-form-actions"><button id="price-rule-tag-reset" class="btn" type="button">새 태그</button><button class="btn primary" type="submit">작은 태그 저장</button></div>
+                      <div class="price-rule-form-actions"><button id="price-rule-tag-delete" class="btn danger" type="button" hidden>작은 태그 삭제</button><button id="price-rule-tag-reset" class="btn" type="button">새 태그</button><button class="btn primary" type="submit">작은 태그 저장</button></div>
                     </form>
                   </section>
                   <section class="price-rule-lab-panel">
@@ -358,7 +358,7 @@
                       <label>큰 태그 이름<input id="price-rule-set-name" required maxlength="50" placeholder="예: 10% 할인 + 고정가 + 배송비"></label>
                       <label>색상<input id="price-rule-set-color" type="color" value="#1558c0"></label>
                       <div class="price-rule-set-builder"><b>계산 순서</b><div id="price-rule-set-selected" class="price-rule-set-selected"></div><select id="price-rule-set-add"><option value="">작은 태그 추가…</option></select></div>
-                      <div class="price-rule-form-actions"><button id="price-rule-set-reset" class="btn" type="button">새 큰 태그</button><button class="btn primary" type="submit">큰 태그 저장</button></div>
+                      <div class="price-rule-form-actions"><button id="price-rule-set-delete" class="btn danger" type="button" hidden>큰 태그 삭제</button><button id="price-rule-set-reset" class="btn" type="button">새 큰 태그</button><button class="btn primary" type="submit">큰 태그 저장</button></div>
                     </form>
                   </section>
                 </div>
@@ -537,15 +537,32 @@
         <div class="modal-foot"><button class="btn" id="matrix-csv-cancel">취소</button><button class="btn primary" id="matrix-csv-run">CSV 만들기</button></div>
       </section>
     </div>
+    <div id="price-rule-bulk-modal" class="modal-backdrop" hidden>
+      <section class="price-rule-bulk-modal" role="dialog" aria-modal="true" aria-labelledby="price-rule-bulk-title">
+        <div class="modal-head"><div><span>상품 범위와 판매처별 규칙 지정</span><h3 id="price-rule-bulk-title">가격 규칙 일괄 배정</h3></div><button id="price-rule-bulk-close" aria-label="가격 규칙 일괄 배정 닫기">×</button></div>
+        <div class="price-rule-bulk-body">
+          <div class="price-rule-bulk-note"><b>이 단계에서는 가격을 바꾸지 않습니다.</b><span>큰 태그 배정만 DB에 저장하고, 실제 판매가·옵션가 수정안은 다음 검토 단계에서 별도로 만듭니다.</span></div>
+          <fieldset class="price-rule-bulk-scopes"><legend>적용할 상품 범위</legend>
+            <label><input type="radio" name="price-rule-bulk-scope" value="selected"><span><b>체크한 SKU</b><em id="price-rule-bulk-selected-count">0개</em></span></label>
+            <label><input type="radio" name="price-rule-bulk-scope" value="code_list"><span><b>엑셀 코드목록</b><em id="price-rule-bulk-code-count">0개</em></span></label>
+            <label><input type="radio" name="price-rule-bulk-scope" value="filtered"><span><b>현재 검색·필터 결과</b><em id="price-rule-bulk-filtered-count">0개</em></span></label>
+          </fieldset>
+          <fieldset class="price-rule-bulk-sources"><legend>배정할 판매처</legend><label><input type="checkbox" value="smartstore" checked><span class="dot smart"></span>스마트스토어</label><label><input type="checkbox" value="makeshop" checked><span class="dot make"></span>메이크샵</label><label><input type="checkbox" value="ably" checked><span class="dot ably"></span>에이블리</label></fieldset>
+          <label class="price-rule-bulk-set">큰 태그<select id="price-rule-bulk-set"><option value="">큰 태그 선택…</option></select><span id="price-rule-bulk-set-summary">저장된 계산 순서를 상품에 배정합니다.</span></label>
+          <div id="price-rule-bulk-progress" class="price-rule-bulk-progress" hidden><div><b id="price-rule-bulk-progress-title">배정 준비</b><span id="price-rule-bulk-progress-percent">0%</span></div><i><span id="price-rule-bulk-progress-bar"></span></i><p id="price-rule-bulk-progress-detail">상품 범위를 확인합니다.</p></div>
+        </div>
+        <div class="modal-foot"><button id="price-rule-bulk-cancel" class="btn" type="button">취소</button><button id="price-rule-bulk-run" class="btn primary" type="button">규칙 배정 저장</button></div>
+      </section>
+    </div>
     <div id="toast" class="toast" role="status"></div>
     <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.112.3/dist/umd/supabase.js"></script>
-    <script src="./seller-source-parsers.js?v=20260821-pricerules1"></script>
-    <script src="./seller-export-adapter.js?v=20260821-pricerules1"></script>
-    <script src="./matrix-csv-export.js?v=20260821-pricerules1"></script>
-    <script src="./data-service.js?v=20260821-pricerules1"></script>
-    <script src="./app.js?v=20260821-pricerules1"></script>
-    <script src="./price-rule-lab.js?v=20260821-pricerules1"></script>
+    <script src="./seller-source-parsers.js?v=20260821-pricerules2"></script>
+    <script src="./seller-export-adapter.js?v=20260821-pricerules2"></script>
+    <script src="./matrix-csv-export.js?v=20260821-pricerules2"></script>
+    <script src="./data-service.js?v=20260821-pricerules2"></script>
+    <script src="./app.js?v=20260821-pricerules2"></script>
+    <script src="./price-rule-lab.js?v=20260821-pricerules2"></script>
   </body>
 </html>

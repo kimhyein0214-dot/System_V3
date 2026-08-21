@@ -2608,14 +2608,140 @@ document.getElementById('custom-preset-select').addEventListener('change', event
   applyViewPreset(preset, {id:preset.id});
 });
 
-document.getElementById('matrix-bulk-btn').addEventListener('click', () => {
-  const selected = [...document.querySelectorAll('.row-check:checked')];
-  if (!selected.length) {
-    showToast('일괄 수정할 상품을 먼저 선택해주세요.');
+const priceRuleBulkModal = document.getElementById('price-rule-bulk-modal');
+const priceRuleBulkState = {running:false, cancelRequested:false, ruleSets:[], selectedSkus:[], codeListSkus:[], filter:null};
+
+function priceRuleBulkScope() {
+  return priceRuleBulkModal.querySelector('input[name="price-rule-bulk-scope"]:checked')?.value || '';
+}
+
+function showPriceRuleBulkProgress(percent, title, detail) {
+  const safePercent = Math.max(0, Math.min(100, Math.round(percent)));
+  document.getElementById('price-rule-bulk-progress').hidden = false;
+  document.getElementById('price-rule-bulk-progress-title').textContent = title;
+  document.getElementById('price-rule-bulk-progress-percent').textContent = `${safePercent}%`;
+  document.getElementById('price-rule-bulk-progress-bar').style.width = `${safePercent}%`;
+  document.getElementById('price-rule-bulk-progress-detail').textContent = detail;
+}
+
+function updatePriceRuleBulkSetSummary() {
+  const selectedId = Number(document.getElementById('price-rule-bulk-set').value || 0);
+  const ruleSet = priceRuleBulkState.ruleSets.find(item => Number(item.price_rule_set_id) === selectedId);
+  document.getElementById('price-rule-bulk-set-summary').textContent = ruleSet
+    ? (ruleSet.tags || []).slice().sort((left, right) => Number(left.order) - Number(right.order)).map(tag => tag.tag_name).join(' → ') || '기준가 그대로'
+    : '저장된 계산 순서를 상품에 배정합니다.';
+}
+
+async function openPriceRuleBulk() {
+  if (!liveData?.loadPriceRuleSets || !liveData?.savePriceRuleAssignmentsBulk) {
+    showToast('가격 규칙 일괄 배정 기능을 불러오지 못했습니다. 새로고침 후 다시 시도해주세요.');
     return;
   }
-  showToast('판매처 정규화 행이 DB에 적재되면 일괄수정이 활성화됩니다.');
-});
+  priceRuleBulkState.selectedSkus = selectedMatrixSkus();
+  priceRuleBulkState.codeListSkus = [...new Set(matrixState.codeListSkus.map(value => String(value || '').trim()).filter(Boolean))];
+  priceRuleBulkState.filter = snapshotMatrixExportFilter();
+  const counts = {
+    selected:priceRuleBulkState.selectedSkus.length,
+    code_list:priceRuleBulkState.codeListSkus.length,
+    filtered:Number(priceRuleBulkState.filter.total || 0)
+  };
+  document.getElementById('price-rule-bulk-selected-count').textContent = `${formatNumber(counts.selected)}개`;
+  document.getElementById('price-rule-bulk-code-count').textContent = `${formatNumber(counts.code_list)}개`;
+  document.getElementById('price-rule-bulk-filtered-count').textContent = `${formatNumber(counts.filtered)}개`;
+  let preferredScope = '';
+  priceRuleBulkModal.querySelectorAll('input[name="price-rule-bulk-scope"]').forEach(input => {
+    input.disabled = counts[input.value] === 0;
+    input.checked = false;
+    if (!preferredScope && counts[input.value] > 0) preferredScope = input.value;
+  });
+  const preferred = priceRuleBulkModal.querySelector(`input[name="price-rule-bulk-scope"][value="${preferredScope}"]`);
+  if (preferred) preferred.checked = true;
+  document.getElementById('price-rule-bulk-progress').hidden = true;
+  document.getElementById('price-rule-bulk-run').disabled = true;
+  document.getElementById('price-rule-bulk-run').textContent = '규칙 불러오는 중…';
+  document.getElementById('price-rule-bulk-cancel').textContent = '취소';
+  priceRuleBulkModal.hidden = false;
+  try {
+    priceRuleBulkState.ruleSets = await liveData.loadPriceRuleSets();
+    const select = document.getElementById('price-rule-bulk-set');
+    select.innerHTML = '<option value="">큰 태그 선택…</option>' + priceRuleBulkState.ruleSets.map(ruleSet => `<option value="${Number(ruleSet.price_rule_set_id)}">${escapeHtml(ruleSet.set_name)}</option>`).join('');
+    updatePriceRuleBulkSetSummary();
+    document.getElementById('price-rule-bulk-run').disabled = !preferredScope || !priceRuleBulkState.ruleSets.length;
+    document.getElementById('price-rule-bulk-run').textContent = '규칙 배정 저장';
+  } catch (error) {
+    showPriceRuleBulkProgress(0, '규칙 조회 실패', error?.message || String(error));
+    document.getElementById('price-rule-bulk-run').textContent = '규칙 배정 저장';
+  }
+}
+
+function closePriceRuleBulk() {
+  if (priceRuleBulkState.running) {
+    priceRuleBulkState.cancelRequested = true;
+    showPriceRuleBulkProgress(0, '중단 요청됨', '현재 500개 묶음 저장이 끝나면 다음 묶음부터 중단합니다.');
+    return;
+  }
+  priceRuleBulkModal.hidden = true;
+}
+
+async function resolvePriceRuleBulkSkus() {
+  const scope = priceRuleBulkScope();
+  if (scope === 'selected') return [...priceRuleBulkState.selectedSkus];
+  if (scope === 'code_list') return [...priceRuleBulkState.codeListSkus];
+  if (scope === 'filtered') {
+    return collectMatrixFilterSkus(priceRuleBulkState.filter, {
+      onProgress:(loaded, total) => showPriceRuleBulkProgress(total ? (loaded / total) * 30 : 5, '상품 범위 확인 중', `${formatNumber(loaded)} / ${formatNumber(total)}개 SKU 확인`)
+    });
+  }
+  return [];
+}
+
+async function runPriceRuleBulk() {
+  if (priceRuleBulkState.running) return;
+  const ruleSetId = Number(document.getElementById('price-rule-bulk-set').value || 0);
+  const sources = [...priceRuleBulkModal.querySelectorAll('.price-rule-bulk-sources input:checked')].map(input => input.value);
+  if (!priceRuleBulkScope()) { showToast('적용할 상품 범위를 선택해주세요.'); return; }
+  if (!sources.length) { showToast('판매처를 하나 이상 선택해주세요.'); return; }
+  if (!ruleSetId) { showToast('배정할 큰 태그를 선택해주세요.'); return; }
+  priceRuleBulkState.running = true;
+  priceRuleBulkState.cancelRequested = false;
+  const runButton = document.getElementById('price-rule-bulk-run');
+  runButton.disabled = true;
+  runButton.textContent = '배정 저장 중…';
+  try {
+    showPriceRuleBulkProgress(2, '상품 범위 확인 중', '현재 화면의 선택 조건을 SKU 목록으로 확인합니다.');
+    const skus = [...new Set((await resolvePriceRuleBulkSkus()).map(value => String(value || '').trim()).filter(Boolean))];
+    if (!skus.length) throw new Error('배정할 셀피아 SKU를 찾지 못했습니다.');
+    let processed = 0;
+    let assignedRows = 0;
+    let skippedSkus = 0;
+    const batchSize = 500;
+    while (processed < skus.length) {
+      if (priceRuleBulkState.cancelRequested) throw new Error('가격 규칙 일괄 배정을 중단했습니다.');
+      const batch = skus.slice(processed, processed + batchSize);
+      const result = await liveData.savePriceRuleAssignmentsBulk({skus:batch, sources, ruleSetId});
+      processed += batch.length;
+      assignedRows += Number(result.assigned_rows || 0);
+      skippedSkus += Number(result.skipped_skus || 0);
+      showPriceRuleBulkProgress(30 + (processed / skus.length) * 68, '가격 규칙 배정 중', `${formatNumber(processed)} / ${formatNumber(skus.length)}개 SKU · ${formatNumber(assignedRows)}개 판매처 배정 저장`);
+      await new Promise(resolve => window.setTimeout(resolve, 0));
+    }
+    showPriceRuleBulkProgress(100, '배정 완료', `${formatNumber(skus.length - skippedSkus)}개 SKU · ${formatNumber(assignedRows)}개 판매처 규칙 저장${skippedSkus ? ` · 미발견 ${formatNumber(skippedSkus)}개` : ''}`);
+    showToast('가격 규칙 일괄 배정을 저장했습니다. 실제 가격 수정안은 아직 만들지 않았습니다.');
+    document.getElementById('price-rule-bulk-cancel').textContent = '닫기';
+  } catch (error) {
+    showPriceRuleBulkProgress(0, priceRuleBulkState.cancelRequested ? '배정 중단' : '배정 실패', error?.message || String(error));
+  } finally {
+    priceRuleBulkState.running = false;
+    runButton.disabled = false;
+    runButton.textContent = '다시 배정 저장';
+  }
+}
+
+document.getElementById('matrix-bulk-btn').addEventListener('click', openPriceRuleBulk);
+document.getElementById('price-rule-bulk-close').addEventListener('click', closePriceRuleBulk);
+document.getElementById('price-rule-bulk-cancel').addEventListener('click', closePriceRuleBulk);
+document.getElementById('price-rule-bulk-run').addEventListener('click', runPriceRuleBulk);
+document.getElementById('price-rule-bulk-set').addEventListener('change', updatePriceRuleBulkSetSummary);
 
 document.getElementById('matrix-refresh-btn').addEventListener('click', () => refreshLiveData());
 document.getElementById('matrix-prev').addEventListener('click', () => {
@@ -3353,11 +3479,7 @@ function snapshotMatrixExportFilter() {
   };
 }
 
-async function collectSellerExportFilteredSkus() {
-  if (sellerExportState.filteredSkus) return sellerExportState.filteredSkus;
-  if (sellerExportState.filteredSkusPromise) return sellerExportState.filteredSkusPromise;
-  const filter = sellerExportState.filter || snapshotMatrixExportFilter();
-  sellerExportState.filteredSkusPromise = (async () => {
+async function collectMatrixFilterSkus(filter, {onProgress = null} = {}) {
     const skus = [];
     const seen = new Set();
     const appendRows = rows => {
@@ -3390,16 +3512,28 @@ async function collectSellerExportFilteredSkus() {
         const loaded = result.rows?.length || 0;
         if (!loaded) break;
         offset += loaded;
-        const detail = document.getElementById('seller-export-preview-detail');
-        if (detail && !sellerExportModal.hidden) detail.textContent = `현재 필터 SKU 확인 ${formatNumber(Math.min(offset, filter.total))} / ${formatNumber(filter.total)}`;
+        onProgress?.(Math.min(offset, filter.total), filter.total);
         if (loaded < Number(result.limit || chunkSize)) break;
       }
     }
+    return skus;
+}
+
+async function collectSellerExportFilteredSkus() {
+  if (sellerExportState.filteredSkus) return sellerExportState.filteredSkus;
+  if (sellerExportState.filteredSkusPromise) return sellerExportState.filteredSkusPromise;
+  const filter = sellerExportState.filter || snapshotMatrixExportFilter();
+  sellerExportState.filteredSkusPromise = collectMatrixFilterSkus(filter, {
+    onProgress:(loaded, total) => {
+      const detail = document.getElementById('seller-export-preview-detail');
+      if (detail && !sellerExportModal.hidden) detail.textContent = `현재 필터 SKU 확인 ${formatNumber(loaded)} / ${formatNumber(total)}`;
+    }
+  }).then(skus => {
     sellerExportState.filteredSkus = skus;
     const filteredCountNode = document.getElementById('seller-export-filtered-count');
     if (filteredCountNode && !sellerExportModal.hidden) filteredCountNode.textContent = `현재 조건 ${formatNumber(skus.length)}개 SKU`;
     return skus;
-  })().finally(() => { sellerExportState.filteredSkusPromise = null; });
+  }).finally(() => { sellerExportState.filteredSkusPromise = null; });
   return sellerExportState.filteredSkusPromise;
 }
 

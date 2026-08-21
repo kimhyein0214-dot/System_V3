@@ -18,6 +18,10 @@ test('price rule lab exposes atomic, composite and virtual QA UI', () => {
   assert.doesNotMatch(html, /id="price-rule-lab-modal"/);
   assert.match(lab, /showPage\?\.\('price-rules'\)/);
   assert.match(lab, /SystemV3PriceRuleLab = \{refresh\}/);
+  assert.match(html, /id="price-rule-tag-delete"/);
+  assert.match(html, /id="price-rule-set-delete"/);
+  assert.match(dataService, /deletePriceRuleTag/);
+  assert.match(dataService, /deletePriceRuleSet/);
 });
 
 test('data service keeps tag saves behind dedicated RPCs', () => {
