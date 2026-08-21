@@ -778,6 +778,16 @@
     return data || {};
   }
 
+  async function stageAssignedPriceDraftsBulk({skus = [], sources = [], batchId = null}) {
+    const {data, error} = await db.rpc('stage_operations_hub_assigned_price_drafts_bulk', {
+      p_skus:[...new Set((skus || []).map(cleanText).filter(Boolean))].slice(0, 100),
+      p_sources:[...new Set((sources || []).map(cleanText).filter(Boolean))],
+      p_batch_id:batchId
+    });
+    if (error) throw error;
+    return data || {};
+  }
+
   async function stageSellerInventoryDrafts({sources = [], skus = [], batchId = null} = {}) {
     const {data, error} = await db.rpc('stage_operations_hub_seller_inventory_match', {
       p_sources:(sources || []).map(cleanText),
@@ -1616,6 +1626,7 @@
     previewPriceRuleSet,
     savePriceRuleAssignment,
     savePriceRuleAssignmentsBulk,
+    stageAssignedPriceDraftsBulk,
     stageSellerInventoryDrafts,
     stageSellerInventoryDraftBatch,
     countSellerDraftsForExport,
