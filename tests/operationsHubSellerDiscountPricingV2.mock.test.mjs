@@ -36,6 +36,7 @@ assert.match(editableDiscounts, /price_discount_terms_before jsonb[\s\S]*?price_
 assert.match(editableDiscounts, /target_discount_terms[\s\S]*?source_discount_fingerprint is distinct from/, 'export items must carry reviewed discount terms while retaining stale-source protection');
 assert.match(dataService, /saveSellerProductDiscountDrafts[\s\S]*?operations_hub_matrix_cached[\s\S]*?saveSellerDiscountDraft/, 'product-level discounts must stage every connected option, not only the visible SKU');
 assert.match(app, /renderNativeDiscountEditor[\s\S]*?readDrawerDiscountTerms[\s\S]*?saveSellerProductDiscountDrafts/, 'the drawer must expose native fields and persist product-level edits');
+assert.match(app, /const priceDraft = product\?\.__sellerDrafts[\s\S]*?const savedDiscountTerms = priceDraft\?\.price_discount_terms_after/, 'the drawer must initialize its active price draft before reading editable discounts');
 assert.match(exportAdapter, /patchSmartstoreDiscounts[\s\S]*?'basic','BF','BG'[\s\S]*?'mobile','BH','BI'[\s\S]*?target_discount_terms/, 'Smartstore export must patch its original discount value and unit columns');
 
 console.log('Operations hub seller discount pricing V2 contract: passed');
