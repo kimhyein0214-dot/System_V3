@@ -13,13 +13,13 @@ assert.match(migration, /enable row level security[\s\S]*?security invoker[\s\S]
 assert.doesNotMatch(migration, /\beval\s*\(/, "price policies must never evaluate free-form code");
 assert.match(data, /loadPriceRuleAssignment[\s\S]*?previewPriceRuleSet[\s\S]*?savePriceRuleAssignment/, "the frontend adapter must expose per-SKU price tag assignment methods");
 assert.match(app, /이 상품에 적용할 큰 태그[\s\S]*?태그 배정 저장[\s\S]*?수정안으로 적용/, "the drawer must select and save a composite tag before applying its calculated price");
-assert.match(app, /tagApply[\s\S]*?saveSellerValueDraft\([\s\S]*?fieldKey:'sellpia_sale_price'/, "applying a tagged final price must persist a source-specific seller draft");
+assert.match(app, /tagApply[\s\S]*?saveSellerPriceDraft\([\s\S]*?targetFinalPrice:finalPrice[\s\S]*?priceRuleSetId/, "applying a tagged final price must persist all seller price components through the atomic price RPC");
 assert.match(app, /새 조합 태그를 여기서 바로 만들기[\s\S]*?data-price-composer-add[\s\S]*?조합 저장 · 현재 상품에 배정/, "the drawer must build and assign a reusable composite tag without leaving the current product");
 assert.match(app, /composerSave[\s\S]*?savePriceRuleSet\([\s\S]*?savePriceRuleAssignment\([\s\S]*?previewPriceRuleSet/, "inline composite creation must save the ordered set, assign it to the current SKU, and verify its calculated price");
 assert.match(app, /data-composer-edit[\s\S]*?data-composer-tag-mode[\s\S]*?data-composer-tag-value[\s\S]*?수정본은 새 작은 태그로 저장/, "selected atomic tags must be directly editable without mutating existing composite tags");
 assert.match(app, /composerTagField[\s\S]*?applyPriceRuleTagSimpleMode[\s\S]*?composer\.tagEdits[\s\S]*?renderCurrentPricePolicy/, "atomic tag edits must recalculate the current composite locally before saving");
 assert.match(app, /savedTagIds[\s\S]*?savePriceRuleTag\(priceRuleTagSavePayload[\s\S]*?savePriceRuleSet/, "edited atomic steps must be cloned before the composite tag is saved");
-assert.match(app, /tagApply[\s\S]*?applyLocalSellerDraft[\s\S]*?syncMatrixSellerDraftCell[\s\S]*?syncDrawerSellerDraftUi[\s\S]*?refreshChangeQueueInBackground/, "tagged price application must update the current matrix cell and drawer without a blocking matrix reload");
+assert.match(app, /tagApply[\s\S]*?applyLocalSellerPriceDraft[\s\S]*?renderLiveMatrixRows\(matrixState\.rows\)[\s\S]*?renderDrawerInventory[\s\S]*?refreshChangeQueueInBackground/, "tagged price application must update the current matrix and drawer from local state without a blocking DB reload");
 const taggedApplyBlock = app.slice(app.indexOf('if (tagApply)'), app.indexOf('const selectedRuleSetId', app.indexOf('if (tagApply)')));
 assert.doesNotMatch(taggedApplyBlock, /loadLiveMatrix\(/, "tagged price application must not reload the full matrix page");
 assert.doesNotMatch(app, /가격 규칙 저장·계산/, "the product drawer must not present a seller-wide legacy policy as if it were product-specific");

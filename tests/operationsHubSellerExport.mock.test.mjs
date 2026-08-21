@@ -14,6 +14,8 @@ const aliasMigration = fs.readFileSync(new URL('../supabase/migrations/202608141
 const bulkMigration = fs.readFileSync(new URL('../supabase/migrations/20260814173000_operations_hub_export_bulk_prepare.sql', import.meta.url), 'utf8');
 const conflictMigration = fs.readFileSync(new URL('../supabase/migrations/20260814183000_operations_hub_export_row_conflicts.sql', import.meta.url), 'utf8');
 const inventoryBatchMigration = fs.readFileSync(new URL('../supabase/migrations/20260814190000_operations_hub_inventory_match_batches.sql', import.meta.url), 'utf8');
+const priceComponentMigration = fs.readFileSync(new URL('../supabase/migrations/20260821014626_operations_hub_seller_price_components.sql', import.meta.url), 'utf8');
+const priceExportMigration = fs.readFileSync(new URL('../supabase/migrations/20260821020657_operations_hub_export_price_components.sql', import.meta.url), 'utf8');
 
 for (const table of ['operations_hub_export_batches', 'operations_hub_export_items']) {
   assert.match(migration, new RegExp(`create table if not exists public\\.${table}`), `${table} must persist the export audit trail`);
@@ -68,6 +70,9 @@ assert.match(app, /buildExportArchive[\s\S]*?completeSellerExport\(\{batchId, su
 assert.match(app, /skippedItems:result\.skippedItems[\s\S]*?제외목록 CSV/, 'successful exports must report row conflicts without aborting the whole archive');
 assert.match(adapterSource, /SystemV3_내보내기_제외목록\.csv/, 'the archive must include a CSV describing skipped conflicts');
 assert.match(app, /confirmChangesApplied/, 'marketplace upload confirmation must be a separate action');
+assert.match(priceComponentMigration, /v_target_base := p_target_final_price - v_target_option/, 'seller price drafts must derive the shared base price from final minus option');
+assert.match(priceExportMigration, /target_base_price[\s\S]*?target_option_price[\s\S]*?target_final_price/, 'export plans must preserve all three target price components');
+assert.match(priceExportMigration, /같은 상품의 옵션별 목표 판매가가 서로 다릅니다[\s\S]*?모든 옵션 가격을 함께 검토/, 'unsafe shared base-price changes must be blocked before file generation');
 
 const context = {console, setTimeout, URL:{createObjectURL(){}, revokeObjectURL(){}}, Blob};
 vm.createContext(context);
@@ -77,19 +82,31 @@ const adapter = context.SystemV3SellerExport;
 const smartRow = '<row r="3"><c r="F3"><v>5200</v></c><c r="P3" t="inlineStr"><is><t xml:space="preserve">op1\nop2</t></is></c><c r="Q3" t="inlineStr"><is><t xml:space="preserve">실버\n골드</t></is></c><c r="R3" t="inlineStr"><is><t xml:space="preserve">0\n200</t></is></c><c r="S3" t="inlineStr"><is><t xml:space="preserve">2\n3</t></is></c></row>';
 const smartPatched = adapter.patchSmartstoreRow(smartRow, [
   {source_row_no:3, source_channel:'smartstore', sellpia_sku_code:'1014-2', seller_option_code:'op2', field_key:'sellpia_current_stock', expected_source_value:3, after_value:9},
-  {source_row_no:3, source_channel:'smartstore', sellpia_sku_code:'1014-2', seller_option_code:'op2', field_key:'sellpia_sale_price', expected_source_value:5400, after_value:5700},
+  {source_row_no:3, source_channel:'smartstore', sellpia_sku_code:'1014-2', seller_option_code:'op2', field_key:'sellpia_sale_price', expected_source_value:5400, after_value:5700, target_base_price:5400, target_option_price:300, target_final_price:5700},
 ], []);
 assert.equal(adapter.cellValue(smartPatched, 'S3', []), '2\n9');
-assert.equal(adapter.cellValue(smartPatched, 'R3', []), '0\n500');
+assert.equal(adapter.cellValue(smartPatched, 'F3', []), '5400');
+assert.equal(adapter.cellValue(smartPatched, 'R3', []), '0\n300');
+
+const smartGroupSheet = `<worksheet><sheetData>${smartRow}</sheetData></worksheet>`;
+const smartGroupItems = [
+  {source_row_no:3, source_channel:'smartstore', source_file_name:'smart.xlsx', sellpia_sku_code:'1014-1', seller_product_code:'product-1', seller_option_code:'op1', field_key:'sellpia_sale_price', expected_source_value:5200, after_value:5700, target_base_price:5400, target_option_price:300, target_final_price:5700},
+  {source_row_no:3, source_channel:'smartstore', source_file_name:'smart.xlsx', sellpia_sku_code:'1014-2', seller_product_code:'product-1', seller_option_code:'op2', field_key:'sellpia_sale_price', expected_source_value:9999, after_value:5700, target_base_price:5400, target_option_price:300, target_final_price:5700},
+];
+const smartGroupConflicts = [];
+const smartPreflight = adapter.preflightSharedPriceGroups(smartGroupSheet, smartGroupItems, [], conflict => smartGroupConflicts.push(conflict));
+assert.equal(smartPreflight.workingSheetXml, smartGroupSheet, 'Smartstore shared base must not change before the full option group passes verification');
+assert.equal(smartGroupConflicts.length, 2, 'one conflicting Smartstore option must exclude the full shared-price group');
+assert.equal(smartGroupItems.every(item => item._preflight_conflict), true);
 
 const changedSmartRefs = [];
 const changedSmartHighlights = [];
 adapter.patchSmartstoreRow(smartRow, [
   {source_row_no:3, source_channel:'smartstore', sellpia_sku_code:'1014-2', seller_option_code:'op2', field_key:'sellpia_current_stock', expected_source_value:3, after_value:9},
-  {source_row_no:3, source_channel:'smartstore', sellpia_sku_code:'1014-2', seller_option_code:'op2', field_key:'sellpia_sale_price', expected_source_value:5400, after_value:5700},
+  {source_row_no:3, source_channel:'smartstore', sellpia_sku_code:'1014-2', seller_option_code:'op2', field_key:'sellpia_sale_price', expected_source_value:5400, after_value:5700, target_base_price:5400, target_option_price:300, target_final_price:5700},
 ], [], null, (_, reference, highlight) => { changedSmartRefs.push(reference); changedSmartHighlights.push({reference, ...highlight}); });
-assert.deepEqual(changedSmartRefs, ['S3','R3'], 'only successfully modified Smartstore cells must be highlighted');
-assert.deepEqual(changedSmartHighlights, [{reference:'S3',lineIndex:1},{reference:'R3',lineIndex:1}], 'Smartstore option changes must retain the modified line index');
+assert.equal(JSON.stringify(changedSmartRefs), JSON.stringify(['S3',[{reference:'F3'},{reference:'R3',lineIndex:1}]]), 'Smartstore price writes must identify both the shared base cell and option line');
+assert.equal(JSON.stringify(changedSmartHighlights), JSON.stringify([{reference:'S3',lineIndex:1},{reference:[{reference:'F3'},{reference:'R3',lineIndex:1}],lineIndex:null}]), 'Smartstore option changes must retain the modified line index');
 
 const styleFixture = '<?xml version="1.0"?><styleSheet><fonts count="2"><font><name val="Arial"/><sz val="10"/></font><font><b/><name val="Arial"/></font></fonts><fills count="2"><fill><patternFill patternType="none"/></fill><fill><patternFill patternType="gray125"/></fill></fills><borders count="2"><border/><border><left style="thin"/></border></borders><cellXfs count="2"><xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0"/><xf numFmtId="4" fontId="0" fillId="0" borderId="1" xfId="0" applyAlignment="1"><alignment horizontal="right"/></xf></cellXfs></styleSheet>';
 const sheetFixture = '<worksheet><sheetData><row r="3"><c r="F3" s="1"><v>5200</v></c><c r="G3" s="1"><v>untouched</v></c><c r="S3"><v>9</v></c></row></sheetData></worksheet>';
@@ -116,20 +133,29 @@ assert.equal((wholeTextHighlighted.sheetXml.match(/<rPr><b\/><\/rPr>/g) || []).l
 const makeRow = '<row r="4"><c r="AD4" t="inlineStr"><is><t>골드</t></is></c><c r="AF4"><v>200</v></c><c r="AG4"><v>3</v></c><c r="AR4"><v>425</v></c></row>';
 const makePatched = adapter.patchMakeshopRow(makeRow, [
   {source_row_no:4, source_channel:'makeshop', sellpia_sku_code:'1014-2', seller_option_code:'425', field_key:'sellpia_current_stock', expected_source_value:3, after_value:8},
-  {source_row_no:4, source_channel:'makeshop', sellpia_sku_code:'1014-2', seller_option_code:'425', field_key:'sellpia_sale_price', expected_source_value:5400, after_value:5600, base_price:5200, option_price:200},
+  {source_row_no:4, source_channel:'makeshop', sellpia_sku_code:'1014-2', seller_option_code:'425', field_key:'sellpia_sale_price', expected_source_value:5400, after_value:5600, base_price:5200, option_price:200, target_base_price:5300, target_option_price:300, target_final_price:5600, _product_row_no:2},
 ], []);
 assert.equal(adapter.cellValue(makePatched, 'AG4', []), '8');
-assert.equal(adapter.cellValue(makePatched, 'AF4', []), '400');
+assert.equal(adapter.cellValue(makePatched, 'AF4', []), '300');
 assert.equal(adapter.outputName('원본.xlsx'), '원본_SystemV3반영.xlsx');
+
+const makeProductRow = '<row r="2"><c r="E2" t="inlineStr"><is><t>product-1</t></is></c><c r="AS2"><v>5200</v></c></row>';
+const makeGroupSheet = `<worksheet><sheetData>${makeProductRow}${makeRow}</sheetData></worksheet>`;
+const makeGroupItems = [
+  {source_row_no:4, source_channel:'makeshop', source_file_name:'make.xlsx', sellpia_sku_code:'1014-2', seller_product_code:'product-1', seller_option_code:'425', field_key:'sellpia_sale_price', expected_source_value:5400, after_value:5600, base_price:5200, option_price:200, target_base_price:5300, target_option_price:300, target_final_price:5600},
+];
+const makePreflight = adapter.preflightSharedPriceGroups(makeGroupSheet, makeGroupItems, [], conflict => { throw new Error(conflict.reason); });
+assert.equal(adapter.cellValue(makePreflight.workingSheetXml, 'AS2', []), '5300', 'MakeShop shared base changes only after every option in the group passes');
+assert.equal(makeGroupItems[0]._product_row_no, 2);
 
 const conflicts = [];
 const applied = [];
 const partialMakePatched = adapter.patchMakeshopRow(makeRow, [
   {export_item_id:41, source_row_no:4, source_channel:'makeshop', sellpia_sku_code:'11334-1', seller_option_code:'425', field_key:'sellpia_current_stock', expected_source_value:102, after_value:100},
-  {export_item_id:42, source_row_no:4, source_channel:'makeshop', sellpia_sku_code:'1014-2', seller_option_code:'425', field_key:'sellpia_sale_price', expected_source_value:5400, after_value:5600, base_price:5200, option_price:200},
+  {export_item_id:42, source_row_no:4, source_channel:'makeshop', sellpia_sku_code:'1014-2', seller_option_code:'425', field_key:'sellpia_sale_price', expected_source_value:5400, after_value:5600, base_price:5200, option_price:200, target_base_price:5300, target_option_price:300, target_final_price:5600, _product_row_no:2},
 ], [], conflict => conflicts.push(conflict), item => applied.push(item));
 assert.equal(adapter.cellValue(partialMakePatched, 'AG4', []), '3', 'a conflicting stock item must leave the original cell untouched');
-assert.equal(adapter.cellValue(partialMakePatched, 'AF4', []), '400', 'a valid sibling item must still be applied');
+assert.equal(adapter.cellValue(partialMakePatched, 'AF4', []), '300', 'a valid sibling item must still be applied');
 assert.equal(conflicts.length, 1, 'only the conflicting item must be skipped');
 assert.equal(conflicts[0].item.export_item_id, 41);
 assert.equal(applied.length, 1);

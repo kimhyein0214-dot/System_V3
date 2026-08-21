@@ -42,7 +42,7 @@
     if (!skus.length) return products;
     const {data, error} = await db
       .from('operations_hub_active_seller_drafts')
-      .select('change_id,sellpia_sku_code,source_channel,field_key,before_value,after_value,status,updated_at')
+      .select('change_id,sellpia_sku_code,source_channel,field_key,before_value,after_value,status,updated_at,price_base_before,price_base_after,price_option_before,price_option_after,price_final_before,price_final_after,option_price_source,price_rule_set_id')
       .in('sellpia_sku_code', skus)
       .order('updated_at', {ascending:false})
       .order('change_id', {ascending:false});
@@ -100,8 +100,39 @@
     }));
   }
 
+  async function attachSellerPriceComponents(rows) {
+    const products = Array.isArray(rows) ? rows : [];
+    const skus = [...new Set(products.map(row => cleanText(row?.sellpia_sku_code)).filter(Boolean))];
+    if (!skus.length) return products;
+    const {data, error} = await db.rpc('load_operations_hub_seller_price_components', {p_skus:skus});
+    if (error) throw error;
+    const bySku = new Map();
+    for (const component of data || []) {
+      const sku = cleanText(component.sellpia_sku_code);
+      const source = cleanText(component.source_channel);
+      if (!sku || !source) continue;
+      if (!bySku.has(sku)) bySku.set(sku, {});
+      bySku.get(sku)[source] = component;
+    }
+    return products.map(product => {
+      const components = bySku.get(cleanText(product?.sellpia_sku_code)) || {};
+      const projected = {...product, __sellerPriceComponents:components};
+      for (const source of ['smartstore','makeshop','ably']) {
+        const component = components[source];
+        if (!component) continue;
+        projected[`${source}_base_price`] = component.source_base_price;
+        projected[`${source}_option_price`] = component.source_option_price;
+        projected[`${source}_final_price`] = component.source_final_price;
+        if (component.source_final_price !== null && component.source_final_price !== undefined) {
+          projected[`${source}_price`] = component.source_final_price;
+        }
+      }
+      return projected;
+    });
+  }
+
   async function attachProductMetadata(rows) {
-    return attachSellerDrafts(await attachLinkBadges(await attachProductProfiles(rows)));
+    return attachSellerDrafts(await attachSellerPriceComponents(await attachLinkBadges(await attachProductProfiles(rows))));
   }
 
   async function loadListingGraph({source = 'all', relationType = 'complex', search = '', page = 1, pageSize = 50} = {}) {
@@ -611,6 +642,20 @@
     return Array.isArray(data) ? data[0] : data;
   }
 
+  async function saveSellerPriceDraft({sku, source, targetFinalPrice, optionPrice = null, optionPriceSource = 'original', priceRuleSetId = null, batchId = null}) {
+    const {data, error} = await db.rpc('save_operations_hub_seller_price_draft', {
+      p_sku:cleanText(sku),
+      p_source:cleanText(source),
+      p_target_final_price:Number(targetFinalPrice),
+      p_option_price:optionPrice === null || optionPrice === undefined || optionPrice === '' ? null : Number(optionPrice),
+      p_option_price_source:cleanText(optionPriceSource) || 'original',
+      p_price_rule_set_id:priceRuleSetId ? Number(priceRuleSetId) : null,
+      p_batch_id:batchId
+    });
+    if (error) throw error;
+    return Array.isArray(data) ? data[0] : data;
+  }
+
   async function loadPriceRuleTags() {
     const {data, error} = await db
       .from('operations_hub_price_rule_tags')
@@ -823,7 +868,7 @@
     for (let from = 0; ; from += pageSize) {
       const {data, error:loadError} = await db
         .from('operations_hub_export_items')
-        .select('export_item_id,export_batch_id,change_id,sellpia_sku_code,source_channel,field_key,before_value,after_value,seller_product_code,seller_option_code,source_file_name,source_row_no,expected_source_value,base_price,option_price,blocking_reason,status')
+        .select('export_item_id,export_batch_id,change_id,sellpia_sku_code,source_channel,field_key,before_value,after_value,seller_product_code,seller_option_code,source_file_name,source_row_no,expected_source_value,base_price,option_price,target_base_price,target_option_price,target_final_price,option_price_source,price_rule_set_id,blocking_reason,status')
         .eq('export_batch_id', batchId)
         .order('export_item_id', {ascending:true})
         .range(from, from + pageSize - 1);
@@ -1527,6 +1572,7 @@
     cancelChangeQueue,
     retryChangeQueue,
     saveSellerValueDraft,
+    saveSellerPriceDraft,
     loadPricePolicies,
     previewPricePolicy,
     savePricePolicy,

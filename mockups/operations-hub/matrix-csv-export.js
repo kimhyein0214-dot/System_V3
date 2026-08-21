@@ -34,6 +34,17 @@
     return [stock?.status, price?.status].filter(Boolean).join(' / ');
   }
 
+  function sellerPriceComponent(row, source, component, projected = true) {
+    const layer = row?.__sellerPriceComponents?.[source] || {};
+    const draft = row?.__sellerDrafts?.[`${source}:sellpia_sale_price`];
+    const sourceKey = `source_${component}_price`;
+    const draftKey = `draft_${component}_price`;
+    const queueDraftKey = `price_${component}_after`;
+    const fallback = component === 'option' ? 0 : row?.[`${source}_price`];
+    if (projected) return layer[draftKey] ?? draft?.[queueDraftKey] ?? layer[sourceKey] ?? row?.[`${source}_${component}_price`] ?? fallback;
+    return layer[sourceKey] ?? row?.[`${source}_${component}_price`] ?? fallback;
+  }
+
   function codeListColumns() {
     return [
       {key:'input_row', label:'입력 행', type:'number', value:row => row?.__codeList?.input_row},
@@ -84,14 +95,17 @@
       key:`${source}_stock_projected`, label:`${label} 판매처재고`, type:'number',
       value:row => projectedSellerValue(row, source, 'sellpia_current_stock', `${source}_stock`)
     });
-    if (all || view?.showPrice !== false) columns.push({
-      key:`${source}_price_projected`, label:`${label} 판매가격`, type:'number',
-      value:row => projectedSellerValue(row, source, 'sellpia_sale_price', `${source}_price`)
-    });
+    if (all || view?.showPrice !== false) columns.push(
+      {key:`${source}_base_price_projected`, label:`${label} 판매가`, type:'number', value:row => sellerPriceComponent(row, source, 'base')},
+      {key:`${source}_option_price_projected`, label:`${label} 옵션가`, type:'number', value:row => sellerPriceComponent(row, source, 'option')},
+      {key:`${source}_final_price_projected`, label:`${label} 최종판가`, type:'number', value:row => sellerPriceComponent(row, source, 'final')}
+    );
     if (all) columns.push(
       {key:`${source}_sale_status`, label:`${label} 판매상태`},
       {key:`${source}_stock`, label:`${label} 원본재고`, type:'number'},
-      {key:`${source}_price`, label:`${label} 원본가격`, type:'number'},
+      {key:`${source}_base_price`, label:`${label} 원본 판매가`, type:'number', value:row => sellerPriceComponent(row, source, 'base', false)},
+      {key:`${source}_option_price`, label:`${label} 원본 옵션가`, type:'number', value:row => sellerPriceComponent(row, source, 'option', false)},
+      {key:`${source}_final_price`, label:`${label} 원본 최종판가`, type:'number', value:row => sellerPriceComponent(row, source, 'final', false)},
       {key:`${source}_draft_status`, label:`${label} 수정안상태`, value:row => sellerDraftStatus(row, source)},
       {key:`${source}_inventory_at`, label:`${label} 재고기준시각`}
     );

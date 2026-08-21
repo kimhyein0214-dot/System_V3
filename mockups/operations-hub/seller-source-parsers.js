@@ -144,6 +144,7 @@
       const sourceRowNo = headerIndex + relativeIndex + 2;
 
       if (!optionCodes.length) {
+        const finalPrice = selectedValue(fields, 'price', basePrice);
         output.push({
           product_code:productCode,
           option_code:'',
@@ -151,7 +152,10 @@
           product_name:selectedValue(fields, 'basic', productName),
           option_name:null,
           stock:selectedValue(fields, 'inventory', cleanNumber(row[12])),
-          price:selectedValue(fields, 'price', basePrice),
+          price:finalPrice,
+          base_price:finalPrice,
+          option_price:selectedValue(fields, 'price', 0),
+          final_price:finalPrice,
           sale_status:selectedValue(fields, 'status', cleanText(row[4]) || null),
           source_row_no:sourceRowNo,
           raw_payload:{source_file_name:fileName, base_price:basePrice, option_price:0}
@@ -162,6 +166,9 @@
       optionCodes.forEach((optionCode, index) => {
         if (!optionCode) return;
         const optionPrice = cleanNumber(optionPrices[index], 0);
+        const selectedBasePrice = selectedValue(fields, 'price', basePrice);
+        const selectedOptionPrice = selectedValue(fields, 'price', optionPrice);
+        const finalPrice = selectedBasePrice === null ? null : selectedBasePrice + Number(selectedOptionPrice || 0);
         output.push({
           product_code:productCode,
           option_code:optionCode,
@@ -169,7 +176,10 @@
           product_name:selectedValue(fields, 'basic', productName),
           option_name:selectedValue(fields, 'basic', optionNames[index] || null),
           stock:selectedValue(fields, 'inventory', cleanNumber(optionStocks[index])),
-          price:selectedValue(fields, 'price', basePrice === null ? null : basePrice + optionPrice),
+          price:finalPrice,
+          base_price:selectedBasePrice,
+          option_price:selectedOptionPrice,
+          final_price:finalPrice,
           sale_status:selectedValue(fields, 'status', optionUse[index] || cleanText(row[4]) || null),
           source_row_no:sourceRowNo,
           raw_payload:{source_file_name:fileName, base_price:basePrice, option_price:optionPrice}
@@ -204,6 +214,9 @@
       const hasOptionDetail = optionCode !== '';
       if (!hasOptionDetail && !productCode) return;
       const optionPrice = hasOptionDetail ? cleanNumber(row[31], 0) : 0;
+      const selectedBasePrice = selectedValue(fields, 'price', product.basePrice);
+      const selectedOptionPrice = selectedValue(fields, 'price', optionPrice);
+      const finalPrice = selectedBasePrice === null ? null : selectedBasePrice + Number(selectedOptionPrice || 0);
       output.push({
         product_code:product.productCode,
         option_code:optionCode,
@@ -211,7 +224,10 @@
         product_name:selectedValue(fields, 'basic', product.productName),
         option_name:selectedValue(fields, 'basic', hasOptionDetail ? (cleanText(row[29]) || cleanText(row[20]) || null) : null),
         stock:selectedValue(fields, 'inventory', hasOptionDetail ? cleanNumber(row[32]) : product.productStock),
-        price:selectedValue(fields, 'price', product.basePrice === null ? null : product.basePrice + optionPrice),
+        price:finalPrice,
+        base_price:selectedBasePrice,
+        option_price:selectedOptionPrice,
+        final_price:finalPrice,
         sale_status:selectedValue(fields, 'status', cleanText(row[41]) || product.saleStatus),
         source_row_no:headerIndex + relativeIndex + 2,
         raw_payload:{source_file_name:fileName, base_price:product.basePrice, option_price:optionPrice}
@@ -231,6 +247,7 @@
       const optionCode = cleanText(row[10]);
       if (!productCode || !optionCode) return [];
       const price = cleanNumber(row[6], cleanNumber(row[5], cleanNumber(row[4])));
+      const selectedPrice = selectedValue(fields, 'price', price);
       return [{
         product_code:productCode,
         option_code:optionCode,
@@ -238,10 +255,13 @@
         product_name:selectedValue(fields, 'basic', cleanText(row[2]) || null),
         option_name:selectedValue(fields, 'basic', cleanText(row[14]) || cleanText(row[12]) || null),
         stock:selectedValue(fields, 'inventory', cleanNumber(row[15])),
-        price:selectedValue(fields, 'price', price),
+        price:selectedPrice,
+        base_price:selectedPrice,
+        option_price:selectedValue(fields, 'price', 0),
+        final_price:selectedPrice,
         sale_status:selectedValue(fields, 'status', [cleanText(row[18]), cleanText(row[19])].filter(Boolean).join(' · ') || null),
         source_row_no:headerIndex + relativeIndex + 2,
-        raw_payload:{source_file_name:fileName, safety_stock:cleanNumber(row[16])}
+        raw_payload:{source_file_name:fileName, base_price:price, option_price:0, safety_stock:cleanNumber(row[16])}
       }];
     });
   }
