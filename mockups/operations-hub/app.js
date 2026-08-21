@@ -283,14 +283,36 @@ function viewColumnIndexes(view) {
   return visible;
 }
 
+function indexMatrixBodyColumns() {
+  const rows = [...matrixBody.querySelectorAll('tr')];
+  const grid = rows.map(() => []);
+  rows.forEach((row, rowIndex) => {
+    let columnIndex = 0;
+    const cells = [...row.children].filter(cell => cell.matches('td'));
+    for (const cell of cells) {
+      while (grid[rowIndex][columnIndex]) columnIndex += 1;
+      const rowSpan = Math.max(1, Number(cell.rowSpan) || 1);
+      const colSpan = Math.max(1, Number(cell.colSpan) || 1);
+      cell.dataset.matrixColumn = String(columnIndex + 1);
+      for (let rowOffset = 0; rowOffset < rowSpan && rowIndex + rowOffset < rows.length; rowOffset += 1) {
+        for (let columnOffset = 0; columnOffset < colSpan; columnOffset += 1) {
+          grid[rowIndex + rowOffset][columnIndex + columnOffset] = cell;
+        }
+      }
+      columnIndex += colSpan;
+    }
+  });
+}
+
 function applyColumnVisibility(view = activeView) {
   const visible = viewColumnIndexes(view);
+  indexMatrixBodyColumns();
   const columnHeaders = matrixTable.querySelectorAll('.column-row th');
   for (let index = 3; index <= 35; index += 1) {
     const show = visible.has(index);
     const header = columnHeaders[index - 3];
     if (header) header.hidden = !show;
-    matrixBody.querySelectorAll(`tr td:nth-child(${index})`).forEach(cell => { cell.hidden = !show; });
+    matrixBody.querySelectorAll(`[data-matrix-column="${index}"]`).forEach(cell => { cell.hidden = !show; });
   }
   const groupConfig = [
     ['.smart-group', [8,9,10,11,12,13,14,15]],
@@ -1348,7 +1370,7 @@ function renderDrawerListingLinks(rows, sku) {
       <div><b>${escapeHtml(component.sku)}</b><span>${escapeHtml([component.productName, component.optionName].filter(Boolean).join(' · ') || '셀피아 상품정보 없음')}</span></div>
       <label>수량<input data-drawer-component-qty type="number" min="1" step="1" value="${Math.max(1, Number(component.qty) || 1)}"></label>
       <label>역할<select data-drawer-component-role><option value="primary"${component.role === 'primary' ? ' selected' : ''}>기준</option><option value="additional"${component.role === 'additional' ? ' selected' : ''}>추가</option></select></label>
-      <button type="button" data-drawer-component-save>저장</button>${component.componentId ? '<button type="button" class="danger" data-drawer-component-remove>해제</button>' : ''}
+      <button type="button" data-drawer-component-save>저장</button><button type="button" class="danger" data-drawer-component-remove>해제</button>
     </article>`).join('');
     return `<article class="drawer-link-listing" data-drawer-link-row="${rowIndex}">
       <header><div><span class="multi-link-channel ${escapeHtml(row.source_channel)}"><i></i>${escapeHtml(CHANNEL_LABELS[row.source_channel] || row.source_channel)}</span><b>${escapeHtml(row.product_code || '-')} / ${escapeHtml(row.option_code || '-')}</b></div><span class="relation-pill ${escapeHtml(row.relation_type)}">${escapeHtml(drawerRelationLabel(row))}</span></header>
@@ -3606,7 +3628,7 @@ document.getElementById('drawer-link-manager')?.addEventListener('click', async 
     const button = event.target.closest('button');
     button.disabled = true;
     try {
-      await liveData.deactivateListingComponent(component.dataset.componentId);
+      await liveData.removeListingComponent({componentId:component.dataset.componentId || null, source:row.source_channel, productCode:row.product_code, optionCode:row.option_code, sku:component.dataset.componentSku});
       await refresh();
       showToast(`${component.dataset.componentSku} 연결을 해제했습니다.`);
     } catch (error) { showToast(`연결 해제 실패: ${error?.message || error}`); }
@@ -4531,9 +4553,8 @@ function renderMultiLinkEditor(row) {
   document.getElementById('multi-link-form-option').value = row.option_code || '';
   const components = Array.isArray(row.components) ? row.components : [];
   componentsBox.innerHTML = components.map(component => {
-    const canRemove = Boolean(component.componentId);
     return `<article class="multi-link-component" data-component-id="${component.componentId || ''}" data-component-sku="${escapeHtml(component.sku)}">
-      <div class="multi-link-component-head"><div><b>${escapeHtml(component.sku)}</b><span>${escapeHtml([component.productName, component.optionName].filter(Boolean).join(' · ') || '셀피아 상품정보 없음')}</span></div>${canRemove ? '<button type="button" data-remove-component>연결 해제</button>' : ''}</div>
+      <div class="multi-link-component-head"><div><b>${escapeHtml(component.sku)}</b><span>${escapeHtml([component.productName, component.optionName].filter(Boolean).join(' · ') || '셀피아 상품정보 없음')}</span></div><button type="button" data-remove-component>연결 해제</button></div>
       <div class="multi-link-component-meta"><span>가용재고<b>${formatNullableNumber(component.availableStock)}</b></span><span>구성수량<b>${formatNumber(component.qty)}</b></span><span>가능세트<b>${component.availableStock === null || component.availableStock === undefined ? '-' : formatNumber(Math.floor(Number(component.availableStock) / Math.max(1, Number(component.qty))))}</b></span></div>
       <div class="multi-link-component-actions"><input data-component-qty type="number" min="1" step="1" value="${Math.max(1, Number(component.qty) || 1)}"><select data-component-role><option value="primary"${component.role === 'primary' ? ' selected' : ''}>기준 구성</option><option value="additional"${component.role === 'additional' ? ' selected' : ''}>추가 구성</option></select><button type="button" data-save-component>수량 저장</button></div>
     </article>`;
@@ -4621,7 +4642,7 @@ document.getElementById('multi-link-components').addEventListener('click', async
     if (!window.confirm(`${card.dataset.componentSku} 구성 연결을 해제할까요? 이력은 보존됩니다.`)) return;
     event.target.disabled = true;
     try {
-      await liveData.deactivateListingComponent(card.dataset.componentId);
+      await liveData.removeListingComponent({componentId:card.dataset.componentId || null, source:multiLinkState.selected.source_channel, productCode:multiLinkState.selected.product_code, optionCode:multiLinkState.selected.option_code, sku:card.dataset.componentSku});
       const selectedKey = multiLinkKey(multiLinkState.selected);
       await Promise.all([loadMultiLinks({selectKey:selectedKey}), loadLiveMatrix()]);
       showToast(`${card.dataset.componentSku} 연결을 해제했습니다.`);

@@ -11,6 +11,9 @@ assert.match(css, /product-group-start:not\(:first-child\)>td\{border-top:3px so
 assert.match(app, /function buildSellerBaseMerges\(products\)[\s\S]*?sellerBaseMergeSignature[\s\S]*?rowspan[\s\S]*?hidden:true/, 'seller base prices must merge only when the price signature is compatible');
 assert.match(app, /seller-base-merged-cell[\s\S]*?data-seller-product-code[\s\S]*?data-group-size/, 'merged seller base-price cells must carry their bulk-save identity');
 assert.match(app, /function matrixCellGrid\(\)[\s\S]*?cell\.rowSpan[\s\S]*?grid\[rowIndex \+ rowOffset\]/, 'cell selection must expand rowspans into a logical matrix grid');
+assert.match(app, /function indexMatrixBodyColumns\(\)[\s\S]*?cell\.dataset\.matrixColumn[\s\S]*?grid\[rowIndex \+ rowOffset\]/, 'column visibility must index logical columns across merged seller price cells');
+assert.match(app, /function applyColumnVisibility\([\s\S]*?data-matrix-column/, 'column visibility must target logical column identities instead of DOM positions');
+assert.doesNotMatch(app, /td:nth-child\(\$\{index\}\)/, 'merged seller price rows must not shift columns through nth-child visibility rules');
 assert.match(data, /async function saveSellerProductBaseDrafts\([\s\S]*?operations_hub_matrix_cached[\s\S]*?saveSellerPriceDraft/, 'editing a merged seller base price must save every linked option while preserving option prices');
 assert.match(app, /saveSellerProductBaseDrafts\([\s\S]*?groupResult\.items[\s\S]*?applyLocalSellerPriceDraft/, 'bulk base-price results must update visible matrix rows without a manual refresh');
 
