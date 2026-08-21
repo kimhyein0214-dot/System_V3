@@ -90,12 +90,16 @@ assert.equal(adapter.cellValue(smartPatched, 'R3', []), '0\n300');
 
 const smartDiscountRow = '<row r="5"><c r="F5"><v>5200</v></c><c r="P5" t="inlineStr"><is><t xml:space="preserve">op1\nop2</t></is></c><c r="Q5" t="inlineStr"><is><t xml:space="preserve">실버\n골드</t></is></c><c r="R5" t="inlineStr"><is><t xml:space="preserve">0\n200</t></is></c><c r="BF5"><v>10</v></c><c r="BG5" t="inlineStr"><is><t>%</t></is></c></row>';
 const smartDiscountPatched = adapter.patchSmartstoreRow(smartDiscountRow, [
-  {source_row_no:5, source_channel:'smartstore', sellpia_sku_code:'1014-2', seller_option_code:'op2', field_key:'sellpia_sale_price', expected_source_value:4880, after_value:5700, target_base_price:6000, target_discounted_base_price:5400, target_option_price:300, target_final_price:5700},
+  {source_row_no:5, source_channel:'smartstore', sellpia_sku_code:'1014-2', seller_option_code:'op2', field_key:'sellpia_sale_price', expected_source_value:4880, after_value:5700, target_base_price:6000, target_discounted_base_price:5100, target_option_price:600, target_final_price:5700,
+    source_discount_terms:[{term_key:'basic',value:10,unit:'percent'}],
+    target_discount_terms:[{term_key:'basic',value:15,unit:'percent'},{term_key:'mobile',value:1000,unit:'amount',is_baseline:false}]},
 ], []);
 assert.equal(adapter.cellValue(smartDiscountPatched, 'F5', []), '6000', 'Smartstore export must write the pre-discount sale price');
-assert.equal(adapter.cellValue(smartDiscountPatched, 'R5', []), '0\n300', 'Smartstore export must derive the option against the discounted sale price');
-assert.equal(adapter.cellValue(smartDiscountPatched, 'BF5', []), '10', 'Smartstore native discount value must remain unchanged');
+assert.equal(adapter.cellValue(smartDiscountPatched, 'R5', []), '0\n600', 'Smartstore export must derive the option against the discounted sale price');
+assert.equal(adapter.cellValue(smartDiscountPatched, 'BF5', []), '15', 'Smartstore native discount value must be editable');
 assert.equal(adapter.cellValue(smartDiscountPatched, 'BG5', []), '%', 'Smartstore native discount unit must remain unchanged');
+assert.equal(adapter.cellValue(smartDiscountPatched, 'BH5', []), '1000', 'Smartstore mobile discount value must be exported separately');
+assert.equal(adapter.cellValue(smartDiscountPatched, 'BI5', []), '원', 'Smartstore mobile discount unit must be exported separately');
 
 const smartGroupSheet = `<worksheet><sheetData>${smartRow}</sheetData></worksheet>`;
 const smartGroupItems = [
@@ -151,10 +155,13 @@ assert.equal(adapter.outputName('원본.xlsx'), '원본_SystemV3반영.xlsx');
 const makeProductRow = '<row r="2"><c r="E2" t="inlineStr"><is><t>product-1</t></is></c><c r="AS2"><v>5200</v></c></row>';
 const makeGroupSheet = `<worksheet><sheetData>${makeProductRow}${makeRow}</sheetData></worksheet>`;
 const makeGroupItems = [
-  {source_row_no:4, source_channel:'makeshop', source_file_name:'make.xlsx', sellpia_sku_code:'1014-2', seller_product_code:'product-1', seller_option_code:'425', field_key:'sellpia_sale_price', expected_source_value:5400, after_value:5600, base_price:5200, option_price:200, target_base_price:5300, target_option_price:300, target_final_price:5600},
+  {source_row_no:4, source_channel:'makeshop', source_file_name:'make.xlsx', sellpia_sku_code:'1014-2', seller_product_code:'product-1', seller_option_code:'425', field_key:'sellpia_sale_price', expected_source_value:5400, after_value:5600, base_price:5200, option_price:200, target_base_price:5300, target_discounted_base_price:4770, target_option_price:830, target_final_price:5600,
+    source_discount_terms:[], target_discount_terms:[{term_key:'period',value:10,unit:'percent',rounding_mode:'none',rounding_unit:1},{term_key:'membership',value:5,unit:'percent',is_baseline:false}]},
 ];
 const makePreflight = adapter.preflightSharedPriceGroups(makeGroupSheet, makeGroupItems, [], conflict => { throw new Error(conflict.reason); });
 assert.equal(adapter.cellValue(makePreflight.workingSheetXml, 'AS2', []), '5300', 'MakeShop shared base changes only after every option in the group passes');
+assert.equal(adapter.cellValue(makePreflight.workingSheetXml, 'DD2', []), '10%', 'MakeShop period discount must be exported to the product row');
+assert.equal(adapter.cellValue(makePreflight.workingSheetXml, 'AT2', []), '5', 'MakeShop membership discount must be exported separately');
 assert.equal(makeGroupItems[0]._product_row_no, 2);
 
 const conflicts = [];
