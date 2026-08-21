@@ -91,6 +91,7 @@ const mappingSyncState = {displayedVersion:'', checking:false, autoRefreshing:fa
 const matrixRowsBySku = new Map();
 const drawerState = {
   activeTab:'connections', historyRequestId:0, historySku:'', attributeRequestId:0, priceRequestId:0,
+  linkRequestId:0, linkRows:[],
   tags:null, attributeDraft:null, priceRuleTags:[], priceRuleSets:[], priceRuleAssignments:{},
   priceRulePreviews:{}, priceRuleSelections:{}, priceComposers:{}
 };
@@ -1286,6 +1287,57 @@ function setDrawerTab(tabName, {loadHistory = true} = {}) {
     history:'SKU 단위 연결·수정·검증·내보내기 이력을 표시합니다.'
   }[tabName] || '';
   if (tabName === 'history' && loadHistory) loadDrawerHistory();
+  if (tabName === 'connections') loadDrawerListingLinks();
+}
+
+function drawerRelationLabel(row) {
+  return multiLinkRelationLabel(row?.relation_type, row?.component_count, row?.max_listing_count);
+}
+
+function renderDrawerListingLinks(rows, sku) {
+  const host = document.getElementById('drawer-link-manager');
+  if (!host) return;
+  if (!rows.length) {
+    host.innerHTML = `<div class="drawer-empty-state"><b>저장된 구성 연결이 없습니다.</b><span>현재 SKU의 판매처 연결을 먼저 확인하거나 전체 관리 화면에서 새 구성을 추가하세요.</span></div>`;
+    return;
+  }
+  host.innerHTML = rows.map((row, rowIndex) => {
+    const components = Array.isArray(row.components) ? row.components : [];
+    const componentCards = components.map(component => `<article class="drawer-link-component" data-component-id="${component.componentId || ''}" data-component-sku="${escapeHtml(component.sku)}">
+      <div><b>${escapeHtml(component.sku)}</b><span>${escapeHtml([component.productName, component.optionName].filter(Boolean).join(' · ') || '셀피아 상품정보 없음')}</span></div>
+      <label>수량<input data-drawer-component-qty type="number" min="1" step="1" value="${Math.max(1, Number(component.qty) || 1)}"></label>
+      <label>역할<select data-drawer-component-role><option value="primary"${component.role === 'primary' ? ' selected' : ''}>기준</option><option value="additional"${component.role === 'additional' ? ' selected' : ''}>추가</option></select></label>
+      <button type="button" data-drawer-component-save>저장</button>${component.componentId ? '<button type="button" class="danger" data-drawer-component-remove>해제</button>' : ''}
+    </article>`).join('');
+    return `<article class="drawer-link-listing" data-drawer-link-row="${rowIndex}">
+      <header><div><span class="multi-link-channel ${escapeHtml(row.source_channel)}"><i></i>${escapeHtml(CHANNEL_LABELS[row.source_channel] || row.source_channel)}</span><b>${escapeHtml(row.product_code || '-')} / ${escapeHtml(row.option_code || '-')}</b></div><span class="relation-pill ${escapeHtml(row.relation_type)}">${escapeHtml(drawerRelationLabel(row))}</span></header>
+      <p>${escapeHtml(row.product_name || '상품명 없음')} · ${escapeHtml(row.option_name || '옵션명 없음')}</p>
+      <div class="drawer-link-stock"><span>판매처 원본 <b>${formatNullableNumber(row.seller_stock)}</b></span><span>구성 계산 <b>${formatNullableNumber(row.calculated_stock)}</b></span><button type="button" data-drawer-stage-stock ${!row.is_explicit || row.calculated_stock === null || row.seller_stock === null ? 'disabled' : ''}>계산재고 수정안 등록</button></div>
+      <div class="drawer-link-components">${componentCards}</div>
+      <form class="drawer-link-add"><input name="sku" placeholder="추가할 셀피아 SKU" required><input name="qty" type="number" min="1" step="1" value="1" aria-label="구성수량"><select name="role"><option value="additional">추가 구성</option><option value="primary">기준 구성</option></select><button type="submit">구성 추가</button></form>
+    </article>`;
+  }).join('');
+}
+
+async function loadDrawerListingLinks({force = false} = {}) {
+  const sku = productDrawer.dataset.sku;
+  const host = document.getElementById('drawer-link-manager');
+  if (!sku || !host || !liveData?.loadListingGraph) return;
+  if (!force && drawerState.linkRowsSku === sku && drawerState.linkRows.length) {
+    renderDrawerListingLinks(drawerState.linkRows, sku);
+    return;
+  }
+  const requestId = ++drawerState.linkRequestId;
+  host.innerHTML = '<div class="drawer-empty-state loading"><b>연결 구성을 불러오는 중입니다.</b><span>현재 SKU가 포함된 판매처 옵션을 조회합니다.</span></div>';
+  try {
+    const result = await liveData.loadListingGraph({source:'all', relationType:'all', search:sku, page:1, pageSize:100});
+    if (requestId !== drawerState.linkRequestId || productDrawer.dataset.sku !== sku) return;
+    drawerState.linkRowsSku = sku;
+    drawerState.linkRows = result.rows || [];
+    renderDrawerListingLinks(drawerState.linkRows, sku);
+  } catch (error) {
+    if (requestId === drawerState.linkRequestId) host.innerHTML = `<div class="drawer-empty-state error"><b>연결 구성을 불러오지 못했습니다.</b><span>${escapeHtml(error?.message || error)}</span></div>`;
+  }
 }
 
 function openProductDrawer(row) {
@@ -1311,6 +1363,8 @@ function openProductDrawer(row) {
   document.getElementById('drawer-price').textContent = formatNullableNumber(liveProduct.sellpia_sale_price);
   document.getElementById('drawer-channel-count').textContent = `${connectedCount}곳`;
   drawerState.historySku = '';
+  drawerState.linkRowsSku = '';
+  drawerState.linkRows = [];
   renderDrawerAttributes(liveProduct);
   matrixBody.querySelectorAll('tr').forEach(item => item.classList.toggle('selected-row', item === row));
   productDrawer.classList.add('open');
@@ -3459,6 +3513,73 @@ document.getElementById('drawer-prev').addEventListener('click', () => moveDrawe
 document.getElementById('drawer-next').addEventListener('click', () => moveDrawerSelection(1));
 
 document.querySelectorAll('[data-drawer-tab]').forEach(button => button.addEventListener('click', () => setDrawerTab(button.dataset.drawerTab)));
+document.getElementById('drawer-open-multi-links')?.addEventListener('click', () => {
+  const sku = productDrawer.dataset.sku;
+  closeProductDrawer();
+  openMultiLinkWorkspace('all', sku);
+});
+document.getElementById('drawer-link-manager')?.addEventListener('click', async event => {
+  const listing = event.target.closest('[data-drawer-link-row]');
+  if (!listing) return;
+  const row = drawerState.linkRows[Number(listing.dataset.drawerLinkRow)];
+  if (!row) return;
+  const component = event.target.closest('.drawer-link-component');
+  const refresh = async () => {
+    drawerState.linkRowsSku = '';
+    await Promise.all([loadDrawerListingLinks({force:true}), loadLiveMatrix()]);
+  };
+  if (event.target.closest('[data-drawer-component-save]') && component) {
+    const button = event.target.closest('button');
+    button.disabled = true;
+    try {
+      await liveData.saveListingComponent({source:row.source_channel, productCode:row.product_code, optionCode:row.option_code, sku:component.dataset.componentSku, qty:component.querySelector('[data-drawer-component-qty]').value, role:component.querySelector('[data-drawer-component-role]').value});
+      await refresh();
+      showToast(`${component.dataset.componentSku} 구성수량을 저장했습니다.`);
+    } catch (error) { showToast(`구성 저장 실패: ${error?.message || error}`); }
+    finally { button.disabled = false; }
+    return;
+  }
+  if (event.target.closest('[data-drawer-component-remove]') && component) {
+    if (!window.confirm(`${component.dataset.componentSku} 구성 연결을 해제할까요?`)) return;
+    const button = event.target.closest('button');
+    button.disabled = true;
+    try {
+      await liveData.deactivateListingComponent(component.dataset.componentId);
+      await refresh();
+      showToast(`${component.dataset.componentSku} 연결을 해제했습니다.`);
+    } catch (error) { showToast(`연결 해제 실패: ${error?.message || error}`); }
+    finally { button.disabled = false; }
+    return;
+  }
+  if (event.target.closest('[data-drawer-stage-stock]')) {
+    const button = event.target.closest('button');
+    button.disabled = true;
+    try {
+      const result = await liveData.stageListingInventoryDraft({source:row.source_channel, productCode:row.product_code, optionCode:row.option_code, batchId:createRequestId()});
+      await Promise.all([refresh(), loadChangeQueue({silent:true}), loadLiveDashboardMetrics()]);
+      showToast(result?.draft_status === 'unchanged' ? '판매처 재고와 구성 계산재고가 일치합니다.' : `계산재고 ${formatNullableNumber(result.calculated_stock)}개를 변경대기에 등록했습니다.`);
+    } catch (error) { showToast(`계산재고 등록 실패: ${error?.message || error}`); }
+    finally { button.disabled = false; }
+  }
+});
+document.getElementById('drawer-link-manager')?.addEventListener('submit', async event => {
+  const form = event.target.closest('.drawer-link-add');
+  if (!form) return;
+  event.preventDefault();
+  const listing = form.closest('[data-drawer-link-row]');
+  const row = drawerState.linkRows[Number(listing?.dataset.drawerLinkRow)];
+  if (!row) return;
+  const button = form.querySelector('button[type="submit"]');
+  button.disabled = true;
+  try {
+    const addedSku = form.elements.sku.value.trim();
+    await liveData.saveListingComponent({source:row.source_channel, productCode:row.product_code, optionCode:row.option_code, sku:addedSku, qty:form.elements.qty.value, role:form.elements.role.value});
+    drawerState.linkRowsSku = '';
+    await Promise.all([loadDrawerListingLinks({force:true}), loadLiveMatrix()]);
+    showToast(`${addedSku}를 구성에 추가했습니다.`);
+  } catch (error) { showToast(`구성 추가 실패: ${error?.message || error}`); }
+  finally { button.disabled = false; }
+});
 document.getElementById('drawer-history-refresh').addEventListener('click', () => {
   drawerState.historySku = '';
   loadDrawerHistory({force:true});

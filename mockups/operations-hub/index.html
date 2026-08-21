@@ -7,7 +7,7 @@
     <title>System V3 · 상품 운영 허브</title>
     <link rel="preconnect" href="https://cdnjs.cloudflare.com" crossorigin>
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/pretendard/1.3.9/static/pretendard.css">
-    <link rel="stylesheet" href="./style.css?v=20260821-product-grouping">
+    <link rel="stylesheet" href="./style.css?v=20260821-inline-links">
     <link rel="stylesheet" href="./inventory.css?v=20260821-product-grouping">
     <link rel="stylesheet" href="./price-rule-lab.css?v=20260821-product-grouping">
   </head>
@@ -408,6 +408,10 @@
           <section class="drawer-section" id="drawer-smart" data-source="smartstore"><div class="drawer-section-title"><h4><i class="dot smart"></i>스마트스토어</h4><span class="matrix-status pending">조회 중</span></div><div class="form-grid"><label>상품코드<input id="drawer-smart-product" disabled></label><label>옵션코드<input id="drawer-smart-option" disabled></label><label class="form-wide">판매처 상품명<textarea id="drawer-smart-name" data-seller-name="product" rows="2"></textarea></label><label class="form-wide">판매처 옵션명<textarea id="drawer-smart-option-name" data-seller-name="option" rows="2"></textarea></label></div><div class="drawer-section-actions"><button class="drawer-link-btn" data-drawer-link-source="smartstore">원본에서 연결 변경</button><button class="btn seller-draft-save" data-queue="false">초안 저장</button><button class="btn primary seller-draft-save" data-queue="true">반영 대기 추가</button></div></section>
           <section class="drawer-section" id="drawer-make" data-source="makeshop"><div class="drawer-section-title"><h4><i class="dot make"></i>메이크샵</h4><span class="matrix-status pending">조회 중</span></div><div class="form-grid"><label>상품코드<input id="drawer-make-product" disabled></label><label>옵션코드<input id="drawer-make-option" disabled></label><label class="form-wide">판매처 상품명<textarea id="drawer-make-name" data-seller-name="product" rows="2"></textarea></label><label class="form-wide">판매처 옵션명<textarea id="drawer-make-option-name" data-seller-name="option" rows="2"></textarea></label></div><div class="drawer-section-actions"><button class="drawer-link-btn" data-drawer-link-source="makeshop">원본에서 연결 변경</button><button class="btn seller-draft-save" data-queue="false">초안 저장</button><button class="btn primary seller-draft-save" data-queue="true">반영 대기 추가</button></div></section>
           <section class="drawer-section" id="drawer-ably" data-source="ably"><div class="drawer-section-title"><h4><i class="dot ably"></i>에이블리</h4><span class="matrix-status pending">조회 중</span></div><div class="form-grid"><label>상품코드<input id="drawer-ably-product" disabled></label><label>옵션코드<input id="drawer-ably-option" disabled></label><label class="form-wide">판매처 상품명<textarea id="drawer-ably-name" data-seller-name="product" rows="2"></textarea></label><label class="form-wide">판매처 옵션명<textarea id="drawer-ably-option-name" data-seller-name="option" rows="2"></textarea></label></div><div class="drawer-section-actions"><button class="drawer-link-btn" data-drawer-link-source="ably">원본에서 연결 변경</button><button class="btn seller-draft-save" data-queue="false">초안 저장</button><button class="btn primary seller-draft-save" data-queue="true">반영 대기 추가</button></div></section>
+          <section class="drawer-section drawer-link-manager-section">
+            <div class="drawer-section-title"><div><h4>다중·조합·세트 구성</h4><small>현재 SKU가 연결된 판매처 옵션의 구성과 계산재고를 관리합니다.</small></div><button id="drawer-open-multi-links" class="btn">전체 관리 열기</button></div>
+            <div id="drawer-link-manager" class="drawer-link-manager"><div class="drawer-empty-state loading"><b>연결 구성을 불러오는 중입니다.</b><span>1:1, 1:N, 세트 구성품을 함께 조회합니다.</span></div></div>
+          </section>
         </div>
         <div class="drawer-tab-panel" data-drawer-panel="inventory" hidden>
           <div class="drawer-panel-guide"><b>판매처 원본 기준 재고·가격 수정안</b><span>값을 저장해도 원본 파일은 즉시 바뀌지 않습니다. 매트릭스에서 검토한 뒤 내보내기 단계에서 반영됩니다.</span></div>
@@ -554,11 +558,11 @@
     <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.112.3/dist/umd/supabase.js"></script>
-    <script src="./seller-source-parsers.js?v=20260821-product-grouping"></script>
-    <script src="./seller-export-adapter.js?v=20260821-product-grouping"></script>
-    <script src="./matrix-csv-export.js?v=20260821-product-grouping"></script>
-    <script src="./data-service.js?v=20260821-product-grouping"></script>
-    <script src="./app.js?v=20260821-product-grouping"></script>
-    <script src="./price-rule-lab.js?v=20260821-product-grouping"></script>
+    <script src="./seller-source-parsers.js?v=20260821-inline-links"></script>
+    <script src="./seller-export-adapter.js?v=20260821-inline-links"></script>
+    <script src="./matrix-csv-export.js?v=20260821-inline-links"></script>
+    <script src="./data-service.js?v=20260821-inline-links"></script>
+    <script src="./app.js?v=20260821-inline-links"></script>
+    <script src="./price-rule-lab.js?v=20260821-inline-links"></script>
   </body>
 </html>
