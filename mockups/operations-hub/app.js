@@ -1754,16 +1754,26 @@ function normalizePastedRows(text) {
   return rows.map(row => row.split('\t'));
 }
 
+function parseEditableInputValue(value, valueType = 'text') {
+  const signedNumber = valueType === 'signed-number';
+  const numeric = valueType === 'number' || signedNumber;
+  let normalized = String(value ?? '').trim();
+  if (numeric) normalized = normalized.replace(/,/g, '');
+  const valid = !numeric || (signedNumber
+    ? /^-?\d+(\.\d+)?$/.test(normalized)
+    : /^\d+(\.\d+)?$/.test(normalized));
+  return {value:normalized, numeric, signedNumber, valid};
+}
+
 function commitEditableCellValue(cell, value) {
   if (!cell?.matches('.sellpia-edit')) return {changed:false, valid:false};
   const row = cell.closest('tr[data-sku]');
   if (!row) return {changed:false, valid:false};
   const before = String(cell.dataset.value ?? '');
-  const numeric = ['number','signed-number'].includes(cell.dataset.valueType);
-  const signedNumber = cell.dataset.valueType === 'signed-number';
-  let after = String(value ?? '').trim();
-  if (numeric) after = after.replace(/,/g, '');
-  if (numeric && !/^\d+(\.\d+)?$/.test(after)) return {changed:false, valid:false};
+  const parsed = parseEditableInputValue(value, cell.dataset.valueType);
+  const {numeric} = parsed;
+  const after = parsed.value;
+  if (!parsed.valid) return {changed:false, valid:false};
   if (after === before) return {changed:false, valid:true};
   cell.dataset.value = after;
   cell.textContent = numeric ? formatNullableNumber(after) : (after || '-');
@@ -2201,7 +2211,8 @@ matrixBody.addEventListener('dblclick', event => {
   if (cell.querySelector('input')) return;
   const before = cell.dataset.value ?? cell.textContent.trim();
   const beforeHtml = cell.innerHTML;
-  const numeric = cell.dataset.valueType === 'number';
+  const valueType = cell.dataset.valueType || 'text';
+  const {numeric, signedNumber} = parseEditableInputValue(before, valueType);
   const input = document.createElement('input');
   input.className = `inline-editor${numeric ? '' : ' text-editor'}`;
   input.value = before;
@@ -2213,10 +2224,9 @@ matrixBody.addEventListener('dblclick', event => {
   const finish = async save => {
     if (completed) return;
     completed = true;
-    let after = save ? input.value.trim() : before;
-    if (numeric) after = after.replace(/,/g, '');
-    const validNumeric = signedNumber ? /^-?\d+(\.\d+)?$/.test(after) : /^\d+(\.\d+)?$/.test(after);
-    if (save && numeric && !validNumeric) {
+    const parsed = parseEditableInputValue(save ? input.value : before, valueType);
+    let after = parsed.value;
+    if (save && !parsed.valid) {
       showToast(signedNumber ? '옵션가는 음수를 포함한 숫자로 입력해주세요.' : '재고와 최종판가는 0 이상의 숫자로 입력해주세요.');
       after = before;
       save = false;

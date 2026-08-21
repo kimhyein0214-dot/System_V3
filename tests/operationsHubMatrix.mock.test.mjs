@@ -84,7 +84,8 @@ assert.match(dataSource, /operations_hub_mapping_sync_status[\s\S]*?loadMappingS
 assert.match(source, /loadMappingSyncStatus\(\{autoRefresh:true\}\)[\s\S]*?15000/, "the matrix must detect external mapping changes without requiring a manual page reload");
 assert.match(source, /function matrixSelectionClipboardText\([\s\S]*?rows\.join\('\\n'\)/, "selected Sellpia cells must copy to an Excel-compatible tab and newline grid");
 assert.match(source, /document\.addEventListener\('paste'[\s\S]*?normalizePastedRows[\s\S]*?commitEditableCellValue/, "Excel clipboard grids must paste into the selected editable Sellpia cell range");
-assert.match(source, /numeric && !\/\^\\d\+[\s\S]*?valid:false/, "clipboard paste must reject invalid numeric stock and price values");
+assert.match(source, /function parseEditableInputValue\([\s\S]*?signedNumber[\s\S]*?\^\-\?\\d\+[\s\S]*?valid/, "clipboard paste and inline editing must share numeric validation, including signed option prices");
+assert.match(source, /function commitEditableCellValue\([\s\S]*?parseEditableInputValue\(value, cell\.dataset\.valueType\)[\s\S]*?parsed\.valid/, "clipboard paste must reject invalid stock and price values through the common parser");
 assert.match(html, /한 번 클릭은 셀 선택[\s\S]*?Ctrl\+C \/ Ctrl\+V/, "the matrix must explain spreadsheet-style clipboard controls");
 assert.match(css, /td\.matrix-cell-selected[\s\S]*?td\.matrix-cell-anchor/, "selected matrix cells and the anchor cell must remain visually distinct");
 assert.match(source, /matrixBody\.addEventListener\('click'[\s\S]*?selectMatrixCell\(cell[\s\S]*?matrixBody\.addEventListener\('dblclick'[\s\S]*?openProductDrawer\(row\)/, "single click must select a cell while double click opens row details");
