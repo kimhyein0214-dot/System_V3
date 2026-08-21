@@ -11,8 +11,9 @@ const exporter = fs.readFileSync(new URL('../supabase/migrations/20260821020657_
 
 assert.equal((html.match(/<th>판매가<\/th><th>옵션가<\/th><th>최종판가<\/th>/g) || []).length, 3, 'every seller group must expose base, option, and final prices');
 assert.match(app, /priceComponent\.source_base_price[\s\S]*?priceComponent\.source_option_price[\s\S]*?priceComponent\.source_final_price/, 'matrix rows must read all three source components');
-assert.match(app, /data-price-component="option"[\s\S]*?data-price-component="final"/, 'matrix option and final prices must be directly editable');
-assert.match(app, /data-drawer-price-component="option"[\s\S]*?data-drawer-price-component="final"[\s\S]*?판매가 \$\{formatNullableNumber\(basePriceValue\)\} \+ 옵션가/, 'drawer must preview the inverse price equation');
+assert.match(app, /data-price-component="base"[\s\S]*?data-price-component="option"[\s\S]*?data-price-component="final"/, 'matrix base, option, and final prices must be directly editable');
+assert.match(app, /data-drawer-price-component="base"[\s\S]*?data-drawer-price-component="option"[\s\S]*?data-drawer-price-component="final"[\s\S]*?판매가 \$\{formatNullableNumber\(basePriceValue\)\} \+ 옵션가/, 'drawer must expose all three components and preview their equation');
+assert.match(app, /priceComponent === 'base'[\s\S]*?Number\(after\) \+ Number\(cell\.dataset\.optionPrice/, 'editing base price must preserve the option price and recalculate final price');
 assert.match(app, /saveSellerPriceDraft\([\s\S]*?targetFinalPrice[\s\S]*?optionPrice/, 'frontend price writes must be atomic');
 assert.doesNotMatch(app.slice(app.indexOf('async function flushPendingSellpiaChanges'), app.indexOf('function editableMatrixGrid')), /refreshLiveData\(/, 'Sellpia autosave must not reload the full matrix');
 assert.match(data, /load_operations_hub_seller_price_components[\s\S]*?save_operations_hub_seller_price_draft/, 'data service must expose component load and save RPCs');

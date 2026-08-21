@@ -35,7 +35,7 @@ assert.match(app, /values\.length > 1[\s\S]*?한 행에 코드가 여러 개 있
 assert.match(app, /sheet_to_json\(sheet, \{header:1, raw:false, defval:''\}\)/, "formatted Excel codes must be read without numeric coercion");
 assert.match(app, /matrixState\.codeListRows = codeListSession\.resultRows\.map\(item => \(\{\.\.\.item\}\)\)[\s\S]*?loadLiveMatrix\(\{resetPage:true\}\)/, "ordered Excel result rows must drive the live matrix view");
 assert.match(app, /\.\.\.codeListSession\.resolved\.map[\s\S]*?\.\.\.codeListSession\.invalid\.map[\s\S]*?\.sort\(\(left, right\) => Number\(left\.input_row\) - Number\(right\.input_row\)/, "matched, missing, unmapped, and invalid inputs must share one ordered result stream");
-assert.match(data, /orderedCodeRows\.slice\(from, from \+ PAGE_SIZE\)/, "Excel result rows must be paginated in client input order");
+assert.match(data, /orderedCodeRows\.slice\(from, from \+ safePageSize\)/, "Excel result rows must be paginated in client input order with the selected page size");
 assert.match(data, /pageRows\.map\(codeRow =>[\s\S]*?__codeListPlaceholder:true/, "missing or unmapped Excel rows must survive as matrix placeholders");
 assert.match(app, /function renderCodeListPlaceholderRow[\s\S]*?code-list-placeholder-row/, "the matrix must render an explicit placeholder for unresolved Excel rows");
 assert.match(app, /<em>엑셀 \$\{inputRow\}행<\/em>/, "matched rows must expose their original Excel row number");

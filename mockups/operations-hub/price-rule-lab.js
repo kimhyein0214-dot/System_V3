@@ -6,7 +6,7 @@
   const openButton = document.getElementById('price-rule-lab-open');
   if (!data || !page || !openButton) return;
 
-  const state = {tags:[], sets:[], qa:[], selectedTagIds:[], loading:false};
+  const state = {tags:[], sets:[], selectedTagIds:[], loading:false};
   const byId = id => document.getElementById(id);
   const escapeHtml = value => String(value ?? '').replace(/[&<>"]/g, character => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[character]));
   const money = value => Number(value || 0).toLocaleString('ko-KR') + '원';
@@ -75,26 +75,12 @@
     }).join('') || '<p class="price-rule-empty">아래 목록에서 작은 태그를 추가하세요.</p>';
   }
 
-  function renderQa() {
-    const passed = state.qa.filter(item => item.passed).length;
-    byId('price-rule-qa-status').textContent = `${passed}/${state.qa.length} 통과`;
-    byId('price-rule-qa-status').className = passed === state.qa.length && state.qa.length ? 'passed' : 'failed';
-    byId('price-rule-qa-list').innerHTML = state.qa.map(item => `
-      <article class="price-rule-qa-card ${item.passed ? 'passed' : 'failed'}">
-        <div class="price-rule-qa-title"><span><b>${escapeHtml(item.case_name)}</b><em>${escapeHtml(item.source_channel)} · ${escapeHtml(item.virtual_product_code)} / ${escapeHtml(item.virtual_option_code)}</em></span><strong>${item.passed ? '통과' : '불일치'}</strong></div>
-        <div class="price-rule-qa-components">${(item.components || []).map(component => `<span>${escapeHtml(component.sku)} × ${Number(component.qty)} <b>${money(component.unit_price)}</b></span>`).join(' + ')}</div>
-        <div class="price-rule-qa-flow"><span>기준 <b>${money(item.base_price)}</b></span>${(item.steps || []).map(step => `<i>→</i><span>${escapeHtml(step.tag_name)} <b>${money(step.after)}</b></span>`).join('')}<i>→</i><span>예상 <b>${money(item.expected_final_price)}</b></span></div>
-      </article>`).join('') || '<p class="price-rule-empty">가상 QA 데이터가 없습니다.</p>';
-  }
-
   function renderAll() {
     byId('price-rule-tag-count').textContent = `${state.tags.length}개`;
     byId('price-rule-set-count').textContent = `${state.sets.length}개`;
-    byId('price-rule-qa-count').textContent = `${state.qa.filter(item => item.passed).length}/${state.qa.length} 통과`;
     renderTags();
     renderSets();
     renderSelectedTags();
-    renderQa();
   }
 
   async function refresh() {
@@ -103,8 +89,8 @@
     byId('price-rule-lab-error').hidden = true;
     byId('price-rule-lab-refresh').disabled = true;
     try {
-      [state.tags, state.sets, state.qa] = await Promise.all([
-        data.loadPriceRuleTags(), data.loadPriceRuleSets(), data.loadPriceRuleQaCases()
+      [state.tags, state.sets] = await Promise.all([
+        data.loadPriceRuleTags(), data.loadPriceRuleSets()
       ]);
       renderAll();
     } catch (error) {
@@ -189,7 +175,7 @@
   byId('price-rule-set-delete').addEventListener('click', async () => {
     const ruleSetId = cleanNumber(byId('price-rule-set-id').value);
     const ruleSet = state.sets.find(item => Number(item.price_rule_set_id) === Number(ruleSetId));
-    if (!ruleSetId || !ruleSet || !global.confirm(`큰 태그 “${ruleSet.set_name}”을 삭제할까요?\n상품 배정 또는 가상 QA에서 사용 중이면 삭제되지 않습니다.`)) return;
+    if (!ruleSetId || !ruleSet || !global.confirm(`큰 태그 “${ruleSet.set_name}”을 삭제할까요?\n상품에 배정되어 있으면 삭제되지 않습니다.`)) return;
     const button = byId('price-rule-set-delete');
     button.disabled = true;
     try {
