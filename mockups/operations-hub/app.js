@@ -2633,7 +2633,7 @@ function updatePriceRuleBulkSetSummary() {
 }
 
 async function openPriceRuleBulk() {
-  if (!liveData?.loadPriceRuleSets || !liveData?.savePriceRuleAssignmentsBulk) {
+  if (!liveData?.loadPriceRuleSets || !liveData?.savePriceRuleAssignmentsBulk || !liveData?.stageAssignedPriceDraftsBulk) {
     showToast('가격 규칙 일괄 배정 기능을 불러오지 못했습니다. 새로고침 후 다시 시도해주세요.');
     return;
   }
@@ -2658,6 +2658,7 @@ async function openPriceRuleBulk() {
   if (preferred) preferred.checked = true;
   document.getElementById('price-rule-bulk-progress').hidden = true;
   document.getElementById('price-rule-bulk-run').disabled = true;
+  document.getElementById('price-rule-bulk-stage').disabled = !preferredScope;
   document.getElementById('price-rule-bulk-run').textContent = '규칙 불러오는 중…';
   document.getElementById('price-rule-bulk-cancel').textContent = '취소';
   priceRuleBulkModal.hidden = false;
@@ -2705,7 +2706,9 @@ async function runPriceRuleBulk() {
   priceRuleBulkState.running = true;
   priceRuleBulkState.cancelRequested = false;
   const runButton = document.getElementById('price-rule-bulk-run');
+  const stageButton = document.getElementById('price-rule-bulk-stage');
   runButton.disabled = true;
+  stageButton.disabled = true;
   runButton.textContent = '배정 저장 중…';
   try {
     showPriceRuleBulkProgress(2, '상품 범위 확인 중', '현재 화면의 선택 조건을 SKU 목록으로 확인합니다.');
@@ -2733,7 +2736,60 @@ async function runPriceRuleBulk() {
   } finally {
     priceRuleBulkState.running = false;
     runButton.disabled = false;
+    stageButton.disabled = false;
     runButton.textContent = '다시 배정 저장';
+  }
+}
+
+async function runAssignedPriceDraftsBulk() {
+  if (priceRuleBulkState.running) return;
+  const sources = [...priceRuleBulkModal.querySelectorAll('.price-rule-bulk-sources input:checked')].map(input => input.value);
+  if (!priceRuleBulkScope()) { showToast('적용할 상품 범위를 선택해주세요.'); return; }
+  if (!sources.length) { showToast('판매처를 하나 이상 선택해주세요.'); return; }
+  priceRuleBulkState.running = true;
+  priceRuleBulkState.cancelRequested = false;
+  const runButton = document.getElementById('price-rule-bulk-run');
+  const stageButton = document.getElementById('price-rule-bulk-stage');
+  runButton.disabled = true;
+  stageButton.disabled = true;
+  stageButton.textContent = '가격 수정안 생성 중…';
+  try {
+    showPriceRuleBulkProgress(2, '상품 범위 확인 중', '배정된 큰 태그와 현재 셀피아 판매가를 확인합니다.');
+    const skus = [...new Set((await resolvePriceRuleBulkSkus()).map(value => String(value || '').trim()).filter(Boolean))];
+    if (!skus.length) throw new Error('가격 수정안을 만들 셀피아 SKU를 찾지 못했습니다.');
+    const batchId = createRequestId();
+    let processed = 0;
+    let pendingDrafts = 0;
+    let unchangedDrafts = 0;
+    let failedRows = 0;
+    let unassignedRows = 0;
+    const errors = [];
+    const batchSize = 100;
+    while (processed < skus.length) {
+      if (priceRuleBulkState.cancelRequested) throw new Error('가격 수정안 생성을 중단했습니다.');
+      const batch = skus.slice(processed, processed + batchSize);
+      const result = await liveData.stageAssignedPriceDraftsBulk({skus:batch, sources, batchId});
+      processed += batch.length;
+      pendingDrafts += Number(result.pending_drafts || 0);
+      unchangedDrafts += Number(result.unchanged_drafts || 0);
+      failedRows += Number(result.failed_rows || 0);
+      unassignedRows += Number(result.unassigned_rows || 0);
+      errors.push(...(Array.isArray(result.errors) ? result.errors : []));
+      showPriceRuleBulkProgress(30 + (processed / skus.length) * 68, '가격 수정안 생성 중', `${formatNumber(processed)} / ${formatNumber(skus.length)}개 SKU · 수정안 ${formatNumber(pendingDrafts)}건 · 동일가 ${formatNumber(unchangedDrafts)}건`);
+      await new Promise(resolve => window.setTimeout(resolve, 0));
+    }
+    const errorSummary = errors.slice(0, 3).map(item => `${item.sku || '-'} ${CHANNEL_LABELS[item.source] || item.source}: ${item.message}`).join(' / ');
+    showPriceRuleBulkProgress(100, '가격 수정안 생성 완료', `수정안 ${formatNumber(pendingDrafts)}건 · 동일가 ${formatNumber(unchangedDrafts)}건 · 미배정 ${formatNumber(unassignedRows)}건 · 실패 ${formatNumber(failedRows)}건${errorSummary ? ` · ${errorSummary}` : ''}`);
+    showToast('배정된 가격 규칙으로 검토용 수정안을 만들었습니다. 매트릭스에서 판매가·옵션가·최종판가를 확인해주세요.');
+    document.getElementById('price-rule-bulk-cancel').textContent = '닫기';
+    await refreshLiveData();
+  } catch (error) {
+    showPriceRuleBulkProgress(0, priceRuleBulkState.cancelRequested ? '수정안 생성 중단' : '수정안 생성 실패', error?.message || String(error));
+  } finally {
+    priceRuleBulkState.running = false;
+    runButton.disabled = false;
+    stageButton.disabled = false;
+    stageButton.textContent = '배정 규칙으로 가격 수정안 생성';
   }
 }
 
@@ -2741,6 +2797,7 @@ document.getElementById('matrix-bulk-btn').addEventListener('click', openPriceRu
 document.getElementById('price-rule-bulk-close').addEventListener('click', closePriceRuleBulk);
 document.getElementById('price-rule-bulk-cancel').addEventListener('click', closePriceRuleBulk);
 document.getElementById('price-rule-bulk-run').addEventListener('click', runPriceRuleBulk);
+document.getElementById('price-rule-bulk-stage').addEventListener('click', runAssignedPriceDraftsBulk);
 document.getElementById('price-rule-bulk-set').addEventListener('change', updatePriceRuleBulkSetSummary);
 
 document.getElementById('matrix-refresh-btn').addEventListener('click', () => refreshLiveData());
