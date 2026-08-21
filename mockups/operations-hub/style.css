@@ -122,6 +122,10 @@
 .matrix-table tbody td.matrix-cell-anchor{outline:3px solid var(--blue);outline-offset:-3px}
 .matrix-table tbody td.select-col,.matrix-table tbody td.image-drop-cell{cursor:default}
 .matrix-table .select-col{display:none}
+.matrix-table tbody tr.product-group-start:not(:first-child)>td{border-top:3px solid #6f91be}
+.matrix-table td.seller-base-merged-cell{position:relative;vertical-align:middle;background:#f7fbff;border-left:1px solid #b8cce6;border-right:1px solid #b8cce6;text-align:center}
+.matrix-table td.seller-base-merged-cell .editable-cell{min-height:34px;border-color:#8fb1de;background:#f4f8ff}
+.matrix-table td.seller-base-merged-cell::after{content:"상품 공통";display:block;margin:4px auto 0;color:#52739d;font-size:6px;font-weight:900;letter-spacing:-.2px}
 .matrix-page-size{display:flex;align-items:center;gap:5px;white-space:nowrap;color:#64748b;font-size:9px;font-weight:900}
 .matrix-page-size select{min-width:64px;padding-right:20px}
 .matrix-table .image-col{left:0}

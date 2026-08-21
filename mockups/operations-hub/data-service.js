@@ -665,6 +665,55 @@
     return Array.isArray(data) ? data[0] : data;
   }
 
+  async function saveSellerProductBaseDrafts({source, productCode, targetBasePrice}) {
+    const normalizedSource = cleanText(source);
+    const normalizedProductCode = cleanText(productCode);
+    const sourceFields = {
+      smartstore:'smartstore_product_code',
+      makeshop:'makeshop_product_code',
+      ably:'ably_product_code'
+    };
+    const sourceField = sourceFields[normalizedSource];
+    if (!sourceField || !normalizedProductCode) throw new Error('판매처와 상품코드를 확인해주세요.');
+    const rows = [];
+    for (let from = 0; ; from += 1000) {
+      const {data, error} = await db
+        .from('operations_hub_matrix_cached')
+        .select(`sellpia_sku_code,${sourceField}`)
+        .eq(sourceField, normalizedProductCode)
+        .range(from, from + 999);
+      if (error) throw error;
+      rows.push(...(data || []));
+      if ((data || []).length < 1000) break;
+    }
+    const products = await attachSellerPriceComponents(rows);
+    if (!products.length) throw new Error('같은 판매처 상품코드에 연결된 SKU를 찾지 못했습니다.');
+    const batchId = global.crypto?.randomUUID?.() || `seller-base-${Date.now()}`;
+    const items = [];
+    const concurrency = 6;
+    for (let offset = 0; offset < products.length; offset += concurrency) {
+      const chunk = products.slice(offset, offset + concurrency);
+      const saved = await Promise.all(chunk.map(async product => {
+        const component = product.__sellerPriceComponents?.[normalizedSource] || {};
+        const optionPrice = component.draft_option_price ?? component.source_option_price ?? 0;
+        const result = await saveSellerPriceDraft({
+          sku:product.sellpia_sku_code,
+          source:normalizedSource,
+          targetBasePrice:Number(targetBasePrice),
+          inputMode:'option',
+          optionPrice,
+          optionPriceSource:component.option_price_source || 'original',
+          basePriceSource:'manual',
+          priceRuleSetId:component.price_rule_set_id || null,
+          batchId
+        });
+        return {sku:product.sellpia_sku_code, result};
+      }));
+      items.push(...saved);
+    }
+    return {source:normalizedSource, productCode:normalizedProductCode, savedCount:items.length, items};
+  }
+
   async function loadPriceRuleTags() {
     const {data, error} = await db
       .from('operations_hub_price_rule_tags')
@@ -1613,6 +1662,7 @@
     retryChangeQueue,
     saveSellerValueDraft,
     saveSellerPriceDraft,
+    saveSellerProductBaseDrafts,
     loadPricePolicies,
     previewPricePolicy,
     savePricePolicy,
