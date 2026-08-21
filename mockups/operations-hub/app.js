@@ -392,7 +392,7 @@ function sellerNameCell(product, prefix) {
   </td>`;
 }
 
-function channelInventoryCells(product, prefix, label) {
+function channelInventoryCells(product, prefix, label, baseMerge = null) {
   const tier = product[`${prefix}_match_tier`];
   const state = matchState(tier);
   const productCode = product[`${prefix}_product_code`] || '';
@@ -437,9 +437,17 @@ function channelInventoryCells(product, prefix, label) {
     : `<td data-channel="${prefix}"><button class="editable-cell seller-edit${stockDiff && !stockDraft ? ' diff' : ''}${draftClass(stockDraft)}" data-source="${prefix}" data-field-key="sellpia_current_stock" data-field="${label} 재고" data-value="${escapeHtml(stockDisplay)}" data-baseline="${escapeHtml(stock)}" data-value-type="number" data-change-id="${stockDraft?.change_id || ''}" data-draft-status="${stockDraft?.status || ''}" title="${stockDraft ? `수정안 ${formatNullableNumber(stockDisplay)} · 원본 ${formatNullableNumber(stock)}` : '수정 가능한 판매처 재고 · 변경하면 매트릭스 수정안으로 저장됩니다.'}">${formatNullableNumber(stockDisplay)}</button></td>`;
   const componentLayer = (original, draft) => `<span class="price-layer original"><span>원본</span><b>${formatNullableNumber(original)}</b></span>${priceDraft ? `<span class="price-layer draft"><span>수정</span><b>${formatNullableNumber(draft)}</b></span>` : ''}`;
   const noPrice = finalPrice === null || finalPrice === undefined;
-  const baseCell = noPrice
-    ? `<td class="data-gap" data-channel="${prefix}">-</td>`
-    : `<td data-channel="${prefix}"><button class="editable-cell seller-edit price-layer-cell price-component-base${draftClass(priceDraft)}" data-source="${prefix}" data-field-key="sellpia_sale_price" data-price-component="base" data-field="${label} 판매가" data-value="${escapeHtml(effectiveBasePrice)}" data-baseline="${escapeHtml(basePrice)}" data-option-price="${escapeHtml(effectiveOptionPrice)}" data-value-type="number" data-change-id="${priceDraft?.change_id || ''}" data-draft-status="${priceDraft?.status || ''}" title="${escapeHtml(nativeDiscountSummary(discountTerms))} · 할인 적용 판매가 ${formatNullableNumber(effectiveDiscountedBasePrice)}">${componentLayer(basePrice, effectiveBasePrice)}</button></td>`;
+  const mergeHidden = Boolean(baseMerge?.hidden);
+  const mergeRowspan = Math.max(1, Number(baseMerge?.rowspan) || 1);
+  const mergeAttributes = mergeRowspan > 1
+    ? ` rowspan="${mergeRowspan}" class="seller-base-merged-cell" data-seller-product-code="${escapeHtml(baseMerge.productCode || productCode)}" data-group-size="${mergeRowspan}"`
+    : '';
+  const mergeTitle = mergeRowspan > 1 ? ` · 같은 상품 ${mergeRowspan}개 옵션 공통 판매가` : '';
+  const baseCell = mergeHidden
+    ? ''
+    : noPrice
+      ? `<td class="data-gap${mergeRowspan > 1 ? ' seller-base-merged-cell' : ''}" data-channel="${prefix}"${mergeRowspan > 1 ? ` rowspan="${mergeRowspan}"` : ''}>-</td>`
+      : `<td data-channel="${prefix}"${mergeAttributes}><button class="editable-cell seller-edit price-layer-cell price-component-base${draftClass(priceDraft)}" data-source="${prefix}" data-field-key="sellpia_sale_price" data-price-component="base" data-field="${label} 판매가" data-value="${escapeHtml(effectiveBasePrice)}" data-baseline="${escapeHtml(basePrice)}" data-option-price="${escapeHtml(effectiveOptionPrice)}" data-value-type="number" data-change-id="${priceDraft?.change_id || ''}" data-draft-status="${priceDraft?.status || ''}" data-seller-product-code="${escapeHtml(baseMerge?.productCode || productCode)}" data-group-size="${mergeRowspan}" title="${escapeHtml(nativeDiscountSummary(discountTerms))} · 할인 적용 판매가 ${formatNullableNumber(effectiveDiscountedBasePrice)}${mergeTitle}">${componentLayer(basePrice, effectiveBasePrice)}</button></td>`;
   const optionCell = noPrice
     ? `<td class="data-gap" data-channel="${prefix}">-</td>`
     : prefix === 'ably'
@@ -450,6 +458,56 @@ function channelInventoryCells(product, prefix, label) {
     ? `<td class="data-gap" data-channel="${prefix}">-</td>`
     : `<td data-channel="${prefix}"><button class="editable-cell seller-edit price-hover-target price-layer-cell price-component-final${priceDiff && !priceDraft ? ' diff' : ''}${draftClass(priceDraft)}" data-source="${prefix}" data-field-key="sellpia_sale_price" data-price-component="final" data-field="${label} 최종구매가" data-value="${escapeHtml(effectiveFinalPrice)}" data-baseline="${escapeHtml(finalPrice)}" data-option-price="${escapeHtml(effectiveOptionPrice)}" data-value-type="number" data-change-id="${priceDraft?.change_id || ''}" data-draft-status="${priceDraft?.status || ''}" tabindex="0" data-price-source="${prefix}" data-price-label="${label}" data-original-price="${escapeHtml(finalPrice)}" data-policy-price="${escapeHtml(policyPrice ?? '')}" data-policy-active="${policyActive ? 'true' : 'false'}" data-policy-name="${escapeHtml(policyName)}" data-draft-price="${escapeHtml(effectiveFinalPrice ?? '')}" data-base-price="${escapeHtml(sellpiaPrice ?? '')}" data-price-updated="${escapeHtml(product[`${prefix}_inventory_at`] || '')}" title="${priceDraft ? `반영 예정 ${formatNullableNumber(effectiveFinalPrice)} · 원본 ${formatNullableNumber(finalPrice)}` : policyActive ? `원본 ${formatNullableNumber(finalPrice)} · 수식 계산 ${formatNullableNumber(policyPrice)}` : '수정 가능한 판매처 최종구매가'}">${finalLayers}</button></td>`;
   return `<td data-channel="${prefix}"><span class="matrix-status ${state.key}">${state.label}</span>${relationBadge}</td>${codeCells}${sellerNameCell(product, prefix)}${stockCell}${baseCell}${optionCell}${finalCell}`;
+}
+
+function sellpiaProductGroupKey(product) {
+  const explicit = product?.__profile?.sellpia_product_code || product?.sellpia_product_code;
+  if (explicit) return String(explicit).trim();
+  const sku = String(product?.sellpia_sku_code || '').trim();
+  return sku.replace(/-\d+$/, '') || sku;
+}
+
+function sellerBaseMergeSignature(product, source) {
+  const price = product?.[`${source}_price`];
+  const component = product?.__sellerPriceComponents?.[source] || {};
+  const draft = product?.__sellerDrafts?.[`${source}:sellpia_sale_price`];
+  const original = component.source_base_price ?? product?.[`${source}_base_price`] ?? price;
+  const effective = draft ? (component.draft_base_price ?? draft.price_base_after) : original;
+  const terms = component.source_discount_terms ?? product?.[`${source}_discount_terms`] ?? [];
+  return JSON.stringify([original ?? null, effective ?? null, draft?.status || '', terms]);
+}
+
+function buildSellerBaseMerges(products) {
+  const metadata = new Map();
+  for (const source of ['smartstore', 'makeshop', 'ably']) {
+    let index = 0;
+    while (index < products.length) {
+      const first = products[index];
+      if (first?.__codeListPlaceholder) {
+        index += 1;
+        continue;
+      }
+      const productCode = String(first?.[`${source}_product_code`] || '').trim();
+      const sellpiaGroup = sellpiaProductGroupKey(first);
+      const signature = sellerBaseMergeSignature(first, source);
+      let end = index + 1;
+      while (productCode && end < products.length) {
+        const candidate = products[end];
+        if (candidate?.__codeListPlaceholder) break;
+        if (sellpiaProductGroupKey(candidate) !== sellpiaGroup) break;
+        if (String(candidate?.[`${source}_product_code`] || '').trim() !== productCode) break;
+        if (sellerBaseMergeSignature(candidate, source) !== signature) break;
+        end += 1;
+      }
+      const rowspan = productCode ? end - index : 1;
+      metadata.set(`${index}|${source}`, {rowspan, hidden:false, productCode});
+      for (let hiddenIndex = index + 1; hiddenIndex < end; hiddenIndex += 1) {
+        metadata.set(`${hiddenIndex}|${source}`, {rowspan:0, hidden:true, productCode});
+      }
+      index = Math.max(end, index + 1);
+    }
+  }
+  return metadata;
 }
 
 function codeListSourceLabel(source) {
@@ -497,7 +555,9 @@ function renderLiveMatrixRows(products) {
     matrixBody.innerHTML = '<tr class="matrix-empty-row"><td colspan="35"><b>검색 결과가 없습니다.</b><span>SKU 또는 자사코드를 다시 확인해주세요.</span></td></tr>';
     return;
   }
-  matrixBody.innerHTML = products.map(product => {
+  const sellerBaseMerges = buildSellerBaseMerges(products);
+  let previousProductGroup = '';
+  matrixBody.innerHTML = products.map((product, rowIndex) => {
     if (product.__codeListPlaceholder) return renderCodeListPlaceholderRow(product);
     matrixRowsBySku.set(product.sellpia_sku_code, product);
     const sku = escapeHtml(product.sellpia_sku_code);
@@ -520,7 +580,10 @@ function renderLiveMatrixRows(products) {
     const mappingTag = overallState === 'review' ? '<span class="tag review-tag">검토 필요</span>' : `<span class="tag">${connectedCount}처 연결</span>`;
     const profile = product.__profile || {};
     const tagSummary = [profile.shape, profile.tag_summary].filter(Boolean).join(' · ');
-    return `<tr data-sku="${sku}" data-own-code="${ownCode}" data-image="${imageUrl}" data-status="${overallState}"${inputRow ? ` data-input-row="${inputRow}"` : ''}>
+    const productGroup = sellpiaProductGroupKey(product);
+    const groupStart = !previousProductGroup || productGroup !== previousProductGroup;
+    previousProductGroup = productGroup;
+    return `<tr class="${groupStart ? 'product-group-start' : 'product-group-continuation'}" data-sku="${sku}" data-product-group="${escapeHtml(productGroup)}" data-own-code="${ownCode}" data-image="${imageUrl}" data-status="${overallState}"${inputRow ? ` data-input-row="${inputRow}"` : ''}>
       <td class="sticky-col select-col" aria-hidden="true"></td>
       <td class="sticky-col image-col image-drop-cell" data-image-drop="${sku}" title="이미지를 이 셀에 놓으면 ${sku}.jpg로 저장됩니다.">${matrixImage(product)}<span class="image-drop-hint">DROP</span></td>
       <td class="sticky-col sku-col code-cell">${skuMarkup}</td>
@@ -528,9 +591,9 @@ function renderLiveMatrixRows(products) {
       <td class="sticky-col sellpia-name-col product-cell"><b title="${displayName}">${displayName}</b><em title="${optionName}">${optionName}</em></td>
       <td class="sticky-col sellpia-stock-col number-cell${sellpiaStock === '-' ? ' data-gap' : ''}">${sellpiaEditor('sellpia_current_stock', '셀피아 현재재고', product.sellpia_current_stock, {number:true})}</td>
       <td class="sticky-col sellpia-price-col number-cell${sellpiaPrice === '-' ? ' data-gap' : ''}">${sellpiaEditor('sellpia_sale_price', '셀피아 판매가', product.sellpia_sale_price, {number:true})}</td>
-      ${channelInventoryCells(product, 'smartstore', '스마트스토어')}
-      ${channelInventoryCells(product, 'makeshop', '메이크샵')}
-      ${channelInventoryCells(product, 'ably', '에이블리')}
+      ${channelInventoryCells(product, 'smartstore', '스마트스토어', sellerBaseMerges.get(`${rowIndex}|smartstore`))}
+      ${channelInventoryCells(product, 'makeshop', '메이크샵', sellerBaseMerges.get(`${rowIndex}|makeshop`))}
+      ${channelInventoryCells(product, 'ably', '에이블리', sellerBaseMerges.get(`${rowIndex}|ably`))}
       <td class="profile-cell${profile.material ? '' : ' data-gap'}">${escapeHtml(profile.material || '-')}</td><td class="profile-cell${profile.product_group ? '' : ' data-gap'}">${escapeHtml(profile.product_group || '-')}</td><td class="profile-tags-cell">${tagSummary ? `<span class="tag" title="${escapeHtml(tagSummary)}">${escapeHtml(tagSummary)}</span>` : mappingTag}</td><td>${formatLiveTime(profile.updated_at || product.sellpia_override_updated_at || product.updated_at)}</td>
     </tr>`;
   }).join('');
@@ -1671,8 +1734,24 @@ function editableMatrixGrid() {
 }
 
 function matrixCellGrid() {
-  return [...matrixBody.querySelectorAll('tr[data-sku]')]
-    .map(row => [...row.children].filter(cell => cell.matches('td:not(.select-col)')));
+  const rows = [...matrixBody.querySelectorAll('tr[data-sku]')];
+  const grid = rows.map(() => []);
+  rows.forEach((row, rowIndex) => {
+    let columnIndex = 0;
+    const cells = [...row.children].filter(cell => cell.matches('td:not(.select-col)'));
+    for (const cell of cells) {
+      while (grid[rowIndex][columnIndex]) columnIndex += 1;
+      const rowSpan = Math.max(1, Number(cell.rowSpan) || 1);
+      const colSpan = Math.max(1, Number(cell.colSpan) || 1);
+      for (let rowOffset = 0; rowOffset < rowSpan && rowIndex + rowOffset < rows.length; rowOffset += 1) {
+        for (let columnOffset = 0; columnOffset < colSpan; columnOffset += 1) {
+          grid[rowIndex + rowOffset][columnIndex + columnOffset] = cell;
+        }
+      }
+      columnIndex += colSpan;
+    }
+  });
+  return grid;
 }
 
 function editableCellPosition(cell, grid = editableMatrixGrid()) {
@@ -2298,7 +2377,16 @@ matrixBody.addEventListener('dblclick', event => {
         const currentPrice = product?.__sellerPriceComponents?.[cell.dataset.source] || {};
         const currentBasePrice = currentPrice.draft_base_price ?? currentPrice.source_base_price ?? product?.[`${cell.dataset.source}_base_price`] ?? product?.[`${cell.dataset.source}_price`];
         const currentOptionPrice = currentPrice.draft_option_price ?? currentPrice.source_option_price ?? product?.[`${cell.dataset.source}_option_price`] ?? 0;
-        const result = priceComponent
+        const sellerProductCode = priceComponent === 'base' ? String(cell.dataset.sellerProductCode || '').trim() : '';
+        const mergedGroupSize = Math.max(1, Number(cell.dataset.groupSize) || 1);
+        const groupResult = sellerProductCode && mergedGroupSize > 1 && liveData.saveSellerProductBaseDrafts
+          ? await liveData.saveSellerProductBaseDrafts({
+              source:cell.dataset.source,
+              productCode:sellerProductCode,
+              targetBasePrice:Number(after)
+            })
+          : null;
+        const result = groupResult || (priceComponent
           ? await liveData.saveSellerPriceDraft({
               sku:row.dataset.sku,
               source:cell.dataset.source,
@@ -2315,10 +2403,16 @@ matrixBody.addEventListener('dblclick', event => {
               source:cell.dataset.source,
               fieldKey:cell.dataset.fieldKey,
               after
-            });
-        if (priceComponent) applyLocalSellerPriceDraft(product, cell.dataset.source, result);
+            }));
+        if (groupResult) {
+          for (const saved of groupResult.items || []) {
+            applyLocalSellerPriceDraft(matrixRowsBySku.get(saved.sku), cell.dataset.source, saved.result);
+          }
+        } else if (priceComponent) applyLocalSellerPriceDraft(product, cell.dataset.source, result);
         else applyLocalSellerDraft(product, cell.dataset.source, cell.dataset.fieldKey, after, result);
-        showToast(result?.draft_status === 'unchanged'
+        showToast(groupResult
+          ? `${cell.dataset.field}를 같은 판매처 상품 ${groupResult.savedCount}개 옵션에 저장했습니다.`
+          : result?.draft_status === 'unchanged'
           ? `${cell.dataset.field} 수정안을 취소했습니다.`
           : `${cell.dataset.field} 수정안을 매트릭스에 저장했습니다.`);
         renderLiveMatrixRows(matrixState.rows);
@@ -3786,6 +3880,7 @@ function selectedMatrixSkus() {
 
 function selectedMatrixTargets() {
   const grid = matrixCellGrid();
+  const rows = [...matrixBody.querySelectorAll('tr[data-sku]')];
   const bounds = selectionRectangle(grid);
   if (!bounds) return {cells:[], skus:[], sources:[]};
   const cells = [];
@@ -3796,7 +3891,7 @@ function selectedMatrixTargets() {
       const cell = grid[rowIndex]?.[columnIndex];
       if (!cell) continue;
       cells.push(cell);
-      const sku = cell.closest('tr[data-sku]')?.dataset.sku;
+      const sku = rows[rowIndex]?.dataset.sku;
       if (sku) skus.add(sku);
       if (cell.dataset.channel) sources.add(cell.dataset.channel);
     }
