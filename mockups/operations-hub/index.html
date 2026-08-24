@@ -7,9 +7,9 @@
     <title>System V3 · 상품 운영 허브</title>
     <link rel="preconnect" href="https://cdnjs.cloudflare.com" crossorigin>
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/pretendard/1.3.9/static/pretendard.css">
-    <link rel="stylesheet" href="./style.css?v=20260824-product-discount-editor-r13">
-    <link rel="stylesheet" href="./inventory.css?v=20260824-product-discount-editor-r13">
-    <link rel="stylesheet" href="./price-rule-lab.css?v=20260824-product-discount-editor-r13">
+    <link rel="stylesheet" href="./style.css?v=20260824-discount-anchor-r14">
+    <link rel="stylesheet" href="./inventory.css?v=20260824-discount-anchor-r14">
+    <link rel="stylesheet" href="./price-rule-lab.css?v=20260824-discount-anchor-r14">
   </head>
   <body>
     <div class="app-shell">
@@ -505,7 +505,9 @@
             <label>기간 할인코드<select id="discount-editor-rule-code"><option value="NONE">NONE · 기간할인 없음</option><option value="M10">M10 · 10% / 십원 절사</option><option value="M15">M15 · 15% / 십원 절사</option><option value="M20">M20 · 20% / 백원 절사</option></select></label>
             <p>코드를 고르면 메이크샵 기간할인 값과 절사 단위가 함께 고정됩니다.</p>
           </div>
-          <div class="discount-editor-preview"><span>판매가</span><b id="discount-editor-base-price">-</b><i>→</i><span>할인 적용가</span><strong id="discount-editor-preview-price">-</strong></div>
+          <div class="discount-editor-anchor"><span>유지할 가격 기준</span><b id="discount-editor-anchor-source">판매처 원본</b><em>목표 최종구매가 <strong id="discount-editor-anchor-final-price">-</strong></em></div>
+          <div class="discount-editor-preview"><span>자동 보정 판매가</span><b id="discount-editor-base-price">-</b><i>→</i><span>할인 적용가</span><strong id="discount-editor-preview-price">-</strong></div>
+          <p id="discount-editor-preview-note" class="discount-editor-preview-note">할인을 적용한 뒤에도 목표 최종구매가를 유지합니다.</p>
           <div class="discount-editor-preserved"><b>조건부 할인은 그대로 보존</b><span id="discount-editor-preserved-terms">보존할 조건부 할인 없음</span></div>
         </div>
         <div class="modal-foot"><button class="btn" id="discount-editor-cancel">취소</button><button class="btn primary" id="discount-editor-save">상품 전체 수정안 저장</button></div>
@@ -577,11 +579,12 @@
     <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.112.3/dist/umd/supabase.js"></script>
-    <script src="./seller-source-parsers.js?v=20260824-product-discount-editor-r13"></script>
-    <script src="./seller-export-adapter.js?v=20260824-product-discount-editor-r13"></script>
-    <script src="./matrix-csv-export.js?v=20260824-product-discount-editor-r13"></script>
-    <script src="./data-service.js?v=20260824-product-discount-editor-r13"></script>
-    <script src="./app.js?v=20260824-product-discount-editor-r13"></script>
-    <script src="./price-rule-lab.js?v=20260824-product-discount-editor-r13"></script>
+    <script src="./seller-source-parsers.js?v=20260824-discount-anchor-r14"></script>
+    <script src="./seller-export-adapter.js?v=20260824-discount-anchor-r14"></script>
+    <script src="./matrix-csv-export.js?v=20260824-discount-anchor-r14"></script>
+    <script src="./discount-price-math.js?v=20260824-discount-anchor-r14"></script>
+    <script src="./data-service.js?v=20260824-discount-anchor-r14"></script>
+    <script src="./app.js?v=20260824-discount-anchor-r14"></script>
+    <script src="./price-rule-lab.js?v=20260824-discount-anchor-r14"></script>
   </body>
 </html>
