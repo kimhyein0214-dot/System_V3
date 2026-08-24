@@ -95,6 +95,7 @@ const drawerState = {
   tags:null, attributeDraft:null, priceRuleTags:[], priceRuleSets:[], priceRuleAssignments:{},
   priceRulePreviews:{}, priceRuleSelections:{}, priceComposers:{}, discountTerms:{}
 };
+const discountEditorState = {source:'', productCode:'', sku:'', terms:[], product:null};
 const inventoryState = {loaded:false, loading:false, rows:[], snapshot:null, activityRefreshedAt:'', requestId:0};
 const ATTRIBUTE_OPTIONS = Object.freeze({
   material:['14K','925 실버','써지컬','티타늄','아크릴/투명','실버','기타'],
@@ -478,11 +479,12 @@ function channelInventoryCells(product, prefix, label, baseMerge = null) {
       ? `<td class="data-gap${mergeRowspan > 1 ? ' seller-base-merged-cell' : ''}" data-channel="${prefix}"${mergeRowspan > 1 ? ` rowspan="${mergeRowspan}"` : ''}>-</td>`
       : `<td data-channel="${prefix}"${mergeAttributes}><button class="editable-cell seller-edit price-layer-cell price-component-base${draftClass(priceDraft)}" data-source="${prefix}" data-field-key="sellpia_sale_price" data-price-component="base" data-field="${label} 판매가" data-value="${escapeHtml(effectiveBasePrice)}" data-baseline="${escapeHtml(basePrice)}" data-option-price="${escapeHtml(effectiveOptionPrice)}" data-value-type="number" data-change-id="${priceDraft?.change_id || ''}" data-draft-status="${priceDraft?.status || ''}" data-seller-product-code="${escapeHtml(baseMerge?.productCode || productCode)}" data-group-size="${mergeRowspan}" title="${escapeHtml(nativeDiscountSummary(discountTerms))} · 할인 적용 판매가 ${formatNullableNumber(effectiveDiscountedBasePrice)}${mergeTitle}">${componentLayer(basePrice, effectiveBasePrice)}</button></td>`;
   const discountView = matrixDiscountSummary(effectiveDiscountTerms, effectiveBasePrice, effectiveDiscountedBasePrice);
+  const discountContent = `<b>${escapeHtml(discountView.summary)}</b><em>${discountView.hasDiscount ? `적용가 ${formatNullableNumber(effectiveDiscountedBasePrice)}원` : '할인 없음'}</em>`;
   const discountCell = mergeHidden
     ? ''
     : noPrice
       ? `<td class="data-gap${mergeRowspan > 1 ? ' seller-discount-merged-cell' : ''}" data-channel="${prefix}"${mergeRowspan > 1 ? ` rowspan="${mergeRowspan}"` : ''}>-</td>`
-      : `<td class="seller-discount-cell ${discountView.hasDiscount ? 'has-discount' : 'no-discount'}${priceDraft ? ' pending' : ''}${mergeRowspan > 1 ? ' seller-discount-merged-cell' : ''}" data-channel="${prefix}"${mergeRowspan > 1 ? ` rowspan="${mergeRowspan}" data-seller-product-code="${escapeHtml(baseMerge.productCode || productCode)}" data-group-size="${mergeRowspan}"` : ''} title="${escapeHtml(discountView.detail)}${discountView.hasDiscount ? ` · 할인 적용 판매가 ${formatNullableNumber(effectiveDiscountedBasePrice)}원` : ''}${mergeTitle}"><b>${escapeHtml(discountView.summary)}</b><em>${discountView.hasDiscount ? `적용가 ${formatNullableNumber(effectiveDiscountedBasePrice)}원` : '할인 없음'}</em></td>`;
+      : `<td class="seller-discount-cell ${discountView.hasDiscount ? 'has-discount' : 'no-discount'}${priceDraft ? ' pending' : ''}${mergeRowspan > 1 ? ' seller-discount-merged-cell' : ''}" data-channel="${prefix}"${mergeRowspan > 1 ? ` rowspan="${mergeRowspan}" data-seller-product-code="${escapeHtml(baseMerge.productCode || productCode)}" data-group-size="${mergeRowspan}"` : ''} title="${escapeHtml(discountView.detail)}${discountView.hasDiscount ? ` · 할인 적용 판매가 ${formatNullableNumber(effectiveDiscountedBasePrice)}원` : ''}${mergeTitle}">${prefix === 'ably' ? discountContent : `<button type="button" class="discount-cell-edit" data-discount-edit data-source="${prefix}" data-product-code="${escapeHtml(baseMerge?.productCode || productCode)}" data-sku="${escapeHtml(product.sellpia_sku_code)}" aria-label="${label} 할인 수정">${discountContent}<span class="discount-edit-icon">수정</span></button>`}</td>`;
   const optionCell = noPrice
     ? `<td class="data-gap" data-channel="${prefix}">-</td>`
     : prefix === 'ably'
@@ -1352,12 +1354,19 @@ function editableDiscountTerms(source, terms) {
 function renderNativeDiscountEditor(source, terms, disabled) {
   const rows = editableDiscountTerms(source, terms);
   drawerState.discountTerms[source] = rows;
+  if (source === 'smartstore' || source === 'makeshop') {
+    const editableKey = discountEditorPrimaryKey(source);
+    const primary = rows.find(term => term.term_key === editableKey && term.enabled);
+    const conditional = rows.filter(term => term.term_key !== editableKey && term.enabled);
+    return `<details class="drawer-native-discounts"><summary>판매처 할인정보 <span>${escapeHtml(nativeDiscountSummary(terms))}</span></summary><p>${source === 'smartstore' ? '기본할인은 매트릭스 할인정보 열에서 원 단위로 수정합니다.' : '기간할인은 매트릭스 할인정보 열에서 M10·M15·M20 코드로 수정합니다.'} 조건부 할인은 그대로 보존됩니다.</p><div class="drawer-discount-readonly"><b>${escapeHtml(primary ? `${primary.title || primary.term_key} ${formatNullableNumber(primary.value)}${primary.unit === 'percent' ? '%' : '원'}` : '기본 할인 없음')}</b><span>${escapeHtml(conditional.length ? `보존: ${conditional.map(term => term.title || term.term_key).join(' · ')}` : '보존할 조건부 할인 없음')}</span></div></details>`;
+  }
   return `<details class="drawer-native-discounts" open><summary>판매처 원본 할인필드 <span>${escapeHtml(nativeDiscountSummary(terms))}</span></summary><p>체크된 할인만 원본에 반영됩니다. 조건부 할인은 보존하지만 최종구매가 계산에는 포함하지 않습니다.</p><div class="drawer-discount-rows">${rows.map((term,index) => `<label class="drawer-discount-row"><input type="checkbox" data-discount-enabled data-discount-index="${index}" ${term.enabled ? 'checked' : ''} ${disabled ? 'disabled' : ''}><span>${escapeHtml(term.title || term.term_key)}</span><input type="number" min="0" step="1" data-discount-value data-discount-index="${index}" value="${escapeHtml(term.value ?? '')}" placeholder="0" ${disabled ? 'disabled' : ''}><select data-discount-unit data-discount-index="${index}" ${disabled ? 'disabled' : ''}><option value="percent"${term.unit === 'percent' ? ' selected' : ''}>%</option><option value="amount"${term.unit === 'amount' ? ' selected' : ''}>원</option></select><em>${term.is_baseline ? '최종가 계산' : '조건부/표시용'}</em></label>`).join('')}</div></details>`;
 }
 
 function readDrawerDiscountTerms(section) {
   const source = section.dataset.source;
   const terms = drawerState.discountTerms[source] || [];
+  if (!section.querySelector('[data-discount-enabled]')) return terms.filter(term => term.enabled).map(term => ({...term,enabled:undefined}));
   return terms.flatMap((term,index) => {
     const enabled = section.querySelector(`[data-discount-enabled][data-discount-index="${index}"]`)?.checked;
     const value = Number(section.querySelector(`[data-discount-value][data-discount-index="${index}"]`)?.value || 0);
@@ -2033,7 +2042,7 @@ function isClipboardTypingTarget(target) {
 }
 
 matrixBody.addEventListener('mousedown', event => {
-  if (event.target.closest('.row-check,.inline-editor,[data-open-multi-link]')) return;
+  if (event.target.closest('.row-check,.inline-editor,[data-open-multi-link],[data-discount-edit]')) return;
   const cell = event.target.closest('td');
   if (!cell || event.button !== 0) return;
   selectMatrixCell(cell, {extend:event.shiftKey});
@@ -2163,6 +2172,174 @@ function matrixDiscountSummary(terms = [], basePrice = null, discountedBasePrice
   const summary = `${labels.slice(0, 2).join(' · ')}${labels.length > 2 ? ` 외 ${labels.length - 2}건` : ''}`;
   return {hasDiscount:true, summary, detail:labels.join(' · ')};
 }
+
+function discountEditorPrimaryKey(source) {
+  return source === 'smartstore' ? 'basic' : 'period';
+}
+
+function discountEditorConditionalTerms(source, terms = discountEditorState.terms) {
+  const primaryKey = discountEditorPrimaryKey(source);
+  return (Array.isArray(terms) ? terms : []).filter(term => term?.term_key !== primaryKey);
+}
+
+function makeDiscountRuleTerms(ruleCode) {
+  const catalog = {M10:{value:10,rounding_unit:10},M15:{value:15,rounding_unit:10},M20:{value:20,rounding_unit:100}};
+  const rule = catalog[ruleCode];
+  if (!rule) return [];
+  return [{term_key:'period',term_type:'period',title:'기간 할인',rule_code:ruleCode,unit:'percent',value:rule.value,is_baseline:true,rounding_mode:'down',rounding_unit:rule.rounding_unit}];
+}
+
+function makeDiscountRuleCode(terms = []) {
+  const period = (Array.isArray(terms) ? terms : []).find(term => term?.term_key === 'period');
+  if (!period) return 'NONE';
+  if (['M10','M15','M20'].includes(period.rule_code)) return period.rule_code;
+  if (Number(period.value) === 10) return 'M10';
+  if (Number(period.value) === 15) return 'M15';
+  if (Number(period.value) === 20) return 'M20';
+  return 'PRESERVE';
+}
+
+function discountEditorDraftTerms() {
+  const source = discountEditorState.source;
+  const conditional = discountEditorConditionalTerms(source);
+  if (source === 'smartstore') {
+    const amount = Number(document.getElementById('discount-editor-amount').value || 0);
+    const basic = amount > 0 ? [{term_key:'basic',term_type:'basic',title:'즉시할인 기본할인',input_source:'manual',unit:'amount',value:amount,is_baseline:true,rounding_mode:'nearest',rounding_unit:1}] : [];
+    return [...basic, ...conditional];
+  }
+  const ruleCode = document.getElementById('discount-editor-rule-code').value;
+  return ruleCode === 'PRESERVE' ? [...discountEditorState.terms] : [...makeDiscountRuleTerms(ruleCode), ...conditional];
+}
+
+function updateDiscountEditorPreview() {
+  const basePrice = Number(discountEditorState.basePrice);
+  const terms = discountEditorDraftTerms();
+  document.getElementById('discount-editor-base-price').textContent = Number.isFinite(basePrice) ? `${formatNullableNumber(basePrice)}원` : '-';
+  const discounted = calculateNativeDiscountedBase(basePrice, terms);
+  document.getElementById('discount-editor-preview-price').textContent = discounted === null ? '-' : `${formatNullableNumber(discounted)}원`;
+}
+
+function closeDiscountEditor() {
+  document.getElementById('discount-editor-modal').hidden = true;
+  discountEditorState.source = '';
+  discountEditorState.product = null;
+}
+
+function openDiscountEditor(button) {
+  const source = button.dataset.source;
+  if (!['smartstore','makeshop'].includes(source)) return;
+  const modal = document.getElementById('discount-editor-modal');
+  modal.hidden = false;
+  const targetSku = String(button.dataset.sku || '').trim();
+  const targetProductCode = String(button.dataset.productCode || '').trim();
+  const product = matrixRowsBySku.get(targetSku)
+    || matrixState.rows.find(row => String(row?.sellpia_sku_code || '').trim() === targetSku)
+    || matrixState.rows.find(row => String(row?.[`${source}_product_code`] || '').trim() === targetProductCode);
+  if (!product) {
+    modal.hidden = true;
+    console.warn('discount editor product not found', {source,targetSku,targetProductCode});
+    showToast('할인을 수정할 판매처 상품을 현재 화면에서 찾지 못했습니다.');
+    return;
+  }
+  const component = product.__sellerPriceComponents?.[source] || {};
+  const priceDraft = product.__sellerDrafts?.[`${source}:sellpia_sale_price`];
+  const sourceTerms = component.source_discount_terms ?? product[`${source}_discount_terms`] ?? [];
+  const terms = priceDraft ? (component.draft_discount_terms ?? priceDraft.price_discount_terms_after ?? sourceTerms) : sourceTerms;
+  const basePrice = priceDraft
+    ? (component.draft_base_price ?? priceDraft.price_base_after)
+    : (component.source_base_price ?? product[`${source}_base_price`] ?? product[`${source}_price`]);
+  Object.assign(discountEditorState, {
+    source,
+    productCode:button.dataset.productCode || product[`${source}_product_code`],
+    sku:button.dataset.sku,
+    terms:structuredClone(Array.isArray(terms) ? terms : []),
+    product,
+    basePrice
+  });
+  const isSmartstore = source === 'smartstore';
+  document.getElementById('discount-editor-kicker').textContent = `${CHANNEL_LABELS[source]} 할인정보`;
+  document.getElementById('discount-editor-title').textContent = isSmartstore ? '기본할인 금액 수정' : '기간 할인코드 수정';
+  document.getElementById('discount-editor-product-code').textContent = discountEditorState.productCode || '-';
+  const groupSize = Math.max(1, Number(button.closest('td')?.dataset.groupSize) || 1);
+  document.getElementById('discount-editor-group-size').textContent = `같은 상품의 ${groupSize}개 옵션을 한 번에 저장합니다.`;
+  document.getElementById('discount-editor-smartstore').hidden = !isSmartstore;
+  document.getElementById('discount-editor-makeshop').hidden = isSmartstore;
+  if (isSmartstore) {
+    const basic = discountEditorState.terms.find(term => term?.term_key === 'basic');
+    const discounted = calculateNativeDiscountedBase(basePrice, basic ? [basic] : []);
+    const amount = basic?.unit === 'amount' ? Number(basic.value || 0) : Math.max(0, Number(basePrice || 0) - Number(discounted ?? basePrice ?? 0));
+    const input = document.getElementById('discount-editor-amount');
+    input.value = String(Math.round(amount));
+    input.max = Number.isFinite(Number(basePrice)) ? String(Math.max(0, Number(basePrice))) : '';
+  } else {
+    const select = document.getElementById('discount-editor-rule-code');
+    select.querySelector('option[value="PRESERVE"]')?.remove();
+    const ruleCode = makeDiscountRuleCode(discountEditorState.terms);
+    if (ruleCode === 'PRESERVE') select.insertAdjacentHTML('afterbegin', '<option value="PRESERVE">현재 원본 기간할인 유지 · 지원 코드 선택 필요</option>');
+    select.value = ruleCode;
+  }
+  const preserved = discountEditorConditionalTerms(source);
+  document.getElementById('discount-editor-preserved-terms').textContent = preserved.length
+    ? preserved.map(term => `${term.title || term.term_key} ${formatNullableNumber(term.value)}${term.unit === 'percent' ? '%' : '원'}`).join(' · ')
+    : '보존할 조건부 할인 없음';
+  updateDiscountEditorPreview();
+  setTimeout(() => (isSmartstore ? document.getElementById('discount-editor-amount') : document.getElementById('discount-editor-rule-code')).focus(), 0);
+}
+async function saveDiscountEditor() {
+  const source = discountEditorState.source;
+  const productCode = discountEditorState.productCode;
+  if (!source || !productCode) return;
+  const amountInput = document.getElementById('discount-editor-amount');
+  const ruleSelect = document.getElementById('discount-editor-rule-code');
+  if (source === 'smartstore') {
+    const amount = Number(amountInput.value);
+    if (!Number.isFinite(amount) || amount < 0 || amount > Number(discountEditorState.basePrice)) {
+      showToast('기본할인은 0원 이상, 판매가 이하로 입력해주세요.');
+      amountInput.focus();
+      return;
+    }
+  }
+  if (source === 'makeshop' && ruleSelect.value === 'PRESERVE') {
+    showToast('저장할 메이크샵 할인코드를 선택해주세요.');
+    ruleSelect.focus();
+    return;
+  }
+  const button = document.getElementById('discount-editor-save');
+  const originalLabel = button.textContent;
+  button.disabled = true;
+  button.textContent = '상품 전체 저장 중…';
+  try {
+    const saved = await liveData.saveSellerProductDiscountDrafts({
+      source,
+      productCode,
+      discountTerms:discountEditorDraftTerms(),
+      ruleCode:source === 'makeshop' ? ruleSelect.value : null
+    });
+    for (const item of saved.items) applyLocalSellerPriceDraft(matrixRowsBySku.get(item.sku), source, item.result);
+    renderLiveMatrixRows(matrixState.rows);
+    const drawerProduct = matrixRowsBySku.get(productDrawer.dataset.sku);
+    if (productDrawer.getAttribute('aria-hidden') === 'false' && drawerProduct) renderDrawerInventory(drawerProduct);
+    refreshChangeQueueInBackground();
+    void loadLiveDashboardMetrics();
+    closeDiscountEditor();
+    const pending = saved.items.filter(item => item.result?.draft_status === 'pending').length;
+    const unchanged = saved.items.length - pending;
+    showToast(`${CHANNEL_LABELS[source]} 상품 할인 수정안 ${pending}건 저장${unchanged ? ` · 원본값 유지 ${unchanged}건` : ''}`);
+  } catch (error) {
+    console.error('product discount draft save failed', error);
+    showToast(`할인 수정안 저장 실패: ${error?.message || error}`);
+  } finally {
+    button.disabled = false;
+    button.textContent = originalLabel;
+  }
+}
+
+document.getElementById('discount-editor-close').addEventListener('click', closeDiscountEditor);
+document.getElementById('discount-editor-cancel').addEventListener('click', closeDiscountEditor);
+document.getElementById('discount-editor-save').addEventListener('click', saveDiscountEditor);
+document.getElementById('discount-editor-modal').addEventListener('click', event => { if (event.target.id === 'discount-editor-modal') closeDiscountEditor(); });
+document.getElementById('discount-editor-amount').addEventListener('input', updateDiscountEditorPreview);
+document.getElementById('discount-editor-rule-code').addEventListener('change', updateDiscountEditorPreview);
 
 const viewSettingsModal = document.getElementById('view-settings-modal');
 function fillViewSettingsForm(view = activeView) {
@@ -2449,6 +2626,11 @@ document.getElementById('advanced-filter-chips').addEventListener('click', event
 document.getElementById('advanced-filter-clear').addEventListener('click', () => setAdvancedFilter({logic:'and', conditions:[]}));
 
 matrixBody.addEventListener('click', event => {
+  const discountButton = event.target.closest('[data-discount-edit]');
+  if (discountButton) {
+    openDiscountEditor(discountButton);
+    return;
+  }
   const multiLinkButton = event.target.closest('[data-open-multi-link]');
   if (multiLinkButton) {
     openMultiLinkWorkspace(multiLinkButton.dataset.openMultiLink, multiLinkButton.dataset.linkSku);
@@ -2487,7 +2669,7 @@ matrixBody.addEventListener('focusout', event => {
 });
 
 matrixBody.addEventListener('dblclick', event => {
-  if (event.target.closest('.mapping-code-button,.row-check')) return;
+  if (event.target.closest('.mapping-code-button,.row-check,[data-discount-edit]')) return;
   const tableCell = event.target.closest('td');
   const cell = event.target.closest('.editable-cell') || tableCell?.querySelector('.sellpia-edit');
   if (!cell) {

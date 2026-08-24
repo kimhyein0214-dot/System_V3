@@ -691,11 +691,29 @@
     return Array.isArray(data) ? data[0] : data;
   }
 
-  async function saveSellerProductDiscountDrafts({source, productCode, discountTerms = []}) {
+  async function saveSellerProductDiscountDrafts({source, productCode, discountTerms = [], ruleCode = null}) {
     const normalizedSource = cleanText(source);
     const normalizedProductCode = cleanText(productCode);
     const sourceField = {smartstore:'smartstore_product_code',makeshop:'makeshop_product_code',ably:'ably_product_code'}[normalizedSource];
     if (!sourceField || !normalizedProductCode) throw new Error('판매처와 상품코드를 확인해주세요.');
+    if (normalizedSource !== 'ably') {
+      const batchId = global.crypto?.randomUUID?.() || null;
+      const {data, error} = await db.rpc('save_operations_hub_seller_product_discount_draft', {
+        p_source:normalizedSource,
+        p_product_code:normalizedProductCode,
+        p_discount_terms:Array.isArray(discountTerms) ? discountTerms : [],
+        p_rule_code:ruleCode === null || ruleCode === undefined ? null : cleanText(ruleCode),
+        p_batch_id:batchId
+      });
+      if (error) throw error;
+      const rows = Array.isArray(data) ? data : (data ? [data] : []);
+      return {
+        items:rows.map(result => ({sku:cleanText(result.sellpia_sku_code), result})),
+        count:rows.length,
+        batchId:rows[0]?.change_batch_id || batchId,
+        atomic:true
+      };
+    }
     const rows = [];
     for (let from = 0; ; from += 1000) {
       const {data, error} = await db.from('operations_hub_matrix_cached').select(`sellpia_sku_code,${sourceField}`).eq(sourceField, normalizedProductCode).range(from, from + 999);
@@ -720,7 +738,7 @@
       }));
       items.push(...saved);
     }
-    return {items, count:items.length, batchId};
+    return {items, count:items.length, batchId, atomic:false};
   }
 
   async function saveSellerProductBaseDrafts({source, productCode, targetBasePrice}) {
