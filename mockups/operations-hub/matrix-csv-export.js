@@ -45,6 +45,28 @@
     return layer[sourceKey] ?? row?.[`${source}_${component}_price`] ?? fallback;
   }
 
+  function sellerDiscountInformation(row, source) {
+    const layer = row?.__sellerPriceComponents?.[source] || {};
+    const draft = row?.__sellerDrafts?.[`${source}:sellpia_sale_price`];
+    const sourceTerms = layer.source_discount_terms ?? row?.[`${source}_discount_terms`] ?? [];
+    const terms = draft ? (layer.draft_discount_terms ?? draft.price_discount_terms_after ?? sourceTerms) : sourceTerms;
+    const activeTerms = (Array.isArray(terms) ? terms : []).filter(term => {
+      const value = Math.abs(Number(term?.value));
+      return term && term.enabled !== false && Number.isFinite(value) && value > 0;
+    });
+    const basePrice = sellerPriceComponent(row, source, 'base');
+    const discountedBasePrice = sellerPriceComponent(row, source, 'discounted_base');
+    const labels = activeTerms.map(term => `${term.title || '할인'} ${Number(term.value).toLocaleString('ko-KR')}${term.unit === 'percent' ? '%' : '원'}${term.is_baseline ? '' : ' (조건부)'}`);
+    const reportedDiscount = Number.isFinite(Number(basePrice))
+      && Number.isFinite(Number(discountedBasePrice))
+      && Number(discountedBasePrice) < Number(basePrice);
+    if (!labels.length && !reportedDiscount) return '할인 없음';
+    const summary = labels.length ? labels.join(' · ') : '판매처 할인가';
+    return Number.isFinite(Number(discountedBasePrice))
+      ? `${summary} · 적용가 ${Number(discountedBasePrice).toLocaleString('ko-KR')}원`
+      : summary;
+  }
+
   function codeListColumns() {
     return [
       {key:'input_row', label:'입력 행', type:'number', value:row => row?.__codeList?.input_row},
@@ -100,6 +122,12 @@
       {key:`${source}_option_price_projected`, label:`${label} 옵션가`, type:'number', value:row => sellerPriceComponent(row, source, 'option')},
       {key:`${source}_final_price_projected`, label:`${label} 최종구매가`, type:'number', value:row => sellerPriceComponent(row, source, 'final')}
     );
+    if (all || (view?.showDiscount ?? view?.showPrice ?? true)) {
+      const discountColumn = {key:`${source}_discount_information`, label:`${label} 할인정보`, value:row => sellerDiscountInformation(row, source)};
+      const baseIndex = columns.findIndex(column => column.key === `${source}_base_price_projected`);
+      if (baseIndex >= 0) columns.splice(baseIndex + 1, 0, discountColumn);
+      else columns.push(discountColumn);
+    }
     if (all) columns.push(
       {key:`${source}_sale_status`, label:`${label} 판매상태`},
       {key:`${source}_stock`, label:`${label} 원본재고`, type:'number'},

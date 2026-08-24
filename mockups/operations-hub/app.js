@@ -121,6 +121,7 @@ const DEFAULT_VIEW_OPTIONS = {
   showSellerNames:true,
   showInventory:true,
   showPrice:true,
+  showDiscount:true,
   showAttributes:true,
   showSync:true,
   wrapNames:false,
@@ -171,10 +172,10 @@ const ADVANCED_FILTER_OPERATORS = Object.freeze({
 });
 const BUILTIN_PRESETS = Object.freeze({
   all:{id:'all', name:'전체 현황', ...DEFAULT_VIEW_OPTIONS},
-  matching:{id:'matching', name:'매칭 검토', ...DEFAULT_VIEW_OPTIONS, showInventory:false, showPrice:false, showAttributes:false, wrapNames:true, status:'attention'},
-  inventory:{id:'inventory', name:'재고 작업', ...DEFAULT_VIEW_OPTIONS, showCodes:false, showSellerNames:false, showPrice:false, showAttributes:false, zoom:110},
+  matching:{id:'matching', name:'매칭 검토', ...DEFAULT_VIEW_OPTIONS, showInventory:false, showPrice:false, showDiscount:false, showAttributes:false, wrapNames:true, status:'attention'},
+  inventory:{id:'inventory', name:'재고 작업', ...DEFAULT_VIEW_OPTIONS, showCodes:false, showSellerNames:false, showPrice:false, showDiscount:false, showAttributes:false, zoom:110},
   price:{id:'price', name:'가격 작업', ...DEFAULT_VIEW_OPTIONS, showCodes:false, showSellerNames:false, showInventory:false, showAttributes:false, zoom:110},
-  attributes:{id:'attributes', name:'속성·태그', ...DEFAULT_VIEW_OPTIONS, channels:{smartstore:false, makeshop:false, ably:false}, showStatus:false, showCodes:false, showSellerNames:false, showInventory:false, showPrice:false, status:'all'}
+  attributes:{id:'attributes', name:'속성·태그', ...DEFAULT_VIEW_OPTIONS, channels:{smartstore:false, makeshop:false, ably:false}, showStatus:false, showCodes:false, showSellerNames:false, showInventory:false, showPrice:false, showDiscount:false, status:'all'}
 });
 
 function cloneAdvancedFilter(filter) {
@@ -191,7 +192,7 @@ function cloneView(view) {
 function readCustomPresets() {
   try {
     const parsed = JSON.parse(localStorage.getItem(MATRIX_PRESETS_KEY) || '[]');
-    return Array.isArray(parsed) ? parsed.filter(item => item?.id && item?.name).map(item => cloneView({...cloneView(DEFAULT_VIEW_OPTIONS), ...item, channels:{...DEFAULT_VIEW_OPTIONS.channels, ...item.channels}})) : [];
+    return Array.isArray(parsed) ? parsed.filter(item => item?.id && item?.name).map(item => cloneView({...cloneView(DEFAULT_VIEW_OPTIONS), ...item, showDiscount:item.showDiscount ?? item.showPrice ?? DEFAULT_VIEW_OPTIONS.showDiscount, channels:{...DEFAULT_VIEW_OPTIONS.channels, ...item.channels}})) : [];
   } catch (error) {
     console.warn('matrix preset storage reset', error);
     return [];
@@ -266,9 +267,9 @@ function formatLiveTime(value) {
 function viewColumnIndexes(view) {
   const visible = new Set([1,2,3,4,5,6,7]);
   const channelColumns = {
-    smartstore:{status:[8], codes:[9,10], names:[11], inventory:[12], price:[13,14,15]},
-    makeshop:{status:[16], codes:[17,18], names:[19], inventory:[20], price:[21,22,23]},
-    ably:{status:[24], codes:[25,26], names:[27], inventory:[28], price:[29,30,31]}
+    smartstore:{status:[8], codes:[9,10], names:[11], inventory:[12], price:[13,15,16], discount:[14]},
+    makeshop:{status:[17], codes:[18,19], names:[20], inventory:[21], price:[22,24,25], discount:[23]},
+    ably:{status:[26], codes:[27,28], names:[29], inventory:[30], price:[31,33,34], discount:[32]}
   };
   Object.entries(channelColumns).forEach(([channel, groups]) => {
     if (!view.channels[channel]) return;
@@ -277,9 +278,10 @@ function viewColumnIndexes(view) {
     if (view.showSellerNames ?? true) groups.names.forEach(index => visible.add(index));
     if (view.showInventory) groups.inventory.forEach(index => visible.add(index));
     if (view.showPrice) groups.price.forEach(index => visible.add(index));
+    if (view.showDiscount ?? view.showPrice ?? true) groups.discount.forEach(index => visible.add(index));
   });
-  if (view.showAttributes) [32,33,34].forEach(index => visible.add(index));
-  if (view.showSync) visible.add(35);
+  if (view.showAttributes) [35,36,37].forEach(index => visible.add(index));
+  if (view.showSync) visible.add(38);
   return visible;
 }
 
@@ -308,17 +310,17 @@ function applyColumnVisibility(view = activeView) {
   const visible = viewColumnIndexes(view);
   indexMatrixBodyColumns();
   const columnHeaders = matrixTable.querySelectorAll('.column-row th');
-  for (let index = 3; index <= 35; index += 1) {
+  for (let index = 3; index <= 38; index += 1) {
     const show = visible.has(index);
     const header = columnHeaders[index - 3];
     if (header) header.hidden = !show;
     matrixBody.querySelectorAll(`[data-matrix-column="${index}"]`).forEach(cell => { cell.hidden = !show; });
   }
   const groupConfig = [
-    ['.smart-group', [8,9,10,11,12,13,14,15]],
-    ['.make-group', [16,17,18,19,20,21,22,23]],
-    ['.ably-group', [24,25,26,27,28,29,30,31]],
-    ['.ops-group', [32,33,34,35]]
+    ['.smart-group', [8,9,10,11,12,13,14,15,16]],
+    ['.make-group', [17,18,19,20,21,22,23,24,25]],
+    ['.ably-group', [26,27,28,29,30,31,32,33,34]],
+    ['.ops-group', [35,36,37,38]]
   ];
   groupConfig.forEach(([selector, indexes]) => {
     const header = matrixTable.querySelector(selector);
@@ -448,10 +450,14 @@ function channelInventoryCells(product, prefix, label, baseMerge = null) {
   const stockDisplay = stockDraft ? stockDraft.after_value : stock;
   const draftBasePrice = priceComponent.draft_base_price ?? priceDraft?.price_base_after ?? null;
   const draftDiscountedBasePrice = priceComponent.draft_discounted_base_price ?? priceDraft?.price_discounted_base_after ?? null;
+  const draftDiscountTerms = priceComponent.draft_discount_terms ?? priceDraft?.price_discount_terms_after ?? null;
   const draftOptionPrice = priceComponent.draft_option_price ?? priceDraft?.price_option_after ?? null;
   const draftFinalPrice = priceComponent.draft_final_price ?? priceDraft?.price_final_after ?? priceDraft?.after_value ?? null;
   const effectiveBasePrice = priceDraft ? draftBasePrice : basePrice;
-  const effectiveDiscountedBasePrice = priceDraft ? draftDiscountedBasePrice : discountedBasePrice;
+  const effectiveDiscountTerms = priceDraft && Array.isArray(draftDiscountTerms) ? draftDiscountTerms : discountTerms;
+  const effectiveDiscountedBasePrice = priceDraft
+    ? (draftDiscountedBasePrice ?? calculateNativeDiscountedBase(effectiveBasePrice, effectiveDiscountTerms))
+    : discountedBasePrice;
   const effectiveOptionPrice = priceDraft ? draftOptionPrice : optionPrice;
   const effectiveFinalPrice = priceDraft ? draftFinalPrice : finalPrice;
   const draftClass = draft => draft ? ` pending draft-${draft.status}` : '';
@@ -471,6 +477,12 @@ function channelInventoryCells(product, prefix, label, baseMerge = null) {
     : noPrice
       ? `<td class="data-gap${mergeRowspan > 1 ? ' seller-base-merged-cell' : ''}" data-channel="${prefix}"${mergeRowspan > 1 ? ` rowspan="${mergeRowspan}"` : ''}>-</td>`
       : `<td data-channel="${prefix}"${mergeAttributes}><button class="editable-cell seller-edit price-layer-cell price-component-base${draftClass(priceDraft)}" data-source="${prefix}" data-field-key="sellpia_sale_price" data-price-component="base" data-field="${label} 판매가" data-value="${escapeHtml(effectiveBasePrice)}" data-baseline="${escapeHtml(basePrice)}" data-option-price="${escapeHtml(effectiveOptionPrice)}" data-value-type="number" data-change-id="${priceDraft?.change_id || ''}" data-draft-status="${priceDraft?.status || ''}" data-seller-product-code="${escapeHtml(baseMerge?.productCode || productCode)}" data-group-size="${mergeRowspan}" title="${escapeHtml(nativeDiscountSummary(discountTerms))} · 할인 적용 판매가 ${formatNullableNumber(effectiveDiscountedBasePrice)}${mergeTitle}">${componentLayer(basePrice, effectiveBasePrice)}</button></td>`;
+  const discountView = matrixDiscountSummary(effectiveDiscountTerms, effectiveBasePrice, effectiveDiscountedBasePrice);
+  const discountCell = mergeHidden
+    ? ''
+    : noPrice
+      ? `<td class="data-gap${mergeRowspan > 1 ? ' seller-discount-merged-cell' : ''}" data-channel="${prefix}"${mergeRowspan > 1 ? ` rowspan="${mergeRowspan}"` : ''}>-</td>`
+      : `<td class="seller-discount-cell ${discountView.hasDiscount ? 'has-discount' : 'no-discount'}${priceDraft ? ' pending' : ''}${mergeRowspan > 1 ? ' seller-discount-merged-cell' : ''}" data-channel="${prefix}"${mergeRowspan > 1 ? ` rowspan="${mergeRowspan}" data-seller-product-code="${escapeHtml(baseMerge.productCode || productCode)}" data-group-size="${mergeRowspan}"` : ''} title="${escapeHtml(discountView.detail)}${discountView.hasDiscount ? ` · 할인 적용 판매가 ${formatNullableNumber(effectiveDiscountedBasePrice)}원` : ''}${mergeTitle}"><b>${escapeHtml(discountView.summary)}</b><em>${discountView.hasDiscount ? `적용가 ${formatNullableNumber(effectiveDiscountedBasePrice)}원` : '할인 없음'}</em></td>`;
   const optionCell = noPrice
     ? `<td class="data-gap" data-channel="${prefix}">-</td>`
     : prefix === 'ably'
@@ -480,7 +492,7 @@ function channelInventoryCells(product, prefix, label, baseMerge = null) {
   const finalCell = noPrice
     ? `<td class="data-gap" data-channel="${prefix}">-</td>`
     : `<td data-channel="${prefix}"><button class="editable-cell seller-edit price-hover-target price-layer-cell price-component-final${priceDiff && !priceDraft ? ' diff' : ''}${draftClass(priceDraft)}" data-source="${prefix}" data-field-key="sellpia_sale_price" data-price-component="final" data-field="${label} 최종구매가" data-value="${escapeHtml(effectiveFinalPrice)}" data-baseline="${escapeHtml(finalPrice)}" data-option-price="${escapeHtml(effectiveOptionPrice)}" data-value-type="number" data-change-id="${priceDraft?.change_id || ''}" data-draft-status="${priceDraft?.status || ''}" tabindex="0" data-price-source="${prefix}" data-price-label="${label}" data-original-price="${escapeHtml(finalPrice)}" data-policy-price="${escapeHtml(policyPrice ?? '')}" data-policy-active="${policyActive ? 'true' : 'false'}" data-policy-name="${escapeHtml(policyName)}" data-draft-price="${escapeHtml(effectiveFinalPrice ?? '')}" data-base-price="${escapeHtml(sellpiaPrice ?? '')}" data-price-updated="${escapeHtml(product[`${prefix}_inventory_at`] || '')}" title="${priceDraft ? `반영 예정 ${formatNullableNumber(effectiveFinalPrice)} · 원본 ${formatNullableNumber(finalPrice)}` : policyActive ? `원본 ${formatNullableNumber(finalPrice)} · 수식 계산 ${formatNullableNumber(policyPrice)}` : '수정 가능한 판매처 최종구매가'}">${finalLayers}</button></td>`;
-  return `<td data-channel="${prefix}"><span class="matrix-status ${state.key}">${state.label}</span>${relationBadge}</td>${codeCells}${sellerNameCell(product, prefix)}${stockCell}${baseCell}${optionCell}${finalCell}`;
+  return `<td data-channel="${prefix}"><span class="matrix-status ${state.key}">${state.label}</span>${relationBadge}</td>${codeCells}${sellerNameCell(product, prefix)}${stockCell}${baseCell}${discountCell}${optionCell}${finalCell}`;
 }
 
 function sellpiaProductGroupKey(product) {
@@ -496,7 +508,8 @@ function sellerBaseMergeSignature(product, source) {
   const draft = product?.__sellerDrafts?.[`${source}:sellpia_sale_price`];
   const original = component.source_base_price ?? product?.[`${source}_base_price`] ?? price;
   const effective = draft ? (component.draft_base_price ?? draft.price_base_after) : original;
-  const terms = component.source_discount_terms ?? product?.[`${source}_discount_terms`] ?? [];
+  const sourceTerms = component.source_discount_terms ?? product?.[`${source}_discount_terms`] ?? [];
+  const terms = draft ? (component.draft_discount_terms ?? draft.price_discount_terms_after ?? sourceTerms) : sourceTerms;
   return JSON.stringify([original ?? null, effective ?? null, draft?.status || '', terms]);
 }
 
@@ -538,7 +551,7 @@ function codeListSourceLabel(source) {
 }
 
 function codeListPlaceholderSellerCells(codeRow, source) {
-  if (codeRow.source_channel !== source) return '<td class="data-gap">-</td>'.repeat(8);
+  if (codeRow.source_channel !== source) return '<td class="data-gap">-</td>'.repeat(9);
   const reason = escapeHtml(codeRow.reason || codeListIssueLabel(codeRow.match_status));
   const inputCode = escapeHtml(codeRow.input_code || '-');
   const state = codeRow.match_status === 'unmapped' ? 'review' : 'unmatched';
@@ -575,7 +588,7 @@ function renderLiveMatrixRows(products) {
   clearMatrixCellSelection();
   matrixRowsBySku.clear();
   if (!products.length) {
-    matrixBody.innerHTML = '<tr class="matrix-empty-row"><td colspan="35"><b>검색 결과가 없습니다.</b><span>SKU 또는 자사코드를 다시 확인해주세요.</span></td></tr>';
+    matrixBody.innerHTML = '<tr class="matrix-empty-row"><td colspan="38"><b>검색 결과가 없습니다.</b><span>SKU 또는 자사코드를 다시 확인해주세요.</span></td></tr>';
     return;
   }
   const sellerBaseMerges = buildSellerBaseMerges(products);
@@ -712,7 +725,7 @@ async function loadLiveMatrix({resetPage = false} = {}) {
   const requestId = ++matrixState.requestId;
   matrixState.loading = true;
   setMatrixConnection('loading', 'DB 조회 중');
-  matrixBody.innerHTML = '<tr class="matrix-empty-row loading"><td colspan="35"><b>Supabase에서 실제 SKU를 불러오는 중입니다.</b><span>이미지와 자사코드를 함께 연결합니다.</span></td></tr>';
+  matrixBody.innerHTML = '<tr class="matrix-empty-row loading"><td colspan="38"><b>Supabase에서 실제 SKU를 불러오는 중입니다.</b><span>이미지와 자사코드를 함께 연결합니다.</span></td></tr>';
   try {
     const request = {
       page:matrixState.page,
@@ -762,7 +775,7 @@ async function loadLiveMatrix({resetPage = false} = {}) {
     return true;
   } catch (error) {
     console.error('operations hub matrix load failed', error);
-    matrixBody.innerHTML = '<tr class="matrix-empty-row error"><td colspan="35"><b>실데이터를 불러오지 못했습니다.</b><span>DB 새로고침을 눌러 다시 시도해주세요.</span></td></tr>';
+    matrixBody.innerHTML = '<tr class="matrix-empty-row error"><td colspan="38"><b>실데이터를 불러오지 못했습니다.</b><span>DB 새로고침을 눌러 다시 시도해주세요.</span></td></tr>';
     document.getElementById('live-catalog-state').textContent = '연결 오류';
     setMatrixConnection('error', 'DB 연결 오류');
     return false;
@@ -2129,6 +2142,28 @@ function nativeDiscountSummary(terms = []) {
   }).join(' → ');
 }
 
+function matrixDiscountSummary(terms = [], basePrice = null, discountedBasePrice = null) {
+  const activeTerms = (Array.isArray(terms) ? terms : []).filter(term => {
+    const value = Math.abs(Number(term?.value));
+    return term && term.enabled !== false && Number.isFinite(value) && value > 0;
+  });
+  const reportedDiscount = Number.isFinite(Number(basePrice))
+    && Number.isFinite(Number(discountedBasePrice))
+    && Number(discountedBasePrice) < Number(basePrice);
+  if (!activeTerms.length) {
+    return reportedDiscount
+      ? {hasDiscount:true, summary:'판매처 할인가', detail:'판매처가 제공한 할인 적용 판매가'}
+      : {hasDiscount:false, summary:'없음', detail:'할인 없음'};
+  }
+  const labels = activeTerms.map(term => {
+    const suffix = term.unit === 'percent' ? '%' : '원';
+    const condition = term.is_baseline ? '' : ' (조건부)';
+    return `${term.title || '할인'} ${formatNullableNumber(term.value)}${suffix}${condition}`;
+  });
+  const summary = `${labels.slice(0, 2).join(' · ')}${labels.length > 2 ? ` 외 ${labels.length - 2}건` : ''}`;
+  return {hasDiscount:true, summary, detail:labels.join(' · ')};
+}
+
 const viewSettingsModal = document.getElementById('view-settings-modal');
 function fillViewSettingsForm(view = activeView) {
   document.getElementById('preset-name').value = view.name || '';
@@ -2140,6 +2175,7 @@ function fillViewSettingsForm(view = activeView) {
   document.getElementById('preset-show-seller-names').checked = view.showSellerNames ?? true;
   document.getElementById('preset-show-inventory').checked = view.showInventory;
   document.getElementById('preset-show-price').checked = view.showPrice;
+  document.getElementById('preset-show-discount').checked = view.showDiscount ?? view.showPrice ?? true;
   document.getElementById('preset-show-attributes').checked = view.showAttributes;
   document.getElementById('preset-show-sync').checked = view.showSync;
   document.getElementById('preset-wrap-names').checked = Boolean(view.wrapNames);
@@ -2164,6 +2200,7 @@ function readViewSettingsForm() {
     showSellerNames:document.getElementById('preset-show-seller-names').checked,
     showInventory:document.getElementById('preset-show-inventory').checked,
     showPrice:document.getElementById('preset-show-price').checked,
+    showDiscount:document.getElementById('preset-show-discount').checked,
     showAttributes:document.getElementById('preset-show-attributes').checked,
     showSync:document.getElementById('preset-show-sync').checked,
     wrapNames:document.getElementById('preset-wrap-names').checked,
