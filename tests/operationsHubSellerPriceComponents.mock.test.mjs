@@ -12,7 +12,7 @@ const exporter = fs.readFileSync(new URL('../supabase/migrations/20260821020657_
 
 assert.equal((html.match(/<th>판매가<\/th><th>할인정보<\/th><th>옵션가<\/th><th>최종구매가<\/th>/g) || []).length, 3, 'every seller group must expose discount information between base, option, and final customer prices');
 assert.match(app, /priceComponent\.source_base_price[\s\S]*?priceComponent\.source_option_price[\s\S]*?priceComponent\.source_final_price/, 'matrix rows must read all three source components');
-assert.match(app, /const discountCell[\s\S]*?discountView\.summary[\s\S]*?적용가/, 'matrix rows must render a dedicated discount-information cell and effective discounted price');
+assert.match(app, /const discountContent[\s\S]*?discountView\.summary[\s\S]*?적용가[\s\S]*?const discountCell/, 'matrix rows must render a dedicated discount-information cell and effective discounted price');
 assert.match(app, /function matrixDiscountSummary[\s\S]*?판매처 할인가[\s\S]*?조건부/, 'matrix discount summaries must preserve marketplace-reported and conditional discounts');
 assert.match(app, /data-price-component="base"[\s\S]*?data-price-component="option"[\s\S]*?data-price-component="final"/, 'matrix base, option, and final prices must be directly editable');
 assert.match(app, /data-drawer-price-component="base"[\s\S]*?data-drawer-discounted-base[\s\S]*?data-drawer-price-component="option"[\s\S]*?data-drawer-price-component="final"[\s\S]*?원본 할인 적용/, 'drawer must expose base, native-discounted base, option, and final customer price');
