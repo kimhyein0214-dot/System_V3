@@ -51,6 +51,24 @@ assert.ok(labels.includes('스마트스토어 판매처재고'), 'visible channe
 assert.ok(!labels.includes('스마트스토어 판매가격'), 'hidden price columns must stay out of visible-scope CSV');
 assert.ok(!labels.some(label => label.startsWith('메이크샵 ')), 'hidden channels must stay out of visible-scope CSV');
 
+const discountColumns = csv.buildColumns({
+  scope:'visible',
+  view:{channels:{smartstore:true,makeshop:false,ably:false},showStatus:false,showCodes:false,showSellerNames:false,showInventory:false,showPrice:true,showDiscount:true,showAttributes:false,showSync:false}
+});
+const smartstoreDiscount = discountColumns.find(column => column.label === '스마트스토어 할인정보');
+assert.ok(smartstoreDiscount, 'visible-scope CSV must include the requested marketplace discount-information column');
+const serializedDiscount = csv.serializeRows([{
+  smartstore_price:9000,
+  __sellerPriceComponents:{smartstore:{
+    source_base_price:10000,
+    source_discounted_base_price:9000,
+    source_option_price:0,
+    source_final_price:9000,
+    source_discount_terms:[{title:'기본할인',value:10,unit:'percent',is_baseline:true}]
+  }}
+}], [smartstoreDiscount]);
+assert.match(serializedDiscount, /기본할인 10% · 적용가 9,000원/, 'discount CSV cells must include both the discount condition and effective sale price');
+
 const sample = [{
   sellpia_sku_code:'00123-1',
   sellpia_own_code:'=unsafe',
