@@ -21,6 +21,10 @@ const productDiscountEditor = fs.readFileSync(
   new URL('../supabase/migrations/20260824033753_operations_hub_product_discount_editor.sql', import.meta.url),
   'utf8'
 );
+const discountAnchor = fs.readFileSync(
+  new URL('../supabase/migrations/20260824132227_preserve_target_price_when_editing_discounts.sql', import.meta.url),
+  'utf8'
+);
 const app = fs.readFileSync(new URL('../mockups/operations-hub/app.js', import.meta.url), 'utf8');
 const dataService = fs.readFileSync(new URL('../mockups/operations-hub/data-service.js', import.meta.url), 'utf8');
 const html = fs.readFileSync(new URL('../mockups/operations-hub/index.html', import.meta.url), 'utf8');
@@ -44,9 +48,16 @@ assert.doesNotMatch(productDiscountEditor, /security definer/i, 'product discoun
 assert.match(productDiscountEditor, /smartstore[\s\S]*?term ->> 'unit' <> 'amount'/, 'Smartstore basic discounts must be validated as fixed won amounts');
 for (const code of ['NONE','M10','M15','M20']) assert.match(productDiscountEditor, new RegExp(`'${code}'`), `MakeShop code ${code} must be validated server-side`);
 assert.match(productDiscountEditor, /affected_sku_count[\s\S]*?v_batch_id uuid :=[\s\S]*?v_batch_id/, 'all option drafts must share one batch and report the affected product size');
-assert.match(dataService, /normalizedSource !== 'ably'[\s\S]*?save_operations_hub_seller_product_discount_draft/, 'Smartstore and MakeShop product discounts must use the atomic RPC');
+assert.match(discountAnchor, /gross_operations_hub_discount_base[\s\S]*?calculate_operations_hub_discounted_base[\s\S]*?v_result <> v_target/, 'discount editing must gross up a whole-won base price to the anchored discounted price');
+assert.match(discountAnchor, /discount_anchor[\s\S]*?v_existing\.price_final_after[\s\S]*?v_source_final[\s\S]*?v_target_final - v_target_option/, 'an active formula or manual draft must take priority over the source final price');
+assert.match(discountAnchor, /v_valid_count = 0[\s\S]*?원본에 상품코드[\s\S]*?v_valid_count <> v_count/, 'product discount saves must preflight every linked option against the latest seller source');
+assert.match(discountAnchor, /save_operations_hub_seller_product_discount_draft_v2[\s\S]*?p_anchor_sku[\s\S]*?v_anchor_discounted[\s\S]*?v_item\.target_final_price - v_anchor_discounted/, 'one clicked option must anchor a shared product base while each option target final price is preserved');
+assert.match(discountAnchor, /save_operations_hub_seller_discount_draft\([\s\S]*?'discount_anchor'/, 'Smartstore and MakeShop product edits must use target-price anchoring');
+assert.match(dataService, /normalizedSource !== 'ably'[\s\S]*?save_operations_hub_seller_product_discount_draft_v2[\s\S]*?p_anchor_sku/, 'Smartstore and MakeShop product discounts must use the anchored atomic RPC');
 assert.match(dataService, /normalizedSource !== 'ably'[\s\S]*?operations_hub_matrix_cached[\s\S]*?saveSellerDiscountDraft/, 'Ably must retain the existing per-SKU fanout path');
 assert.match(html, /id="discount-editor-modal"[\s\S]*?id="discount-editor-amount"[\s\S]*?<b>원<\/b>[\s\S]*?value="M10"[\s\S]*?value="M15"[\s\S]*?value="M20"/, 'the matrix editor must expose Smartstore won input and MakeShop code choices');
+assert.match(html, /discount-price-math\.js[\s\S]*?data-service\.js[\s\S]*?app\.js/, 'discount inverse pricing must load before the application');
+assert.match(html, /discount-editor-anchor-source[\s\S]*?discount-editor-anchor-final-price[\s\S]*?자동 보정 판매가/, 'the editor must explain which target price is preserved and preview the grossed base price');
 assert.match(app, /prefix === 'ably' \? discountContent[\s\S]*?data-discount-edit/, 'only Smartstore and MakeShop discount cells may expose the direct edit button');
 assert.match(app, /matrixBody\.addEventListener\('mousedown'[\s\S]*?\[data-discount-edit\]/, 'discount edit buttons must not be swallowed by matrix drag selection');
 assert.match(app, /saveDiscountEditor[\s\S]*?saveSellerProductDiscountDrafts[\s\S]*?for \(const item of saved\.items\) applyLocalSellerPriceDraft/, 'the direct editor must persist and repaint every option result');
