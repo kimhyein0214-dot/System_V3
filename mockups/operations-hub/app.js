@@ -114,9 +114,19 @@ const matrixFreezeToggle = document.getElementById('matrix-freeze-toggle');
 const matrixSourceRefreshButton = document.getElementById('matrix-source-refresh-btn');
 const MATRIX_ZOOM_KEY = 'system-v3-matrix-zoom';
 const MATRIX_FREEZE_KEY = 'system-v3-matrix-sellpia-freeze';
+const MATRIX_COLUMN_WIDTHS_KEY = 'system-v3-matrix-column-widths-v1';
 const MATRIX_ZOOM_MIN = 80;
 const MATRIX_ZOOM_MAX = 140;
 const MATRIX_ZOOM_STEP = 5;
+const MATRIX_COLUMN_MIN_WIDTH = 56;
+const MATRIX_COLUMN_MAX_WIDTH = 720;
+const MATRIX_COLUMN_DEFAULT_WIDTHS = Object.freeze({
+  3:110, 4:260, 5:220, 6:150, 7:104, 8:112, 9:96, 10:88, 11:108, 12:110,
+  13:92, 14:220, 15:220, 16:96, 17:120, 18:126, 19:102, 20:120,
+  21:92, 22:220, 23:220, 24:96, 25:120, 26:126, 27:102, 28:120,
+  29:92, 30:220, 31:220, 32:96, 33:120, 34:126, 35:102, 36:120,
+  37:100, 38:110, 39:180, 40:120
+});
 const MATRIX_PRESETS_KEY = 'system-v3-matrix-presets-v1';
 const MATRIX_ACTIVE_PRESET_KEY = 'system-v3-matrix-active-preset';
 const DEFAULT_VIEW_OPTIONS = {
@@ -223,6 +233,163 @@ function findPreset(id) {
 let activeView = cloneView(findPreset(activePresetId));
 let matrixZoom = Math.max(MATRIX_ZOOM_MIN, Math.min(MATRIX_ZOOM_MAX, Number(localStorage.getItem(MATRIX_ZOOM_KEY)) || 100));
 let matrixSellpiaFrozen = localStorage.getItem(MATRIX_FREEZE_KEY) !== 'off';
+let matrixColumnWidths = readMatrixColumnWidths();
+let matrixColumnResizeState = null;
+
+function readMatrixColumnWidths() {
+  try {
+    const parsed = JSON.parse(localStorage.getItem(MATRIX_COLUMN_WIDTHS_KEY) || '{}');
+    return Object.fromEntries(Object.entries(parsed).filter(([index, width]) => {
+      const columnIndex = Number(index);
+      const columnWidth = Number(width);
+      return columnIndex >= 3 && columnIndex <= 40 && Number.isFinite(columnWidth)
+        && columnWidth >= MATRIX_COLUMN_MIN_WIDTH && columnWidth <= MATRIX_COLUMN_MAX_WIDTH;
+    }).map(([index, width]) => [index, Math.round(Number(width))]));
+  } catch {
+    return {};
+  }
+}
+
+function matrixImageColumnWidth() {
+  if (matrixTable.dataset.imageSize === 'compact') return 76;
+  if (matrixTable.dataset.imageSize === 'large') return 112;
+  return 96;
+}
+
+function matrixColumnWidth(index) {
+  if (index === 1) return 36;
+  if (index === 2) return matrixImageColumnWidth();
+  return Math.max(MATRIX_COLUMN_MIN_WIDTH, Math.min(MATRIX_COLUMN_MAX_WIDTH,
+    Number(matrixColumnWidths[index]) || MATRIX_COLUMN_DEFAULT_WIDTHS[index] || 112));
+}
+
+function saveMatrixColumnWidths() {
+  localStorage.setItem(MATRIX_COLUMN_WIDTHS_KEY, JSON.stringify(matrixColumnWidths));
+}
+
+function ensureMatrixColumnStructure() {
+  let colgroup = matrixTable.querySelector('colgroup[data-matrix-columns]');
+  if (!colgroup) {
+    colgroup = document.createElement('colgroup');
+    colgroup.dataset.matrixColumns = 'true';
+    for (let index = 1; index <= 40; index += 1) {
+      const column = document.createElement('col');
+      column.dataset.matrixColumn = String(index);
+      column.style.width = `var(--matrix-col-${index}-width)`;
+      colgroup.append(column);
+    }
+    matrixTable.insertBefore(colgroup, matrixTable.tHead);
+  }
+  const groupHeaders = matrixTable.querySelectorAll('.group-row th');
+  if (groupHeaders[0]) groupHeaders[0].dataset.matrixColumn = '1';
+  if (groupHeaders[1]) groupHeaders[1].dataset.matrixColumn = '2';
+  matrixTable.querySelectorAll('.column-row th').forEach((header, offset) => {
+    const index = offset + 3;
+    header.dataset.matrixColumn = String(index);
+    if (header.querySelector('.matrix-column-resize-handle')) return;
+    const handle = document.createElement('span');
+    handle.className = 'matrix-column-resize-handle';
+    handle.dataset.resizeColumn = String(index);
+    handle.setAttribute('role', 'separator');
+    handle.setAttribute('aria-orientation', 'vertical');
+    handle.setAttribute('aria-label', `${header.textContent.trim()} 열 너비 조절`);
+    handle.tabIndex = 0;
+    header.append(handle);
+  });
+}
+
+function bindMatrixColumnWidthsToCells() {
+  matrixTable.querySelectorAll('[data-matrix-column]').forEach(cell => {
+    const index = Number(cell.dataset.matrixColumn);
+    if (index >= 1 && index <= 40 && !cell.matches('col') && (Number(cell.colSpan) || 1) === 1) {
+      cell.style.setProperty('--matrix-cell-width', `var(--matrix-col-${index}-width)`);
+    }
+  });
+}
+
+function applyMatrixColumnWidths(view = activeView) {
+  ensureMatrixColumnStructure();
+  bindMatrixColumnWidthsToCells();
+  const visible = viewColumnIndexes(view);
+  let tableWidth = matrixColumnWidth(1) + matrixColumnWidth(2);
+  for (let index = 1; index <= 40; index += 1) {
+    const width = matrixColumnWidth(index);
+    matrixTable.style.setProperty(`--matrix-col-${index}-width`, `${width}px`);
+    const column = matrixTable.querySelector(`col[data-matrix-column="${index}"]`);
+    const show = index <= 2 || visible.has(index);
+    if (column) column.style.display = show ? '' : 'none';
+    if (index >= 3 && show) tableWidth += width;
+  }
+  matrixTable.style.width = `${Math.max(900, tableWidth)}px`;
+  matrixTable.style.minWidth = `${Math.max(900, tableWidth)}px`;
+}
+
+function setMatrixColumnWidth(index, width, {persist = false, announce = false} = {}) {
+  if (index < 3 || index > 40) return;
+  matrixColumnWidths[index] = Math.max(MATRIX_COLUMN_MIN_WIDTH, Math.min(MATRIX_COLUMN_MAX_WIDTH, Math.round(Number(width) || MATRIX_COLUMN_DEFAULT_WIDTHS[index] || 112)));
+  applyMatrixColumnWidths(activeView);
+  if (persist) saveMatrixColumnWidths();
+  if (announce) showToast(`${matrixTable.querySelector(`.column-row th[data-matrix-column="${index}"]`)?.textContent.trim() || '열'} 너비를 저장했습니다.`);
+}
+
+function resetMatrixColumnWidth(index = null) {
+  if (index === null) matrixColumnWidths = {};
+  else delete matrixColumnWidths[index];
+  saveMatrixColumnWidths();
+  applyMatrixColumnWidths(activeView);
+  showToast(index === null ? '모든 열 너비를 기본값으로 되돌렸습니다.' : '열 너비를 기본값으로 되돌렸습니다.');
+}
+
+function startMatrixColumnResize(event, handle) {
+  if (event.button !== undefined && event.button !== 0) return;
+  const index = Number(handle.dataset.resizeColumn);
+  if (index < 3 || index > 40) return;
+  matrixColumnResizeState = {index, startX:event.clientX, startWidth:matrixColumnWidth(index)};
+  document.body.classList.add('matrix-column-resizing');
+  handle.classList.add('active');
+  handle.setPointerCapture?.(event.pointerId);
+  event.preventDefault();
+  event.stopPropagation();
+}
+
+function initializeMatrixColumnResizing() {
+  ensureMatrixColumnStructure();
+  matrixTable.tHead.addEventListener('pointerdown', event => {
+    const handle = event.target.closest('.matrix-column-resize-handle');
+    if (handle) startMatrixColumnResize(event, handle);
+  });
+  matrixTable.tHead.addEventListener('dblclick', event => {
+    const handle = event.target.closest('.matrix-column-resize-handle');
+    if (!handle) return;
+    event.preventDefault();
+    event.stopPropagation();
+    resetMatrixColumnWidth(Number(handle.dataset.resizeColumn));
+  });
+  matrixTable.tHead.addEventListener('keydown', event => {
+    const handle = event.target.closest('.matrix-column-resize-handle');
+    if (!handle || !['ArrowLeft','ArrowRight','Home'].includes(event.key)) return;
+    event.preventDefault();
+    const index = Number(handle.dataset.resizeColumn);
+    if (event.key === 'Home') resetMatrixColumnWidth(index);
+    else setMatrixColumnWidth(index, matrixColumnWidth(index) + (event.key === 'ArrowRight' ? 10 : -10), {persist:true, announce:true});
+  });
+  document.addEventListener('pointermove', event => {
+    if (!matrixColumnResizeState) return;
+    const zoom = Math.max(.01, matrixZoom / 100);
+    const delta = (event.clientX - matrixColumnResizeState.startX) / zoom;
+    setMatrixColumnWidth(matrixColumnResizeState.index, matrixColumnResizeState.startWidth + delta);
+  });
+  const finishResize = () => {
+    if (!matrixColumnResizeState) return;
+    saveMatrixColumnWidths();
+    matrixColumnResizeState = null;
+    document.body.classList.remove('matrix-column-resizing');
+    matrixTable.querySelectorAll('.matrix-column-resize-handle.active').forEach(handle => handle.classList.remove('active'));
+  };
+  document.addEventListener('pointerup', finishResize);
+  document.addEventListener('pointercancel', finishResize);
+  document.getElementById('matrix-column-reset').addEventListener('click', () => resetMatrixColumnWidth());
+}
 
 function applyMatrixSellpiaFreeze(frozen, {persist = true, announce = false} = {}) {
   matrixSellpiaFrozen = Boolean(frozen);
@@ -356,10 +523,9 @@ function applyColumnVisibility(view = activeView) {
     header.hidden = count === 0;
     if (count) header.colSpan = count;
   });
-  const variableColumns = [...visible].filter(index => index > 7).length;
-  matrixTable.style.minWidth = `${Math.max(900, 776 + variableColumns * 112)}px`;
   matrixTable.dataset.imageSize = ['compact','default','large'].includes(view.imageSize) ? view.imageSize : 'default';
   matrixTable.classList.toggle('wrap-names', Boolean(view.wrapNames));
+  applyMatrixColumnWidths(view);
 }
 
 function renderCustomPresetOptions() {
@@ -6113,6 +6279,7 @@ document.addEventListener('keydown', event => {
 
 const startupPreset = findPreset(activePresetId);
 activePresetId = startupPreset.id;
+initializeMatrixColumnResizing();
 applyViewPreset(startupPreset, {id:startupPreset.id, reload:false, announce:false});
 updateCodeListFilterUi();
 
