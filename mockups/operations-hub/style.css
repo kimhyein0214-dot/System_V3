@@ -298,3 +298,28 @@ body.matrix-cell-selecting{user-select:none}
 .matrix-table{font-size:11px}.matrix-table th,.matrix-table td{line-height:1.35}.matrix-table thead th{font-size:10px}.matrix-table tbody td{height:52px;font-size:11px;vertical-align:middle}
 .matrix-table .product-cell,.matrix-table .option-cell,.matrix-table .seller-identity-cell{text-align:center;vertical-align:middle}.matrix-table .product-identity-merged-cell,.matrix-table .seller-identity-merged-cell{vertical-align:middle}.matrix-table .product-cell b,.matrix-table .option-cell b,.matrix-table .seller-identity-cell .mapping-code-button{margin-left:auto;margin-right:auto;font-size:12px;line-height:1.3;text-align:center}.matrix-table .product-cell em,.matrix-table .option-cell em,.matrix-table .seller-identity-cell>em{margin-left:auto;margin-right:auto;margin-top:5px;font-size:10px;line-height:1.35;text-align:center}.matrix-table .product-cell b,.matrix-table .product-cell em{max-width:282px}.matrix-table .option-cell b,.matrix-table .option-cell em{max-width:194px}.matrix-table .seller-identity-cell .mapping-code-button{max-width:204px;height:30px}.matrix-table .seller-identity-cell>em{max-width:204px}.matrix-table .seller-identity-cell em i{font-size:9px}.matrix-table .product-cell small,.matrix-table .option-cell small{justify-content:center;font-size:9px}.matrix-table .option-cell .sellpia-text-compact,.matrix-table .sellpia-product-col.product-cell .sellpia-text-compact{height:26px;font-size:10px;text-align:center}
 .matrix-table .matrix-status{font-size:10px}.matrix-table .matrix-relation-badge{font-size:9px}.matrix-table .editable-cell,.matrix-table .inline-editor{font-size:11px}.matrix-table .system-master-cell b{font-size:11px}.matrix-table .system-master-cell em{font-size:9px}.matrix-table .price-layer-cell .price-layer span,.matrix-table .price-component-cell .price-layer span{font-size:9px}.matrix-table .price-layer-cell .price-layer b,.matrix-table .price-component-cell .price-layer b{font-size:11px}.matrix-table .price-rule-badge,.matrix-table .price-rule-final{font-size:9px}.matrix-table .seller-discount-cell>b,.matrix-table .discount-cell-edit b{font-size:10px}.matrix-table .seller-discount-cell>em,.matrix-table .discount-cell-edit em{font-size:9px}.matrix-table .discount-edit-icon{font-size:9px}.matrix-table .tag{font-size:9px}.matrix-table .profile-cell{font-size:10px}.matrix-table td.seller-base-merged-cell::after,.matrix-table td.seller-discount-merged-cell::after{font-size:9px}
+
+/* Separate Sellpia identity columns and keep editable data visually neutral. */
+.matrix-table{min-width:4300px}
+.matrix-table .sellpia-sku-col{left:var(--image-col-width);width:110px;min-width:110px;max-width:110px}
+.matrix-table .sellpia-name-col{left:calc(var(--image-col-width) + 110px);width:260px;min-width:260px;max-width:260px}
+.matrix-table .sellpia-option-name-col{left:calc(var(--image-col-width) + 370px);width:220px;min-width:220px;max-width:220px}
+.matrix-table .own-code-col{left:calc(var(--image-col-width) + 590px);width:150px;min-width:150px;max-width:150px}
+.matrix-table .sellpia-stock-col{left:calc(var(--image-col-width) + 740px)}
+.matrix-table .sellpia-price-col{left:calc(var(--image-col-width) + 844px)}
+.matrix-table .sellpia-group{left:var(--image-col-width);width:956px;min-width:956px}
+.matrix-table .sellpia-code-cell,.matrix-table .sellpia-text-cell,.matrix-table .own-code-col{text-align:center;vertical-align:middle}
+.matrix-table .sellpia-code-cell b{display:block;overflow:hidden;color:#1d4ed8;font-size:12px;line-height:1.35;text-overflow:ellipsis}
+.matrix-table .sellpia-text-cell{white-space:normal!important}
+.matrix-table .sellpia-text-cell span{display:block;overflow:hidden;color:#111827;font-size:11px;font-weight:800;line-height:1.4;text-overflow:ellipsis;white-space:nowrap}
+.matrix-table.wrap-names .sellpia-text-cell span{display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:2;white-space:normal}
+.matrix-table .own-code-col .sellpia-text-compact{width:132px;height:30px;text-align:center}
+.matrix-table .product-cell em,.matrix-table .option-cell em,.matrix-table .seller-identity-cell>em{color:#111827;font-weight:800}
+.matrix-table .editable-cell{border-color:transparent;border-radius:0;background:transparent}
+.matrix-table .editable-cell:hover,.matrix-table .editable-cell:focus-visible{border-color:transparent;background:#f3f7ff;outline:0}
+.matrix-table .editable-cell.diff{border-color:transparent;background:#fff1f1}
+.matrix-table .editable-cell.pending{border-color:transparent;background:#eaf2ff}
+.matrix-table .system-master-cell.unset{border-style:solid;background:transparent}
+.matrix-table td.seller-base-merged-cell .editable-cell{border-color:transparent;background:transparent}
+.matrix-table .mapping-code-button.unmatched,.matrix-table .mapping-code-button.unmatched:hover,.matrix-table .mapping-code-button.unmatched:focus-visible{border-color:transparent;border-style:solid;background:transparent}
+.matrix-table .inbound-cost-cell,.matrix-table .inbound-cost-cell:hover{border-color:transparent;border-style:solid;background:transparent}

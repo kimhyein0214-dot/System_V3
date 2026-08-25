@@ -31,9 +31,9 @@ assert.match(app, /basePrice:product\.system_base_price/, 'price combinations mu
 assert.doesNotMatch(app, /basePrice:product\??\.sellpia_sale_price/, 'price combinations must never calculate from the uploaded Sellpia price snapshot');
 assert.match(app, /계산 태그[\s\S]*?가격 조합/, 'user-facing pricing terminology must separate atomic calculation tags from ordered combinations');
 
-assert.match(html, /시스템 기준 · 셀피아 원본 비교[\s\S]*?상품코드 \/ 상품명[\s\S]*?옵션코드 \/ 옵션명[\s\S]*?기준재고[\s\S]*?기준가격/, 'the matrix header must expose combined identities and canonical values');
+assert.match(html, /시스템 기준 · 셀피아 원본 비교[\s\S]*?>SKU<[\s\S]*?>상품명<[\s\S]*?>옵션명<[\s\S]*?>자사코드<[\s\S]*?기준재고[\s\S]*?기준가격/, 'the matrix header must expose separate Sellpia identities and canonical values');
 assert.match(html, /id="matrix-source-refresh-btn"[\s\S]*?원본값으로 갱신/, 'the work tools must expose selected-cell source refresh');
 assert.match(csv, /시스템 기준재고[\s\S]*?셀피아 원본재고[\s\S]*?시스템 기준가격[\s\S]*?셀피아 원본 판매가/, 'CSV output must preserve both canonical and source comparison columns');
-assert.match(css, /sellpia-product-col[\s\S]*?sellpia-option-col[\s\S]*?system-master-cell/, 'combined identities and canonical values must have dedicated frozen-cell styling');
+assert.match(css, /sellpia-sku-col[\s\S]*?sellpia-name-col[\s\S]*?sellpia-option-name-col[\s\S]*?own-code-col[\s\S]*?system-master-cell/, 'separate Sellpia identities and canonical values must have dedicated frozen-cell styling');
 
 console.log('Operations hub system-owned price and stock contract: passed');
