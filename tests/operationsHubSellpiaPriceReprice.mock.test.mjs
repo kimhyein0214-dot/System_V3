@@ -21,15 +21,18 @@ assert.match(migration, /enforce_operations_hub_price_assignment_system_base[\s\
 
 assert.match(data, /operations_hub_matrix_system_live/, 'interactive and export matrix reads must use the canonical system overlay');
 assert.match(data, /saveSellpiaChanges[\s\S]*?system_base_price','system_stock[\s\S]*?save_operations_hub_sku_operational_value/, 'system stock and price edits must route to the immediate canonical-save RPC');
+assert.match(data, /systemChangeSource[\s\S]*?p_change_source:systemChangeSource[\s\S]*?p_metadata:systemMetadata/, 'explicit source acceptance must be preserved in the canonical audit event');
 assert.match(data, /previewPriceRuleSet[\s\S]*?시스템 기준가격을 먼저 저장해주세요/, 'price calculations must reject missing canonical base prices instead of treating them as zero');
 
 assert.match(app, /systemOperationalCell\(product, 'system_stock'[\s\S]*?systemOperationalCell\(product, 'system_base_price'/, 'the matrix must show editable system stock and price cells');
 assert.match(app, /원본 \$\{hasSource \? formatNullableNumber\(sourceValue\)/, 'each canonical value must keep its source comparison visible in the same cell');
+assert.match(app, /refreshSelectedSystemValuesFromSource[\s\S]*?systemChangeSource:'source_accept'[\s\S]*?applySavedSellpiaChanges/, 'selected source values must save immediately to the system master and update the matrix');
 assert.match(app, /basePrice:product\.system_base_price/, 'price combinations must calculate from the canonical system base price');
 assert.doesNotMatch(app, /basePrice:product\??\.sellpia_sale_price/, 'price combinations must never calculate from the uploaded Sellpia price snapshot');
 assert.match(app, /계산 태그[\s\S]*?가격 조합/, 'user-facing pricing terminology must separate atomic calculation tags from ordered combinations');
 
 assert.match(html, /시스템 기준 · 셀피아 원본 비교[\s\S]*?상품코드 \/ 상품명[\s\S]*?옵션코드 \/ 옵션명[\s\S]*?기준재고[\s\S]*?기준가격/, 'the matrix header must expose combined identities and canonical values');
+assert.match(html, /id="matrix-source-refresh-btn"[\s\S]*?원본값으로 갱신/, 'the work tools must expose selected-cell source refresh');
 assert.match(csv, /시스템 기준재고[\s\S]*?셀피아 원본재고[\s\S]*?시스템 기준가격[\s\S]*?셀피아 원본 판매가/, 'CSV output must preserve both canonical and source comparison columns');
 assert.match(css, /sellpia-product-col[\s\S]*?sellpia-option-col[\s\S]*?system-master-cell/, 'combined identities and canonical values must have dedicated frozen-cell styling');
 

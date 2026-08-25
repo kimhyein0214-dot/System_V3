@@ -487,7 +487,11 @@
     return data;
   }
 
-  async function saveSellpiaChanges(changes, batchId = null) {
+  async function saveSellpiaChanges(changes, batchId = null, options = {}) {
+    const systemChangeSource = cleanText(options?.systemChangeSource) || 'manual';
+    const systemMetadata = options?.systemMetadata && typeof options.systemMetadata === 'object' && !Array.isArray(options.systemMetadata)
+      ? options.systemMetadata
+      : {ui:'integrated-matrix'};
     const grouped = new Map();
     for (const change of changes || []) {
       if (!change?.sku || !change?.fieldKey) continue;
@@ -511,9 +515,9 @@
           p_sellpia_sku_code:sku,
           p_field_key:item.field_key,
           p_value:rawValue === '' ? null : Number(rawValue),
-          p_change_source:'manual',
+          p_change_source:systemChangeSource,
           p_actor:'operations-hub',
-          p_metadata:{ui:'integrated-matrix'}
+          p_metadata:systemMetadata
         });
         if (error) throw error;
         const savedRow = Array.isArray(data) ? data[0] : data;
