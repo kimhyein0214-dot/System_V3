@@ -4,6 +4,7 @@ import fs from "node:fs";
 const migration = fs.readFileSync(new URL("../supabase/migrations/20260818031045_operations_hub_price_policy_engine.sql", import.meta.url), "utf8");
 const baselineMigration = fs.readFileSync(new URL("../supabase/migrations/20260820061850_simplify_price_rules_and_baseline_save.sql", import.meta.url), "utf8");
 const assignmentMigration = fs.readFileSync(new URL("../supabase/migrations/20260820210000_price_rule_assignment_flow.sql", import.meta.url), "utf8");
+const sellpiaRepriceMigration = fs.readFileSync(new URL("../supabase/migrations/20260825013259_reprice_on_sellpia_price_change.sql", import.meta.url), "utf8");
 const data = fs.readFileSync(new URL("../mockups/operations-hub/data-service.js", import.meta.url), "utf8");
 const app = fs.readFileSync(new URL("../mockups/operations-hub/app.js", import.meta.url), "utf8");
 
@@ -25,7 +26,9 @@ assert.doesNotMatch(taggedApplyBlock, /loadLiveMatrix\(/, "tagged price applicat
 assert.doesNotMatch(app, /가격 규칙 저장·계산/, "the product drawer must not present a seller-wide legacy policy as if it were product-specific");
 assert.match(assignmentMigration, /target_type = 'sellpia_sku'[\s\S]*?source_channel = p_source[\s\S]*?sellpia_sku_code = v_sku/, "price tag assignments must be scoped by Sellpia SKU and seller channel");
 assert.doesNotMatch(assignmentMigration, /operations_hub_change_queue/, "saving a price tag assignment must not create an export draft implicitly");
-assert.match(baselineMigration, /v_field = 'sellpia_current_stock'[\s\S]*?then 'pending'[\s\S]*?else 'saved'/, "Sellpia price edits must save as DB-only base values while stock retains its queue behavior");
+assert.match(baselineMigration, /v_field = 'sellpia_current_stock'[\s\S]*?then 'pending'[\s\S]*?else 'saved'/, "the baseline workflow must keep Sellpia price edits local while stock retains its queue behavior");
 assert.match(baselineMigration, /field_key = 'sellpia_sale_price'[\s\S]*?source_channel is null[\s\S]*?status in \('pending', 'validated', 'failed'\)/, "legacy raw-price seller queues must be cancelled during the workflow transition");
+assert.match(sellpiaRepriceMigration, /save_operations_hub_seller_discount_draft[\s\S]*?v_has_price_change[\s\S]*?reprice_operations_hub_sellpia_price_change/, "the current workflow must atomically turn tagged Sellpia price edits into reviewable seller drafts");
+assert.match(sellpiaRepriceMigration, /source_channel in \('smartstore', 'makeshop'\)/, "automatic Sellpia repricing must leave Ably unchanged");
 
 console.log("Operations hub structured price policy contract: passed");
