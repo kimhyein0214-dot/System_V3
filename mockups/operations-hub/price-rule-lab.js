@@ -48,8 +48,9 @@
     if (tag.min_price !== null) guards.push(`최저 ${money(tag.min_price)}`);
     if (tag.max_price !== null) guards.push(`최고 ${money(tag.max_price)}`);
     if (Number(tag.rounding_unit || 1) > 1) guards.push(`${money(tag.rounding_unit)} 단위 ${tag.rounding_mode === 'up' ? '올림' : tag.rounding_mode === 'down' ? '내림' : '반올림'}`);
+    const channelLabels = {smartstore:'스마트스토어', makeshop:'메이크샵', ably:'에이블리'};
     const role = tag.tag_role === 'discount'
-      ? `할인 · ${tag.discount_source_channel === 'makeshop' ? '메이크샵' : '스마트스토어'}`
+      ? `할인 · ${channelLabels[tag.discount_source_channel] || '판매처'}`
       : '판매가';
     return [role, labels[mode], ...guards].filter(Boolean).join(' · ');
   }
