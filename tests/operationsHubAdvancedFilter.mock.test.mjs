@@ -18,7 +18,9 @@ assert.match(html, /id="advanced-filter-btn"[\s\S]*?id="advanced-filter-count"/,
 assert.match(html, /id="advanced-filter-modal"[\s\S]*?id="advanced-filter-logic"[\s\S]*?id="advanced-filter-rows"[\s\S]*?id="advanced-filter-apply"/, "the filter modal must expose logic, condition rows, and apply controls");
 assert.match(html, /id="advanced-filter-bar"[\s\S]*?id="advanced-filter-chips"[\s\S]*?id="advanced-filter-clear"/, "applied filters must remain visible and individually removable");
 assert.match(app, /advancedFilter:\{logic:'and', conditions:\[\]\}/, "matrix state and presets must start with an empty advanced filter");
-assert.match(app, /function cloneAdvancedFilter\([\s\S]*?conditions\.map\(condition => \(\{\.\.\.condition\}\)\)/, "preset cloning must deep-copy condition rows");
+assert.match(app, /function cloneAdvancedFilter\([\s\S]*?conditions:Array\.isArray[\s\S]*?map\(condition => \(\{[\s\S]*?\.\.\.condition[\s\S]*?\}\)\)/, "preset cloning must deep-copy and normalize condition rows");
+assert.match(app, /const options = \[\['connected','연결 완료'\],\['unmatched','미매칭'\]\]/, "advanced connection filters must expose only the two operational states");
+assert.match(data, /function normalizeConnectionConditions\([\s\S]*?field !== 'overall_status'[\s\S]*?operator:condition\.operator === 'neq' \? 'eq' : 'neq'[\s\S]*?value:'unmatched'/, "advanced connected filters must include legacy review rows without exposing review as a third state");
 assert.match(app, /readViewSettingsForm\([\s\S]*?advancedFilter:cloneAdvancedFilter\(activeView\.advancedFilter\)/, "saved view presets must retain advanced filters");
 assert.match(app, /ADVANCED_FILTER_FIELDS[\s\S]*?sellpia_product_name[\s\S]*?smartstore_stock[\s\S]*?makeshop_price[\s\S]*?ably_sale_status[\s\S]*?tag_summary/, "field choices must cover names, stock, prices, seller status, and tags");
 assert.match(app, /ADVANCED_FILTER_OPERATORS[\s\S]*?contains[\s\S]*?gte[\s\S]*?lte/, "text and numeric comparison operators must be explicit");

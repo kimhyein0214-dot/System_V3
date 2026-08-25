@@ -11,7 +11,7 @@ const tableSamples = {
     columns:['셀피아 SKU','자사코드','상품명 / 옵션','판매처','연결상태','최근 수정'],
     rows:[
       ['1014-1','[P] C-07-01','NEW 컬러 큐빅 별 피어싱 · 크리스탈','스마트스토어','연결 완료','오늘 12:41'],
-      ['11035-124','[P] R-18-24','베이직 링 피어싱 · 실버 8mm','메이크샵','검토 필요','오늘 11:58'],
+      ['11035-124','[P] R-18-24','베이직 링 피어싱 · 실버 8mm','메이크샵','연결 완료','오늘 11:58'],
       ['11246-13','[P] B-04-13','큐빅 바벨 피어싱 · 골드','에이블리','미매칭','오늘 11:42'],
       ['1280-18','[P] S-11-18','심플 미니 큐빅 피어싱 · 라이트핑크','스마트스토어','연결 완료','어제 17:31']]
   },
@@ -177,21 +177,31 @@ const ADVANCED_FILTER_OPERATORS = Object.freeze({
 });
 const BUILTIN_PRESETS = Object.freeze({
   all:{id:'all', name:'전체 현황', ...DEFAULT_VIEW_OPTIONS},
-  matching:{id:'matching', name:'매칭 검토', ...DEFAULT_VIEW_OPTIONS, showInventory:false, showPrice:false, showDiscount:false, showAttributes:false, wrapNames:true, status:'attention'},
+  matching:{id:'matching', name:'미매칭 확인', ...DEFAULT_VIEW_OPTIONS, showInventory:false, showPrice:false, showDiscount:false, showAttributes:false, wrapNames:true, status:'unmatched'},
   inventory:{id:'inventory', name:'재고 작업', ...DEFAULT_VIEW_OPTIONS, showCodes:false, showSellerNames:false, showPrice:false, showDiscount:false, showAttributes:false, zoom:110},
   price:{id:'price', name:'가격 작업', ...DEFAULT_VIEW_OPTIONS, showCodes:false, showSellerNames:false, showInventory:false, showAttributes:false, zoom:110},
   attributes:{id:'attributes', name:'속성·태그', ...DEFAULT_VIEW_OPTIONS, channels:{smartstore:false, makeshop:false, ably:false}, showStatus:false, showCodes:false, showSellerNames:false, showInventory:false, showPrice:false, showDiscount:false, status:'all'}
 });
 
+function normalizeConnectionStatus(value) {
+  const status = String(value || 'all').toLowerCase();
+  if (status === 'review') return 'connected';
+  if (status === 'attention') return 'unmatched';
+  return ['all','connected','unmatched'].includes(status) ? status : 'all';
+}
+
 function cloneAdvancedFilter(filter) {
   return {
     logic:String(filter?.logic || 'and').toLowerCase() === 'or' ? 'or' : 'and',
-    conditions:Array.isArray(filter?.conditions) ? filter.conditions.map(condition => ({...condition})) : []
+    conditions:Array.isArray(filter?.conditions) ? filter.conditions.map(condition => ({
+      ...condition,
+      value:condition?.field === 'overall_status' ? normalizeConnectionStatus(condition.value) : condition.value
+    })) : []
   };
 }
 
 function cloneView(view) {
-  return {...view, channels:{...view.channels}, advancedFilter:cloneAdvancedFilter(view.advancedFilter)};
+  return {...view, status:normalizeConnectionStatus(view.status), channels:{...view.channels}, advancedFilter:cloneAdvancedFilter(view.advancedFilter)};
 }
 
 function readCustomPresets() {
@@ -415,7 +425,6 @@ function sellpiaEditor(fieldKey, label, value, {number = false, className = ''} 
 
 function matchState(tier) {
   if (!tier) return {key:'unmatched', label:'미매칭'};
-  if (tier === 'FAST_REVIEW') return {key:'review', label:'검토 필요'};
   return {key:'connected', label:'연결 완료'};
 }
 
@@ -636,7 +645,7 @@ function codeListPlaceholderSellerCells(codeRow, source) {
   if (codeRow.source_channel !== source) return '<td class="data-gap">-</td>'.repeat(8);
   const reason = escapeHtml(codeRow.reason || codeListIssueLabel(codeRow.match_status));
   const inputCode = escapeHtml(codeRow.input_code || '-');
-  const state = codeRow.match_status === 'unmapped' ? 'review' : 'unmatched';
+  const state = 'unmatched';
   return `<td><span class="matrix-status ${state}">${reason}</span></td>
     <td class="seller-identity-cell code-list-placeholder-code" title="${inputCode}"><b>${inputCode}</b><em>원본 상품코드</em></td>
     <td class="seller-identity-cell data-gap"><b>-</b><em>${escapeHtml(codeListSourceLabel(source))}</em></td>
@@ -650,7 +659,7 @@ function renderCodeListPlaceholderRow(product) {
   const inputCode = escapeHtml(codeRow.input_code || '-');
   const reasonText = codeRow.reason || (codeRow.match_status === 'matched' ? '상품 정보 없음' : codeListIssueLabel(codeRow.match_status));
   const reason = escapeHtml(reasonText);
-  const state = codeRow.match_status === 'unmapped' ? 'review' : 'unmatched';
+  const state = 'unmatched';
   return `<tr class="code-list-placeholder-row" data-input-row="${rowNo}" data-status="${state}">
     <td class="sticky-col select-col" aria-hidden="true"></td>
     <td class="sticky-col image-col"><span class="code-list-placeholder-symbol">!</span></td>
@@ -662,7 +671,7 @@ function renderCodeListPlaceholderRow(product) {
     ${codeListPlaceholderSellerCells(codeRow, 'smartstore')}
     ${codeListPlaceholderSellerCells(codeRow, 'makeshop')}
     ${codeListPlaceholderSellerCells(codeRow, 'ably')}
-    <td class="data-gap">-</td><td class="data-gap">-</td><td><span class="tag ${state === 'review' ? 'review-tag' : ''}">${reason}</span></td><td>엑셀 ${rowNo}행</td>
+    <td class="data-gap">-</td><td class="data-gap">-</td><td><span class="tag">${reason}</span></td><td>엑셀 ${rowNo}행</td>
   </tr>`;
 }
 
@@ -689,14 +698,16 @@ function renderLiveMatrixRows(products) {
     const imageUrl = escapeHtml(liveImageUrl);
     const tiers = [product.smartstore_match_tier, product.makeshop_match_tier, product.ably_match_tier];
     const connectedCount = tiers.filter(Boolean).length;
-    const overallState = product.overall_status || (connectedCount === 0 ? 'unmatched' : tiers.includes('FAST_REVIEW') ? 'review' : 'connected');
+    const overallState = connectedCount > 0 || normalizeConnectionStatus(product.overall_status) === 'connected' ? 'connected' : 'unmatched';
     const rawDisplayName = product.sellpia_product_name || product.display_name || '';
     const rawOptionName = product.sellpia_option_name || '';
     const displayName = escapeHtml(rawDisplayName || '상품명 원본 적재 대기');
     const optionName = escapeHtml(rawOptionName || '셀피아 옵션명 적재 대기');
     const sellpiaSourceStock = product.sellpia_source_stock ?? product.sellpia_current_stock;
     const sellpiaSourcePrice = product.sellpia_source_sale_price ?? product.sellpia_sale_price;
-    const mappingTag = overallState === 'review' ? '<span class="tag review-tag">검토 필요</span>' : `<span class="tag">${connectedCount}처 연결</span>`;
+    const mappingTag = overallState === 'connected'
+      ? `<span class="tag">연결 완료${connectedCount ? ` · ${connectedCount}처` : ''}</span>`
+      : '<span class="tag">미매칭</span>';
     const profile = product.__profile || {};
     const tagSummary = [profile.shape, profile.tag_summary].filter(Boolean).join(' · ');
     const productGroup = sellpiaProductGroupKey(product);
@@ -2983,7 +2994,7 @@ function advancedFilterOperatorOptions(type, selectedOperator) {
 function advancedFilterValueControl(condition, fieldInfo, index) {
   const noValue = ['empty','not_empty'].includes(condition.operator);
   if (fieldInfo.type === 'status') {
-    const options = [['connected','연결 완료'],['review','검토 필요'],['unmatched','미매칭']];
+    const options = [['connected','연결 완료'],['unmatched','미매칭']];
     return `<select class="advanced-filter-value" data-filter-part="value" data-filter-index="${index}">${options.map(([value, label]) => `<option value="${value}"${value === condition.value ? ' selected' : ''}>${label}</option>`).join('')}</select>`;
   }
   const inputMode = fieldInfo.type === 'number' ? 'decimal' : 'text';
@@ -3015,7 +3026,7 @@ function advancedFilterOperatorLabel(type, operator) {
 function advancedFilterConditionLabel(condition) {
   const fieldInfo = advancedFilterField(condition.field);
   const operator = advancedFilterOperatorLabel(fieldInfo.type, condition.operator);
-  const statusLabels = {connected:'연결 완료', review:'검토 필요', unmatched:'미매칭'};
+  const statusLabels = {connected:'연결 완료', review:'연결 완료', unmatched:'미매칭'};
   const value = ['empty','not_empty'].includes(condition.operator) ? '' : ` ${statusLabels[condition.value] || condition.value}`;
   return `${fieldInfo.group} ${fieldInfo.label} · ${operator}${value}`;
 }
@@ -5086,7 +5097,7 @@ function matrixCsvFilterSummary() {
   const parts = [];
   if (matrixState.search) parts.push(`검색 “${matrixState.search}”`);
   if (matrixState.searchSources.length < 4) parts.push(`검색처 ${matrixState.searchSources.map(source => CHANNEL_LABELS[source] || (source === 'sellpia' ? '셀피아' : source)).join('·')}`);
-  const statusLabels = {all:'전체 연결상태', attention:'미매칭+검토', connected:'연결 완료', review:'검토 필요', unmatched:'미매칭'};
+  const statusLabels = {all:'전체 연결상태', attention:'미매칭', connected:'연결 완료', review:'연결 완료', unmatched:'미매칭'};
   parts.push(statusLabels[matrixState.status] || matrixState.status);
   if (matrixState.advancedFilter.conditions.length) parts.push(`상세조건 ${matrixState.advancedFilter.conditions.length}개 ${matrixState.advancedFilter.logic === 'or' ? 'OR' : 'AND'}`);
   const sortLabels = {sku_asc:'SKU 오름차순', stock_desc:'재고 많은 순', price_desc:'가격 높은 순', updated_desc:'최근 갱신 순'};

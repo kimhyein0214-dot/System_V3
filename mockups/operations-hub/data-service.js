@@ -9,6 +9,29 @@
   const MATRIX_PAGE_SIZES = new Set([50, 100, 200]);
   const MATRIX_SELECT = 'sellpia_sku_code,own_code,image_url,display_name,smartstore_name,smartstore_option_name,smartstore_product_code,smartstore_option_code,smartstore_match_tier,smartstore_match_score,smartstore_listing_count,smartstore_name_is_draft,smartstore_sale_status,makeshop_name,makeshop_option_name,makeshop_product_code,makeshop_option_code,makeshop_match_tier,makeshop_match_score,makeshop_listing_count,makeshop_name_is_draft,makeshop_sale_status,ably_name,ably_option_name,ably_product_code,ably_option_code,ably_match_tier,ably_match_score,ably_listing_count,ably_name_is_draft,ably_sale_status,updated_at,sellpia_product_name,sellpia_option_name,sellpia_own_code,sellpia_current_stock,sellpia_available_stock,sellpia_safety_stock,sellpia_sale_price,sellpia_inventory_at,smartstore_stock,smartstore_price,smartstore_policy_price,smartstore_policy_active,smartstore_policy_name,smartstore_inventory_at,makeshop_stock,makeshop_price,makeshop_policy_price,makeshop_policy_active,makeshop_policy_name,makeshop_inventory_at,ably_stock,ably_price,ably_policy_price,ably_policy_active,ably_policy_name,ably_inventory_at,overall_status,sellpia_override_image_url,sellpia_override_updated_at,sellpia_source_sale_price,sellpia_source_stock,sellpia_source_updated_at,system_base_price,system_stock,system_price_version,system_stock_version,system_price_updated_at,system_stock_updated_at,system_updated_at';
 
+  function normalizeConnectionStatus(status) {
+    const value = cleanText(status).toLowerCase();
+    if (value === 'review') return 'connected';
+    if (value === 'attention') return 'unmatched';
+    return ['all','connected','unmatched'].includes(value) ? value : 'all';
+  }
+
+  function normalizeConnectionConditions(filter) {
+    const normalized = filter && typeof filter === 'object' ? filter : {};
+    return {
+      logic:String(normalized.logic || 'and').toLowerCase() === 'or' ? 'or' : 'and',
+      conditions:(Array.isArray(normalized.conditions) ? normalized.conditions : []).slice(0, 12).map(condition => {
+        if (condition?.field !== 'overall_status') return {...condition};
+        if (normalizeConnectionStatus(condition.value) !== 'connected') return {...condition, value:'unmatched'};
+        return {
+          ...condition,
+          operator:condition.operator === 'neq' ? 'eq' : 'neq',
+          value:'unmatched'
+        };
+      })
+    };
+  }
+
   function requireClient() {
     if (!global.supabase?.createClient) {
       throw new Error('Supabase 클라이언트를 불러오지 못했습니다.');
@@ -277,6 +300,7 @@
   }
 
   async function loadProducts({ page = 1, pageSize = PAGE_SIZE, search = '', searchSources = ['sellpia','smartstore','makeshop','ably'], status = 'all', sort = 'sku_asc', skus = [], codeListRows = [], advancedFilter = null } = {}) {
+    status = normalizeConnectionStatus(status);
     const safePage = Math.max(1, Number(page) || 1);
     const safePageSize = MATRIX_PAGE_SIZES.has(Number(pageSize)) ? Number(pageSize) : PAGE_SIZE;
     const loadPagedRpc = async (rpcName, args) => {
@@ -331,12 +355,7 @@
         rows:await attachProductMetadata(result.rows)
       };
     }
-    const filterPayload = advancedFilter && typeof advancedFilter === 'object'
-      ? {
-          logic:String(advancedFilter.logic || 'and').toLowerCase() === 'or' ? 'or' : 'and',
-          conditions:Array.isArray(advancedFilter.conditions) ? advancedFilter.conditions.slice(0, 12) : []
-        }
-      : {logic:'and', conditions:[]};
+    const filterPayload = normalizeConnectionConditions(advancedFilter);
     if (filterPayload.conditions.length) {
       const result = await loadPagedRpc('load_operations_hub_matrix_filtered', {
         p_search:normalizedSearch(search),
@@ -401,8 +420,8 @@
         else query = query.eq('sellpia_sku_code', '__NO_SEARCH_SOURCE_SELECTED__');
       }
     }
-    if (status === 'attention') query = query.in('overall_status', ['review', 'unmatched']);
-    else if (['connected', 'review', 'unmatched'].includes(status)) query = query.eq('overall_status', status);
+    if (status === 'connected') query = query.in('overall_status', ['connected', 'review']);
+    else if (status === 'unmatched') query = query.eq('overall_status', 'unmatched');
 
     const sortOptions = {
       sku_asc: ['sellpia_sku_code', true],
@@ -430,18 +449,13 @@
     advancedFilter = null,
     skus = []
   } = {}) {
-    const filterPayload = advancedFilter && typeof advancedFilter === 'object'
-      ? {
-          logic:String(advancedFilter.logic || 'and').toLowerCase() === 'or' ? 'or' : 'and',
-          conditions:Array.isArray(advancedFilter.conditions) ? advancedFilter.conditions.slice(0, 12) : []
-        }
-      : {logic:'and', conditions:[]};
+    const filterPayload = normalizeConnectionConditions(advancedFilter);
     const {data, error} = await db.rpc('export_operations_hub_matrix_chunk', {
       p_offset:Math.max(0, Math.trunc(Number(offset) || 0)),
       p_limit:Math.max(1, Math.min(Math.trunc(Number(limit) || 1000), 1000)),
       p_search:normalizedSearch(search),
       p_search_sources:Array.isArray(searchSources) ? searchSources : [],
-      p_status:cleanText(status) || 'all',
+      p_status:normalizeConnectionStatus(status),
       p_sort:cleanText(sort) || 'sku_asc',
       p_filter:filterPayload,
       p_skus:[...new Set((skus || []).map(cleanText).filter(Boolean))].slice(0, 1000)
