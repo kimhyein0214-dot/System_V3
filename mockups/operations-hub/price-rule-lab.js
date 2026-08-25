@@ -48,7 +48,21 @@
     if (tag.min_price !== null) guards.push(`최저 ${money(tag.min_price)}`);
     if (tag.max_price !== null) guards.push(`최고 ${money(tag.max_price)}`);
     if (Number(tag.rounding_unit || 1) > 1) guards.push(`${money(tag.rounding_unit)} 단위 ${tag.rounding_mode === 'up' ? '올림' : tag.rounding_mode === 'down' ? '내림' : '반올림'}`);
-    return [labels[mode], ...guards].filter(Boolean).join(' · ');
+    const role = tag.tag_role === 'discount'
+      ? `할인 · ${tag.discount_source_channel === 'makeshop' ? '메이크샵' : '스마트스토어'}`
+      : '판매가';
+    return [role, labels[mode], ...guards].filter(Boolean).join(' · ');
+  }
+
+  function syncTagRoleForm() {
+    const isDiscount = byId('price-rule-tag-role').value === 'discount';
+    byId('price-rule-tag-source-field').hidden = !isDiscount;
+    const mode = byId('price-rule-tag-mode');
+    [...mode.options].forEach(option => {
+      option.disabled = isDiscount && !['amount_discount','percent_discount'].includes(option.value);
+    });
+    if (isDiscount && !['amount_discount','percent_discount'].includes(mode.value)) mode.value = 'amount_discount';
+    if (!isDiscount && mode.value === 'amount_discount') return;
   }
 
   function renderTags() {
@@ -107,6 +121,8 @@
   function resetTagForm() {
     byId('price-rule-tag-id').value = '';
     byId('price-rule-tag-name').value = '';
+    byId('price-rule-tag-role').value = 'price';
+    byId('price-rule-tag-source').value = 'smartstore';
     byId('price-rule-tag-mode').value = 'none';
     byId('price-rule-tag-value').value = '0';
     byId('price-rule-tag-color').value = '#2f6fd1';
@@ -115,6 +131,7 @@
     byId('price-rule-tag-round-unit').value = '1';
     byId('price-rule-tag-round-mode').value = 'nearest';
     byId('price-rule-tag-delete').hidden = true;
+    syncTagRoleForm();
   }
 
   function editTag(tagId) {
@@ -123,6 +140,8 @@
     const simple = atomicMode(tag);
     byId('price-rule-tag-id').value = tag.price_rule_tag_id;
     byId('price-rule-tag-name').value = tag.tag_name;
+    byId('price-rule-tag-role').value = tag.tag_role || 'price';
+    byId('price-rule-tag-source').value = tag.discount_source_channel || 'smartstore';
     byId('price-rule-tag-mode').value = simple.mode;
     byId('price-rule-tag-value').value = simple.value;
     byId('price-rule-tag-color').value = tag.color;
@@ -131,6 +150,7 @@
     byId('price-rule-tag-round-unit').value = tag.rounding_unit ?? 1;
     byId('price-rule-tag-round-mode').value = tag.rounding_mode || 'nearest';
     byId('price-rule-tag-delete').hidden = false;
+    syncTagRoleForm();
   }
 
   function resetSetForm() {
@@ -157,6 +177,7 @@
   byId('price-rule-lab-done').addEventListener('click', () => global.showPage?.('matching'));
   byId('price-rule-lab-refresh').addEventListener('click', refresh);
   byId('price-rule-tag-reset').addEventListener('click', resetTagForm);
+  byId('price-rule-tag-role').addEventListener('change', syncTagRoleForm);
   byId('price-rule-set-reset').addEventListener('click', resetSetForm);
   byId('price-rule-tag-delete').addEventListener('click', async () => {
     const tagId = cleanNumber(byId('price-rule-tag-id').value);
@@ -209,9 +230,15 @@
     submit.disabled = true;
     try {
       const calc = modePayload(byId('price-rule-tag-mode').value, byId('price-rule-tag-value').value);
+      const tagRole = byId('price-rule-tag-role').value;
+      if (tagRole === 'discount' && !['amount_discount','percent_discount'].includes(byId('price-rule-tag-mode').value)) {
+        throw new Error('할인 태그는 금액 할인 또는 퍼센트 할인만 선택할 수 있습니다.');
+      }
       await data.savePriceRuleTag({
         tagId:cleanNumber(byId('price-rule-tag-id').value), tagName:byId('price-rule-tag-name').value,
-        color:byId('price-rule-tag-color').value, ...calc,
+        color:byId('price-rule-tag-color').value, tagRole,
+        discountSource:tagRole === 'discount' ? byId('price-rule-tag-source').value : null,
+        discountRuleCode:null, ...calc,
         minPrice:cleanNumber(byId('price-rule-tag-min').value), maxPrice:cleanNumber(byId('price-rule-tag-max').value),
         roundingUnit:cleanNumber(byId('price-rule-tag-round-unit').value) || 1,
         roundingMode:byId('price-rule-tag-round-mode').value

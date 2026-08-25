@@ -15,7 +15,7 @@ assert.match(data, /function loadProductHistory[\s\S]*?operations_hub_change_que
 assert.match(data, /loadProductHistory,[\s\S]*?saveSellerValueDraft/, "the public data adapter must expose history and seller value drafts together");
 assert.match(app, /function setDrawerTab[\s\S]*?loadDrawerHistory[\s\S]*?function openProductDrawer/, "drawer tabs must switch panels and lazily load SKU history");
 assert.match(app, /function renderDrawerInventoryChannel[\s\S]*?data-drawer-value="sellpia_current_stock"[\s\S]*?data-drawer-price-component="base"[\s\S]*?data-drawer-price-component="option"[\s\S]*?data-drawer-price-component="final"/, "drawer inventory must expose stock and all three price inputs per seller");
-assert.match(app, /function renderDrawerPricePolicy[\s\S]*?판매처 원본 판매가[\s\S]*?셀피아 기준가[\s\S]*?태그 계산 판매가[\s\S]*?판매가 수정안/, "drawer prices must expose user-facing price layers");
+assert.match(app, /function renderDrawerPricePolicy[\s\S]*?판매처 원본 판매가[\s\S]*?셀피아 기준가[\s\S]*?태그 계산 판매가[\s\S]*?할인 적용가/, "drawer prices must expose gross and discounted user-facing price layers");
 assert.match(app, /function renderDrawerPricePolicy[\s\S]*?이 상품에 적용할 큰 태그[\s\S]*?태그 배정 저장[\s\S]*?수정안으로 적용/, "drawer prices must expose product-scoped composite tag selection and explicit draft application");
 assert.match(app, /function renderDrawerAttributesPanel[\s\S]*?상품 공통 태그[\s\S]*?현재 SKU 예외 태그[\s\S]*?drawer-save-attributes/, "drawer attributes must separate product-level values from SKU exceptions");
 assert.match(data, /operations_hub_product_profiles[\s\S]*?ensure_operations_hub_product_profile[\s\S]*?save_operations_hub_product_profile/, "product profiles must load and save through the durable Supabase profile API");

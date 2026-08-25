@@ -176,8 +176,25 @@
     }));
   }
 
+  async function attachInboundCostDetails(rows) {
+    const products = Array.isArray(rows) ? rows : [];
+    const skus = [...new Set(products.map(row => cleanText(row?.sellpia_sku_code)).filter(Boolean))];
+    if (!skus.length) return products;
+    const details = [];
+    for (let offset = 0; offset < skus.length; offset += 500) {
+      const {data, error} = await db
+        .from('operations_hub_inbound_cost_live')
+        .select('sellpia_sku_code,sellpia_purchase_price,sellpia_order_unit,sellpia_minimum_order_unit,actual_inbound_manual_cost,inbound_cost_formula_tag_id,inbound_cost_formula_tag_name,inbound_cost_formula_tag_color,actual_inbound_cost,actual_inbound_cost_mode,actual_inbound_cost_updated_at')
+        .in('sellpia_sku_code', skus.slice(offset, offset + 500));
+      if (error) throw error;
+      details.push(...(data || []));
+    }
+    const bySku = new Map(details.map(detail => [cleanText(detail.sellpia_sku_code), detail]));
+    return products.map(product => ({...product, ...(bySku.get(cleanText(product?.sellpia_sku_code)) || {})}));
+  }
+
   async function attachProductMetadata(rows) {
-    return attachPriceRuleAssignments(await attachSellerDrafts(await attachSellerPriceComponents(await attachLinkBadges(await attachProductProfiles(rows)))));
+    return attachPriceRuleAssignments(await attachSellerDrafts(await attachSellerPriceComponents(await attachLinkBadges(await attachProductProfiles(await attachInboundCostDetails(rows))))));
   }
 
   async function loadListingGraph({source = 'all', relationType = 'complex', search = '', page = 1, pageSize = 50} = {}) {
@@ -401,7 +418,7 @@
     });
     if (error) throw error;
     return {
-      rows:Array.isArray(data?.rows) ? data.rows : [],
+      rows:await attachInboundCostDetails(Array.isArray(data?.rows) ? data.rows : []),
       offset:Number(data?.offset || offset || 0),
       limit:Number(data?.limit || limit || 1000)
     };
@@ -861,7 +878,7 @@
   async function loadPriceRuleTags() {
     const {data, error} = await db
       .from('operations_hub_price_rule_tags')
-      .select('price_rule_tag_id,tag_code,tag_name,color,replace_price,modify_type,modify_value,min_price,max_price,rounding_unit,rounding_mode,is_active,note,updated_at')
+      .select('price_rule_tag_id,tag_code,tag_name,color,tag_role,discount_source_channel,discount_rule_code,replace_price,modify_type,modify_value,min_price,max_price,rounding_unit,rounding_mode,is_active,note,updated_at')
       .eq('is_active', true)
       .order('price_rule_tag_id', {ascending:true});
     if (error) throw error;
@@ -877,7 +894,64 @@
     return data || [];
   }
 
-  async function savePriceRuleTag({tagId = null, tagName, color, replacePrice, modifyType, modifyValue, minPrice, maxPrice, roundingUnit, roundingMode, note = ''}) {
+  async function loadInboundCostFormulaTags() {
+    const {data, error} = await db
+      .from('operations_hub_inbound_cost_formula_tags')
+      .select('tag_id,tag_name,tag_color,multiply_value,divide_value,add_value,rounding_unit,rounding_mode,is_active,description,updated_at')
+      .eq('is_active', true)
+      .order('tag_id', {ascending:true});
+    if (error) throw error;
+    return data || [];
+  }
+
+  async function saveInboundCostFormulaTag({tagId = null, tagName, tagColor, multiplyValue = 1, divideValue = 1, addValue = 0, roundingUnit = 1, roundingMode = 'nearest', description = ''}) {
+    const payload = {
+      tag_name:cleanText(tagName),
+      tag_color:cleanText(tagColor) || '#7c3aed',
+      multiply_value:Number(multiplyValue || 1),
+      divide_value:Number(divideValue || 1),
+      add_value:Number(addValue || 0),
+      rounding_unit:Number(roundingUnit || 1),
+      rounding_mode:cleanText(roundingMode) || 'nearest',
+      description:cleanText(description) || null,
+      updated_at:new Date().toISOString()
+    };
+    const query = tagId
+      ? db.from('operations_hub_inbound_cost_formula_tags').update(payload).eq('tag_id', Number(tagId))
+      : db.from('operations_hub_inbound_cost_formula_tags').insert({...payload, created_by:'operations-hub'});
+    const {data, error} = await query.select('tag_id,tag_name,tag_color,multiply_value,divide_value,add_value,rounding_unit,rounding_mode,is_active,description,updated_at').single();
+    if (error) throw error;
+    return data;
+  }
+
+  async function deleteInboundCostFormulaTag(tagId) {
+    const {count, error:assignedError} = await db
+      .from('operations_hub_inbound_cost_settings')
+      .select('sellpia_sku_code', {count:'exact', head:true})
+      .eq('formula_tag_id', Number(tagId));
+    if (assignedError) throw assignedError;
+    if (Number(count || 0) > 0) throw new Error(`이 수식태그를 사용 중인 SKU가 ${Number(count).toLocaleString('ko-KR')}개 있습니다. 먼저 상품에서 태그를 해제해주세요.`);
+    const {error} = await db
+      .from('operations_hub_inbound_cost_formula_tags')
+      .update({is_active:false, updated_at:new Date().toISOString()})
+      .eq('tag_id', Number(tagId));
+    if (error) throw error;
+    return {tagId:Number(tagId), assignedCount:0};
+  }
+
+  async function saveInboundCost({sku, manualCost = null, formulaTagId = null}) {
+    const optionalNumber = value => value === '' || value === null || value === undefined ? null : Number(value);
+    const {data, error} = await db.rpc('save_operations_hub_inbound_cost', {
+      p_sellpia_sku_code:cleanText(sku),
+      p_manual_cost:optionalNumber(manualCost),
+      p_formula_tag_id:formulaTagId ? Number(formulaTagId) : null,
+      p_actor:'operations-hub'
+    });
+    if (error) throw error;
+    return data || {};
+  }
+
+  async function savePriceRuleTag({tagId = null, tagName, color, tagRole = 'price', discountSource = null, discountRuleCode = null, replacePrice, modifyType, modifyValue, minPrice, maxPrice, roundingUnit, roundingMode, note = ''}) {
     const optionalNumber = value => value === '' || value === null || value === undefined ? null : Number(value);
     const {data, error} = await db.rpc('save_operations_hub_price_rule_tag', {
       p_tag_id:tagId ? Number(tagId) : null,
@@ -890,7 +964,10 @@
       p_max_price:optionalNumber(maxPrice),
       p_rounding_unit:Number(roundingUnit || 1),
       p_rounding_mode:cleanText(roundingMode) || 'nearest',
-      p_note:cleanText(note) || null
+      p_note:cleanText(note) || null,
+      p_tag_role:cleanText(tagRole) || 'price',
+      p_discount_source_channel:cleanText(discountSource) || null,
+      p_discount_rule_code:cleanText(discountRuleCode) || null
     });
     if (error) throw error;
     return Array.isArray(data) ? data[0] : data;
@@ -939,14 +1016,27 @@
     return data || null;
   }
 
-  async function previewPriceRuleSet({basePrice, ruleSetId}) {
+  async function previewPriceRuleSet({basePrice, ruleSetId, source = null, sourceDiscountTerms = []}) {
     if (!ruleSetId) return {final_price:null, steps:[]};
-    const {data, error} = await db.rpc('calculate_operations_hub_price_rule_set', {
-      p_base_price:Number(basePrice),
-      p_rule_set_id:Number(ruleSetId)
-    });
+    const {data, error} = source
+      ? await db.rpc('calculate_operations_hub_price_rule_plan', {
+        p_base_price:Number(basePrice),
+        p_rule_set_id:Number(ruleSetId),
+        p_source:cleanText(source),
+        p_source_discount_terms:Array.isArray(sourceDiscountTerms) ? sourceDiscountTerms : []
+      })
+      : await db.rpc('calculate_operations_hub_price_rule_set', {
+        p_base_price:Number(basePrice),
+        p_rule_set_id:Number(ruleSetId)
+      });
     if (error) throw error;
-    return Array.isArray(data) ? data[0] : data;
+    const result = Array.isArray(data) ? data[0] : data;
+    if (!source || !result) return result;
+    return {
+      ...result,
+      final_price:result.gross_price,
+      steps:[...(result.price_steps || []), ...(result.discount_steps || [])]
+    };
   }
 
   async function savePriceRuleAssignment({sku, source, ruleSetId = null}) {
@@ -1268,7 +1358,7 @@
     const range = global.XLSX.utils.decode_range(worksheet['!ref']);
     range.s.r = 0;
     range.s.c = 0;
-    range.e.c = Math.min(range.e.c, 38);
+    range.e.c = Math.min(range.e.c, 61);
     const rows = global.XLSX.utils.sheet_to_json(worksheet, {
       header:1,
       raw:true,
@@ -1288,12 +1378,19 @@
       [30, '상가명'],
       [31, '매입처전화'],
       [32, '매입상품명'],
-      [33, '매입옵션명']
+      [33, '매입옵션명'],
+      [35, '매입가'],
+      [60, '발주단위'],
+      [61, ['최소발주수량', '최소발주단위']]
     ]);
-    const invalidHeader = [...expectedHeaders].find(([index, label]) => cleanText(header[index]) !== label);
+    const invalidHeader = [...expectedHeaders].find(([index, label]) => {
+      const allowed = Array.isArray(label) ? label : [label];
+      return !allowed.includes(cleanText(header[index]));
+    });
     if (invalidHeader) {
       const [index, label] = invalidHeader;
-      throw new Error(`${file.name}: 셀피아 원본 ${global.XLSX.utils.encode_col(index)}1 헤더가 '${label}'이 아닙니다.`);
+      const expected = Array.isArray(label) ? label.join(' 또는 ') : label;
+      throw new Error(`${file.name}: 셀피아 원본 ${global.XLSX.utils.encode_col(index)}1 헤더가 '${expected}'이 아닙니다.`);
     }
     return rows.slice(1).flatMap(row => {
       const sourceRowNo = cleanNumber(row[0]);
@@ -1328,10 +1425,15 @@
         supplier_phone: cleanText(row[31]) || null,
         purchase_product_name: cleanText(row[32]) || null,
         purchase_option_name: cleanText(row[33]) || null,
+        purchase_price: cleanNumber(row[35]),
+        order_unit: cleanNumber(row[60]),
+        minimum_order_unit: cleanNumber(row[61]),
         raw_payload: {
           base_price: salePrice,
           sell_price: salePrice,
-          purchase_price: cleanNumber(row[35], 0),
+          purchase_price: cleanNumber(row[35]),
+          order_unit: cleanNumber(row[60]),
+          minimum_order_unit: cleanNumber(row[61]),
           commission: cleanText(row[36]),
           purchase_vat: cleanText(row[37]),
           sale_status: saleStatus,
@@ -1385,7 +1487,7 @@
           upload_status: 'uploading',
           uploaded_by: 'system_v1_frontend',
           metadata: {
-            parser_version: 'operations-hub-sellpia-2026.08.20-v3',
+            parser_version: 'operations-hub-sellpia-2026.08.25-v4',
             source_files: selectedFiles.map(file => ({name:file.name, size:file.size})),
             selected_fields: fields,
             upload_mode: uploadMode,
@@ -1823,6 +1925,10 @@
     savePricePolicy,
     loadPriceRuleTags,
     loadPriceRuleSets,
+    loadInboundCostFormulaTags,
+    saveInboundCostFormulaTag,
+    deleteInboundCostFormulaTag,
+    saveInboundCost,
     savePriceRuleTag,
     savePriceRuleSet,
     deletePriceRuleTag,

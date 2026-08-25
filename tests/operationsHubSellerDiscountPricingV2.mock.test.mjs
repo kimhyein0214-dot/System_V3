@@ -33,6 +33,10 @@ const partialAssignmentCleanup = fs.readFileSync(
   new URL('../supabase/migrations/20260824082536_remove_partial_production_price_rule_assignments.sql', import.meta.url),
   'utf8'
 );
+const splitTags = fs.readFileSync(
+  new URL('../supabase/migrations/20260825043000_split_price_and_discount_rule_tags.sql', import.meta.url),
+  'utf8'
+);
 const app = fs.readFileSync(new URL('../mockups/operations-hub/app.js', import.meta.url), 'utf8');
 const dataService = fs.readFileSync(new URL('../mockups/operations-hub/data-service.js', import.meta.url), 'utf8');
 const html = fs.readFileSync(new URL('../mockups/operations-hub/index.html', import.meta.url), 'utf8');
@@ -67,13 +71,17 @@ assert.match(partialAssignmentCleanup, /assigned_skus<>total_skus[\s\S]*?assigne
 assert.match(dataService, /normalizedSource !== 'ably'[\s\S]*?save_operations_hub_seller_product_discount_draft_v2[\s\S]*?p_anchor_sku/, 'Smartstore and MakeShop product discounts must use the anchored atomic RPC');
 assert.match(dataService, /normalizedSource !== 'ably'[\s\S]*?operations_hub_matrix_cached[\s\S]*?saveSellerDiscountDraft/, 'Ably must retain the existing per-SKU fanout path');
 assert.match(html, /id="discount-editor-modal"[\s\S]*?id="discount-editor-amount"[\s\S]*?<b>원<\/b>[\s\S]*?value="M10"[\s\S]*?value="M15"[\s\S]*?value="M20"/, 'the matrix editor must expose Smartstore won input and MakeShop code choices');
-assert.match(html, /discount-price-math\.js[\s\S]*?data-service\.js[\s\S]*?app\.js/, 'discount inverse pricing must load before the application');
+assert.match(html, /discount-price-math\.js[\s\S]*?data-service\.js[\s\S]*?app\.js/, 'native discount preview math must load before the application');
 assert.match(html, /discount-editor-anchor-source[\s\S]*?discount-editor-anchor-price-label[\s\S]*?discount-editor-preview-label/, 'the editor must explain whether the tag target or current seller base is being preserved');
 assert.match(app, /prefix === 'ably' \? discountContent[\s\S]*?data-discount-edit/, 'only Smartstore and MakeShop discount cells may expose the direct edit button');
 assert.match(app, /matrixBody\.addEventListener\('mousedown'[\s\S]*?\[data-discount-edit\]/, 'discount edit buttons must not be swallowed by matrix drag selection');
 assert.match(app, /saveDiscountEditor[\s\S]*?saveSellerProductDiscountDrafts[\s\S]*?for \(const item of saved\.items\) applyLocalSellerPriceDraft/, 'the direct editor must persist and repaint every option result');
-assert.match(app, /loadPriceRuleAssignment\(\{sku:targetSku, source\}\)[\s\S]*?autoAdjustBase = Boolean\(assignment\)/, 'the discount editor must gate automatic base-price adjustment on an active price-rule assignment');
-assert.match(app, /discountEditorState\.autoAdjustBase[\s\S]*?grossBaseForTarget[\s\S]*?discountedBase/, 'the preview must separate tagged inverse pricing from untagged fixed-base discounting');
+assert.match(app, /loadPriceRuleAssignment\(\{sku:targetSku, source\}\)[\s\S]*?const autoAdjustBase = false/, 'manual discount editing must never enable inverse base-price adjustment');
+assert.match(app, /function updateDiscountEditorPreview[\s\S]*?discountedBase\?\.\(discountEditorState\.basePrice, terms\)[\s\S]*?판매가는/, 'the preview must keep the gross sale price fixed and show the changed customer price');
+assert.doesNotMatch(app.slice(app.indexOf('function updateDiscountEditorPreview'), app.indexOf('function closeDiscountEditor')), /grossBaseForTarget/, 'the active preview must not call inverse pricing');
+assert.match(splitTags, /tag_role text not null default 'price'[\s\S]*?discount_source_channel[\s\S]*?discount_rule_code/, 'atomic tags must store their price or seller-discount role');
+assert.match(splitTags, /calculate_operations_hub_price_rule_plan[\s\S]*?gross_price[\s\S]*?discounted_base_price[\s\S]*?discount_terms/, 'the rule plan must expose gross price and native discount results separately');
+assert.match(splitTags, /save_operations_hub_seller_rule_draft[\s\S]*?price_calculation_version[\s\S]*?3, 'rule_tags'/, 'tag-driven seller drafts must persist exact gross, discount, option, and final components');
 assert.match(app, /source === 'smartstore' \|\| source === 'makeshop'[\s\S]*?매트릭스 할인정보 열/, 'the drawer must route scoped discount changes to the matrix column');
 assert.match(app, /const priceDraft = product\?\.__sellerDrafts[\s\S]*?const savedDiscountTerms = priceDraft\?\.price_discount_terms_after/, 'the drawer must initialize its active price draft before reading editable discounts');
 assert.match(exportAdapter, /patchSmartstoreDiscounts[\s\S]*?'basic','BF','BG'[\s\S]*?'mobile','BH','BI'[\s\S]*?target_discount_terms/, 'Smartstore export must patch its original discount value and unit columns');

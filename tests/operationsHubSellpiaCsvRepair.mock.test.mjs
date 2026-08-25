@@ -17,7 +17,7 @@ assert.match(sellpiaParser, /csv\|tsv\|txt/, 'the Sellpia parser must recognize 
 assert.match(sellpiaParser, /readOptions\.raw = true/, 'plain-text Sellpia exports must disable SheetJS date coercion');
 assert.match(sellpiaParser, /XLSX\.read\(await file\.arrayBuffer\(\), readOptions\)/, 'the guarded read options must be passed to SheetJS');
 assert.match(dataService, /!\/\^\\d\+-\\d\+\$\/\.test\(sku\)/, 'Sellpia uploads must reject malformed SKU values before DB insert');
-assert.match(dataService, /operations-hub-sellpia-2026\.08\.20-v3/, 'the guarded Sellpia parser must publish a new parser version');
+assert.match(dataService, /operations-hub-sellpia-2026\.08\.25-v4/, 'the guarded Sellpia parser must publish the procurement-aware parser version');
 assert.doesNotMatch(dataService, /\.from\('operations_hub_matrix_live'\)/, 'interactive matrix reads must not hit the expensive live view');
 assert.match(dataService, /\.from\('operations_hub_matrix_cached'\)/, 'interactive matrix reads must use the non-blocking cache');
 assert.match(dataService, /directSellpiaSku[\s\S]*exactMatchSkus[\s\S]*query\.in\('sellpia_sku_code'/, 'exact Sellpia SKU searches must avoid a wide multi-column scan');

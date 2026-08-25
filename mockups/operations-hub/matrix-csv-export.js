@@ -85,7 +85,12 @@
       {key:'sellpia_product_name', label:'셀피아 상품명', value:row => row?.sellpia_product_name || row?.display_name},
       {key:'sellpia_option_name', label:'셀피아 옵션명'},
       {key:'sellpia_current_stock', label:'셀피아 현재재고', type:'number'},
-      {key:'sellpia_sale_price', label:'셀피아 판매가', type:'number'}
+      {key:'sellpia_sale_price', label:'셀피아 판매가', type:'number'},
+      {key:'sellpia_purchase_price', label:'셀피아 매입가', type:'number'},
+      {key:'sellpia_order_unit', label:'셀피아 발주단위', type:'number'},
+      {key:'sellpia_minimum_order_unit', label:'셀피아 최소발주단위', type:'number'},
+      {key:'actual_inbound_cost', label:'실입고가', type:'number'},
+      {key:'inbound_cost_formula_tag_name', label:'실입고가 수식태그'}
     ];
     if (all) columns.splice(2, 0, {key:'image_url', label:'이미지 URL', value:row => row?.sellpia_override_image_url || row?.image_url});
     if (all) columns.push(
