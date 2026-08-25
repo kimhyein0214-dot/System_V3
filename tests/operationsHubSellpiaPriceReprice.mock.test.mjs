@@ -25,7 +25,9 @@ assert.match(data, /systemChangeSource[\s\S]*?p_change_source:systemChangeSource
 assert.match(data, /previewPriceRuleSet[\s\S]*?시스템 기준가격을 먼저 저장해주세요/, 'price calculations must reject missing canonical base prices instead of treating them as zero');
 
 assert.match(app, /systemOperationalCell\(product, 'system_stock'[\s\S]*?systemOperationalCell\(product, 'system_base_price'/, 'the matrix must show editable system stock and price cells');
-assert.match(app, /원본 \$\{hasSource \? formatNullableNumber\(sourceValue\)/, 'each canonical value must keep its source comparison visible in the same cell');
+assert.match(app, /원본 미반영[\s\S]*?원본 갱신 있음[\s\S]*?원본과 다름[\s\S]*?원본과 일치/, 'canonical cells must expose source state without rendering the source number as the system value');
+assert.doesNotMatch(app, /<em>원본 \$\{hasSource \? formatNullableNumber\(sourceValue\)/, 'the matrix must not print raw source numbers inside canonical cells');
+assert.match(app, /원본 숫자는 자동 반영되지 않으며[\s\S]*?선택 셀 원본값 갱신/, 'canonical cell help must state that copying a source value is explicit only');
 assert.match(app, /refreshSelectedSystemValuesFromSource[\s\S]*?systemChangeSource:'source_accept'[\s\S]*?applySavedSellpiaChanges/, 'selected source values must save immediately to the system master and update the matrix');
 assert.match(app, /basePrice:product\.system_base_price/, 'price combinations must calculate from the canonical system base price');
 assert.doesNotMatch(app, /basePrice:product\??\.sellpia_sale_price/, 'price combinations must never calculate from the uploaded Sellpia price snapshot');
