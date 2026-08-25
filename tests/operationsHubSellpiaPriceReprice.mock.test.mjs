@@ -29,12 +29,17 @@ assert.match(app, /원본 미반영[\s\S]*?원본 갱신 있음[\s\S]*?원본과
 assert.doesNotMatch(app, /<em>원본 \$\{hasSource \? formatNullableNumber\(sourceValue\)/, 'the matrix must not print raw source numbers inside canonical cells');
 assert.match(app, /원본 숫자는 자동 반영되지 않으며[\s\S]*?선택 셀 원본값 갱신/, 'canonical cell help must state that copying a source value is explicit only');
 assert.match(app, /refreshSelectedSystemValuesFromSource[\s\S]*?systemChangeSource:'source_accept'[\s\S]*?applySavedSellpiaChanges/, 'selected source values must save immediately to the system master and update the matrix');
+assert.match(app, /selectedSourceRefreshTargets[\s\S]*?seller-edit\[data-source\]\[data-field-key\][\s\S]*?seller_price[\s\S]*?seller_discount/, 'selected source refresh must recognize seller stock, price component, and discount cells in addition to system cells');
+assert.match(app, /sellerEditor\.dataset\.baseline[\s\S]*?saveSellerValueDraft[\s\S]*?saveSellerProductDiscountDrafts[\s\S]*?saveSellerProductBaseDrafts[\s\S]*?saveSellerPriceDraft/, 'seller source refresh must restore the selected raw value through the matching seller draft workflow');
+assert.match(app, /saveSellerProductBaseDrafts\([\s\S]*?basePriceSource:'source'/, 'restoring a merged seller base-price cell must mark the restored group value as source-owned');
+assert.match(data, /saveSellerProductBaseDrafts\(\{source, productCode, targetBasePrice, basePriceSource = 'manual'\}\)[\s\S]*?basePriceSource:cleanText\(basePriceSource\)/, 'group base-price saves must accept an explicit source ownership marker while preserving manual edits by default');
 assert.match(app, /basePrice:product\.system_base_price/, 'price combinations must calculate from the canonical system base price');
 assert.doesNotMatch(app, /basePrice:product\??\.sellpia_sale_price/, 'price combinations must never calculate from the uploaded Sellpia price snapshot');
 assert.match(app, /계산 태그[\s\S]*?가격 조합/, 'user-facing pricing terminology must separate atomic calculation tags from ordered combinations');
 
 assert.match(html, /시스템 기준 · 셀피아 원본 비교[\s\S]*?>SKU<[\s\S]*?>상품명<[\s\S]*?>옵션명<[\s\S]*?>자사코드<[\s\S]*?기준재고[\s\S]*?기준가격/, 'the matrix header must expose separate Sellpia identities and canonical values');
 assert.match(html, /id="matrix-source-refresh-btn"[\s\S]*?원본값으로 갱신/, 'the work tools must expose selected-cell source refresh');
+assert.match(html, /id="matrix-source-refresh-btn"[\s\S]*?title="원본값을 가진 기준값 또는 판매처 셀을 선택해주세요\."/, 'the source-refresh action must explain that seller cells are supported');
 assert.match(csv, /시스템 기준재고[\s\S]*?셀피아 원본재고[\s\S]*?시스템 기준가격[\s\S]*?셀피아 원본 판매가/, 'CSV output must preserve both canonical and source comparison columns');
 assert.match(css, /sellpia-sku-col[\s\S]*?sellpia-name-col[\s\S]*?sellpia-option-name-col[\s\S]*?own-code-col[\s\S]*?system-master-cell/, 'separate Sellpia identities and canonical values must have dedicated frozen-cell styling');
 

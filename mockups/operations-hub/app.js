@@ -2483,26 +2483,86 @@ function selectedSourceRefreshTargets() {
     system_base_price:'sellpia_source_sale_price'
   };
   for (const cell of matrixBody.querySelectorAll('td.matrix-cell-selected')) {
-    const editor = cell.querySelector('.system-master-cell[data-field-key]');
     const row = cell.closest('tr[data-sku]');
-    if (!editor || !row) continue;
+    if (!row) continue;
     const sku = row.dataset.sku;
-    const fieldKey = editor.dataset.fieldKey;
-    const sourceField = sourceFields[fieldKey];
-    const key = `${sku}\u0000${fieldKey}`;
-    if (!sourceField || seen.has(key)) continue;
-    seen.add(key);
     const product = matrixRowsBySku.get(sku);
-    const sourceValue = product?.[sourceField];
-    const hasSource = sourceValue !== null && sourceValue !== undefined && sourceValue !== '' && Number.isFinite(Number(sourceValue));
-    targets.push({
-      sku,
-      field:editor.dataset.field || (fieldKey === 'system_stock' ? '시스템 기준재고' : '시스템 기준가격'),
-      fieldKey,
-      before:String(product?.[fieldKey] ?? ''),
-      after:hasSource ? String(sourceValue) : '',
-      hasSource
-    });
+    const systemEditor = cell.querySelector('.system-master-cell[data-field-key]');
+    if (systemEditor) {
+      const fieldKey = systemEditor.dataset.fieldKey;
+      const sourceField = sourceFields[fieldKey];
+      const key = `system\u0000${sku}\u0000${fieldKey}`;
+      if (!sourceField || seen.has(key)) continue;
+      seen.add(key);
+      const sourceValue = product?.[sourceField];
+      const hasSource = sourceValue !== null && sourceValue !== undefined && sourceValue !== '' && Number.isFinite(Number(sourceValue));
+      targets.push({
+        kind:'system',
+        sku,
+        field:systemEditor.dataset.field || (fieldKey === 'system_stock' ? '시스템 기준재고' : '시스템 기준가격'),
+        fieldKey,
+        before:String(product?.[fieldKey] ?? ''),
+        after:hasSource ? String(sourceValue) : '',
+        hasSource
+      });
+      continue;
+    }
+
+    const sellerEditor = cell.querySelector('.seller-edit[data-source][data-field-key]');
+    if (sellerEditor) {
+      const source = sellerEditor.dataset.source;
+      const fieldKey = sellerEditor.dataset.fieldKey;
+      const priceComponent = sellerEditor.dataset.priceComponent || '';
+      const productCode = String(sellerEditor.dataset.sellerProductCode || product?.[`${source}_product_code`] || '').trim();
+      const groupSize = Math.max(1, Number(sellerEditor.dataset.groupSize) || 1);
+      const keyScope = priceComponent === 'base' && groupSize > 1 && productCode ? productCode : sku;
+      const key = `seller\u0000${source}\u0000${fieldKey}\u0000${priceComponent}\u0000${keyScope}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      const sourceValue = sellerEditor.dataset.baseline;
+      const hasSource = sourceValue !== undefined && sourceValue !== '' && Number.isFinite(Number(sourceValue));
+      targets.push({
+        kind:fieldKey === 'sellpia_current_stock' ? 'seller_stock' : 'seller_price',
+        sku,
+        source,
+        productCode,
+        groupSize,
+        priceComponent,
+        field:sellerEditor.dataset.field || `${CHANNEL_LABELS[source] || source} 원본값`,
+        fieldKey,
+        before:String(sellerEditor.dataset.value ?? ''),
+        after:hasSource ? String(sourceValue) : '',
+        hasSource
+      });
+      continue;
+    }
+
+    const discountEditor = cell.querySelector('[data-discount-edit][data-source]');
+    if (discountEditor) {
+      const source = discountEditor.dataset.source;
+      const productCode = String(discountEditor.dataset.productCode || product?.[`${source}_product_code`] || '').trim();
+      const groupSize = Math.max(1, Number(cell.dataset.groupSize) || 1);
+      const keyScope = groupSize > 1 && productCode ? productCode : sku;
+      const key = `seller\u0000${source}\u0000discount\u0000${keyScope}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      const component = product?.__sellerPriceComponents?.[source] || {};
+      const sourceTerms = component.source_discount_terms ?? product?.[`${source}_discount_terms`] ?? [];
+      const draftTerms = component.draft_discount_terms;
+      targets.push({
+        kind:'seller_discount',
+        sku,
+        source,
+        productCode,
+        groupSize,
+        field:`${CHANNEL_LABELS[source] || source} 할인정보`,
+        fieldKey:'sellpia_sale_price',
+        before:JSON.stringify(Array.isArray(draftTerms) ? draftTerms : sourceTerms),
+        after:JSON.stringify(Array.isArray(sourceTerms) ? sourceTerms : []),
+        sourceTerms:Array.isArray(sourceTerms) ? sourceTerms : [],
+        hasSource:Boolean(productCode)
+      });
+    }
   }
   return targets;
 }
@@ -2513,10 +2573,10 @@ function updateSourceRefreshAction() {
   const available = targets.filter(target => target.hasSource).length;
   matrixSourceRefreshButton.disabled = sellpiaSaveInFlight || available === 0;
   matrixSourceRefreshButton.title = targets.length === 0
-    ? '기준재고 또는 기준가격 셀을 선택해주세요.'
+    ? '원본값을 가진 기준값 또는 판매처 셀을 선택해주세요.'
     : available === 0
-      ? `선택한 ${targets.length}개 셀에 셀피아 원본값이 없습니다.`
-      : `선택한 기준 셀 중 원본값이 있는 ${available}개를 시스템 기준값으로 저장합니다.`;
+      ? `선택한 ${targets.length}개 셀에 적용할 원본값이 없습니다.`
+      : `선택한 셀 중 원본값이 있는 ${available}개를 원본 상태로 저장합니다.`;
 }
 
 function paintMatrixCellSelection() {
@@ -2568,7 +2628,7 @@ async function refreshSelectedSystemValuesFromSource() {
   if (!matrixSourceRefreshButton || sellpiaSaveInFlight || !liveData?.saveSellpiaChanges) return;
   let targets = selectedSourceRefreshTargets();
   if (!targets.length) {
-    showToast('원본값을 적용할 기준재고 또는 기준가격 셀을 선택해주세요.');
+    showToast('원본값을 적용할 기준값 또는 판매처 셀을 선택해주세요.');
     return;
   }
   if (pendingChanges.length) {
@@ -2577,14 +2637,13 @@ async function refreshSelectedSystemValuesFromSource() {
       showToast('먼저 진행 중인 시스템 기준값 저장을 확인해주세요.');
       return;
     }
-    targets = targets.map(target => ({
-      ...target,
-      before:String(matrixRowsBySku.get(target.sku)?.[target.fieldKey] ?? '')
-    }));
+    targets = selectedSourceRefreshTargets();
   }
   const available = targets.filter(target => target.hasSource);
   const missingCount = targets.length - available.length;
-  const changes = available.filter(target => target.before === '' || Number(target.before) !== Number(target.after));
+  const changes = available.filter(target => target.kind === 'seller_discount'
+    ? target.before !== target.after
+    : target.before === '' || Number(target.before) !== Number(target.after));
   if (!changes.length) {
     const suffix = missingCount ? ` · 원본값 없음 ${missingCount}개` : '';
     showToast(`선택한 셀은 이미 원본값과 같습니다.${suffix}`);
@@ -2594,21 +2653,97 @@ async function refreshSelectedSystemValuesFromSource() {
   const originalLabel = label?.innerHTML || '선택 셀을<br>원본값으로 갱신';
   matrixSourceRefreshButton.disabled = true;
   if (label) label.textContent = '원본값 저장 중…';
+  let sellerSavedCount = 0;
   try {
-    const result = await liveData.saveSellpiaChanges(changes, createRequestId(), {
-      systemChangeSource:'source_accept',
-      systemMetadata:{ui:'matrix-source-refresh', selected_cell_count:targets.length}
-    });
-    applySavedSellpiaChanges(changes, result);
-    removeSavedCellState(changes);
+    const systemChanges = changes.filter(target => target.kind === 'system');
+    if (systemChanges.length) {
+      const result = await liveData.saveSellpiaChanges(systemChanges, createRequestId(), {
+        systemChangeSource:'source_accept',
+        systemMetadata:{ui:'matrix-source-refresh', selected_cell_count:targets.length}
+      });
+      applySavedSellpiaChanges(systemChanges, result);
+      removeSavedCellState(systemChanges);
+    }
+
+    for (const target of changes.filter(item => item.kind !== 'system')) {
+      const product = matrixRowsBySku.get(target.sku);
+      if (!product) continue;
+      if (target.kind === 'seller_stock') {
+        const result = await liveData.saveSellerValueDraft({
+          sku:target.sku,
+          source:target.source,
+          fieldKey:'sellpia_current_stock',
+          after:Number(target.after)
+        });
+        applyLocalSellerDraft(product, target.source, 'sellpia_current_stock', target.after, result);
+        sellerSavedCount += 1;
+        continue;
+      }
+
+      if (target.kind === 'seller_discount') {
+        const result = target.productCode && target.groupSize > 1 && liveData.saveSellerProductDiscountDrafts
+          ? await liveData.saveSellerProductDiscountDrafts({
+              source:target.source,
+              productCode:target.productCode,
+              anchorSku:target.sku,
+              discountTerms:target.sourceTerms,
+              ruleCode:null
+            })
+          : {items:[{
+              sku:target.sku,
+              result:await liveData.saveSellerDiscountDraft({
+                sku:target.sku,
+                source:target.source,
+                discountTerms:target.sourceTerms,
+                inputMode:'option',
+                optionPrice:product.__sellerPriceComponents?.[target.source]?.draft_option_price
+                  ?? product.__sellerPriceComponents?.[target.source]?.source_option_price
+                  ?? 0
+              })
+            }]};
+        for (const saved of result.items || []) applyLocalSellerPriceDraft(matrixRowsBySku.get(saved.sku), target.source, saved.result);
+        sellerSavedCount += Math.max(1, Number(result.count || result.items?.length || 1));
+        continue;
+      }
+
+      const component = product.__sellerPriceComponents?.[target.source] || {};
+      const currentBase = component.draft_base_price ?? component.source_base_price ?? product[`${target.source}_base_price`] ?? product[`${target.source}_price`];
+      const currentOption = component.draft_option_price ?? component.source_option_price ?? product[`${target.source}_option_price`] ?? 0;
+      if (target.priceComponent === 'base' && target.productCode && target.groupSize > 1 && liveData.saveSellerProductBaseDrafts) {
+        const result = await liveData.saveSellerProductBaseDrafts({
+          source:target.source,
+          productCode:target.productCode,
+          targetBasePrice:Number(target.after),
+          basePriceSource:'source'
+        });
+        for (const saved of result.items || []) applyLocalSellerPriceDraft(matrixRowsBySku.get(saved.sku), target.source, saved.result);
+        sellerSavedCount += Number(result.savedCount || result.items?.length || 1);
+        continue;
+      }
+      const result = await liveData.saveSellerPriceDraft({
+        sku:target.sku,
+        source:target.source,
+        targetBasePrice:target.priceComponent === 'base' ? Number(target.after) : Number(currentBase),
+        inputMode:target.priceComponent === 'final' ? 'final' : 'option',
+        targetFinalPrice:target.priceComponent === 'final' ? Number(target.after) : null,
+        optionPrice:target.priceComponent === 'option' ? Number(target.after) : Number(currentOption),
+        optionPriceSource:target.priceComponent === 'option' ? 'original' : (component.option_price_source || 'original'),
+        basePriceSource:target.priceComponent === 'base' ? 'source' : (component.base_price_source || 'source'),
+        priceRuleSetId:component.price_rule_set_id || null
+      });
+      applyLocalSellerPriceDraft(product, target.source, result);
+      sellerSavedCount += 1;
+    }
+    if (sellerSavedCount) renderLiveMatrixRows(matrixState.rows);
     const notes = [
       missingCount ? `원본값 없음 ${missingCount}개 제외` : '',
       available.length - changes.length ? `이미 동일 ${available.length - changes.length}개` : ''
     ].filter(Boolean);
-    showToast(`원본값 ${changes.length}개를 시스템 기준값으로 저장했습니다.${notes.length ? ` · ${notes.join(' · ')}` : ''}`);
+    showToast(`선택한 원본값 ${changes.length}개를 저장했습니다.${notes.length ? ` · ${notes.join(' · ')}` : ''}`);
     void loadLiveDashboardMetrics();
   } catch (error) {
-    console.error('system source refresh failed', error);
+    console.error('selected source refresh failed', error);
+    if (sellerSavedCount) renderLiveMatrixRows(matrixState.rows);
     showToast(`원본값 갱신 실패: ${error?.message || error}`);
   } finally {
     if (label) label.innerHTML = originalLabel;

@@ -904,7 +904,7 @@
     return {items, count:items.length, batchId, atomic:false};
   }
 
-  async function saveSellerProductBaseDrafts({source, productCode, targetBasePrice}) {
+  async function saveSellerProductBaseDrafts({source, productCode, targetBasePrice, basePriceSource = 'manual'}) {
     const normalizedSource = cleanText(source);
     const normalizedProductCode = cleanText(productCode);
     const sourceFields = {
@@ -942,7 +942,7 @@
           inputMode:'option',
           optionPrice,
           optionPriceSource:component.option_price_source || 'original',
-          basePriceSource:'manual',
+          basePriceSource:cleanText(basePriceSource) || 'manual',
           priceRuleSetId:component.price_rule_set_id || null,
           batchId
         });
