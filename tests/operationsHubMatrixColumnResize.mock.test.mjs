@@ -6,6 +6,8 @@ const html = fs.readFileSync(new URL('../mockups/operations-hub/index.html', imp
 const css = fs.readFileSync(new URL('../mockups/operations-hub/style.css', import.meta.url), 'utf8');
 
 assert.match(app, /MATRIX_COLUMN_WIDTHS_KEY = 'system-v3-matrix-column-widths-v1'/, 'column widths must persist in browser storage');
+assert.match(app, /if \(index === 1\) return 0/, 'the permanently hidden legacy selection column must not consume matrix width');
+assert.match(app, /const show = index === 1 \? false : index === 2 \|\| visible\.has\(index\)/, 'the hidden selection colgroup entry must not shift visible columns by one');
 assert.match(app, /matrix-column-resize-handle[\s\S]*?pointerdown[\s\S]*?pointermove[\s\S]*?pointerup/, 'header separators must support pointer dragging');
 assert.match(app, /pointermove[\s\S]*?currentX = event\.clientX[\s\S]*?moveMatrixColumnResizeGuide\(event\.clientX\)/, 'the selected boundary guide must follow the pointer while dragging');
 assert.match(app, /finishResize[\s\S]*?matrixZoom \/ 100[\s\S]*?startWidth \+ delta[\s\S]*?persist:true/, 'releasing the guide must commit the width correctly at every matrix zoom level');
