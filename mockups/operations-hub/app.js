@@ -131,7 +131,7 @@ const MATRIX_PRESETS_KEY = 'system-v3-matrix-presets-v1';
 const MATRIX_ACTIVE_PRESET_KEY = 'system-v3-matrix-active-preset';
 const DEFAULT_VIEW_OPTIONS = {
   channels:{smartstore:true, makeshop:true, ably:true},
-  showStatus:true,
+  showStatus:false,
   showCodes:true,
   showSellerNames:true,
   showInventory:true,
@@ -493,13 +493,12 @@ function formatLiveTime(value) {
 function viewColumnIndexes(view) {
   const visible = new Set([1,2,3,4,5,6,7,8,9,10,11,12]);
   const channelColumns = {
-    smartstore:{status:[13], codes:[14,15], names:[14,15], inventory:[16], price:[17,19,20], discount:[18]},
-    makeshop:{status:[21], codes:[22,23], names:[22,23], inventory:[24], price:[25,27,28], discount:[26]},
-    ably:{status:[29], codes:[30,31], names:[30,31], inventory:[32], price:[33,35,36], discount:[34]}
+    smartstore:{codes:[14,15], names:[14,15], inventory:[16], price:[17,19,20], discount:[18]},
+    makeshop:{codes:[22,23], names:[22,23], inventory:[24], price:[25,27,28], discount:[26]},
+    ably:{codes:[30,31], names:[30,31], inventory:[32], price:[33,35,36], discount:[34]}
   };
   Object.entries(channelColumns).forEach(([channel, groups]) => {
     if (!view.channels[channel]) return;
-    if (view.showStatus ?? view.showMapping ?? true) groups.status.forEach(index => visible.add(index));
     if (view.showCodes ?? view.showMapping ?? true) groups.codes.forEach(index => visible.add(index));
     if (view.showSellerNames ?? true) groups.names.forEach(index => visible.add(index));
     if (view.showInventory) groups.inventory.forEach(index => visible.add(index));
@@ -631,7 +630,7 @@ function mappingCodeButton(product, prefix, label, kind, value, state) {
   return `<button class="mapping-code-button ${state.key}" data-link-source="${prefix}" data-code-kind="${kind}" title="${prompt}">${display}</button>`;
 }
 
-function sellerIdentityCells(product, prefix, label, state, productMerge = null) {
+function sellerIdentityCells(product, prefix, label, state, productMerge = null, relationBadge = '') {
   const productName = String(product[`${prefix}_name`] || '').trim();
   const optionName = String(product[`${prefix}_option_name`] || '').trim();
   const productCode = String(product[`${prefix}_product_code`] || '').trim();
@@ -641,11 +640,11 @@ function sellerIdentityCells(product, prefix, label, state, productMerge = null)
   const optionTitle = [optionCode, optionName].filter(Boolean).join(' · ');
   const productRowspan = Math.max(1, Number(productMerge?.rowspan) || 1);
   const productCell = productMerge?.hidden ? '' : `<td class="seller-identity-cell seller-product-identity${productRowspan > 1 ? ' seller-identity-merged-cell' : ''}${!productCode && !productName ? ' data-gap' : ''}${isDraft ? ' draft' : ''}" data-channel="${prefix}"${productRowspan > 1 ? ` rowspan="${productRowspan}"` : ''} title="${escapeHtml(productTitle || '판매처 상품 정보 없음')}">
-      ${mappingCodeButton(product, prefix, label, 'product', productCode, state)}<em>${escapeHtml(productName || '상품명 없음')}${isDraft ? '<i>초안</i>' : ''}</em>
+      ${mappingCodeButton(product, prefix, label, 'product', productCode, state)}<em class="${productName ? '' : 'seller-name-missing'}">${escapeHtml(productName || '상품명 없음')}${isDraft ? '<i>초안</i>' : ''}</em>
     </td>`;
   return `${productCell}
     <td class="seller-identity-cell seller-option-identity${!optionCode && !optionName ? ' data-gap' : ''}" data-channel="${prefix}" title="${escapeHtml(optionTitle || '판매처 옵션 정보 없음')}">
-      ${mappingCodeButton(product, prefix, label, 'option', optionCode, state)}<em>${escapeHtml(optionName || '옵션명 없음')}</em>
+      ${mappingCodeButton(product, prefix, label, 'option', optionCode, state)}<em class="${optionName ? '' : 'seller-name-missing'}">${escapeHtml(optionName || '옵션명 없음')}</em>${relationBadge}
     </td>`;
 }
 
@@ -732,14 +731,14 @@ function channelInventoryCells(product, prefix, label, baseMerge = null, identit
   const mergeHidden = Boolean(baseMerge?.hidden);
   const mergeRowspan = Math.max(1, Number(baseMerge?.rowspan) || 1);
   const mergeAttributes = mergeRowspan > 1
-    ? ` rowspan="${mergeRowspan}" class="seller-base-merged-cell" data-seller-product-code="${escapeHtml(baseMerge.productCode || productCode)}" data-group-size="${mergeRowspan}"`
-    : '';
+    ? ` rowspan="${mergeRowspan}" class="seller-base-cell seller-base-merged-cell" data-seller-product-code="${escapeHtml(baseMerge.productCode || productCode)}" data-group-size="${mergeRowspan}"`
+    : ' class="seller-base-cell"';
   const mergeTitle = mergeRowspan > 1 ? ` · 같은 상품 ${mergeRowspan}개 옵션 공통 판매가` : '';
   const baseCell = mergeHidden
     ? ''
     : noPrice
       ? `<td class="data-gap${mergeRowspan > 1 ? ' seller-base-merged-cell' : ''}" data-channel="${prefix}"${mergeRowspan > 1 ? ` rowspan="${mergeRowspan}"` : ''}>-</td>`
-      : `<td data-channel="${prefix}"${mergeAttributes}><button class="editable-cell seller-edit price-layer-cell price-component-base${draftClass(priceDraft)}" data-source="${prefix}" data-field-key="sellpia_sale_price" data-price-component="base" data-field="${label} 판매가" data-value="${escapeHtml(effectiveBasePrice)}" data-baseline="${escapeHtml(basePrice)}" data-option-price="${escapeHtml(effectiveOptionPrice)}" data-value-type="number" data-change-id="${priceDraft?.change_id || ''}" data-draft-status="${priceDraft?.status || ''}" data-seller-product-code="${escapeHtml(baseMerge?.productCode || productCode)}" data-group-size="${mergeRowspan}" title="${escapeHtml(priceRuleName ? `가격규칙 ${priceRuleName}` : '가격규칙 없음')} · ${escapeHtml(nativeDiscountSummary(discountTerms))} · 할인 적용 판매가 ${formatNullableNumber(effectiveDiscountedBasePrice)}${mergeTitle}">${componentLayer(basePrice, effectiveBasePrice)}${priceRuleSummary}</button></td>`;
+      : `<td data-channel="${prefix}"${mergeAttributes}><button class="editable-cell seller-edit price-layer-cell price-component-base${draftClass(priceDraft)}" data-source="${prefix}" data-field-key="sellpia_sale_price" data-price-component="base" data-field="${label} 판매가" data-value="${escapeHtml(effectiveBasePrice)}" data-baseline="${escapeHtml(basePrice)}" data-option-price="${escapeHtml(effectiveOptionPrice)}" data-value-type="number" data-change-id="${priceDraft?.change_id || ''}" data-draft-status="${priceDraft?.status || ''}" data-seller-product-code="${escapeHtml(baseMerge?.productCode || productCode)}" data-group-size="${mergeRowspan}" title="${escapeHtml(priceRuleName ? `가격규칙 ${priceRuleName}` : '가격규칙 없음')} · ${escapeHtml(nativeDiscountSummary(discountTerms))} · 할인 적용 판매가 ${formatNullableNumber(effectiveDiscountedBasePrice)}${mergeTitle}">${componentLayer(basePrice, effectiveBasePrice)}${priceRuleSummary}</button><button type="button" class="price-edit-trigger" data-price-edit aria-label="${label} 판매가 수정">수정</button></td>`;
   const discountContent = `<b>${escapeHtml(discountView.summary)}</b><em>${discountView.hasDiscount ? `적용가 ${formatNullableNumber(effectiveDiscountedBasePrice)}원` : '할인 없음'}</em>`;
   const discountCell = mergeHidden
     ? ''
@@ -755,7 +754,7 @@ function channelInventoryCells(product, prefix, label, baseMerge = null, identit
   const finalCell = noPrice
     ? `<td class="data-gap" data-channel="${prefix}">-</td>`
     : `<td data-channel="${prefix}"><button class="editable-cell seller-edit price-hover-target price-layer-cell price-component-final${priceDiff && !priceDraft ? ' diff' : ''}${draftClass(priceDraft)}" data-source="${prefix}" data-field-key="sellpia_sale_price" data-price-component="final" data-field="${label} 최종구매가" data-value="${escapeHtml(effectiveFinalPrice)}" data-baseline="${escapeHtml(finalPrice)}" data-option-price="${escapeHtml(effectiveOptionPrice)}" data-value-type="number" data-change-id="${priceDraft?.change_id || ''}" data-draft-status="${priceDraft?.status || ''}" tabindex="0" data-price-source="${prefix}" data-price-label="${label}" data-original-price="${escapeHtml(finalPrice)}" data-policy-price="${escapeHtml(policyPrice ?? '')}" data-policy-active="${policyActive ? 'true' : 'false'}" data-policy-name="${escapeHtml(policyName)}" data-draft-price="${escapeHtml(effectiveFinalPrice ?? '')}" data-base-price="${escapeHtml(sellpiaPrice ?? '')}" data-price-updated="${escapeHtml(product[`${prefix}_inventory_at`] || '')}" title="${priceDraft ? `반영 예정 ${formatNullableNumber(effectiveFinalPrice)} · 원본 ${formatNullableNumber(finalPrice)}` : policyActive ? `원본 ${formatNullableNumber(finalPrice)} · 수식 계산 ${formatNullableNumber(policyPrice)}` : '수정 가능한 판매처 최종구매가'}">${finalLayers}</button></td>`;
-  return `<td data-channel="${prefix}"${title}><span class="matrix-status ${state.key}">${state.label}</span>${relationBadge}</td>${sellerIdentityCells(product, prefix, label, state, identityMerge)}${stockCell}${baseCell}${discountCell}${optionCell}${finalCell}`;
+  return `<td data-channel="${prefix}"${title}><span class="matrix-status ${state.key}">${state.label}</span></td>${sellerIdentityCells(product, prefix, label, state, identityMerge, relationBadge)}${stockCell}${baseCell}${discountCell}${optionCell}${finalCell}`;
 }
 
 function sellpiaProductGroupKey(product) {
@@ -3073,7 +3072,6 @@ function fillViewSettingsForm(view = activeView) {
   document.getElementById('preset-channel-smartstore').checked = view.channels.smartstore;
   document.getElementById('preset-channel-makeshop').checked = view.channels.makeshop;
   document.getElementById('preset-channel-ably').checked = view.channels.ably;
-  document.getElementById('preset-show-status').checked = view.showStatus ?? view.showMapping ?? true;
   document.getElementById('preset-show-codes').checked = view.showCodes ?? view.showMapping ?? true;
   document.getElementById('preset-show-seller-names').checked = view.showSellerNames ?? true;
   document.getElementById('preset-show-inventory').checked = view.showInventory;
@@ -3098,7 +3096,7 @@ function readViewSettingsForm() {
       makeshop:document.getElementById('preset-channel-makeshop').checked,
       ably:document.getElementById('preset-channel-ably').checked
     },
-    showStatus:document.getElementById('preset-show-status').checked,
+    showStatus:false,
     showCodes:document.getElementById('preset-show-codes').checked,
     showSellerNames:document.getElementById('preset-show-seller-names').checked,
     showInventory:document.getElementById('preset-show-inventory').checked,
@@ -3352,6 +3350,12 @@ document.getElementById('advanced-filter-chips').addEventListener('click', event
 document.getElementById('advanced-filter-clear').addEventListener('click', () => setAdvancedFilter({logic:'and', conditions:[]}));
 
 matrixBody.addEventListener('click', event => {
+  const priceEditButton = event.target.closest('[data-price-edit]');
+  if (priceEditButton) {
+    const editable = priceEditButton.closest('td')?.querySelector('.price-component-base');
+    if (editable) openMatrixInlineEditor(editable);
+    return;
+  }
   const inboundCostButton = event.target.closest('[data-inbound-cost-edit]');
   if (inboundCostButton) {
     openInboundCostModal(matrixRowsBySku.get(inboundCostButton.dataset.sku));
@@ -3398,15 +3402,8 @@ matrixBody.addEventListener('focusout', event => {
   if (event.target.closest('.price-hover-target')) scheduleHidePricePopover();
 });
 
-matrixBody.addEventListener('dblclick', event => {
-  if (event.target.closest('.mapping-code-button,.row-check,[data-discount-edit],[data-inbound-cost-edit]')) return;
-  const tableCell = event.target.closest('td');
-  const cell = event.target.closest('.editable-cell') || tableCell?.querySelector('.sellpia-edit');
-  if (!cell) {
-    const row = event.target.closest('tr[data-sku]');
-    if (row) openProductDrawer(row);
-    return;
-  }
+function openMatrixInlineEditor(cell) {
+  if (!cell) return;
   if (cell.querySelector('input')) return;
   const before = cell.dataset.value ?? cell.textContent.trim();
   const beforeHtml = cell.innerHTML;
@@ -3506,6 +3503,18 @@ matrixBody.addEventListener('dblclick', event => {
     if (keyEvent.key === 'Escape') finish(false);
   });
   input.addEventListener('blur', () => finish(true));
+}
+
+matrixBody.addEventListener('dblclick', event => {
+  if (event.target.closest('.mapping-code-button,.row-check,[data-discount-edit],[data-price-edit],[data-inbound-cost-edit]')) return;
+  const tableCell = event.target.closest('td');
+  const cell = event.target.closest('.editable-cell') || tableCell?.querySelector('.sellpia-edit');
+  if (!cell) {
+    const row = event.target.closest('tr[data-sku]');
+    if (row) openProductDrawer(row);
+    return;
+  }
+  openMatrixInlineEditor(cell);
 });
 
 ['dragenter','dragover'].forEach(type => matrixBody.addEventListener(type, event => {

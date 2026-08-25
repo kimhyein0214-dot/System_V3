@@ -74,7 +74,9 @@ assert.match(dataSource, /`sellpia\/\$\{safeSku\}\.jpg`[\s\S]*?upsert:true/, "dr
 assert.match(editMigration, /operations_hub_sellpia_overrides[\s\S]*?operations_hub_change_queue[\s\S]*?operations_hub_dashboard_metrics/, "Sellpia edits, seller outbox, and live dashboard metrics must persist in Supabase");
 assert.match(css, /--thumb-width:84px;--thumb-height:63px[\s\S]*?object-fit:contain/, "matrix thumbnails must be larger and show the complete image without cropping");
 assert.match(html, /스마트스토어[\s\S]*?상품명 \/ 옵션명[\s\S]*?메이크샵[\s\S]*?에이블리/, "every seller group must expose product and option names for verification");
-assert.match(html, /id="preset-show-status"[\s\S]*?id="preset-show-codes"[\s\S]*?id="preset-show-seller-names"[\s\S]*?id="preset-image-size"/, "view settings must independently control status, codes, seller names, and image size");
+assert.doesNotMatch(html, /id="preset-show-status"/, "seller connection labels must not return through view settings");
+assert.doesNotMatch(source.slice(source.indexOf('function viewColumnIndexes'), source.indexOf('function indexMatrixBodyColumns')), /groups\.status/, "seller connection-status columns must stay hidden in every matrix preset");
+assert.match(html, /id="preset-show-codes"[\s\S]*?id="preset-show-seller-names"[\s\S]*?id="preset-image-size"/, "view settings must still independently control codes, seller names, and image size");
 assert.doesNotMatch(source, /sellpiaEditor\('sellpia_product_name'/, "Sellpia product names must not be editable inline in the matrix");
 assert.doesNotMatch(source, /sellpiaEditor\('sellpia_option_name'/, "Sellpia option names must not be editable inline in the matrix");
 assert.match(source, /sellpiaEditor\('sellpia_own_code'[\s\S]*?systemOperationalCell\(product, 'system_stock'[\s\S]*?systemOperationalCell\(product, 'system_base_price'/, "own code plus system-owned stock and base price must remain inline editable");

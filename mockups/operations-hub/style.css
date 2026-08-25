@@ -346,3 +346,12 @@ body.matrix-column-resizing,body.matrix-column-resizing *{cursor:col-resize!impo
 .matrix-table:not(.sellpia-unfrozen) .sellpia-price-col{left:calc(var(--matrix-col-1-width) + var(--matrix-col-2-width) + var(--matrix-col-3-width) + var(--matrix-col-4-width) + var(--matrix-col-5-width) + var(--matrix-col-6-width) + var(--matrix-col-7-width))}
 .matrix-table:not(.sellpia-unfrozen) .sellpia-group{left:calc(var(--matrix-col-1-width) + var(--matrix-col-2-width));width:calc(var(--matrix-col-3-width) + var(--matrix-col-4-width) + var(--matrix-col-5-width) + var(--matrix-col-6-width) + var(--matrix-col-7-width) + var(--matrix-col-8-width) + var(--matrix-col-9-width) + var(--matrix-col-10-width) + var(--matrix-col-11-width) + var(--matrix-col-12-width));min-width:0;max-width:none}
 .matrix-table td[data-matrix-column] .sellpia-text-cell span,.matrix-table td[data-matrix-column].sellpia-text-cell span,.matrix-table td[data-matrix-column] .mapping-code-button,.matrix-table td[data-matrix-column].seller-identity-cell>em,.matrix-table td[data-matrix-column].option-cell b,.matrix-table td[data-matrix-column].option-cell em,.matrix-table td[data-matrix-column].product-cell b,.matrix-table td[data-matrix-column].product-cell em{max-width:calc(var(--matrix-cell-width) - 16px)}
+
+/* Missing seller names are secondary; base-price editing appears on intent. */
+.matrix-table .seller-identity-cell>em.seller-name-missing{color:#a0a9b5;font-weight:600}
+.matrix-table td.seller-base-cell{position:relative;padding:0!important}
+.matrix-table td.seller-base-cell>.price-component-base{width:100%;min-height:52px;padding-right:38px}
+.price-edit-trigger{position:absolute;right:5px;top:50%;transform:translateY(-50%);opacity:0;pointer-events:none;border:1px solid #b8c8dc;border-radius:4px;background:#fff;padding:3px 5px;color:#315a8e;font-size:9px;font-weight:900;cursor:pointer;transition:opacity .12s,background .12s}
+.matrix-table td.seller-base-cell:hover>.price-edit-trigger,.matrix-table td.seller-base-cell:focus-within>.price-edit-trigger,.price-edit-trigger:focus-visible{opacity:1;pointer-events:auto}
+.price-edit-trigger:hover,.price-edit-trigger:focus-visible{border-color:#3b82f6;background:#eff6ff;outline:0}
+.matrix-table td.seller-base-cell:has(.inline-editor)>.price-edit-trigger{opacity:0;pointer-events:none}
