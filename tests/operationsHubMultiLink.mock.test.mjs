@@ -11,6 +11,7 @@ const partialRefreshFix = fs.readFileSync(new URL("../supabase/migrations/202608
 const inventoryDraftMigration = fs.readFileSync(new URL("../supabase/migrations/20260818045443_operations_hub_bundle_inventory_drafts.sql", import.meta.url), "utf8");
 const disconnectMigration = fs.readFileSync(new URL("../supabase/migrations/20260821200000_disconnect_legacy_listing_component.sql", import.meta.url), "utf8");
 const pageFirstGraphMigration = fs.readFileSync(new URL("../supabase/migrations/20260823082547_optimize_operations_hub_listing_graph_page_first.sql", import.meta.url), "utf8");
+const exactGraphMigration = fs.readFileSync(new URL("../supabase/migrations/20260825054226_operations_hub_exact_listing_graph.sql", import.meta.url), "utf8");
 
 assert.match(migration, /operations_hub_seller_listings[\s\S]*operations_hub_listing_components[\s\S]*component_qty integer[\s\S]*check \(component_qty > 0\)/, "bundle graph must have durable listing and positive-quantity component records");
 assert.match(migration, /operations_hub_listing_component_projection[\s\S]*explicit_components[\s\S]*legacy_components/, "explicit graph must retain current 1:1 mappings through a compatibility projection");
@@ -39,7 +40,11 @@ assert.match(data, /removeListingComponent[\s\S]*disconnect_operations_hub_legac
 assert.match(app, /data-remove-component[\s\S]*removeListingComponent\(\{componentId:card\.dataset\.componentId \|\| null/, "the multi-link editor must let operators remove inferred as well as explicit components");
 assert.match(app, /data-drawer-component-remove[\s\S]*removeListingComponent\(\{componentId:component\.dataset\.componentId \|\| null/, "the product drawer must expose the same inferred-component removal action");
 assert.match(html, /id="listing-link-modal"[\s\S]*id="listing-link-components"[\s\S]*id="listing-link-add-toggle"[\s\S]*\+ SKU 추가 연결/, "matrix code clicks must expose a focused listing link manager with current components and an add action");
-assert.match(app, /loadListingLinkManager[\s\S]*loadListingGraph[\s\S]*openListingLinkManager/, "the focused manager must load the exact seller listing graph before it is opened from a matrix code cell");
+assert.match(data, /loadListingConnection[\s\S]*get_operations_hub_listing_graph/, "the data adapter must expose a focused exact-listing read");
+assert.match(app, /loadListingLinkManager[\s\S]*loadListingConnection[\s\S]*openListingLinkManager/, "the focused manager must use the exact seller listing read before it is opened from a matrix code cell");
+assert.match(exactGraphMigration, /get_operations_hub_listing_graph[\s\S]*explicit_listing as materialized[\s\S]*operations_hub_listing_legacy_cache[\s\S]*to_jsonb\(exact_graph\)/, "focused link management must filter one exact listing before component enrichment");
+assert.doesNotMatch(exactGraphMigration, /sku_listing_counts|listing_spread|classified as materialized/, "the exact listing read must not run the catalog-wide relation classifier");
+assert.match(exactGraphMigration, /security invoker[\s\S]*revoke all[\s\S]*grant execute/i, "the exact listing RPC must preserve invoker permissions");
 assert.match(app, /data-link-manager-remove[\s\S]*removeListingComponent/, "the focused manager must disconnect a selected component row");
 assert.match(app, /listing-link-add-form[\s\S]*saveListingComponent/, "the focused manager must add another SKU to the selected seller listing");
 assert.doesNotMatch(pageFirstGraphMigration, /from public\.operations_hub_listing_graph_live/i, "listing pagination must not materialize the fully enriched compatibility graph");

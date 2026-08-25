@@ -283,11 +283,11 @@ function formatLiveTime(value) {
 }
 
 function viewColumnIndexes(view) {
-  const visible = new Set([1,2,3,4,5,6,7,8,9,10]);
+  const visible = new Set([1,2,3,4,5,6,7,8,9,10,11,12]);
   const channelColumns = {
-    smartstore:{status:[11], codes:[12,13], names:[12,13], inventory:[14], price:[15,17,18], discount:[16]},
-    makeshop:{status:[19], codes:[20,21], names:[20,21], inventory:[22], price:[23,25,26], discount:[24]},
-    ably:{status:[27], codes:[28,29], names:[28,29], inventory:[30], price:[31,33,34], discount:[32]}
+    smartstore:{status:[13], codes:[14,15], names:[14,15], inventory:[16], price:[17,19,20], discount:[18]},
+    makeshop:{status:[21], codes:[22,23], names:[22,23], inventory:[24], price:[25,27,28], discount:[26]},
+    ably:{status:[29], codes:[30,31], names:[30,31], inventory:[32], price:[33,35,36], discount:[34]}
   };
   Object.entries(channelColumns).forEach(([channel, groups]) => {
     if (!view.channels[channel]) return;
@@ -298,8 +298,8 @@ function viewColumnIndexes(view) {
     if (view.showPrice) groups.price.forEach(index => visible.add(index));
     if (view.showDiscount ?? view.showPrice ?? true) groups.discount.forEach(index => visible.add(index));
   });
-  if (view.showAttributes) [35,36,37].forEach(index => visible.add(index));
-  if (view.showSync) visible.add(38);
+  if (view.showAttributes) [37,38,39].forEach(index => visible.add(index));
+  if (view.showSync) visible.add(40);
   return visible;
 }
 
@@ -328,17 +328,17 @@ function applyColumnVisibility(view = activeView) {
   const visible = viewColumnIndexes(view);
   indexMatrixBodyColumns();
   const columnHeaders = matrixTable.querySelectorAll('.column-row th');
-  for (let index = 3; index <= 38; index += 1) {
+  for (let index = 3; index <= 40; index += 1) {
     const show = visible.has(index);
     const header = columnHeaders[index - 3];
     if (header) header.hidden = !show;
     matrixBody.querySelectorAll(`[data-matrix-column="${index}"]`).forEach(cell => { cell.hidden = !show; });
   }
   const groupConfig = [
-    ['.smart-group', [11,12,13,14,15,16,17,18]],
-    ['.make-group', [19,20,21,22,23,24,25,26]],
-    ['.ably-group', [27,28,29,30,31,32,33,34]],
-    ['.ops-group', [35,36,37,38]]
+    ['.smart-group', [13,14,15,16,17,18,19,20]],
+    ['.make-group', [21,22,23,24,25,26,27,28]],
+    ['.ably-group', [29,30,31,32,33,34,35,36]],
+    ['.ops-group', [37,38,39,40]]
   ];
   groupConfig.forEach(([selector, indexes]) => {
     const header = matrixTable.querySelector(selector);
@@ -549,7 +549,7 @@ function sellpiaProductGroupKey(product) {
 
 function buildProductIdentityMerges(products) {
   const metadata = new Map();
-  const sources = ['sellpia', 'smartstore', 'makeshop', 'ably'];
+  const sources = ['smartstore', 'makeshop', 'ably'];
   for (const source of sources) {
     let index = 0;
     while (index < products.length) {
@@ -559,22 +559,18 @@ function buildProductIdentityMerges(products) {
         continue;
       }
       const sellpiaGroup = sellpiaProductGroupKey(first);
-      const productCode = source === 'sellpia' ? sellpiaGroup : String(first?.[`${source}_product_code`] || '').trim();
-      const productName = source === 'sellpia'
-        ? String(first?.sellpia_product_name || first?.display_name || '').trim()
-        : String(first?.[`${source}_name`] || '').trim();
-      const draftState = source === 'sellpia' ? '' : String(Boolean(first?.[`${source}_name_is_draft`]));
+      const productCode = String(first?.[`${source}_product_code`] || '').trim();
+      const productName = String(first?.[`${source}_name`] || '').trim();
+      const draftState = String(Boolean(first?.[`${source}_name_is_draft`]));
       const signature = JSON.stringify([sellpiaGroup, productCode, productName, draftState]);
       let end = index + 1;
       while (productCode && end < products.length) {
         const candidate = products[end];
         if (candidate?.__codeListPlaceholder) break;
         const candidateGroup = sellpiaProductGroupKey(candidate);
-        const candidateCode = source === 'sellpia' ? candidateGroup : String(candidate?.[`${source}_product_code`] || '').trim();
-        const candidateName = source === 'sellpia'
-          ? String(candidate?.sellpia_product_name || candidate?.display_name || '').trim()
-          : String(candidate?.[`${source}_name`] || '').trim();
-        const candidateDraft = source === 'sellpia' ? '' : String(Boolean(candidate?.[`${source}_name_is_draft`]));
+        const candidateCode = String(candidate?.[`${source}_product_code`] || '').trim();
+        const candidateName = String(candidate?.[`${source}_name`] || '').trim();
+        const candidateDraft = String(Boolean(candidate?.[`${source}_name_is_draft`]));
         if (JSON.stringify([candidateGroup, candidateCode, candidateName, candidateDraft]) !== signature) break;
         end += 1;
       }
@@ -658,8 +654,10 @@ function renderCodeListPlaceholderRow(product) {
   return `<tr class="code-list-placeholder-row" data-input-row="${rowNo}" data-status="${state}">
     <td class="sticky-col select-col" aria-hidden="true"></td>
     <td class="sticky-col image-col"><span class="code-list-placeholder-symbol">!</span></td>
-    <td class="sticky-col sellpia-product-col product-cell"><b>엑셀 ${rowNo}행</b><em>${reason}</em></td>
-    <td class="sticky-col sellpia-option-col code-list-sku-cell"><b title="${inputCode}">${inputCode}</b><em>${sourceLabel}</em></td>
+    <td class="sticky-col sellpia-sku-col code-list-sku-cell"><b title="${inputCode}">${inputCode}</b></td>
+    <td class="sticky-col sellpia-name-col sellpia-text-cell"><span>엑셀 ${rowNo}행 · ${reason}</span></td>
+    <td class="sticky-col sellpia-option-name-col sellpia-text-cell"><span>${sourceLabel}</span></td>
+    <td class="sticky-col own-code-col data-gap">-</td>
     <td class="sticky-col sellpia-stock-col data-gap">-</td><td class="sticky-col sellpia-price-col data-gap">-</td><td class="data-gap">-</td><td class="data-gap">-</td><td class="data-gap">-</td><td class="data-gap">-</td>
     ${codeListPlaceholderSellerCells(codeRow, 'smartstore')}
     ${codeListPlaceholderSellerCells(codeRow, 'makeshop')}
@@ -672,7 +670,7 @@ function renderLiveMatrixRows(products) {
   clearMatrixCellSelection();
   matrixRowsBySku.clear();
   if (!products.length) {
-    matrixBody.innerHTML = '<tr class="matrix-empty-row"><td colspan="38"><b>검색 결과가 없습니다.</b><span>SKU 또는 자사코드를 다시 확인해주세요.</span></td></tr>';
+    matrixBody.innerHTML = '<tr class="matrix-empty-row"><td colspan="40"><b>검색 결과가 없습니다.</b><span>SKU 또는 자사코드를 다시 확인해주세요.</span></td></tr>';
     return;
   }
   const sellerBaseMerges = buildSellerBaseMerges(products);
@@ -702,15 +700,15 @@ function renderLiveMatrixRows(products) {
     const profile = product.__profile || {};
     const tagSummary = [profile.shape, profile.tag_summary].filter(Boolean).join(' · ');
     const productGroup = sellpiaProductGroupKey(product);
-    const sellpiaProductMerge = productIdentityMerges.get(`${rowIndex}|sellpia`) || {rowspan:1, hidden:false};
-    const sellpiaProductCell = sellpiaProductMerge.hidden ? '' : `<td class="sticky-col sellpia-product-col product-cell${sellpiaProductMerge.rowspan > 1 ? ' product-identity-merged-cell' : ''}"${sellpiaProductMerge.rowspan > 1 ? ` rowspan="${sellpiaProductMerge.rowspan}"` : ''}><b title="${escapeHtml(productGroup)}">${escapeHtml(productGroup || '-')}</b><em title="${displayName}">${displayName}</em></td>`;
     const groupStart = !previousProductGroup || productGroup !== previousProductGroup;
     previousProductGroup = productGroup;
     return `<tr class="${groupStart ? 'product-group-start' : 'product-group-continuation'}" data-sku="${sku}" data-product-group="${escapeHtml(productGroup)}" data-own-code="${ownCode}" data-image="${imageUrl}" data-status="${overallState}"${inputRow ? ` data-input-row="${inputRow}"` : ''}>
       <td class="sticky-col select-col" aria-hidden="true"></td>
       <td class="sticky-col image-col image-drop-cell" data-image-drop="${sku}" title="이미지를 이 셀에 놓으면 ${sku}.jpg로 저장됩니다.">${matrixImage(product)}<span class="image-drop-hint">DROP</span></td>
-      ${sellpiaProductCell}
-      <td class="sticky-col sellpia-option-col option-cell"><b>${skuMarkup}</b><em title="${optionName}">${optionName}</em><small>자사코드 ${sellpiaEditor('sellpia_own_code', '셀피아 자사코드', rawOwnCode, {className:'sellpia-text-compact'})}</small></td>
+      <td class="sticky-col sellpia-sku-col sellpia-code-cell"><b>${skuMarkup}</b></td>
+      <td class="sticky-col sellpia-name-col sellpia-text-cell"><span title="${displayName}">${displayName}</span></td>
+      <td class="sticky-col sellpia-option-name-col sellpia-text-cell"><span title="${optionName}">${optionName}</span></td>
+      <td class="sticky-col own-code-col">${sellpiaEditor('sellpia_own_code', '셀피아 자사코드', rawOwnCode, {className:'sellpia-text-compact'})}</td>
       <td class="sticky-col sellpia-stock-col number-cell">${systemOperationalCell(product, 'system_stock', '시스템 기준재고', sellpiaSourceStock)}</td>
       <td class="sticky-col sellpia-price-col number-cell">${systemOperationalCell(product, 'system_base_price', '시스템 기준가격', sellpiaSourcePrice)}</td>
       <td class="number-cell${product.sellpia_purchase_price === null || product.sellpia_purchase_price === undefined ? ' data-gap' : ''}">${formatNullableNumber(product.sellpia_purchase_price)}</td>
@@ -1779,13 +1777,12 @@ async function loadListingLinkManager({allowMatrixFallback = false} = {}) {
     return;
   }
   try {
-    const result = await liveData.loadListingGraph({source:listingLinkState.source, relationType:'all', search:listingLinkState.productCode, page:1, pageSize:100});
+    const row = await liveData.loadListingConnection({source:listingLinkState.source, productCode:listingLinkState.productCode, optionCode:listingLinkState.optionCode});
     if (requestId !== listingLinkState.requestId) return;
-    const wanted = `${listingLinkState.source}|${listingLinkState.productCode}|${listingLinkState.optionCode}`;
-    let row = (result.rows || []).find(item => listingLinkIdentity(item) === wanted) || null;
-    if (!row && allowMatrixFallback) {
+    let resolvedRow = row || null;
+    if (!resolvedRow && allowMatrixFallback) {
       const product = listingLinkState.matrixProduct || {};
-      row = {
+      resolvedRow = {
         source_channel:listingLinkState.source,
         product_code:listingLinkState.productCode,
         option_code:listingLinkState.optionCode,
@@ -1801,8 +1798,8 @@ async function loadListingLinkManager({allowMatrixFallback = false} = {}) {
         }]
       };
     }
-    if (!row) {
-      row = {
+    if (!resolvedRow) {
+      resolvedRow = {
         source_channel:listingLinkState.source,
         product_code:listingLinkState.productCode,
         option_code:listingLinkState.optionCode,
@@ -1810,7 +1807,7 @@ async function loadListingLinkManager({allowMatrixFallback = false} = {}) {
         components:[]
       };
     }
-    renderListingLinkManager(row);
+    renderListingLinkManager(resolvedRow);
   } catch (error) {
     if (requestId !== listingLinkState.requestId) return;
     console.error('listing link manager load failed', error);

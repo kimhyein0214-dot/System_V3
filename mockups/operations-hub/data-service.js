@@ -563,6 +563,16 @@
     return {savedCount, queuedCount, productCount:grouped.size, batchId, repricedRows, systemRows, repriceRefreshError};
   }
 
+  async function loadListingConnection({source, productCode, optionCode = ''} = {}) {
+    const {data, error} = await db.rpc('get_operations_hub_listing_graph', {
+      p_source:cleanText(source),
+      p_product_code:cleanText(productCode),
+      p_option_code:cleanText(optionCode)
+    });
+    if (error) throw error;
+    return data || null;
+  }
+
   async function searchSellerItems(source, query, page = 1, pageSize = 24) {
     const safeSource = cleanText(source);
     if (!['smartstore', 'makeshop', 'ably'].includes(safeSource)) throw new Error('판매처를 확인해주세요.');
@@ -1948,6 +1958,7 @@
     loadProducts,
     loadMatrixExportChunk,
     loadListingGraph,
+    loadListingConnection,
     saveListingComponent,
     deactivateListingComponent,
     removeListingComponent,
