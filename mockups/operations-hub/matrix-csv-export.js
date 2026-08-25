@@ -6,7 +6,7 @@
     ['makeshop', '메이크샵'],
     ['ably', '에이블리']
   ];
-  const STATUS_LABELS = {connected:'연결 완료', review:'검토 필요', unmatched:'미매칭'};
+  const STATUS_LABELS = {connected:'연결 완료', review:'연결 완료', unmatched:'미매칭'};
   const CODE_LIST_STATUS_LABELS = {matched:'정상 매칭', expanded:'상품 단위 확장', unmapped:'매핑 필요', missing:'코드 없음', conflict:'SKU 불일치'};
 
   function text(value) {
@@ -20,7 +20,7 @@
   function sellerState(row, source) {
     const tier = text(row?.[`${source}_match_tier`]);
     if (!tier) return '미매칭';
-    return tier === 'FAST_REVIEW' ? '검토 필요' : '연결 완료';
+    return '연결 완료';
   }
 
   function projectedSellerValue(row, source, fieldKey, rawKey) {

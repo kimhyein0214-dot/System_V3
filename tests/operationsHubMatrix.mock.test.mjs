@@ -29,6 +29,10 @@ const mappingSyncMigration = fs.readFileSync(
   new URL("../supabase/migrations/20260818013437_operations_hub_mapping_sync.sql", import.meta.url),
   "utf8",
 );
+const binaryConnectionMigration = fs.readFileSync(
+  new URL("../supabase/migrations/20260825070000_binary_connection_status_filters.sql", import.meta.url),
+  "utf8",
+);
 
 assert.match(html, /id="matrix-zoom-out"[\s\S]*?id="matrix-zoom-value"[\s\S]*?id="matrix-zoom-in"/, "matrix zoom controls must be visible together");
 assert.match(source, /MATRIX_ZOOM_MIN = 80;[\s\S]*?MATRIX_ZOOM_MAX = 140;[\s\S]*?localStorage\.setItem\(MATRIX_ZOOM_KEY/, "matrix-only zoom must be bounded and persisted");
@@ -48,7 +52,11 @@ assert.match(html, /id="view-settings-modal"[\s\S]*?id="save-view-preset"/, "mat
 assert.match(source, /MATRIX_PRESETS_KEY = 'system-v3-matrix-presets-v1'/, "personal presets must persist locally");
 assert.match(source, /modifiedPresetSourceId = activePresetId;[\s\S]*?findIndex\(item => item\.id === editablePresetId\)/, "editing a selected personal preset must update that preset instead of creating a stray copy");
 assert.match(source, /function applyColumnVisibility\([\s\S]*?function applyViewPreset\(/, "presets must control matrix columns and view state");
-assert.match(dataSource, /status === 'attention'[\s\S]*?query\.in\('overall_status'/, "attention presets must filter across the server result set");
+assert.match(html, /id="matrix-status-filter"><option value="all">전체 연결상태<\/option><option value="connected">연결 완료<\/option><option value="unmatched">미매칭<\/option><\/select>/, "the connection filter must expose only connected and unmatched states");
+assert.match(source, /function normalizeConnectionStatus\([\s\S]*?status === 'review'[\s\S]*?return 'connected'[\s\S]*?status === 'attention'[\s\S]*?return 'unmatched'/, "legacy review and attention presets must migrate into the binary connection model");
+assert.match(source, /function matchState\(tier\)[\s\S]*?if \(!tier\)[\s\S]*?unmatched[\s\S]*?return \{key:'connected', label:'연결 완료'\}/, "every seller link tier, including FAST_REVIEW, must render as connected");
+assert.match(dataSource, /status === 'connected'[\s\S]*?query\.in\('overall_status', \['connected', 'review'\]\)[\s\S]*?status === 'unmatched'[\s\S]*?query\.eq\('overall_status', 'unmatched'\)/, "binary connection filters must include legacy review rows only in connected results");
+assert.match(binaryConnectionMigration, /v_status in \('connected','review'\)[\s\S]*?matrix\.overall_status <> 'unmatched'[\s\S]*?v_status in \('unmatched','attention'\)[\s\S]*?matrix\.overall_status = 'unmatched'/, "paged and exported server filters must use the same binary status semantics");
 assert.match(dataSource, /\.from\('operations_hub_matrix_system_live'\)/, "the UI must read the non-blocking matrix with the system-owned master overlay");
 assert.match(migration, /with \(security_invoker = true\)/, "the live matrix view must honor underlying RLS");
 assert.match(presetMigration, /end::text as overall_status/, "the live matrix view must expose server-filterable overall status");

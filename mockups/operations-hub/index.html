@@ -7,9 +7,9 @@
     <title>System V3 · 상품 운영 허브</title>
     <link rel="preconnect" href="https://cdnjs.cloudflare.com" crossorigin>
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/pretendard/1.3.9/static/pretendard.css">
-    <link rel="stylesheet" href="./style.css?v=20260825-selected-sku-r27">
-    <link rel="stylesheet" href="./inventory.css?v=20260825-selected-sku-r27">
-    <link rel="stylesheet" href="./price-rule-lab.css?v=20260825-selected-sku-r27">
+    <link rel="stylesheet" href="./style.css?v=20260825-binary-link-status-r28">
+    <link rel="stylesheet" href="./inventory.css?v=20260825-binary-link-status-r28">
+    <link rel="stylesheet" href="./price-rule-lab.css?v=20260825-binary-link-status-r28">
   </head>
   <body>
     <div class="app-shell">
@@ -183,7 +183,7 @@
             </aside>
 
             <div class="matrix-view-tabs">
-              <button class="active" data-preset-id="all">전체 현황</button><button data-preset-id="matching">매칭 검토</button><button data-preset-id="inventory">재고 작업</button><button data-preset-id="price">가격 작업</button><button data-preset-id="attributes">속성·태그</button>
+              <button class="active" data-preset-id="all">전체 현황</button><button data-preset-id="matching">미매칭 확인</button><button data-preset-id="inventory">재고 작업</button><button data-preset-id="price">가격 작업</button><button data-preset-id="attributes">속성·태그</button>
             </div>
             <div class="matrix-toolbar">
               <div class="matrix-search-group" role="search" aria-label="상품 및 판매처 검색">
@@ -197,7 +197,7 @@
                 </fieldset>
               </div>
               <button id="code-list-filter-pill" class="code-list-filter-pill" type="button" hidden><b>엑셀 목록</b><span id="code-list-filter-count">0개 SKU</span><i>×</i></button>
-              <select id="matrix-status-filter"><option value="all">전체 연결상태</option><option value="attention">미매칭 + 검토 필요</option><option value="connected">연결 완료</option><option value="review">검토 필요</option><option value="unmatched">미매칭</option></select>
+              <select id="matrix-status-filter"><option value="all">전체 연결상태</option><option value="connected">연결 완료</option><option value="unmatched">미매칭</option></select>
               <select disabled title="판매처별 정규화 행이 DB에 적재되면 활성화됩니다."><option>판매처 · 적재 대기</option><option>스마트스토어</option><option>메이크샵</option><option>에이블리</option></select>
               <button class="filter-toggle" disabled>재고 차이 <b>-</b></button>
               <button class="filter-toggle" disabled>가격 차이 <b>-</b></button>
@@ -452,7 +452,7 @@
             <fieldset><legend>표시 데이터</legend><label><input id="preset-show-status" type="checkbox"> 연결상태</label><label><input id="preset-show-codes" type="checkbox"> 상품·옵션코드</label><label><input id="preset-show-seller-names" type="checkbox"> 판매처 상품명·옵션명</label><label><input id="preset-show-inventory" type="checkbox"> 재고</label><label><input id="preset-show-price" type="checkbox"> 가격</label><label><input id="preset-show-discount" type="checkbox"> 할인정보</label><label><input id="preset-show-attributes" type="checkbox"> 소재·상품군·태그</label><label><input id="preset-show-sync" type="checkbox"> 최근 동기화</label><label><input id="preset-wrap-names" type="checkbox"> 상품명 두 줄 이상 표시</label></fieldset>
           </div>
           <div class="view-settings-selects">
-            <label>연결상태<select id="preset-status"><option value="all">전체</option><option value="attention">미매칭 + 검토 필요</option><option value="connected">연결 완료</option><option value="review">검토 필요</option><option value="unmatched">미매칭</option></select></label>
+            <label>연결상태<select id="preset-status"><option value="all">전체</option><option value="connected">연결 완료</option><option value="unmatched">미매칭</option></select></label>
             <label>정렬 기준<select id="preset-sort"><option value="sku_asc">SKU 오름차순</option><option value="stock_desc">셀피아 재고 많은 순</option><option value="price_desc">셀피아 가격 높은 순</option><option value="updated_desc">최근 갱신 순</option></select></label>
             <label>표 배율<select id="preset-zoom"><option value="80">80%</option><option value="85">85%</option><option value="90">90%</option><option value="95">95%</option><option value="100">100%</option><option value="105">105%</option><option value="110">110%</option><option value="115">115%</option><option value="120">120%</option><option value="125">125%</option><option value="130">130%</option><option value="135">135%</option><option value="140">140%</option></select></label>
             <label>이미지 크기<select id="preset-image-size"><option value="compact">작게</option><option value="default">기본</option><option value="large">크게</option></select></label>
@@ -637,12 +637,12 @@
     <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.112.3/dist/umd/supabase.js"></script>
-    <script src="./seller-source-parsers.js?v=20260825-selected-sku-r27"></script>
-    <script src="./seller-export-adapter.js?v=20260825-selected-sku-r27"></script>
-    <script src="./matrix-csv-export.js?v=20260825-selected-sku-r27"></script>
-    <script src="./discount-price-math.js?v=20260825-selected-sku-r27"></script>
-    <script src="./data-service.js?v=20260825-selected-sku-r27"></script>
-    <script src="./app.js?v=20260825-selected-sku-r27"></script>
-    <script src="./price-rule-lab.js?v=20260825-selected-sku-r27"></script>
+    <script src="./seller-source-parsers.js?v=20260825-binary-link-status-r28"></script>
+    <script src="./seller-export-adapter.js?v=20260825-binary-link-status-r28"></script>
+    <script src="./matrix-csv-export.js?v=20260825-binary-link-status-r28"></script>
+    <script src="./discount-price-math.js?v=20260825-binary-link-status-r28"></script>
+    <script src="./data-service.js?v=20260825-binary-link-status-r28"></script>
+    <script src="./app.js?v=20260825-binary-link-status-r28"></script>
+    <script src="./price-rule-lab.js?v=20260825-binary-link-status-r28"></script>
   </body>
 </html>
