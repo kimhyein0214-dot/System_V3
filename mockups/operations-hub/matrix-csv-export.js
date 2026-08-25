@@ -84,8 +84,11 @@
       {key:'sellpia_own_code', label:'셀피아 자사코드', type:'code', value:row => row?.sellpia_own_code || row?.own_code},
       {key:'sellpia_product_name', label:'셀피아 상품명', value:row => row?.sellpia_product_name || row?.display_name},
       {key:'sellpia_option_name', label:'셀피아 옵션명'},
-      {key:'sellpia_current_stock', label:'셀피아 현재재고', type:'number'},
-      {key:'sellpia_sale_price', label:'셀피아 판매가', type:'number'},
+      {key:'system_stock', label:'시스템 기준재고', type:'number'},
+      {key:'sellpia_source_stock', label:'셀피아 원본재고', type:'number', value:row => row?.sellpia_source_stock ?? row?.sellpia_current_stock},
+      {key:'system_base_price', label:'시스템 기준가격', type:'number'},
+      {key:'sellpia_source_sale_price', label:'셀피아 원본 판매가', type:'number', value:row => row?.sellpia_source_sale_price ?? row?.sellpia_sale_price},
+      {key:'sellpia_source_updated_at', label:'셀피아 원본 갱신시각', value:row => row?.sellpia_source_updated_at ?? row?.sellpia_inventory_at},
       {key:'sellpia_purchase_price', label:'셀피아 매입가', type:'number'},
       {key:'sellpia_order_unit', label:'셀피아 발주단위', type:'number'},
       {key:'sellpia_minimum_order_unit', label:'셀피아 최소발주단위', type:'number'},
@@ -99,8 +102,8 @@
       {key:'sellpia_inventory_at', label:'셀피아 재고기준시각'}
     );
     return columns.filter(column => {
-      if (!all && view?.showInventory === false && column.key === 'sellpia_current_stock') return false;
-      if (!all && view?.showPrice === false && column.key === 'sellpia_sale_price') return false;
+      if (!all && view?.showInventory === false && ['system_stock','sellpia_source_stock'].includes(column.key)) return false;
+      if (!all && view?.showPrice === false && ['system_base_price','sellpia_source_sale_price'].includes(column.key)) return false;
       return true;
     });
   }

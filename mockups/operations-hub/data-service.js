@@ -7,7 +7,7 @@
   const PICKING_SUPABASE_KEY = 'sb_publishable_XVnKGJo66GZiYTq5Ivu8dA_SjBVvX0g';
   const PAGE_SIZE = 50;
   const MATRIX_PAGE_SIZES = new Set([50, 100, 200]);
-  const MATRIX_SELECT = 'sellpia_sku_code,own_code,image_url,display_name,smartstore_name,smartstore_option_name,smartstore_product_code,smartstore_option_code,smartstore_match_tier,smartstore_match_score,smartstore_listing_count,smartstore_name_is_draft,smartstore_sale_status,makeshop_name,makeshop_option_name,makeshop_product_code,makeshop_option_code,makeshop_match_tier,makeshop_match_score,makeshop_listing_count,makeshop_name_is_draft,makeshop_sale_status,ably_name,ably_option_name,ably_product_code,ably_option_code,ably_match_tier,ably_match_score,ably_listing_count,ably_name_is_draft,ably_sale_status,updated_at,sellpia_product_name,sellpia_option_name,sellpia_own_code,sellpia_current_stock,sellpia_available_stock,sellpia_safety_stock,sellpia_sale_price,sellpia_inventory_at,smartstore_stock,smartstore_price,smartstore_policy_price,smartstore_policy_active,smartstore_policy_name,smartstore_inventory_at,makeshop_stock,makeshop_price,makeshop_policy_price,makeshop_policy_active,makeshop_policy_name,makeshop_inventory_at,ably_stock,ably_price,ably_policy_price,ably_policy_active,ably_policy_name,ably_inventory_at,overall_status,sellpia_override_image_url,sellpia_override_updated_at';
+  const MATRIX_SELECT = 'sellpia_sku_code,own_code,image_url,display_name,smartstore_name,smartstore_option_name,smartstore_product_code,smartstore_option_code,smartstore_match_tier,smartstore_match_score,smartstore_listing_count,smartstore_name_is_draft,smartstore_sale_status,makeshop_name,makeshop_option_name,makeshop_product_code,makeshop_option_code,makeshop_match_tier,makeshop_match_score,makeshop_listing_count,makeshop_name_is_draft,makeshop_sale_status,ably_name,ably_option_name,ably_product_code,ably_option_code,ably_match_tier,ably_match_score,ably_listing_count,ably_name_is_draft,ably_sale_status,updated_at,sellpia_product_name,sellpia_option_name,sellpia_own_code,sellpia_current_stock,sellpia_available_stock,sellpia_safety_stock,sellpia_sale_price,sellpia_inventory_at,smartstore_stock,smartstore_price,smartstore_policy_price,smartstore_policy_active,smartstore_policy_name,smartstore_inventory_at,makeshop_stock,makeshop_price,makeshop_policy_price,makeshop_policy_active,makeshop_policy_name,makeshop_inventory_at,ably_stock,ably_price,ably_policy_price,ably_policy_active,ably_policy_name,ably_inventory_at,overall_status,sellpia_override_image_url,sellpia_override_updated_at,sellpia_source_sale_price,sellpia_source_stock,sellpia_source_updated_at,system_base_price,system_stock,system_price_version,system_stock_version,system_price_updated_at,system_stock_updated_at,system_updated_at';
 
   function requireClient() {
     if (!global.supabase?.createClient) {
@@ -193,8 +193,38 @@
     return products.map(product => ({...product, ...(bySku.get(cleanText(product?.sellpia_sku_code)) || {})}));
   }
 
+  async function attachSystemOperationalDetails(rows) {
+    const products = Array.isArray(rows) ? rows : [];
+    const skus = [...new Set(products.map(row => cleanText(row?.sellpia_sku_code)).filter(Boolean))];
+    if (!skus.length) return products;
+    const details = [];
+    for (let offset = 0; offset < skus.length; offset += 500) {
+      const {data, error} = await db
+        .from('operations_hub_sku_operational_live')
+        .select('sellpia_sku_code,system_base_price,system_stock,system_price_version,system_stock_version,system_price_updated_at,system_stock_updated_at,system_updated_at')
+        .in('sellpia_sku_code', skus.slice(offset, offset + 500));
+      if (error) throw error;
+      details.push(...(data || []));
+    }
+    const bySku = new Map(details.map(detail => [cleanText(detail.sellpia_sku_code), detail]));
+    return products.map(product => ({
+      ...product,
+      sellpia_source_sale_price:product.sellpia_source_sale_price ?? product.sellpia_sale_price ?? null,
+      sellpia_source_stock:product.sellpia_source_stock ?? product.sellpia_current_stock ?? null,
+      sellpia_source_updated_at:product.sellpia_source_updated_at ?? product.sellpia_inventory_at ?? null,
+      system_base_price:null,
+      system_stock:null,
+      system_price_version:0,
+      system_stock_version:0,
+      system_price_updated_at:null,
+      system_stock_updated_at:null,
+      system_updated_at:null,
+      ...(bySku.get(cleanText(product?.sellpia_sku_code)) || {})
+    }));
+  }
+
   async function attachProductMetadata(rows) {
-    return attachPriceRuleAssignments(await attachSellerDrafts(await attachSellerPriceComponents(await attachLinkBadges(await attachProductProfiles(await attachInboundCostDetails(rows))))));
+    return attachPriceRuleAssignments(await attachSellerDrafts(await attachSellerPriceComponents(await attachLinkBadges(await attachProductProfiles(await attachSystemOperationalDetails(await attachInboundCostDetails(rows)))))));
   }
 
   async function loadListingGraph({source = 'all', relationType = 'complex', search = '', page = 1, pageSize = 50} = {}) {
@@ -273,7 +303,7 @@
       let products = [];
       if (pageSkus.length) {
         const {data, error} = await db
-          .from('operations_hub_matrix_cached')
+          .from('operations_hub_matrix_system_live')
           .select(MATRIX_SELECT)
           .in('sellpia_sku_code', pageSkus);
         if (error) throw error;
@@ -328,7 +358,7 @@
     const allowedSearchSources = ['sellpia','smartstore','makeshop','ably'];
     const activeSearchSources = [...new Set((searchSources || []).map(source => cleanText(source).toLowerCase()).filter(source => allowedSearchSources.includes(source)))];
     let query = db
-      .from('operations_hub_matrix_cached')
+      .from('operations_hub_matrix_system_live')
       .select(MATRIX_SELECT, { count: 'exact' });
 
     if (intersection) {
@@ -376,8 +406,8 @@
 
     const sortOptions = {
       sku_asc: ['sellpia_sku_code', true],
-      stock_desc: ['sellpia_current_stock', false],
-      price_desc: ['sellpia_sale_price', false],
+      stock_desc: ['system_stock', false],
+      price_desc: ['system_base_price', false],
       updated_desc: ['updated_at', false]
     };
     const [sortColumn, ascending] = sortOptions[sort] || sortOptions.sku_asc;
@@ -418,7 +448,7 @@
     });
     if (error) throw error;
     return {
-      rows:await attachInboundCostDetails(Array.isArray(data?.rows) ? data.rows : []),
+      rows:await attachSystemOperationalDetails(await attachInboundCostDetails(Array.isArray(data?.rows) ? data.rows : [])),
       offset:Number(data?.offset || offset || 0),
       limit:Number(data?.limit || limit || 1000)
     };
@@ -471,16 +501,36 @@
     let savedCount = 0;
     let queuedCount = 0;
     const priceChanged = [...grouped.values()].some(items => items.some(item => item.field_key === 'sellpia_sale_price'));
+    const systemRows = [];
     for (const [sku, items] of grouped) {
-      const {data, error} = await db.rpc('apply_operations_hub_sellpia_changes', {
-        p_sku:sku,
-        p_changes:items,
-        p_batch_id:batchId
-      });
-      if (error) throw error;
-      const result = Array.isArray(data) ? data[0] : data;
-      savedCount += Number(result?.saved_count || items.length);
-      queuedCount += Number(result?.queued_count || 0);
+      const systemItems = items.filter(item => ['system_base_price','system_stock'].includes(item.field_key));
+      const sourceItems = items.filter(item => !['system_base_price','system_stock'].includes(item.field_key));
+      for (const item of systemItems) {
+        const rawValue = cleanText(item.after);
+        const {data, error} = await db.rpc('save_operations_hub_sku_operational_value', {
+          p_sellpia_sku_code:sku,
+          p_field_key:item.field_key,
+          p_value:rawValue === '' ? null : Number(rawValue),
+          p_change_source:'manual',
+          p_actor:'operations-hub',
+          p_metadata:{ui:'integrated-matrix'}
+        });
+        if (error) throw error;
+        const savedRow = Array.isArray(data) ? data[0] : data;
+        if (savedRow) systemRows.push(savedRow);
+        savedCount += 1;
+      }
+      if (sourceItems.length) {
+        const {data, error} = await db.rpc('apply_operations_hub_sellpia_changes', {
+          p_sku:sku,
+          p_changes:sourceItems,
+          p_batch_id:batchId
+        });
+        if (error) throw error;
+        const result = Array.isArray(data) ? data[0] : data;
+        savedCount += Number(result?.saved_count || sourceItems.length);
+        queuedCount += Number(result?.queued_count || 0);
+      }
     }
     let repricedRows = [];
     let repriceRefreshError = '';
@@ -506,7 +556,7 @@
         repriceRefreshError = error?.message || String(error);
       }
     }
-    return {savedCount, queuedCount, productCount:grouped.size, batchId, repricedRows, repriceRefreshError};
+    return {savedCount, queuedCount, productCount:grouped.size, batchId, repricedRows, systemRows, repriceRefreshError};
   }
 
   async function searchSellerItems(source, query, page = 1, pageSize = 24) {
@@ -1018,6 +1068,9 @@
 
   async function previewPriceRuleSet({basePrice, ruleSetId, source = null, sourceDiscountTerms = []}) {
     if (!ruleSetId) return {final_price:null, steps:[]};
+    if (basePrice === null || basePrice === undefined || basePrice === '' || !Number.isFinite(Number(basePrice))) {
+      throw new Error('시스템 기준가격을 먼저 저장해주세요.');
+    }
     const {data, error} = source
       ? await db.rpc('calculate_operations_hub_price_rule_plan', {
         p_base_price:Number(basePrice),

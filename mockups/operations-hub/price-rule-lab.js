@@ -69,15 +69,15 @@
     byId('price-rule-tag-list').innerHTML = state.tags.map(tag => `
       <button type="button" class="price-rule-tag-card" data-tag-id="${tag.price_rule_tag_id}">
         <i style="--tag-color:${escapeHtml(tag.color)}"></i><span><b>${escapeHtml(tag.tag_name)}</b><em>${escapeHtml(atomicSummary(tag))}</em></span>
-      </button>`).join('') || '<p class="price-rule-empty">저장된 작은 태그가 없습니다.</p>';
-    byId('price-rule-set-add').innerHTML = '<option value="">작은 태그 추가…</option>' + state.tags.map(tag => `<option value="${tag.price_rule_tag_id}">${escapeHtml(tag.tag_name)}</option>`).join('');
+      </button>`).join('') || '<p class="price-rule-empty">저장된 계산 태그가 없습니다.</p>';
+    byId('price-rule-set-add').innerHTML = '<option value="">계산 태그 추가…</option>' + state.tags.map(tag => `<option value="${tag.price_rule_tag_id}">${escapeHtml(tag.tag_name)}</option>`).join('');
   }
 
   function renderSets() {
     byId('price-rule-set-list').innerHTML = state.sets.map(ruleSet => `
       <button type="button" class="price-rule-set-card" data-set-id="${ruleSet.price_rule_set_id}">
         <i style="--set-color:${escapeHtml(ruleSet.color)}"></i><span><b>${escapeHtml(ruleSet.set_name)}</b><em>${(ruleSet.tags || []).map(tag => escapeHtml(tag.tag_name)).join(' → ')}</em></span>
-      </button>`).join('') || '<p class="price-rule-empty">저장된 큰 태그가 없습니다.</p>';
+      </button>`).join('') || '<p class="price-rule-empty">저장된 가격 조합이 없습니다.</p>';
   }
 
   function renderSelectedTags() {
@@ -86,7 +86,7 @@
       const tag = tagsById.get(Number(tagId));
       if (!tag) return '';
       return `<article data-selected-tag-index="${index}"><strong>${index + 1}</strong><span><b>${escapeHtml(tag.tag_name)}</b><em>${escapeHtml(atomicSummary(tag))}</em></span><div><button type="button" data-move="up" aria-label="위로">↑</button><button type="button" data-move="down" aria-label="아래로">↓</button><button type="button" data-remove aria-label="삭제">×</button></div></article>`;
-    }).join('') || '<p class="price-rule-empty">아래 목록에서 작은 태그를 추가하세요.</p>';
+    }).join('') || '<p class="price-rule-empty">아래 목록에서 계산 태그를 추가하세요.</p>';
   }
 
   function renderAll() {
@@ -182,7 +182,7 @@
   byId('price-rule-tag-delete').addEventListener('click', async () => {
     const tagId = cleanNumber(byId('price-rule-tag-id').value);
     const tag = state.tags.find(item => Number(item.price_rule_tag_id) === Number(tagId));
-    if (!tagId || !tag || !global.confirm(`작은 태그 “${tag.tag_name}”을 삭제할까요?\n사용 중인 큰 태그가 있으면 삭제되지 않습니다.`)) return;
+    if (!tagId || !tag || !global.confirm(`계산 태그 “${tag.tag_name}”을 삭제할까요?\n사용 중인 가격 조합이 있으면 삭제되지 않습니다.`)) return;
     const button = byId('price-rule-tag-delete');
     button.disabled = true;
     try {
@@ -190,13 +190,13 @@
       resetTagForm();
       await refresh();
       toast('작은 가격 태그를 삭제했습니다.');
-    } catch (error) { toast(error?.message || '작은 태그 삭제에 실패했습니다.'); }
+    } catch (error) { toast(error?.message || '계산 태그 삭제에 실패했습니다.'); }
     finally { button.disabled = false; }
   });
   byId('price-rule-set-delete').addEventListener('click', async () => {
     const ruleSetId = cleanNumber(byId('price-rule-set-id').value);
     const ruleSet = state.sets.find(item => Number(item.price_rule_set_id) === Number(ruleSetId));
-    if (!ruleSetId || !ruleSet || !global.confirm(`큰 태그 “${ruleSet.set_name}”을 삭제할까요?\n상품에 배정되어 있으면 삭제되지 않습니다.`)) return;
+    if (!ruleSetId || !ruleSet || !global.confirm(`가격 조합 “${ruleSet.set_name}”을 삭제할까요?\n상품에 배정되어 있으면 삭제되지 않습니다.`)) return;
     const button = byId('price-rule-set-delete');
     button.disabled = true;
     try {
@@ -204,7 +204,7 @@
       resetSetForm();
       await refresh();
       toast('큰 가격 태그를 삭제했습니다.');
-    } catch (error) { toast(error?.message || '큰 태그 삭제에 실패했습니다.'); }
+    } catch (error) { toast(error?.message || '가격 조합 삭제에 실패했습니다.'); }
     finally { button.disabled = false; }
   });
   byId('price-rule-tag-list').addEventListener('click', event => editTag(event.target.closest('[data-tag-id]')?.dataset.tagId));
@@ -246,12 +246,12 @@
       resetTagForm();
       await refresh();
       toast('작은 가격 태그를 저장했습니다.');
-    } catch (error) { toast(error?.message || '작은 태그 저장에 실패했습니다.'); }
+    } catch (error) { toast(error?.message || '계산 태그 저장에 실패했습니다.'); }
     finally { submit.disabled = false; }
   });
   byId('price-rule-set-form').addEventListener('submit', async event => {
     event.preventDefault();
-    if (!state.selectedTagIds.length) { toast('작은 태그를 한 개 이상 추가하세요.'); return; }
+    if (!state.selectedTagIds.length) { toast('계산 태그를 한 개 이상 추가하세요.'); return; }
     const submit = event.submitter;
     submit.disabled = true;
     try {
@@ -262,7 +262,7 @@
       resetSetForm();
       await refresh();
       toast('큰 가격 태그와 계산 순서를 저장했습니다.');
-    } catch (error) { toast(error?.message || '큰 태그 저장에 실패했습니다.'); }
+    } catch (error) { toast(error?.message || '가격 조합 저장에 실패했습니다.'); }
     finally { submit.disabled = false; }
   });
   global.SystemV3PriceRuleLab = {refresh};
