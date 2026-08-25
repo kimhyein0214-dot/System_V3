@@ -258,7 +258,7 @@ function matrixImageColumnWidth() {
 }
 
 function matrixColumnWidth(index) {
-  if (index === 1) return 36;
+  if (index === 1) return 0;
   if (index === 2) return matrixImageColumnWidth();
   return Math.max(MATRIX_COLUMN_MIN_WIDTH, Math.min(MATRIX_COLUMN_MAX_WIDTH,
     Number(matrixColumnWidths[index]) || MATRIX_COLUMN_DEFAULT_WIDTHS[index] || 112));
@@ -312,14 +312,14 @@ function applyMatrixColumnWidths(view = activeView) {
   ensureMatrixColumnStructure();
   bindMatrixColumnWidthsToCells();
   const visible = viewColumnIndexes(view);
-  let tableWidth = matrixColumnWidth(1) + matrixColumnWidth(2);
+  let tableWidth = 0;
   for (let index = 1; index <= 40; index += 1) {
     const width = matrixColumnWidth(index);
     matrixTable.style.setProperty(`--matrix-col-${index}-width`, `${width}px`);
     const column = matrixTable.querySelector(`col[data-matrix-column="${index}"]`);
-    const show = index <= 2 || visible.has(index);
+    const show = index === 1 ? false : index === 2 || visible.has(index);
     if (column) column.style.display = show ? '' : 'none';
-    if (index >= 3 && show) tableWidth += width;
+    if (show) tableWidth += width;
   }
   matrixTable.style.width = `${Math.max(900, tableWidth)}px`;
   matrixTable.style.minWidth = `${Math.max(900, tableWidth)}px`;
