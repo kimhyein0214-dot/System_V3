@@ -99,6 +99,7 @@ const drawerState = {
 };
 const discountEditorState = {source:'', productCode:'', sku:'', terms:[], product:null, basePrice:null, anchorDiscountedBase:null, anchorFinalPrice:null, anchorOptionPrice:null, anchorSource:'', priceRuleSetId:null, priceRuleSetName:'', autoAdjustBase:false, preview:null};
 const inventoryState = {loaded:false, loading:false, rows:[], snapshot:null, activityRefreshedAt:'', requestId:0};
+const inboundCostState = {tags:[], loaded:false, editingTagId:null, product:null};
 const ATTRIBUTE_OPTIONS = Object.freeze({
   material:['14K','925 실버','써지컬','티타늄','아크릴/투명','실버','기타'],
   productGroup:['부품/소모품','피어싱','귀걸이','목걸이','반지','팔찌/발찌','헤어/잡화','기타'],
@@ -258,6 +259,19 @@ function formatNullableNumber(value) {
   return Number.isFinite(number) ? number.toLocaleString('ko-KR') : '-';
 }
 
+function inboundCostCell(product) {
+  const cost = formatNullableNumber(product.actual_inbound_cost);
+  const tagName = product.inbound_cost_formula_tag_name || '';
+  const mode = product.actual_inbound_cost_mode || '';
+  const color = product.inbound_cost_formula_tag_color || '#7c3aed';
+  const badge = mode === 'formula' && tagName
+    ? `<em class="inbound-cost-badge" style="--inbound-tag-color:${escapeHtml(color)}">${escapeHtml(tagName)}</em>`
+    : mode === 'manual'
+      ? '<em class="inbound-cost-badge manual">직접입력</em>'
+      : '<em class="inbound-cost-badge empty">설정</em>';
+  return `<button type="button" class="inbound-cost-cell${mode ? ' configured' : ''}" data-inbound-cost-edit data-sku="${escapeHtml(product.sellpia_sku_code)}" title="실입고가 직접 입력 또는 수식태그 설정"><b>${cost}</b>${badge}</button>`;
+}
+
 function formatLiveTime(value) {
   if (!value) return '-';
   const date = new Date(value);
@@ -268,11 +282,11 @@ function formatLiveTime(value) {
 }
 
 function viewColumnIndexes(view) {
-  const visible = new Set([1,2,3,4,5,6,7]);
+  const visible = new Set([1,2,3,4,5,6,7,8,9,10,11]);
   const channelColumns = {
-    smartstore:{status:[8], codes:[9,10], names:[11], inventory:[12], price:[13,15,16], discount:[14]},
-    makeshop:{status:[17], codes:[18,19], names:[20], inventory:[21], price:[22,24,25], discount:[23]},
-    ably:{status:[26], codes:[27,28], names:[29], inventory:[30], price:[31,33,34], discount:[32]}
+    smartstore:{status:[12], codes:[13,14], names:[15], inventory:[16], price:[17,19,20], discount:[18]},
+    makeshop:{status:[21], codes:[22,23], names:[24], inventory:[25], price:[26,28,29], discount:[27]},
+    ably:{status:[30], codes:[31,32], names:[33], inventory:[34], price:[35,37,38], discount:[36]}
   };
   Object.entries(channelColumns).forEach(([channel, groups]) => {
     if (!view.channels[channel]) return;
@@ -283,8 +297,8 @@ function viewColumnIndexes(view) {
     if (view.showPrice) groups.price.forEach(index => visible.add(index));
     if (view.showDiscount ?? view.showPrice ?? true) groups.discount.forEach(index => visible.add(index));
   });
-  if (view.showAttributes) [35,36,37].forEach(index => visible.add(index));
-  if (view.showSync) visible.add(38);
+  if (view.showAttributes) [39,40,41].forEach(index => visible.add(index));
+  if (view.showSync) visible.add(42);
   return visible;
 }
 
@@ -313,17 +327,17 @@ function applyColumnVisibility(view = activeView) {
   const visible = viewColumnIndexes(view);
   indexMatrixBodyColumns();
   const columnHeaders = matrixTable.querySelectorAll('.column-row th');
-  for (let index = 3; index <= 38; index += 1) {
+  for (let index = 3; index <= 42; index += 1) {
     const show = visible.has(index);
     const header = columnHeaders[index - 3];
     if (header) header.hidden = !show;
     matrixBody.querySelectorAll(`[data-matrix-column="${index}"]`).forEach(cell => { cell.hidden = !show; });
   }
   const groupConfig = [
-    ['.smart-group', [8,9,10,11,12,13,14,15,16]],
-    ['.make-group', [17,18,19,20,21,22,23,24,25]],
-    ['.ably-group', [26,27,28,29,30,31,32,33,34]],
-    ['.ops-group', [35,36,37,38]]
+    ['.smart-group', [12,13,14,15,16,17,18,19,20]],
+    ['.make-group', [21,22,23,24,25,26,27,28,29]],
+    ['.ably-group', [30,31,32,33,34,35,36,37,38]],
+    ['.ops-group', [39,40,41,42]]
   ];
   groupConfig.forEach(([selector, indexes]) => {
     const header = matrixTable.querySelector(selector);
@@ -571,7 +585,7 @@ function codeListPlaceholderSellerCells(codeRow, source) {
     <td class="code-list-placeholder-code" title="${inputCode}">${inputCode}</td>
     <td class="data-gap">-</td>
     <td class="product-cell"><b>원본 코드 연결 대기</b><em>${escapeHtml(codeListSourceLabel(source))}</em></td>
-    <td class="data-gap">-</td><td class="data-gap">-</td><td class="data-gap">-</td><td class="data-gap">-</td>`;
+    <td class="data-gap">-</td><td class="data-gap">-</td><td class="data-gap">-</td><td class="data-gap">-</td><td class="data-gap">-</td>`;
 }
 
 function renderCodeListPlaceholderRow(product) {
@@ -588,7 +602,7 @@ function renderCodeListPlaceholderRow(product) {
     <td class="sticky-col sku-col code-list-sku-cell"><b>엑셀 ${rowNo}행</b><em>${reason}</em></td>
     <td class="sticky-col own-code-col data-gap">-</td>
     <td class="sticky-col sellpia-name-col product-cell"><b title="${inputCode}">${inputCode}</b><em>${sourceLabel} · ${reason}</em></td>
-    <td class="sticky-col sellpia-stock-col data-gap">-</td><td class="sticky-col sellpia-price-col data-gap">-</td>
+    <td class="sticky-col sellpia-stock-col data-gap">-</td><td class="sticky-col sellpia-price-col data-gap">-</td><td class="data-gap">-</td><td class="data-gap">-</td><td class="data-gap">-</td><td class="data-gap">-</td>
     ${codeListPlaceholderSellerCells(codeRow, 'smartstore')}
     ${codeListPlaceholderSellerCells(codeRow, 'makeshop')}
     ${codeListPlaceholderSellerCells(codeRow, 'ably')}
@@ -600,7 +614,7 @@ function renderLiveMatrixRows(products) {
   clearMatrixCellSelection();
   matrixRowsBySku.clear();
   if (!products.length) {
-    matrixBody.innerHTML = '<tr class="matrix-empty-row"><td colspan="38"><b>검색 결과가 없습니다.</b><span>SKU 또는 자사코드를 다시 확인해주세요.</span></td></tr>';
+    matrixBody.innerHTML = '<tr class="matrix-empty-row"><td colspan="42"><b>검색 결과가 없습니다.</b><span>SKU 또는 자사코드를 다시 확인해주세요.</span></td></tr>';
     return;
   }
   const sellerBaseMerges = buildSellerBaseMerges(products);
@@ -639,6 +653,10 @@ function renderLiveMatrixRows(products) {
       <td class="sticky-col sellpia-name-col product-cell"><b title="${displayName}">${displayName}</b><em title="${optionName}">${optionName}</em></td>
       <td class="sticky-col sellpia-stock-col number-cell${sellpiaStock === '-' ? ' data-gap' : ''}">${sellpiaEditor('sellpia_current_stock', '셀피아 현재재고', product.sellpia_current_stock, {number:true})}</td>
       <td class="sticky-col sellpia-price-col number-cell${sellpiaPrice === '-' ? ' data-gap' : ''}">${sellpiaEditor('sellpia_sale_price', '셀피아 판매가', product.sellpia_sale_price, {number:true})}</td>
+      <td class="number-cell${product.sellpia_purchase_price === null || product.sellpia_purchase_price === undefined ? ' data-gap' : ''}">${formatNullableNumber(product.sellpia_purchase_price)}</td>
+      <td class="number-cell${product.sellpia_order_unit === null || product.sellpia_order_unit === undefined ? ' data-gap' : ''}">${formatNullableNumber(product.sellpia_order_unit)}</td>
+      <td class="number-cell${product.sellpia_minimum_order_unit === null || product.sellpia_minimum_order_unit === undefined ? ' data-gap' : ''}">${formatNullableNumber(product.sellpia_minimum_order_unit)}</td>
+      <td class="number-cell inbound-cost-column">${inboundCostCell(product)}</td>
       ${channelInventoryCells(product, 'smartstore', '스마트스토어', sellerBaseMerges.get(`${rowIndex}|smartstore`))}
       ${channelInventoryCells(product, 'makeshop', '메이크샵', sellerBaseMerges.get(`${rowIndex}|makeshop`))}
       ${channelInventoryCells(product, 'ably', '에이블리', sellerBaseMerges.get(`${rowIndex}|ably`))}
@@ -739,7 +757,7 @@ async function loadLiveMatrix({resetPage = false} = {}) {
   setMatrixConnection('loading', 'DB 조회 중');
   const keepRenderedRows = matrixState.rows.length > 0;
   if (!keepRenderedRows) {
-    matrixBody.innerHTML = '<tr class="matrix-empty-row loading"><td colspan="38"><b>Supabase에서 실제 SKU를 불러오는 중입니다.</b><span>이미지와 자사코드를 함께 연결합니다.</span></td></tr>';
+    matrixBody.innerHTML = '<tr class="matrix-empty-row loading"><td colspan="42"><b>Supabase에서 실제 SKU를 불러오는 중입니다.</b><span>이미지와 자사코드를 함께 연결합니다.</span></td></tr>';
   }
   try {
     const request = {
@@ -795,7 +813,7 @@ async function loadLiveMatrix({resetPage = false} = {}) {
       setMatrixConnection('error', 'DB 조회 지연 · 기존 화면 유지');
       showToast('새 데이터 조회가 지연되어 기존 화면을 유지합니다. 저장된 수정값은 사라지지 않습니다.');
     } else {
-      matrixBody.innerHTML = '<tr class="matrix-empty-row error"><td colspan="38"><b>실데이터를 불러오지 못했습니다.</b><span>DB 새로고침을 눌러 다시 시도해주세요.</span></td></tr>';
+      matrixBody.innerHTML = '<tr class="matrix-empty-row error"><td colspan="42"><b>실데이터를 불러오지 못했습니다.</b><span>DB 새로고침을 눌러 다시 시도해주세요.</span></td></tr>';
       document.getElementById('live-catalog-state').textContent = '연결 오류';
       setMatrixConnection('error', 'DB 연결 오류');
     }
@@ -957,24 +975,27 @@ function renderPriceRuleSetSteps(ruleSet, preview) {
   if (!ruleSet) return '<div class="price-tag-empty">적용할 가격 태그를 선택해주세요.</div>';
   const steps = Array.isArray(preview?.steps) ? preview.steps : [];
   return `<div class="price-tag-step-list">${(ruleSet.tags || []).map((tag, index) => {
-    const step = steps[index];
-    const calculation = step ? `${formatNullableNumber(step.before)}원 → ${formatNullableNumber(step.after)}원` : '계산 대기';
+    const step = steps.find(item => String(item.tag_id) === String(tag.tag_id));
+    const roleLabel = tag.tag_role === 'discount' ? `${CHANNEL_LABELS[tag.discount_source_channel] || '판매처'} 할인` : '판매가';
+    const calculation = step ? `${roleLabel} · ${formatNullableNumber(step.before)}원 → ${formatNullableNumber(step.after)}원` : `${roleLabel} · 계산 대기`;
     return `<span class="price-tag-step" style="--price-tag-color:${escapeHtml(tag.color || ruleSet.color || '#2f6fd1')}"><i>${index + 1}</i><b>${escapeHtml(tag.tag_name)}</b><em>${escapeHtml(calculation)}</em></span>`;
   }).join('')}</div>`;
 }
 
 function priceRuleTagSummary(tag) {
   if (!tag) return '-';
-  if (tag.replace_price !== null && tag.replace_price !== undefined) return `${formatNullableNumber(tag.replace_price)}원 고정`;
+  const role = tag.tag_role === 'discount' ? `${CHANNEL_LABELS[tag.discount_source_channel] || '판매처'} 할인 · ` : '판매가 · ';
+  if (tag.replace_price !== null && tag.replace_price !== undefined) return `${role}${formatNullableNumber(tag.replace_price)}원 고정`;
   const value = Number(tag.modify_value || 0);
-  if (tag.modify_type === 'percent') return `${Math.abs(value)}% ${value < 0 ? '할인' : '인상'}`;
-  if (tag.modify_type === 'add') return `${formatNullableNumber(Math.abs(value))}원 ${value < 0 ? '할인' : '추가'}`;
-  return '기준가 그대로';
+  if (tag.modify_type === 'percent') return `${role}${Math.abs(value)}% ${value < 0 ? '할인' : '인상'}`;
+  if (tag.modify_type === 'add') return `${role}${formatNullableNumber(Math.abs(value))}원 ${value < 0 ? '할인' : '추가'}`;
+  return `${role}기준가 그대로`;
 }
 
 function calculateLocalPriceRule(basePrice, tag) {
   const base = Number(basePrice);
   if (!Number.isFinite(base) || !tag) return null;
+  if (tag.tag_role === 'discount') return base;
   let value = tag.replace_price !== null && tag.replace_price !== undefined ? Number(tag.replace_price) : base;
   const modifyValue = Number(tag.modify_value || 0);
   if (tag.modify_type === 'percent') value *= 1 + modifyValue / 100;
@@ -1011,6 +1032,9 @@ function priceRuleTagSavePayload(tag) {
     tagId:null,
     tagName:tag.tag_name,
     color:tag.color || '#2f6fd1',
+    tagRole:tag.tag_role || 'price',
+    discountSource:tag.discount_source_channel || null,
+    discountRuleCode:tag.discount_rule_code || null,
     replacePrice:tag.replace_price,
     modifyType:tag.modify_type || 'none',
     modifyValue:Number(tag.modify_value || 0),
@@ -1082,17 +1106,22 @@ function renderDrawerPricePolicy(source, label, originalBasePrice, draftBasePric
   const selectedSet = ruleSets.find(ruleSet => String(ruleSet.price_rule_set_id) === selectedId) || null;
   const dirty = selectedId !== savedRuleSetId;
   const calculatedPrice = selectedSet && preview?.final_price !== null && preview?.final_price !== undefined ? preview.final_price : null;
-  const applyLabel = calculatedPrice === null ? '계산 판매가 없음' : `${formatNullableNumber(calculatedPrice)}원을 판매가 수정안으로 적용`;
+  const discountedPrice = selectedSet && preview?.discounted_base_price !== null && preview?.discounted_base_price !== undefined ? preview.discounted_base_price : null;
+  const applyLabel = calculatedPrice === null
+    ? '계산 판매가 없음'
+    : discountedPrice !== null && Number(discountedPrice) !== Number(calculatedPrice)
+      ? `판매가 ${formatNullableNumber(calculatedPrice)}원 + 할인 태그 적용`
+      : `${formatNullableNumber(calculatedPrice)}원을 판매가 수정안으로 적용`;
   return `<div class="drawer-price-policy${selectedSet ? ' active-policy' : ''}" data-policy-source="${source}" data-calculated-base-price="${escapeHtml(calculatedPrice ?? '')}" data-saved-rule-set-id="${escapeHtml(savedRuleSetId)}">
     <div class="drawer-price-policy-head"><b>판매처 가격 태그</b><span>${savedRuleSetId ? '상품에 배정됨' : '태그 미배정'}</span></div>
-    <div class="drawer-price-layer-summary"><span>판매처 원본 판매가<b>${hasCurrent ? formatNullableNumber(current) : '-'}원</b></span><span>셀피아 기준가<b>${hasBase ? formatNullableNumber(base) : '-'}원</b></span><span class="policy">태그 계산 판매가<b>${calculatedPrice === null ? '-' : `${formatNullableNumber(calculatedPrice)}원`}</b></span><span class="draft">판매가 수정안<b>${hasDraft ? `${formatNullableNumber(draft)}원` : '-'}</b></span></div>
+    <div class="drawer-price-layer-summary"><span>판매처 원본 판매가<b>${hasCurrent ? formatNullableNumber(current) : '-'}원</b></span><span>셀피아 기준가<b>${hasBase ? formatNullableNumber(base) : '-'}원</b></span><span class="policy">태그 계산 판매가<b>${calculatedPrice === null ? '-' : `${formatNullableNumber(calculatedPrice)}원`}</b></span><span class="draft">할인 적용가<b>${discountedPrice === null ? '-' : `${formatNullableNumber(discountedPrice)}원`}</b></span></div>
     <label class="price-tag-selector"><span>이 상품에 적용할 큰 태그</span><select data-price-rule-set><option value="">태그 사용 안 함</option>${ruleSets.map(ruleSet => `<option value="${ruleSet.price_rule_set_id}" ${String(ruleSet.price_rule_set_id) === selectedId ? 'selected' : ''}>${escapeHtml(ruleSet.set_name)}</option>`).join('')}</select></label>
     <div data-price-tag-preview>${renderPriceRuleSetSteps(selectedSet, preview)}</div>
     ${renderPriceTagComposer(source, sellpiaPrice, ruleTags)}
     <div class="price-formula"><span>현재 가격 비교</span><code>${escapeHtml(currentFormula)}</code></div>
-    <p class="price-policy-summary">${selectedSet ? `셀피아 ${formatNullableNumber(base)}원에 ‘${escapeHtml(selectedSet.set_name)}’ 태그를 순서대로 계산합니다.` : '태그를 배정하지 않으면 판매처 가격 수정안이 자동 생성되지 않습니다.'}</p>
+    <p class="price-policy-summary">${selectedSet ? `셀피아 ${formatNullableNumber(base)}원에서 판매가 태그와 ${label} 할인 태그를 각각 계산합니다.` : '태그를 배정하지 않으면 판매처 가격 수정안이 자동 생성되지 않습니다.'}</p>
     <div class="price-policy-actions"><button class="btn price-tag-assignment-save" ${dirty ? '' : 'disabled'}>${selectedId ? '태그 배정 저장' : '태그 배정 해제'}</button><button class="btn primary price-tag-apply" ${selectedSet && !dirty && calculatedPrice !== null ? '' : 'disabled'}>${dirty ? '태그 배정을 먼저 저장' : applyLabel}</button></div>
-    <footer>태그 배정은 ${label}의 현재 SKU에만 저장됩니다. 계산 결과를 검토한 뒤 ‘수정안으로 적용’을 눌러야 변경대기와 원본 내보내기에 포함됩니다.</footer>
+    <footer>판매가와 할인은 역산하지 않고 독립 계산합니다. 계산 결과를 검토한 뒤 ‘수정안으로 적용’을 눌러야 변경대기와 내보내기에 포함됩니다.</footer>
   </div>`;
 }
 
@@ -1129,9 +1158,17 @@ async function loadDrawerPriceRuleAssignments(product) {
       liveData.loadPriceRuleSets(),
       ...['smartstore','makeshop','ably'].map(source => liveData.loadPriceRuleAssignment({sku, source}))
     ]);
-    const previews = await Promise.all(assignments.map(assignment => assignment
-      ? liveData.previewPriceRuleSet({basePrice:product.sellpia_sale_price, ruleSetId:assignment.price_rule_set_id})
-      : Promise.resolve(null)));
+    const previews = await Promise.all(assignments.map((assignment, index) => {
+      if (!assignment) return Promise.resolve(null);
+      const source = ['smartstore','makeshop','ably'][index];
+      const component = product?.__sellerPriceComponents?.[source] || {};
+      return liveData.previewPriceRuleSet({
+        basePrice:product.sellpia_sale_price,
+        ruleSetId:assignment.price_rule_set_id,
+        source,
+        sourceDiscountTerms:component.draft_discount_terms ?? component.source_discount_terms ?? product?.[`${source}_discount_terms`] ?? []
+      });
+    }));
     if (requestId !== drawerState.priceRequestId || productDrawer.dataset.sku !== sku) return;
     drawerState.priceRuleTags = ruleTags;
     drawerState.priceRuleSets = ruleSets;
@@ -2253,34 +2290,26 @@ function discountEditorDraftTerms() {
 
 function updateDiscountEditorPreview() {
   const terms = discountEditorDraftTerms();
-  const preview = discountEditorState.autoAdjustBase
-    ? (discountPriceMath?.grossBaseForTarget
-      ? discountPriceMath.grossBaseForTarget(discountEditorState.anchorDiscountedBase, terms)
-      : {basePrice:null, discountedPrice:null, exact:false, reason:'할인 역산 모듈을 불러오지 못했습니다.'})
-    : (() => {
-      const discountedPrice = discountPriceMath?.discountedBase?.(discountEditorState.basePrice, terms);
-      const exact = Number.isFinite(discountedPrice);
-      return {
-        basePrice:discountEditorState.basePrice,
-        discountedPrice,
-        finalPrice:exact ? discountedPrice + Number(discountEditorState.anchorOptionPrice || 0) : null,
-        exact,
-        reason:exact ? '' : '현재 판매가에 할인조건을 적용하지 못했습니다.'
-      };
-    })();
+  const discountedPrice = discountPriceMath?.discountedBase?.(discountEditorState.basePrice, terms);
+  const exact = Number.isFinite(discountedPrice);
+  const preview = {
+    basePrice:discountEditorState.basePrice,
+    discountedPrice,
+    finalPrice:exact ? discountedPrice + Number(discountEditorState.anchorOptionPrice || 0) : null,
+    exact,
+    reason:exact ? '' : '현재 판매가에 할인조건을 적용하지 못했습니다.'
+  };
   discountEditorState.preview = preview;
-  document.getElementById('discount-editor-preview-label').textContent = discountEditorState.autoAdjustBase ? '자동 보정 판매가' : '현재 판매가 유지';
+  document.getElementById('discount-editor-preview-label').textContent = '현재 판매가 유지';
   document.getElementById('discount-editor-base-price').textContent = preview.basePrice === null ? '-' : `${formatNullableNumber(preview.basePrice)}원`;
   document.getElementById('discount-editor-preview-price').textContent = preview.discountedPrice === null ? '-' : `${formatNullableNumber(preview.discountedPrice)}원`;
-  const displayedFinalPrice = discountEditorState.autoAdjustBase ? discountEditorState.anchorFinalPrice : preview.finalPrice;
+  const displayedFinalPrice = preview.finalPrice;
   document.getElementById('discount-editor-anchor-final-price').textContent = Number.isFinite(Number(displayedFinalPrice)) ? `${formatNullableNumber(displayedFinalPrice)}원` : '-';
   const note = document.getElementById('discount-editor-preview-note');
   note.classList.toggle('error', !preview.exact);
   note.textContent = !preview.exact
     ? preview.reason
-    : discountEditorState.autoAdjustBase
-      ? `가격 태그 계산값을 유지합니다. 할인 적용가 ${formatNullableNumber(preview.discountedPrice)}원 + 옵션가 ${formatNullableNumber(discountEditorState.anchorOptionPrice)}원 = 목표 최종구매가 ${formatNullableNumber(discountEditorState.anchorFinalPrice)}원입니다.`
-      : `가격 태그가 없어 판매가는 ${formatNullableNumber(preview.basePrice)}원으로 유지됩니다. 할인 후 예상 최종구매가는 ${formatNullableNumber(preview.finalPrice)}원입니다.`;
+    : `판매가는 ${formatNullableNumber(preview.basePrice)}원으로 유지됩니다. 할인 적용가 ${formatNullableNumber(preview.discountedPrice)}원 + 옵션가 ${formatNullableNumber(discountEditorState.anchorOptionPrice)}원 = 예상 최종구매가 ${formatNullableNumber(preview.finalPrice)}원입니다.`;
   document.getElementById('discount-editor-save').disabled = !preview.exact;
 }
 
@@ -2333,7 +2362,7 @@ async function openDiscountEditor(button) {
     assignment = await liveData.loadPriceRuleAssignment({sku:targetSku, source});
     if (assignment) {
       const [preview, ruleSets] = await Promise.all([
-        liveData.previewPriceRuleSet({basePrice:product.sellpia_sale_price, ruleSetId:assignment.price_rule_set_id}),
+        liveData.previewPriceRuleSet({basePrice:product.sellpia_sale_price, ruleSetId:assignment.price_rule_set_id, source, sourceDiscountTerms:terms}),
         liveData.loadPriceRuleSets()
       ]);
       rulePreview = preview;
@@ -2345,15 +2374,15 @@ async function openDiscountEditor(button) {
     showToast(`가격 태그를 확인하지 못해 할인 편집을 열 수 없습니다: ${error?.message || error}`);
     return;
   }
-  const autoAdjustBase = Boolean(assignment);
-  const anchorFinalPrice = autoAdjustBase ? numericPrice(rulePreview?.final_price) : currentFinalPrice;
+  const autoAdjustBase = false;
+  const anchorFinalPrice = currentFinalPrice;
   const anchorDiscountedBase = anchorFinalPrice-anchorOptionPrice;
   if (!Number.isFinite(anchorFinalPrice) || !Number.isFinite(anchorDiscountedBase) || anchorDiscountedBase < 0) {
     modal.hidden = true;
     showToast('가격 태그 목표가와 현재 옵션가를 함께 적용할 수 없습니다. 가격 태그 또는 옵션가를 확인해주세요.');
     return;
   }
-  const anchorSource = autoAdjustBase ? `가격 태그 · ${priceRuleSetName}` : '가격 태그 없음 · 현재 판매가 유지';
+  const anchorSource = assignment ? `가격 태그 ‘${priceRuleSetName}’ 배정됨 · 수동 할인은 판매가 유지` : '현재 판매가 유지';
   Object.assign(discountEditorState, {
     source,
     productCode:button.dataset.productCode || product[`${source}_product_code`],
@@ -2374,7 +2403,7 @@ async function openDiscountEditor(button) {
   document.getElementById('discount-editor-title').textContent = isSmartstore ? '기본할인 금액 수정' : '기간 할인코드 수정';
   document.getElementById('discount-editor-product-code').textContent = discountEditorState.productCode || '-';
   document.getElementById('discount-editor-anchor-source').textContent = anchorSource;
-  document.getElementById('discount-editor-anchor-price-label').textContent = autoAdjustBase ? '목표 최종구매가' : '예상 최종구매가';
+  document.getElementById('discount-editor-anchor-price-label').textContent = '예상 최종구매가';
   document.getElementById('discount-editor-anchor-final-price').textContent = `${formatNullableNumber(anchorFinalPrice)}원`;
   const groupSize = Math.max(1, Number(button.closest('td')?.dataset.groupSize) || 1);
   document.getElementById('discount-editor-group-size').textContent = `같은 상품의 ${groupSize}개 옵션을 한 번에 저장합니다.`;
@@ -2445,7 +2474,7 @@ async function saveDiscountEditor() {
     closeDiscountEditor();
     const pending = saved.items.filter(item => item.result?.draft_status === 'pending').length;
     const unchanged = saved.items.length - pending;
-    showToast(`${CHANNEL_LABELS[source]} 상품 할인 수정안 ${pending}건 저장 · ${discountEditorState.autoAdjustBase ? '가격 태그 목표가 유지' : '판매가 유지·할인 후 최종가 변경'}${unchanged ? ` · 원본값 유지 ${unchanged}건` : ''}`);
+    showToast(`${CHANNEL_LABELS[source]} 상품 할인 수정안 ${pending}건 저장 · 판매가 유지·할인 후 최종가 변경${unchanged ? ` · 원본값 유지 ${unchanged}건` : ''}`);
   } catch (error) {
     console.error('product discount draft save failed', error);
     showToast(`할인 수정안 저장 실패: ${error?.message || error}`);
@@ -2747,6 +2776,11 @@ document.getElementById('advanced-filter-chips').addEventListener('click', event
 document.getElementById('advanced-filter-clear').addEventListener('click', () => setAdvancedFilter({logic:'and', conditions:[]}));
 
 matrixBody.addEventListener('click', event => {
+  const inboundCostButton = event.target.closest('[data-inbound-cost-edit]');
+  if (inboundCostButton) {
+    openInboundCostModal(matrixRowsBySku.get(inboundCostButton.dataset.sku));
+    return;
+  }
   const discountButton = event.target.closest('[data-discount-edit]');
   if (discountButton) {
     openDiscountEditor(discountButton);
@@ -2790,7 +2824,7 @@ matrixBody.addEventListener('focusout', event => {
 });
 
 matrixBody.addEventListener('dblclick', event => {
-  if (event.target.closest('.mapping-code-button,.row-check,[data-discount-edit]')) return;
+  if (event.target.closest('.mapping-code-button,.row-check,[data-discount-edit],[data-inbound-cost-edit]')) return;
   const tableCell = event.target.closest('td');
   const cell = event.target.closest('.editable-cell') || tableCell?.querySelector('.sellpia-edit');
   if (!cell) {
@@ -3615,7 +3649,11 @@ document.getElementById('drawer-inventory-list').addEventListener('change', asyn
     if (!selectedRuleSetId) return;
     const preview = await liveData.previewPriceRuleSet({
       basePrice:product?.sellpia_sale_price,
-      ruleSetId:selectedRuleSetId
+      ruleSetId:selectedRuleSetId,
+      source,
+      sourceDiscountTerms:product?.__sellerPriceComponents?.[source]?.draft_discount_terms
+        ?? product?.__sellerPriceComponents?.[source]?.source_discount_terms
+        ?? product?.[`${source}_discount_terms`] ?? []
     });
     if (productDrawer.dataset.sku !== sku) return;
     drawerState.priceRulePreviews[source] = preview;
@@ -3681,7 +3719,14 @@ document.getElementById('drawer-inventory-list').addEventListener('click', async
         liveData.loadPriceRuleSets(),
         liveData.savePriceRuleAssignment({sku, source, ruleSetId:savedSet.price_rule_set_id})
       ]);
-      const preview = await liveData.previewPriceRuleSet({basePrice:product.sellpia_sale_price, ruleSetId:savedSet.price_rule_set_id});
+      const preview = await liveData.previewPriceRuleSet({
+        basePrice:product.sellpia_sale_price,
+        ruleSetId:savedSet.price_rule_set_id,
+        source,
+        sourceDiscountTerms:product?.__sellerPriceComponents?.[source]?.draft_discount_terms
+          ?? product?.__sellerPriceComponents?.[source]?.source_discount_terms
+          ?? product?.[`${source}_discount_terms`] ?? []
+      });
       drawerState.priceRuleTags = ruleTags;
       drawerState.priceRuleSets = ruleSets;
       drawerState.priceRuleAssignments[source] = savedAssignment;
@@ -3712,27 +3757,16 @@ document.getElementById('drawer-inventory-list').addEventListener('click', async
       tagApply.disabled = true;
       tagApply.textContent = '수정안 저장 중…';
       try {
-        const currentComponent = product?.__sellerPriceComponents?.[source] || {};
-        const result = await liveData.saveSellerPriceDraft({
-          sku,
-          source,
-          targetBasePrice:calculatedBasePrice,
-          inputMode:'option',
-          optionPrice:currentComponent.draft_option_price ?? currentComponent.source_option_price ?? product?.[`${source}_option_price`] ?? 0,
-          optionPriceSource:currentComponent.option_price_source || 'tag',
-          basePriceSource:'tag',
-          priceRuleSetId:drawerState.priceRuleSelections[source] || null,
-          batchId:createRequestId()
-        });
-        applyLocalSellerPriceDraft(product, source, result);
-        renderLiveMatrixRows(matrixState.rows);
-        renderDrawerInventory(product);
-        ['smartstore','makeshop','ably'].forEach(channel => renderCurrentPricePolicy(channel, product, drawerState.priceRuleSelections[channel] || ''));
+        const result = await liveData.stageAssignedPriceDraftsBulk({skus:[sku], sources:[source], batchId:createRequestId()});
+        if (Number(result?.failed_rows || 0) > 0) throw new Error(result?.errors?.[0]?.message || '가격·할인 태그 수정안을 만들지 못했습니다.');
+        await loadLiveMatrix();
+        const refreshedProduct = matrixRowsBySku.get(sku);
+        if (refreshedProduct && productDrawer.getAttribute('aria-hidden') === 'false') renderDrawerInventory(refreshedProduct);
         refreshChangeQueueInBackground();
         void loadLiveDashboardMetrics();
-        showToast(result?.draft_status === 'unchanged'
-          ? `${CHANNEL_LABELS[source]} 원본가와 계산 최종가가 같아 기존 가격 수정안을 취소했습니다.`
-          : `${CHANNEL_LABELS[source]} 태그 계산 판매가 ${formatNullableNumber(calculatedBasePrice)}원을 수정안으로 저장했습니다.`);
+        showToast(Number(result?.pending_drafts || 0) > 0
+          ? `${CHANNEL_LABELS[source]} 판매가·할인 태그 수정안 ${Number(result.pending_drafts)}건을 저장했습니다.`
+          : `${CHANNEL_LABELS[source]} 원본값과 태그 계산값이 같아 새 수정안이 없습니다.`);
       } catch (error) {
         console.error('price tag draft save failed', error);
         tagApply.disabled = false;
@@ -3751,7 +3785,14 @@ document.getElementById('drawer-inventory-list').addEventListener('click', async
         source,
         ruleSetId:selectedRuleSetId || null
       });
-      const preview = saved ? await liveData.previewPriceRuleSet({basePrice:product?.sellpia_sale_price, ruleSetId:saved.price_rule_set_id}) : null;
+      const preview = saved ? await liveData.previewPriceRuleSet({
+        basePrice:product?.sellpia_sale_price,
+        ruleSetId:saved.price_rule_set_id,
+        source,
+        sourceDiscountTerms:product?.__sellerPriceComponents?.[source]?.draft_discount_terms
+          ?? product?.__sellerPriceComponents?.[source]?.source_discount_terms
+          ?? product?.[`${source}_discount_terms`] ?? []
+      }) : null;
       drawerState.priceRuleAssignments = {...drawerState.priceRuleAssignments, [source]:saved};
       drawerState.priceRuleSelections[source] = saved?.price_rule_set_id || '';
       drawerState.priceRulePreviews[source] = preview;
@@ -5162,6 +5203,222 @@ window.setInterval(() => {
   if (document.getElementById('inventory').classList.contains('active-page')) loadInventorySurvey({silent:true});
 }, 60000);
 
+function inboundCostFormulaLabel(tag) {
+  const multiply = Number(tag?.multiply_value || 1);
+  const divide = Number(tag?.divide_value || 1);
+  const add = Number(tag?.add_value || 0);
+  const parts = ['매입가'];
+  if (multiply !== 1) parts.push(`× ${multiply.toLocaleString('ko-KR')}`);
+  if (divide !== 1) parts.push(`÷ ${divide.toLocaleString('ko-KR')}`);
+  if (add) parts.push(`${add > 0 ? '+' : '-'} ${Math.abs(add).toLocaleString('ko-KR')}원`);
+  if (Number(tag?.rounding_unit || 1) !== 1) {
+    const rounding = {nearest:'반올림', up:'올림', down:'내림'}[tag.rounding_mode] || '반올림';
+    parts.push(`· ${Number(tag.rounding_unit).toLocaleString('ko-KR')}원 ${rounding}`);
+  }
+  return parts.join(' ');
+}
+
+function calculateInboundCostPreview(purchasePrice, tag) {
+  const base = Number(purchasePrice);
+  if (!Number.isFinite(base) || !tag) return null;
+  const raw = (base * Number(tag.multiply_value || 1) / Number(tag.divide_value || 1)) + Number(tag.add_value || 0);
+  const unit = Math.max(1, Number(tag.rounding_unit || 1));
+  if (tag.rounding_mode === 'up') return Math.ceil(raw / unit) * unit;
+  if (tag.rounding_mode === 'down') return Math.floor(raw / unit) * unit;
+  return Math.round(raw / unit) * unit;
+}
+
+function resetInboundCostTagForm() {
+  inboundCostState.editingTagId = null;
+  document.getElementById('inbound-cost-tag-id').value = '';
+  document.getElementById('inbound-cost-tag-name').value = '';
+  document.getElementById('inbound-cost-tag-color').value = '#7c3aed';
+  document.getElementById('inbound-cost-tag-multiply').value = '1';
+  document.getElementById('inbound-cost-tag-divide').value = '1';
+  document.getElementById('inbound-cost-tag-add').value = '0';
+  document.getElementById('inbound-cost-tag-round-unit').value = '1';
+  document.getElementById('inbound-cost-tag-round-mode').value = 'nearest';
+  document.getElementById('inbound-cost-tag-description').value = '';
+  document.getElementById('inbound-cost-tag-delete').hidden = true;
+  updateInboundCostTagPreview();
+  renderInboundCostTagList();
+}
+
+function inboundCostTagFormValue() {
+  return {
+    tagId:document.getElementById('inbound-cost-tag-id').value || null,
+    tagName:document.getElementById('inbound-cost-tag-name').value.trim(),
+    tagColor:document.getElementById('inbound-cost-tag-color').value,
+    multiplyValue:Number(document.getElementById('inbound-cost-tag-multiply').value || 1),
+    divideValue:Number(document.getElementById('inbound-cost-tag-divide').value || 1),
+    addValue:Number(document.getElementById('inbound-cost-tag-add').value || 0),
+    roundingUnit:Number(document.getElementById('inbound-cost-tag-round-unit').value || 1),
+    roundingMode:document.getElementById('inbound-cost-tag-round-mode').value,
+    description:document.getElementById('inbound-cost-tag-description').value.trim()
+  };
+}
+
+function updateInboundCostTagPreview() {
+  const value = inboundCostTagFormValue();
+  document.getElementById('inbound-cost-tag-preview').textContent = inboundCostFormulaLabel({
+    multiply_value:value.multiplyValue,
+    divide_value:value.divideValue,
+    add_value:value.addValue,
+    rounding_unit:value.roundingUnit,
+    rounding_mode:value.roundingMode
+  });
+}
+
+function renderInboundCostTagList() {
+  const list = document.getElementById('inbound-cost-tag-list');
+  if (!list) return;
+  list.innerHTML = inboundCostState.tags.length ? inboundCostState.tags.map(tag => `
+    <button type="button" class="price-rule-tag-card${Number(tag.tag_id) === Number(inboundCostState.editingTagId) ? ' active' : ''}" data-inbound-cost-tag-id="${Number(tag.tag_id)}">
+      <i style="background:${escapeHtml(tag.tag_color || '#7c3aed')}"></i><span><b>${escapeHtml(tag.tag_name)}</b><em>${escapeHtml(inboundCostFormulaLabel(tag))}</em></span>
+    </button>`).join('') : '<p class="price-rule-empty">아직 실입고가 수식태그가 없습니다. 오른쪽에서 첫 태그를 만들어주세요.</p>';
+  const select = document.getElementById('inbound-cost-formula');
+  if (select) {
+    const selected = select.value;
+    select.innerHTML = '<option value="">수식태그 선택…</option>' + inboundCostState.tags.map(tag => `<option value="${Number(tag.tag_id)}">${escapeHtml(tag.tag_name)} · ${escapeHtml(inboundCostFormulaLabel(tag))}</option>`).join('');
+    if (inboundCostState.tags.some(tag => String(tag.tag_id) === selected)) select.value = selected;
+  }
+}
+
+function editInboundCostTag(tagId) {
+  const tag = inboundCostState.tags.find(item => Number(item.tag_id) === Number(tagId));
+  if (!tag) return;
+  inboundCostState.editingTagId = Number(tag.tag_id);
+  document.getElementById('inbound-cost-tag-id').value = tag.tag_id;
+  document.getElementById('inbound-cost-tag-name').value = tag.tag_name || '';
+  document.getElementById('inbound-cost-tag-color').value = tag.tag_color || '#7c3aed';
+  document.getElementById('inbound-cost-tag-multiply').value = tag.multiply_value ?? 1;
+  document.getElementById('inbound-cost-tag-divide').value = tag.divide_value ?? 1;
+  document.getElementById('inbound-cost-tag-add').value = tag.add_value ?? 0;
+  document.getElementById('inbound-cost-tag-round-unit').value = tag.rounding_unit ?? 1;
+  document.getElementById('inbound-cost-tag-round-mode').value = tag.rounding_mode || 'nearest';
+  document.getElementById('inbound-cost-tag-description').value = tag.description || '';
+  document.getElementById('inbound-cost-tag-delete').hidden = false;
+  updateInboundCostTagPreview();
+  renderInboundCostTagList();
+}
+
+async function loadInboundCostTags({silent = false} = {}) {
+  if (!liveData?.loadInboundCostFormulaTags) return;
+  try {
+    inboundCostState.tags = await liveData.loadInboundCostFormulaTags();
+    inboundCostState.loaded = true;
+    renderInboundCostTagList();
+  } catch (error) {
+    console.error('inbound cost tags load failed', error);
+    if (!silent) showToast(`실입고가 수식태그 조회 실패: ${error?.message || error}`);
+  }
+}
+
+const inboundCostModal = document.getElementById('inbound-cost-modal');
+
+function updateInboundCostModalPreview() {
+  const mode = document.querySelector('input[name="inbound-cost-mode"]:checked')?.value || 'empty';
+  const product = inboundCostState.product || {};
+  const manualField = document.getElementById('inbound-cost-manual-field');
+  const formulaField = document.getElementById('inbound-cost-formula-field');
+  manualField.hidden = mode !== 'manual';
+  formulaField.hidden = mode !== 'formula';
+  let value = null;
+  let equation = '미설정 상태로 저장합니다.';
+  if (mode === 'manual') {
+    const input = document.getElementById('inbound-cost-manual').value;
+    value = input === '' ? null : Number(input);
+    equation = value === null ? '직접 입력 금액을 적어주세요.' : '직접 확인한 실입고가';
+  } else if (mode === 'formula') {
+    const tag = inboundCostState.tags.find(item => String(item.tag_id) === document.getElementById('inbound-cost-formula').value);
+    value = calculateInboundCostPreview(product.sellpia_purchase_price, tag);
+    equation = tag ? `${inboundCostFormulaLabel(tag)} = ${formatNullableNumber(value)}원` : '수식태그를 선택해주세요.';
+  }
+  document.getElementById('inbound-cost-preview').textContent = value === null || !Number.isFinite(value) ? '-' : `${formatNullableNumber(value)}원`;
+  document.getElementById('inbound-cost-preview-equation').textContent = equation;
+}
+
+async function openInboundCostModal(product) {
+  if (!product) return;
+  inboundCostState.product = product;
+  if (!inboundCostState.loaded) await loadInboundCostTags();
+  document.getElementById('inbound-cost-modal-sku').textContent = `셀피아 SKU ${product.sellpia_sku_code}`;
+  document.getElementById('inbound-cost-source-price').textContent = `${formatNullableNumber(product.sellpia_purchase_price)}원`;
+  document.getElementById('inbound-cost-source-order-unit').textContent = formatNullableNumber(product.sellpia_order_unit);
+  document.getElementById('inbound-cost-source-min-unit').textContent = formatNullableNumber(product.sellpia_minimum_order_unit);
+  document.getElementById('inbound-cost-manual').value = product.actual_inbound_manual_cost ?? '';
+  renderInboundCostTagList();
+  document.getElementById('inbound-cost-formula').value = product.inbound_cost_formula_tag_id || '';
+  const mode = product.actual_inbound_cost_mode || 'empty';
+  const radio = document.querySelector(`input[name="inbound-cost-mode"][value="${mode}"]`);
+  if (radio) radio.checked = true;
+  updateInboundCostModalPreview();
+  inboundCostModal.hidden = false;
+}
+
+function closeInboundCostModal() {
+  inboundCostModal.hidden = true;
+  inboundCostState.product = null;
+}
+
+document.getElementById('inbound-cost-tag-list').addEventListener('click', event => {
+  const button = event.target.closest('[data-inbound-cost-tag-id]');
+  if (button) editInboundCostTag(button.dataset.inboundCostTagId);
+});
+document.getElementById('inbound-cost-tag-reset').addEventListener('click', resetInboundCostTagForm);
+document.getElementById('inbound-cost-tag-form').addEventListener('input', updateInboundCostTagPreview);
+document.getElementById('inbound-cost-tag-form').addEventListener('submit', async event => {
+  event.preventDefault();
+  const button = event.submitter || event.currentTarget.querySelector('button[type="submit"]');
+  const value = inboundCostTagFormValue();
+  if (!value.tagName || value.multiplyValue <= 0 || value.divideValue <= 0 || value.roundingUnit <= 0) {
+    showToast('태그 이름과 0보다 큰 곱하기·나누기·끝자리 단위를 확인해주세요.');
+    return;
+  }
+  button.disabled = true;
+  try {
+    const saved = await liveData.saveInboundCostFormulaTag(value);
+    await loadInboundCostTags({silent:true});
+    editInboundCostTag(saved.tag_id);
+    showToast(`실입고가 수식태그 ‘${saved.tag_name}’을 저장했습니다.`);
+  } catch (error) { showToast(`수식태그 저장 실패: ${error?.message || error}`); }
+  finally { button.disabled = false; }
+});
+document.getElementById('inbound-cost-tag-delete').addEventListener('click', async event => {
+  if (!inboundCostState.editingTagId || !window.confirm('이 실입고가 수식태그를 삭제할까요?')) return;
+  event.currentTarget.disabled = true;
+  try {
+    await liveData.deleteInboundCostFormulaTag(inboundCostState.editingTagId);
+    await loadInboundCostTags({silent:true});
+    resetInboundCostTagForm();
+    showToast('실입고가 수식태그를 삭제했습니다.');
+  } catch (error) { showToast(`수식태그 삭제 실패: ${error?.message || error}`); }
+  finally { event.currentTarget.disabled = false; }
+});
+document.querySelectorAll('input[name="inbound-cost-mode"]').forEach(radio => radio.addEventListener('change', updateInboundCostModalPreview));
+document.getElementById('inbound-cost-manual').addEventListener('input', updateInboundCostModalPreview);
+document.getElementById('inbound-cost-formula').addEventListener('change', updateInboundCostModalPreview);
+document.getElementById('inbound-cost-modal-close').addEventListener('click', closeInboundCostModal);
+document.getElementById('inbound-cost-modal-cancel').addEventListener('click', closeInboundCostModal);
+inboundCostModal.addEventListener('click', event => { if (event.target === inboundCostModal) closeInboundCostModal(); });
+document.getElementById('inbound-cost-modal-save').addEventListener('click', async event => {
+  const product = inboundCostState.product;
+  if (!product) return;
+  const mode = document.querySelector('input[name="inbound-cost-mode"]:checked')?.value || 'empty';
+  const manualCost = mode === 'manual' ? document.getElementById('inbound-cost-manual').value : null;
+  const formulaTagId = mode === 'formula' ? document.getElementById('inbound-cost-formula').value : null;
+  if (mode === 'manual' && (manualCost === '' || Number(manualCost) < 0)) { showToast('직접 입력할 실입고가를 확인해주세요.'); return; }
+  if (mode === 'formula' && !formulaTagId) { showToast('적용할 수식태그를 선택해주세요.'); return; }
+  event.currentTarget.disabled = true;
+  try {
+    await liveData.saveInboundCost({sku:product.sellpia_sku_code, manualCost, formulaTagId});
+    closeInboundCostModal();
+    await loadLiveMatrix();
+    showToast(`${product.sellpia_sku_code} 실입고가를 DB에 바로 저장했습니다.`);
+  } catch (error) { showToast(`실입고가 저장 실패: ${error?.message || error}`); }
+  finally { event.currentTarget.disabled = false; }
+});
+
 function showPage(pageId) {
   document.querySelectorAll('.page').forEach(page => page.classList.remove('active-page'));
   document.querySelectorAll('.nav-item').forEach(item => item.classList.toggle('active', item.dataset.page === pageId));
@@ -5170,7 +5427,10 @@ function showPage(pageId) {
   if (pageId === 'jobs') loadChangeQueue();
   if (pageId === 'multi-links' && !multiLinkState.loaded) loadMultiLinks({resetPage:true});
   if (pageId === 'inventory') loadInventorySurvey({silent:inventoryState.loaded});
-  if (pageId === 'price-rules') window.SystemV3PriceRuleLab?.refresh();
+  if (pageId === 'price-rules') {
+    window.SystemV3PriceRuleLab?.refresh();
+    loadInboundCostTags({silent:inboundCostState.loaded});
+  }
   document.querySelector('.content-area').scrollTop = 0;
 }
 
@@ -5383,6 +5643,7 @@ function showToast(message) {
 }
 
 document.addEventListener('keydown', event => {
+  if (event.key === 'Escape' && !inboundCostModal.hidden) closeInboundCostModal();
   if (event.key === 'Escape' && !sellerExportModal.hidden) closeSellerExport();
   if (event.key === 'Escape' && !matrixCsvModal.hidden) closeMatrixCsvExport();
   if (event.key === 'Escape' && !viewSettingsModal.hidden) closeViewSettings();

@@ -7,9 +7,9 @@
     <title>System V3 · 상품 운영 허브</title>
     <link rel="preconnect" href="https://cdnjs.cloudflare.com" crossorigin>
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/pretendard/1.3.9/static/pretendard.css">
-    <link rel="stylesheet" href="./style.css?v=20260825-db-write-through-r17">
-    <link rel="stylesheet" href="./inventory.css?v=20260825-db-write-through-r17">
-    <link rel="stylesheet" href="./price-rule-lab.css?v=20260825-db-write-through-r17">
+    <link rel="stylesheet" href="./style.css?v=20260825-inbound-cost-r19">
+    <link rel="stylesheet" href="./inventory.css?v=20260825-inbound-cost-r19">
+    <link rel="stylesheet" href="./price-rule-lab.css?v=20260825-inbound-cost-r19">
   </head>
   <body>
     <div class="app-shell">
@@ -228,14 +228,14 @@
                   <tr class="group-row">
                     <th class="sticky-col select-col" rowspan="2" aria-hidden="true"></th>
                     <th class="sticky-col image-col" rowspan="2">이미지</th>
-                    <th class="sticky-col sellpia-group" colspan="5">셀피아 기준</th>
+                    <th class="sticky-col sellpia-group" colspan="9">셀피아 기준</th>
                     <th class="smart-group" colspan="9">스마트스토어</th>
                     <th class="make-group" colspan="9">메이크샵</th>
                     <th class="ably-group" colspan="9">에이블리</th>
                     <th class="ops-group" colspan="4">운영정보</th>
                   </tr>
                   <tr class="column-row">
-                    <th class="sticky-col sku-col">셀피아 SKU</th><th class="sticky-col own-code-col">자사코드</th><th class="sticky-col sellpia-name-col name-column">상품명 / 옵션명</th><th class="sticky-col sellpia-stock-col">현재재고</th><th class="sticky-col sellpia-price-col">판매가</th>
+                    <th class="sticky-col sku-col">셀피아 SKU</th><th class="sticky-col own-code-col">자사코드</th><th class="sticky-col sellpia-name-col name-column">상품명 / 옵션명</th><th class="sticky-col sellpia-stock-col">현재재고</th><th class="sticky-col sellpia-price-col">판매가</th><th>매입가</th><th>발주단위</th><th>최소발주단위</th><th>실입고가</th>
                     <th>연결상태</th><th>상품코드</th><th>옵션코드</th><th class="seller-name-column">상품명 / 옵션명</th><th>판매처재고</th><th>판매가</th><th>할인정보</th><th>옵션가</th><th>최종구매가</th>
                     <th>연결상태</th><th>상품코드</th><th>옵션코드</th><th class="seller-name-column">상품명 / 옵션명</th><th>판매처재고</th><th>판매가</th><th>할인정보</th><th>옵션가</th><th>최종구매가</th>
                     <th>연결상태</th><th>상품코드</th><th>옵션코드</th><th class="seller-name-column">상품명 / 옵션명</th><th>판매처재고</th><th>판매가</th><th>할인정보</th><th>옵션가</th><th>최종구매가</th>
@@ -326,7 +326,7 @@
           <div id="attributes" class="page table-page" data-title="상품 속성·태그" data-copy="소재·상품군·형태와 운영 태그를 상품코드 기준으로 관리합니다."></div>
           <div id="price-rules" class="page price-rule-page">
             <div class="page-head">
-              <div><h2 id="price-rule-lab-title">가격 규칙</h2><p>작은 계산 태그를 만들고 순서대로 조합해 재사용할 큰 태그를 관리합니다.</p></div>
+              <div><h2 id="price-rule-lab-title">가격·할인 규칙</h2><p>판매가 태그와 할인 태그를 따로 만든 뒤 하나의 큰 태그로 조합합니다.</p></div>
               <div class="head-actions"><button id="price-rule-lab-refresh" class="btn" type="button">DB 새로고침</button><button id="price-rule-lab-done" class="btn primary" type="button">매트릭스로 이동</button></div>
             </div>
             <section class="panel price-rule-page-shell">
@@ -338,11 +338,13 @@
                 <div id="price-rule-lab-error" class="price-rule-lab-error" hidden></div>
                 <div class="price-rule-lab-grid">
                   <section class="price-rule-lab-panel">
-                    <div class="price-rule-lab-panel-head"><div><b>작은 태그</b><span>할인·추가·고정가·최저가·끝자리처럼 한 가지 계산을 저장합니다.</span></div></div>
+                    <div class="price-rule-lab-panel-head"><div><b>작은 태그</b><span>판매가 계산과 판매처 할인값을 서로 독립된 태그로 저장합니다.</span></div></div>
                     <div id="price-rule-tag-list" class="price-rule-tag-list"></div>
                     <form id="price-rule-tag-form" class="price-rule-editor-form">
                       <input id="price-rule-tag-id" type="hidden">
                       <label>태그 이름<input id="price-rule-tag-name" required maxlength="40" placeholder="예: 10% 할인"></label>
+                      <label>태그 역할<select id="price-rule-tag-role"><option value="price">판매가 태그</option><option value="discount">할인 태그</option></select></label>
+                      <label id="price-rule-tag-source-field" hidden>할인 판매처<select id="price-rule-tag-source"><option value="smartstore">스마트스토어</option><option value="makeshop">메이크샵</option></select></label>
                       <label>계산 방식<select id="price-rule-tag-mode"><option value="none">기준가 그대로</option><option value="percent_discount">퍼센트 할인</option><option value="percent_markup">퍼센트 인상</option><option value="amount_discount">금액 할인</option><option value="amount_add">금액 추가</option><option value="fixed">최종가 고정</option></select></label>
                       <label>값<input id="price-rule-tag-value" type="number" min="0" step="1" value="0"></label>
                       <label>색상<input id="price-rule-tag-color" type="color" value="#2f6fd1"></label>
@@ -351,7 +353,7 @@
                     </form>
                   </section>
                   <section class="price-rule-lab-panel">
-                    <div class="price-rule-lab-panel-head"><div><b>큰 태그</b><span>작은 태그를 위에서 아래 순서로 계산하는 재사용 규칙입니다.</span></div></div>
+                    <div class="price-rule-lab-panel-head"><div><b>큰 태그</b><span>판매가 태그를 먼저 계산하고, 판매처에 맞는 할인 태그를 별도로 적용합니다.</span></div></div>
                     <div id="price-rule-set-list" class="price-rule-set-list"></div>
                     <form id="price-rule-set-form" class="price-rule-editor-form">
                       <input id="price-rule-set-id" type="hidden">
@@ -362,7 +364,23 @@
                     </form>
                   </section>
                 </div>
-                <p class="price-rule-lab-foot">큰 태그 안의 작은 태그 순서가 최종 가격을 결정합니다. 이 화면에서 규칙을 저장해도 상품에는 아직 배정되지 않습니다.</p>
+                <p class="price-rule-lab-foot">예: 판매가 ‘셀피아 +2,000원’ + 스마트스토어 할인 ‘-2,000원’. 할인 태그가 없으면 기존 판매처 할인정보를 보존합니다. 규칙 저장만으로는 상품값이 바뀌지 않습니다.</p>
+                <section class="inbound-cost-rule-panel">
+                  <div class="price-rule-lab-panel-head"><div><b>실입고가 수식태그</b><span>셀피아 매입가를 기준으로 곱하기·나누기·금액 보정을 순서대로 계산합니다. 예: 쌍입고 개당 = ÷2.</span></div></div>
+                  <div class="inbound-cost-rule-grid">
+                    <div id="inbound-cost-tag-list" class="price-rule-tag-list"></div>
+                    <form id="inbound-cost-tag-form" class="price-rule-editor-form">
+                      <input id="inbound-cost-tag-id" type="hidden">
+                      <label>태그 이름<input id="inbound-cost-tag-name" required maxlength="40" placeholder="예: 쌍입고 개당"></label>
+                      <label>색상<input id="inbound-cost-tag-color" type="color" value="#7c3aed"></label>
+                      <div class="inbound-cost-formula-fields"><label>곱하기<input id="inbound-cost-tag-multiply" type="number" min="0.0001" step="0.0001" value="1"></label><label>나누기<input id="inbound-cost-tag-divide" type="number" min="0.0001" step="0.0001" value="1"></label><label>금액 보정<input id="inbound-cost-tag-add" type="number" step="1" value="0"></label></div>
+                      <div class="inbound-cost-formula-fields"><label>끝자리 단위<input id="inbound-cost-tag-round-unit" type="number" min="1" step="1" value="1"></label><label>끝자리 방식<select id="inbound-cost-tag-round-mode"><option value="nearest">반올림</option><option value="up">올림</option><option value="down">내림</option></select></label></div>
+                      <label>설명<input id="inbound-cost-tag-description" maxlength="120" placeholder="예: 두 개 한 쌍으로 입고되는 상품"></label>
+                      <p id="inbound-cost-tag-preview" class="inbound-cost-tag-preview">매입가 × 1 ÷ 1 + 0</p>
+                      <div class="price-rule-form-actions"><button id="inbound-cost-tag-delete" class="btn danger" type="button" hidden>태그 삭제</button><button id="inbound-cost-tag-reset" class="btn" type="button">새 태그</button><button class="btn primary" type="submit">수식태그 저장</button></div>
+                    </form>
+                  </div>
+                </section>
               </div>
             </section>
           </div>
@@ -505,9 +523,9 @@
             <label>기간 할인코드<select id="discount-editor-rule-code"><option value="NONE">NONE · 기간할인 없음</option><option value="M10">M10 · 10% / 십원 절사</option><option value="M15">M15 · 15% / 십원 절사</option><option value="M20">M20 · 20% / 백원 절사</option></select></label>
             <p>코드를 고르면 메이크샵 기간할인 값과 절사 단위가 함께 고정됩니다.</p>
           </div>
-          <div class="discount-editor-anchor"><span>가격 계산 기준</span><b id="discount-editor-anchor-source">가격 태그 확인 중</b><em><span id="discount-editor-anchor-price-label">예상 최종구매가</span> <strong id="discount-editor-anchor-final-price">-</strong></em></div>
+          <div class="discount-editor-anchor"><span>가격 계산 기준</span><b id="discount-editor-anchor-source">현재 판매가 확인 중</b><em><span id="discount-editor-anchor-price-label">예상 최종구매가</span> <strong id="discount-editor-anchor-final-price">-</strong></em></div>
           <div class="discount-editor-preview"><span id="discount-editor-preview-label">현재 판매가 유지</span><b id="discount-editor-base-price">-</b><i>→</i><span>할인 적용가</span><strong id="discount-editor-preview-price">-</strong></div>
-          <p id="discount-editor-preview-note" class="discount-editor-preview-note">가격 태그가 있으면 목표가를 유지하고, 없으면 판매가를 유지합니다.</p>
+          <p id="discount-editor-preview-note" class="discount-editor-preview-note">수동 할인 수정은 판매가를 역산하지 않습니다. 판매가는 유지되고 최종구매가만 달라집니다.</p>
           <div class="discount-editor-preserved"><b>조건부 할인은 그대로 보존</b><span id="discount-editor-preserved-terms">보존할 조건부 할인 없음</span></div>
         </div>
         <div class="modal-foot"><button class="btn" id="discount-editor-cancel">취소</button><button class="btn primary" id="discount-editor-save">상품 전체 수정안 저장</button></div>
@@ -575,16 +593,29 @@
         <div class="modal-foot"><button id="price-rule-bulk-cancel" class="btn" type="button">취소</button><button id="price-rule-bulk-run" class="btn" type="button">규칙 배정 저장</button><button id="price-rule-bulk-stage" class="btn primary" type="button">배정 규칙으로 가격 수정안 생성</button></div>
       </section>
     </div>
+    <div id="inbound-cost-modal" class="modal-backdrop" hidden>
+      <section class="inbound-cost-modal" role="dialog" aria-modal="true" aria-labelledby="inbound-cost-modal-title">
+        <div class="modal-head"><div><span id="inbound-cost-modal-sku">셀피아 SKU</span><h3 id="inbound-cost-modal-title">실입고가 설정</h3></div><button id="inbound-cost-modal-close" aria-label="실입고가 설정 닫기">×</button></div>
+        <div class="inbound-cost-modal-body">
+          <div class="inbound-cost-source-summary"><span>셀피아 매입가 <b id="inbound-cost-source-price">-</b></span><span>발주단위 <b id="inbound-cost-source-order-unit">-</b></span><span>최소발주단위 <b id="inbound-cost-source-min-unit">-</b></span></div>
+          <fieldset class="inbound-cost-modes"><legend>실입고가 입력 방식</legend><label><input type="radio" name="inbound-cost-mode" value="empty"><span><b>미설정</b><em>확정되지 않은 값은 빈칸으로 표시</em></span></label><label><input type="radio" name="inbound-cost-mode" value="manual"><span><b>직접 입력</b><em>확인한 개당 실입고가 저장</em></span></label><label><input type="radio" name="inbound-cost-mode" value="formula"><span><b>수식태그</b><em>셀피아 매입가에서 자동 계산</em></span></label></fieldset>
+          <label id="inbound-cost-manual-field">직접 입력 금액<input id="inbound-cost-manual" type="number" min="0" step="1"></label>
+          <label id="inbound-cost-formula-field">수식태그<select id="inbound-cost-formula"><option value="">수식태그 선택…</option></select></label>
+          <div class="inbound-cost-preview"><span>저장될 실입고가</span><b id="inbound-cost-preview">-</b><em id="inbound-cost-preview-equation">입력 방식을 선택해주세요.</em></div>
+        </div>
+        <div class="modal-foot"><button id="inbound-cost-modal-cancel" class="btn" type="button">취소</button><button id="inbound-cost-modal-save" class="btn primary" type="button">실입고가 저장</button></div>
+      </section>
+    </div>
     <div id="toast" class="toast" role="status"></div>
     <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.112.3/dist/umd/supabase.js"></script>
-    <script src="./seller-source-parsers.js?v=20260825-db-write-through-r17"></script>
-    <script src="./seller-export-adapter.js?v=20260825-db-write-through-r17"></script>
-    <script src="./matrix-csv-export.js?v=20260825-db-write-through-r17"></script>
-    <script src="./discount-price-math.js?v=20260825-db-write-through-r17"></script>
-    <script src="./data-service.js?v=20260825-db-write-through-r17"></script>
-    <script src="./app.js?v=20260825-db-write-through-r17"></script>
-    <script src="./price-rule-lab.js?v=20260825-db-write-through-r17"></script>
+    <script src="./seller-source-parsers.js?v=20260825-inbound-cost-r19"></script>
+    <script src="./seller-export-adapter.js?v=20260825-inbound-cost-r19"></script>
+    <script src="./matrix-csv-export.js?v=20260825-inbound-cost-r19"></script>
+    <script src="./discount-price-math.js?v=20260825-inbound-cost-r19"></script>
+    <script src="./data-service.js?v=20260825-inbound-cost-r19"></script>
+    <script src="./app.js?v=20260825-inbound-cost-r19"></script>
+    <script src="./price-rule-lab.js?v=20260825-inbound-cost-r19"></script>
   </body>
 </html>
