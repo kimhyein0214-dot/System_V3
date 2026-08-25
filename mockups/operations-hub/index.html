@@ -7,9 +7,9 @@
     <title>System V3 · 상품 운영 허브</title>
     <link rel="preconnect" href="https://cdnjs.cloudflare.com" crossorigin>
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/pretendard/1.3.9/static/pretendard.css">
-    <link rel="stylesheet" href="./style.css?v=20260825-source-refresh-r21">
-    <link rel="stylesheet" href="./inventory.css?v=20260825-source-refresh-r21">
-    <link rel="stylesheet" href="./price-rule-lab.css?v=20260825-source-refresh-r21">
+    <link rel="stylesheet" href="./style.css?v=20260825-representative-tags-r22">
+    <link rel="stylesheet" href="./inventory.css?v=20260825-representative-tags-r22">
+    <link rel="stylesheet" href="./price-rule-lab.css?v=20260825-representative-tags-r22">
   </head>
   <body>
     <div class="app-shell">
@@ -339,7 +339,7 @@
                       <input id="price-rule-tag-id" type="hidden">
                       <label>태그 이름<input id="price-rule-tag-name" required maxlength="40" placeholder="예: 10% 할인"></label>
                       <label>태그 역할<select id="price-rule-tag-role"><option value="price">판매가 태그</option><option value="discount">할인 태그</option></select></label>
-                      <label id="price-rule-tag-source-field" hidden>할인 판매처<select id="price-rule-tag-source"><option value="smartstore">스마트스토어</option><option value="makeshop">메이크샵</option></select></label>
+                      <label id="price-rule-tag-source-field" hidden>할인 판매처<select id="price-rule-tag-source"><option value="smartstore">스마트스토어</option><option value="makeshop">메이크샵</option><option value="ably">에이블리</option></select></label>
                       <label>계산 방식<select id="price-rule-tag-mode"><option value="none">기준가 그대로</option><option value="percent_discount">퍼센트 할인</option><option value="percent_markup">퍼센트 인상</option><option value="amount_discount">금액 할인</option><option value="amount_add">금액 추가</option><option value="fixed">최종가 고정</option></select></label>
                       <label>값<input id="price-rule-tag-value" type="number" min="0" step="1" value="0"></label>
                       <label>색상<input id="price-rule-tag-color" type="color" value="#2f6fd1"></label>
@@ -605,12 +605,12 @@
     <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.112.3/dist/umd/supabase.js"></script>
-    <script src="./seller-source-parsers.js?v=20260825-source-refresh-r21"></script>
-    <script src="./seller-export-adapter.js?v=20260825-source-refresh-r21"></script>
-    <script src="./matrix-csv-export.js?v=20260825-source-refresh-r21"></script>
-    <script src="./discount-price-math.js?v=20260825-source-refresh-r21"></script>
-    <script src="./data-service.js?v=20260825-source-refresh-r21"></script>
-    <script src="./app.js?v=20260825-source-refresh-r21"></script>
-    <script src="./price-rule-lab.js?v=20260825-source-refresh-r21"></script>
+    <script src="./seller-source-parsers.js?v=20260825-representative-tags-r22"></script>
+    <script src="./seller-export-adapter.js?v=20260825-representative-tags-r22"></script>
+    <script src="./matrix-csv-export.js?v=20260825-representative-tags-r22"></script>
+    <script src="./discount-price-math.js?v=20260825-representative-tags-r22"></script>
+    <script src="./data-service.js?v=20260825-representative-tags-r22"></script>
+    <script src="./app.js?v=20260825-representative-tags-r22"></script>
+    <script src="./price-rule-lab.js?v=20260825-representative-tags-r22"></script>
   </body>
 </html>
