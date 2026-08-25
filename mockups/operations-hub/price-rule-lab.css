@@ -63,6 +63,7 @@
 .price-rule-bulk-section-head .btn{height:28px;padding:0 10px;font-size:8px}
 .price-rule-bulk-targets .price-rule-bulk-scopes{grid-template-columns:1fr}
 .price-rule-bulk-targets .price-rule-bulk-scopes label>span{min-height:42px}
+.price-rule-bulk-targets .price-rule-bulk-scopes small{display:block;margin-top:4px;color:#74849a;font-size:8px;font-weight:700}
 .price-rule-bulk-targets .price-rule-bulk-sources{align-items:flex-start;flex-wrap:wrap;gap:10px 16px}
 .price-rule-bulk-targets .price-rule-bulk-set{grid-template-columns:1fr}
 .price-rule-bulk-targets .price-rule-bulk-set span{grid-column:1}
