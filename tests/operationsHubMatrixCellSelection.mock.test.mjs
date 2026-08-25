@@ -8,7 +8,7 @@ const css = fs.readFileSync(new URL('../mockups/operations-hub/style.css', impor
 assert.doesNotMatch(html, /id="select-all-matrix"/, 'the matrix header must not expose row checkbox selection');
 assert.match(css, /\.matrix-table \.select-col\{display:none\}/, 'legacy placeholder cells must remain visually removed');
 assert.match(app, /function matrixCellGrid\(\)[\s\S]*?td:not\(\.select-col\)/, 'cell selection coordinates must ignore the removed checkbox column');
-assert.match(app, /function selectedMatrixTargets\(\)[\s\S]*?selectionRectangle[\s\S]*?cell\.dataset\.channel[\s\S]*?skus:\[\.\.\.skus\], sources:\[\.\.\.sources\]/, 'selected cells must resolve both SKU rows and seller channels');
+assert.match(app, /function selectedMatrixTargets\(\)[\s\S]*?selectionRectangle[\s\S]*?cell\.dataset\.channel[\s\S]*?skus:\[\.\.\.skus\][\s\S]*?sources:\[\.\.\.sources\][\s\S]*?sourceSkus:Object\.fromEntries/, 'selected cells must resolve SKU rows, seller channels, and exact seller-SKU pairs');
 assert.match(app, /const selectedTargets = selectedMatrixTargets\(\)[\s\S]*?selectedSources = selectedTargets\.sources/, 'bulk price work must consume the selected cell range');
 assert.match(app, /data-channel="\$\{prefix\}"[\s\S]*?data-price-component="base"[\s\S]*?data-price-component="option"[\s\S]*?data-price-component="final"/, 'seller cells must carry their channel identity');
 assert.match(app, /function selectedSourceRefreshTargets\(\)[\s\S]*?sellpia_source_stock[\s\S]*?sellpia_source_sale_price[\s\S]*?td\.matrix-cell-selected[\s\S]*?system-master-cell/, 'source refresh must resolve only selected system stock and base-price cells');
