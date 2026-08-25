@@ -86,6 +86,7 @@ const discountPriceMath = window.SystemV3DiscountPriceMath;
 const MATRIX_PAGE_SIZE_KEY = 'system-v3-matrix-page-size';
 const storedMatrixPageSize = Number(localStorage.getItem(MATRIX_PAGE_SIZE_KEY));
 const initialMatrixPageSize = [50, 100, 200].includes(storedMatrixPageSize) ? storedMatrixPageSize : 50;
+const MATRIX_TRANSIENT_RETRY_DELAYS_MS = [1500, 5000, 12000];
 const matrixState = {page:1, pageSize:initialMatrixPageSize, search:'', searchSources:['sellpia','smartstore','makeshop','ably'], status:'all', sort:'sku_asc', advancedFilter:{logic:'and', conditions:[]}, total:0, rows:[], loading:false, requestId:0, codeListSkus:[], codeListRows:[], codeListName:''};
 const multiLinkState = {page:1, pageSize:50, search:'', source:'all', relationType:'complex', total:0, loading:false, requestId:0, rows:[], selected:null, loaded:false};
 const mappingSyncState = {displayedVersion:'', checking:false, autoRefreshing:false, latest:null};
@@ -736,7 +737,10 @@ async function loadLiveMatrix({resetPage = false} = {}) {
   const requestId = ++matrixState.requestId;
   matrixState.loading = true;
   setMatrixConnection('loading', 'DB 조회 중');
-  matrixBody.innerHTML = '<tr class="matrix-empty-row loading"><td colspan="38"><b>Supabase에서 실제 SKU를 불러오는 중입니다.</b><span>이미지와 자사코드를 함께 연결합니다.</span></td></tr>';
+  const keepRenderedRows = matrixState.rows.length > 0;
+  if (!keepRenderedRows) {
+    matrixBody.innerHTML = '<tr class="matrix-empty-row loading"><td colspan="38"><b>Supabase에서 실제 SKU를 불러오는 중입니다.</b><span>이미지와 자사코드를 함께 연결합니다.</span></td></tr>';
+  }
   try {
     const request = {
       page:matrixState.page,
@@ -750,7 +754,7 @@ async function loadLiveMatrix({resetPage = false} = {}) {
       advancedFilter:matrixState.advancedFilter
     };
     let result;
-    for (let attempt = 0; attempt < 2; attempt += 1) {
+    for (let attempt = 0; attempt <= MATRIX_TRANSIENT_RETRY_DELAYS_MS.length; attempt += 1) {
       try {
         result = await liveData.loadProducts(request);
         break;
@@ -761,9 +765,10 @@ async function loadLiveMatrix({resetPage = false} = {}) {
           || message.includes('canceling statement')
           || message.includes('fetch failed')
           || message.includes('failed to fetch');
-        if (!transient || attempt > 0 || requestId !== matrixState.requestId) throw error;
-        setMatrixConnection('loading', 'DB 재시도 중');
-        await new Promise(resolve => setTimeout(resolve, 450));
+        if (!transient || attempt >= MATRIX_TRANSIENT_RETRY_DELAYS_MS.length || requestId !== matrixState.requestId) throw error;
+        const retryDelay = MATRIX_TRANSIENT_RETRY_DELAYS_MS[attempt];
+        setMatrixConnection('loading', `DB 재시도 중 · ${attempt + 1}/${MATRIX_TRANSIENT_RETRY_DELAYS_MS.length}`);
+        await new Promise(resolve => setTimeout(resolve, retryDelay));
       }
     }
     if (requestId !== matrixState.requestId) return false;
@@ -786,9 +791,14 @@ async function loadLiveMatrix({resetPage = false} = {}) {
     return true;
   } catch (error) {
     console.error('operations hub matrix load failed', error);
-    matrixBody.innerHTML = '<tr class="matrix-empty-row error"><td colspan="38"><b>실데이터를 불러오지 못했습니다.</b><span>DB 새로고침을 눌러 다시 시도해주세요.</span></td></tr>';
-    document.getElementById('live-catalog-state').textContent = '연결 오류';
-    setMatrixConnection('error', 'DB 연결 오류');
+    if (keepRenderedRows) {
+      setMatrixConnection('error', 'DB 조회 지연 · 기존 화면 유지');
+      showToast('새 데이터 조회가 지연되어 기존 화면을 유지합니다. 저장된 수정값은 사라지지 않습니다.');
+    } else {
+      matrixBody.innerHTML = '<tr class="matrix-empty-row error"><td colspan="38"><b>실데이터를 불러오지 못했습니다.</b><span>DB 새로고침을 눌러 다시 시도해주세요.</span></td></tr>';
+      document.getElementById('live-catalog-state').textContent = '연결 오류';
+      setMatrixConnection('error', 'DB 연결 오류');
+    }
     return false;
   } finally {
     if (requestId === matrixState.requestId) matrixState.loading = false;
