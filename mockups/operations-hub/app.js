@@ -458,9 +458,21 @@ function systemOperationalCell(product, fieldKey, label, sourceValue) {
   const hasSource = sourceValue !== null && sourceValue !== undefined && sourceValue !== '';
   const differs = hasValue && hasSource && Number(value) !== Number(sourceValue);
   const updatedAt = fieldKey === 'system_base_price' ? product?.system_price_updated_at : product?.system_stock_updated_at;
-  return `<button class="editable-cell sellpia-edit system-master-cell${!hasValue ? ' unset' : ''}${differs ? ' diff' : ''}" data-source="system" data-field-key="${fieldKey}" data-field="${label}" data-value="${escapeHtml(hasValue ? value : '')}" data-value-type="nullable-number" title="시스템 기준값을 즉시 저장합니다. 빈값으로 저장하면 기준값을 해제합니다. 원본 업로드는 이 값을 덮어쓰지 않습니다.">
+  const sourceUpdatedAt = product?.sellpia_source_updated_at;
+  const sourceIsNewer = Boolean(sourceUpdatedAt) && (!updatedAt || new Date(sourceUpdatedAt).getTime() > new Date(updatedAt).getTime());
+  const sourceState = !hasSource
+    ? '원본 없음'
+    : !hasValue
+      ? '원본 미반영'
+      : differs && sourceIsNewer
+        ? '원본 갱신 있음'
+        : differs
+          ? '원본과 다름'
+          : '원본과 일치';
+  const sourceClass = hasSource && (!hasValue || differs) ? ' source-pending' : '';
+  return `<button class="editable-cell sellpia-edit system-master-cell${!hasValue ? ' unset' : ''}${differs ? ' diff' : ''}${sourceClass}" data-source="system" data-field-key="${fieldKey}" data-field="${label}" data-value="${escapeHtml(hasValue ? value : '')}" data-value-type="nullable-number" title="시스템 기준값을 즉시 저장합니다. 원본 숫자는 자동 반영되지 않으며, 선택 셀 원본값 갱신 작업을 실행할 때만 복사됩니다.">
     <b>${hasValue ? formatNullableNumber(value) : '미설정'}</b>
-    <em>원본 ${hasSource ? formatNullableNumber(sourceValue) : '-'}${updatedAt ? ` · 저장 ${formatLiveTime(updatedAt)}` : ''}</em>
+    <em>${sourceState}${updatedAt ? ` · 저장 ${formatLiveTime(updatedAt)}` : ''}</em>
   </button>`;
 }
 
