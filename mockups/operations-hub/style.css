@@ -332,6 +332,8 @@ body.matrix-cell-selecting{user-select:none}
 .matrix-column-resize-handle::after{content:"";position:absolute;top:6px;bottom:6px;left:4px;width:2px;border-radius:2px;background:transparent;transition:background .12s}
 .matrix-table .column-row th:hover>.matrix-column-resize-handle::after,.matrix-column-resize-handle:focus-visible::after,.matrix-column-resize-handle.active::after{background:#3274df}
 .matrix-column-resize-handle:focus-visible{outline:2px solid #3274df;outline-offset:-2px}
+.matrix-column-resize-guide{position:fixed;z-index:80;width:3px;transform:translateX(-1px);border-radius:2px;background:#1769e8;box-shadow:0 0 0 1px rgba(255,255,255,.9),0 0 10px rgba(23,105,232,.55);pointer-events:none}
+.matrix-column-resize-guide[hidden]{display:none}
 body.matrix-column-resizing,body.matrix-column-resizing *{cursor:col-resize!important;user-select:none!important}
 .matrix-column-reset{white-space:nowrap}
 .matrix-table:not(.sellpia-unfrozen) .select-col{left:0}
