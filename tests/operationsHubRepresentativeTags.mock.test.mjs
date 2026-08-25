@@ -5,6 +5,10 @@ const migration = fs.readFileSync(
   new URL('../supabase/migrations/20260825060001_representative_price_and_inbound_tags.sql', import.meta.url),
   'utf8'
 );
+const correctionMigration = fs.readFileSync(
+  new URL('../supabase/migrations/20260825060002_correct_14k_nobol_tag_name.sql', import.meta.url),
+  'utf8'
+);
 const html = fs.readFileSync(new URL('../mockups/operations-hub/index.html', import.meta.url), 'utf8');
 const lab = fs.readFileSync(new URL('../mockups/operations-hub/price-rule-lab.js', import.meta.url), 'utf8');
 
@@ -20,7 +24,8 @@ assert.match(migration, /REP_ABLY_2000[\s\S]*?REP_PRICE_ADD_5000[\s\S]*?REP_ABLY
 assert.match(migration, /v_source not in \('smartstore', 'makeshop', 'ably'\)[\s\S]*?v_source = 'ably'[\s\S]*?'term_key', 'immediate'[\s\S]*?'title', '즉시할인'/, 'Ably discount tags must be valid and calculate an immediate-discount term');
 
 assert.match(migration, /'14K_기본'[\s\S]*?1::numeric, 1::numeric, 0::numeric/, '14K 기본 must preserve supplier cost');
-assert.match(migration, /'14K_노블'[\s\S]*?1::numeric, 1::numeric, -7500::numeric/, '14K 노블 must subtract 7500 from supplier cost');
+assert.match(migration, /'14K_노블'[\s\S]*?1::numeric, 1::numeric, -7500::numeric/, 'the historical seed keeps the original formula values');
+assert.match(correctionMigration, /set tag_name = '14K_노볼'[\s\S]*?where tag_name = '14K_노블'/, 'the representative tag name must be corrected to 14K_노볼 without changing its formula');
 assert.match(migration, /'14K_1\/2'[\s\S]*?1::numeric, 2::numeric, 0::numeric/, '14K 1/2 must divide supplier cost by two');
 assert.doesNotMatch(migration, /operations_hub_price_rule_assignments/, 'representative tags must not be assigned to products yet');
 
