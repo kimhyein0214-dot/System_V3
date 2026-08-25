@@ -9,6 +9,7 @@ assert.match(app, /MATRIX_COLUMN_WIDTHS_KEY = 'system-v3-matrix-column-widths-v1
 assert.match(app, /matrix-column-resize-handle[\s\S]*?pointerdown[\s\S]*?pointermove[\s\S]*?pointerup/, 'header separators must support pointer dragging');
 assert.match(app, /pointermove[\s\S]*?currentX = event\.clientX[\s\S]*?moveMatrixColumnResizeGuide\(event\.clientX\)/, 'the selected boundary guide must follow the pointer while dragging');
 assert.match(app, /finishResize[\s\S]*?matrixZoom \/ 100[\s\S]*?startWidth \+ delta[\s\S]*?persist:true/, 'releasing the guide must commit the width correctly at every matrix zoom level');
+assert.doesNotMatch(app, /finishResize[\s\S]*?currentX = event\.clientX[\s\S]*?if \(commit\)/, 'pointerup must not overwrite the last visible guide position before committing');
 assert.match(app, /pointercancel[\s\S]*?finishResize\(event, \{commit:false\}\)/, 'a cancelled drag must hide the guide without changing the width');
 assert.match(app, /function applyColumnVisibility[\s\S]*?applyMatrixColumnWidths\(view\)/, 'resized widths must be restored after every matrix render and view change');
 assert.match(app, /Number\(cell\.colSpan\)[\s\S]*?=== 1/, 'loading and empty rows spanning the table must not be collapsed to one column width');

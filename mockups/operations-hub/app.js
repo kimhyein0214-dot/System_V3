@@ -407,7 +407,6 @@ function initializeMatrixColumnResizing() {
   });
   const finishResize = (event, {commit = true} = {}) => {
     if (!matrixColumnResizeState) return;
-    if (Number.isFinite(event?.clientX)) matrixColumnResizeState.currentX = event.clientX;
     if (commit) {
       const zoom = Math.max(.01, matrixZoom / 100);
       const delta = (matrixColumnResizeState.currentX - matrixColumnResizeState.startX) / zoom;
