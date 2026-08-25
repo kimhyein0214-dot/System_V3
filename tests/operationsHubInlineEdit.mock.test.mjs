@@ -33,7 +33,8 @@ assert.deepEqual(
 );
 
 assert.match(source, /function commitEditableCellValue[\s\S]*?parseEditableInputValue\(value, cell\.dataset\.valueType\)[\s\S]*?if \(!parsed\.valid\) return/, 'paste and direct Sellpia commits must use the shared parser');
-assert.match(source, /matrixBody\.addEventListener\('dblclick'[\s\S]*?const \{numeric, signedNumber\} = parseEditableInputValue\(before, valueType\)[\s\S]*?const parsed = parseEditableInputValue\(save \? input\.value : before, valueType\)/, 'double-click editing must declare signed-number state before validation');
+assert.match(source, /function openMatrixInlineEditor\(cell\)[\s\S]*?const \{numeric, signedNumber\} = parseEditableInputValue\(before, valueType\)[\s\S]*?const parsed = parseEditableInputValue\(save \? input\.value : before, valueType\)/, 'shared inline editing must declare signed-number state before validation');
+assert.match(source, /matrixBody\.addEventListener\('dblclick'[\s\S]*?openMatrixInlineEditor\(cell\)/, 'double-click editing must use the shared inline editor');
 assert.match(source, /let completed = false[\s\S]*?if \(completed\) return;[\s\S]*?completed = true/, 'blur after Enter must not save the same edit twice');
 assert.match(source, /keyEvent\.key === 'Enter'\) finish\(true\)[\s\S]*?keyEvent\.key === 'Escape'\) finish\(false\)[\s\S]*?input\.addEventListener\('blur', \(\) => finish\(true\)\)/, 'Enter, Escape and blur completion paths must remain wired');
 assert.match(source, /cell\.matches\('\.sellpia-edit'\)[\s\S]*?commitEditableCellValue\(cell, after\)/, 'system-master and permitted Sellpia metadata edits must enter the immediate-save queue');

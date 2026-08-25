@@ -112,7 +112,7 @@
     const all = scope === 'all';
     if (!all && view?.channels?.[source] === false) return [];
     const columns = [];
-    if (all || view?.showStatus !== false) columns.push({key:`${source}_connection`, label:`${label} 연결상태`, value:row => sellerState(row, source)});
+    if (all) columns.push({key:`${source}_connection`, label:`${label} 연결상태`, value:row => sellerState(row, source)});
     if (all || view?.showCodes !== false) columns.push(
       {key:`${source}_product_code`, label:`${label} 상품코드`, type:'code'},
       {key:`${source}_option_code`, label:`${label} 옵션코드`, type:'code'}

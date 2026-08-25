@@ -48,6 +48,7 @@ const visible = csv.buildColumns({
 const labels = visible.map(column => column.label);
 assert.ok(labels.includes('입력 행') && labels.includes('입력 코드'), 'code-list metadata must lead the export');
 assert.ok(labels.includes('스마트스토어 판매처재고'), 'visible channel stock must be exported');
+assert.ok(!labels.includes('스마트스토어 연결상태'), 'hidden matrix connection-status columns must stay out of visible-scope CSV');
 assert.ok(!labels.includes('스마트스토어 판매가격'), 'hidden price columns must stay out of visible-scope CSV');
 assert.ok(!labels.some(label => label.startsWith('메이크샵 ')), 'hidden channels must stay out of visible-scope CSV');
 
