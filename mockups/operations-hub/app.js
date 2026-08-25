@@ -418,7 +418,7 @@ function initializeMatrixColumnResizing() {
     matrixTable.querySelectorAll('.matrix-column-resize-handle.active').forEach(handle => handle.classList.remove('active'));
   };
   document.addEventListener('pointerup', event => finishResize(event, {commit:true}));
-  document.addEventListener('pointercancel', event => finishResize(event, {commit:false}));
+  document.addEventListener('pointercancel', event => finishResize(event, {commit:true}));
   document.getElementById('matrix-column-reset').addEventListener('click', () => resetMatrixColumnWidth());
 }
 
