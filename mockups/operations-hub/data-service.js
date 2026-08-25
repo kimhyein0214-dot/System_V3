@@ -134,8 +134,50 @@
     });
   }
 
+  async function attachPriceRuleAssignments(rows) {
+    const products = Array.isArray(rows) ? rows : [];
+    const skus = [...new Set(products.map(row => cleanText(row?.sellpia_sku_code)).filter(Boolean))];
+    if (!skus.length) return products;
+    const {data:assignments, error} = await db
+      .from('operations_hub_price_rule_assignments')
+      .select('source_channel,sellpia_sku_code,price_rule_set_id,updated_at')
+      .eq('target_type', 'sellpia_sku')
+      .eq('is_active', true)
+      .in('sellpia_sku_code', skus);
+    if (error) throw error;
+    const ruleSetIds = [...new Set((assignments || []).map(row => Number(row.price_rule_set_id)).filter(Number.isFinite))];
+    let ruleSets = [];
+    if (ruleSetIds.length) {
+      const result = await db
+        .from('operations_hub_price_rule_sets')
+        .select('price_rule_set_id,set_name,color,is_active')
+        .eq('is_active', true)
+        .in('price_rule_set_id', ruleSetIds);
+      if (result.error) throw result.error;
+      ruleSets = result.data || [];
+    }
+    const ruleSetById = new Map(ruleSets.map(ruleSet => [Number(ruleSet.price_rule_set_id), ruleSet]));
+    const bySku = new Map();
+    for (const assignment of assignments || []) {
+      const sku = cleanText(assignment.sellpia_sku_code);
+      const source = cleanText(assignment.source_channel);
+      if (!sku || !source) continue;
+      if (!bySku.has(sku)) bySku.set(sku, {});
+      const ruleSet = ruleSetById.get(Number(assignment.price_rule_set_id));
+      bySku.get(sku)[source] = {
+        ...assignment,
+        set_name:ruleSet?.set_name || `가격규칙 #${assignment.price_rule_set_id}`,
+        color:ruleSet?.color || '#1558c0'
+      };
+    }
+    return products.map(product => ({
+      ...product,
+      __priceRuleAssignments:bySku.get(cleanText(product?.sellpia_sku_code)) || {}
+    }));
+  }
+
   async function attachProductMetadata(rows) {
-    return attachSellerDrafts(await attachSellerPriceComponents(await attachLinkBadges(await attachProductProfiles(rows))));
+    return attachPriceRuleAssignments(await attachSellerDrafts(await attachSellerPriceComponents(await attachLinkBadges(await attachProductProfiles(rows)))));
   }
 
   async function loadListingGraph({source = 'all', relationType = 'complex', search = '', page = 1, pageSize = 50} = {}) {
@@ -411,6 +453,7 @@
     }
     let savedCount = 0;
     let queuedCount = 0;
+    const priceChanged = [...grouped.values()].some(items => items.some(item => item.field_key === 'sellpia_sale_price'));
     for (const [sku, items] of grouped) {
       const {data, error} = await db.rpc('apply_operations_hub_sellpia_changes', {
         p_sku:sku,
@@ -422,7 +465,31 @@
       savedCount += Number(result?.saved_count || items.length);
       queuedCount += Number(result?.queued_count || 0);
     }
-    return {savedCount, queuedCount, productCount:grouped.size, batchId};
+    let repricedRows = [];
+    let repriceRefreshError = '';
+    if (priceChanged && batchId) {
+      try {
+        const {data:repriced, error} = await db
+          .from('operations_hub_change_queue')
+          .select('sellpia_sku_code')
+          .eq('change_batch_id', batchId)
+          .eq('field_key', 'sellpia_sale_price')
+          .in('source_channel', ['smartstore','makeshop'])
+          .in('status', ['pending','validated','failed']);
+        if (error) throw error;
+        const repricedSkus = [...new Set((repriced || []).map(row => cleanText(row.sellpia_sku_code)).filter(Boolean))];
+        if (repricedSkus.length) {
+          const seeds = repricedSkus.map(sellpia_sku_code => ({sellpia_sku_code}));
+          repricedRows = await attachPriceRuleAssignments(await attachSellerDrafts(await attachSellerPriceComponents(seeds)));
+        }
+      } catch (error) {
+        // The RPC above has already committed. A metadata refresh failure must not
+        // make the UI re-submit the same Sellpia edit as though the save failed.
+        console.error('sellpia repriced rows refresh failed', error);
+        repriceRefreshError = error?.message || String(error);
+      }
+    }
+    return {savedCount, queuedCount, productCount:grouped.size, batchId, repricedRows, repriceRefreshError};
   }
 
   async function searchSellerItems(source, query, page = 1, pageSize = 24) {
