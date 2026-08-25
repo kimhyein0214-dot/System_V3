@@ -68,7 +68,7 @@ assert.match(html, /id="preset-show-status"[\s\S]*?id="preset-show-codes"[\s\S]*
 assert.doesNotMatch(source, /sellpiaEditor\('sellpia_product_name'/, "Sellpia product names must not be editable inline in the matrix");
 assert.doesNotMatch(source, /sellpiaEditor\('sellpia_option_name'/, "Sellpia option names must not be editable inline in the matrix");
 assert.match(source, /sellpiaEditor\('sellpia_own_code'[\s\S]*?systemOperationalCell\(product, 'system_stock'[\s\S]*?systemOperationalCell\(product, 'system_base_price'/, "own code plus system-owned stock and base price must remain inline editable");
-assert.match(source, /mapping-code-button[\s\S]*?openMappingSearch[\s\S]*?linkSellerItem/, "seller code cells must open source search and save a manual link");
+assert.match(source, /mapping-code-button[\s\S]*?openListingLinkManager[\s\S]*?openMappingSearch[\s\S]*?linkSellerItem/, "seller code cells must open link management first and keep source search for unmatched rows");
 assert.match(dataSource, /search_operations_hub_seller_items[\s\S]*?link_operations_hub_seller_item[\s\S]*?save_operations_hub_seller_listing/, "seller search, linking, and detail drafts must use database RPCs");
 assert.match(dataSource, /search_operations_hub_seller_items_v2[\s\S]*?p_page[\s\S]*?p_page_size/, "seller matching search must be paginated instead of silently capped");
 assert.match(source, /상품명 \/ 옵션명[\s\S]*?mapping-pagination[\s\S]*?전체 \$\{formatNumber\(mappingState\.count\)\}개/, "seller search must explain intersection syntax and show total result count");
