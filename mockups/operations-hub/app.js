@@ -111,6 +111,7 @@ const matrixZoomOut = document.getElementById('matrix-zoom-out');
 const matrixZoomValue = document.getElementById('matrix-zoom-value');
 const matrixZoomIn = document.getElementById('matrix-zoom-in');
 const matrixFreezeToggle = document.getElementById('matrix-freeze-toggle');
+const matrixSourceRefreshButton = document.getElementById('matrix-source-refresh-btn');
 const MATRIX_ZOOM_KEY = 'system-v3-matrix-zoom';
 const MATRIX_FREEZE_KEY = 'system-v3-matrix-sellpia-freeze';
 const MATRIX_ZOOM_MIN = 80;
@@ -1849,6 +1850,7 @@ function updatePendingChangeUi(message = '') {
   const preview = document.getElementById('preview-changes');
   if (discard) discard.disabled = sellpiaSaveInFlight || pendingChanges.length === 0;
   if (preview) preview.disabled = sellpiaSaveInFlight || pendingChanges.length === 0;
+  updateSourceRefreshAction();
 }
 
 function scheduleSellpiaAutosave(delay = SELLPIA_AUTOSAVE_DELAY_MS) {
@@ -2019,6 +2021,50 @@ function selectionRectangle(grid = matrixCellGrid()) {
   };
 }
 
+function selectedSourceRefreshTargets() {
+  const targets = [];
+  const seen = new Set();
+  const sourceFields = {
+    system_stock:'sellpia_source_stock',
+    system_base_price:'sellpia_source_sale_price'
+  };
+  for (const cell of matrixBody.querySelectorAll('td.matrix-cell-selected')) {
+    const editor = cell.querySelector('.system-master-cell[data-field-key]');
+    const row = cell.closest('tr[data-sku]');
+    if (!editor || !row) continue;
+    const sku = row.dataset.sku;
+    const fieldKey = editor.dataset.fieldKey;
+    const sourceField = sourceFields[fieldKey];
+    const key = `${sku}\u0000${fieldKey}`;
+    if (!sourceField || seen.has(key)) continue;
+    seen.add(key);
+    const product = matrixRowsBySku.get(sku);
+    const sourceValue = product?.[sourceField];
+    const hasSource = sourceValue !== null && sourceValue !== undefined && sourceValue !== '' && Number.isFinite(Number(sourceValue));
+    targets.push({
+      sku,
+      field:editor.dataset.field || (fieldKey === 'system_stock' ? '시스템 기준재고' : '시스템 기준가격'),
+      fieldKey,
+      before:String(product?.[fieldKey] ?? ''),
+      after:hasSource ? String(sourceValue) : '',
+      hasSource
+    });
+  }
+  return targets;
+}
+
+function updateSourceRefreshAction() {
+  if (!matrixSourceRefreshButton) return;
+  const targets = selectedSourceRefreshTargets();
+  const available = targets.filter(target => target.hasSource).length;
+  matrixSourceRefreshButton.disabled = sellpiaSaveInFlight || available === 0;
+  matrixSourceRefreshButton.title = targets.length === 0
+    ? '기준재고 또는 기준가격 셀을 선택해주세요.'
+    : available === 0
+      ? `선택한 ${targets.length}개 셀에 셀피아 원본값이 없습니다.`
+      : `선택한 기준 셀 중 원본값이 있는 ${available}개를 시스템 기준값으로 저장합니다.`;
+}
+
 function paintMatrixCellSelection() {
   const grid = matrixCellGrid();
   matrixBody.querySelectorAll('td.matrix-cell-selected,td.matrix-cell-anchor').forEach(cell => {
@@ -2028,6 +2074,7 @@ function paintMatrixCellSelection() {
   const bounds = selectionRectangle(grid);
   if (!bounds) {
     updateSelectedCount();
+    updateSourceRefreshAction();
     return;
   }
   for (let rowIndex = bounds.top; rowIndex <= bounds.bottom; rowIndex += 1) {
@@ -2040,6 +2087,7 @@ function paintMatrixCellSelection() {
   }
   matrixCellSelection.anchor?.classList.add('matrix-cell-anchor');
   updateSelectedCount();
+  updateSourceRefreshAction();
 }
 
 function selectMatrixCell(cell, {extend = false} = {}) {
@@ -2059,6 +2107,59 @@ function clearMatrixCellSelection() {
   });
   document.body.classList.remove('matrix-cell-selecting');
   updateSelectedCount();
+  updateSourceRefreshAction();
+}
+
+async function refreshSelectedSystemValuesFromSource() {
+  if (!matrixSourceRefreshButton || sellpiaSaveInFlight || !liveData?.saveSellpiaChanges) return;
+  let targets = selectedSourceRefreshTargets();
+  if (!targets.length) {
+    showToast('원본값을 적용할 기준재고 또는 기준가격 셀을 선택해주세요.');
+    return;
+  }
+  if (pendingChanges.length) {
+    await flushPendingSellpiaChanges({automatic:true});
+    if (pendingChanges.length || sellpiaSaveInFlight) {
+      showToast('먼저 진행 중인 시스템 기준값 저장을 확인해주세요.');
+      return;
+    }
+    targets = targets.map(target => ({
+      ...target,
+      before:String(matrixRowsBySku.get(target.sku)?.[target.fieldKey] ?? '')
+    }));
+  }
+  const available = targets.filter(target => target.hasSource);
+  const missingCount = targets.length - available.length;
+  const changes = available.filter(target => target.before === '' || Number(target.before) !== Number(target.after));
+  if (!changes.length) {
+    const suffix = missingCount ? ` · 원본값 없음 ${missingCount}개` : '';
+    showToast(`선택한 셀은 이미 원본값과 같습니다.${suffix}`);
+    return;
+  }
+  const label = matrixSourceRefreshButton.querySelector('b');
+  const originalLabel = label?.innerHTML || '선택 셀을<br>원본값으로 갱신';
+  matrixSourceRefreshButton.disabled = true;
+  if (label) label.textContent = '원본값 저장 중…';
+  try {
+    const result = await liveData.saveSellpiaChanges(changes, createRequestId(), {
+      systemChangeSource:'source_accept',
+      systemMetadata:{ui:'matrix-source-refresh', selected_cell_count:targets.length}
+    });
+    applySavedSellpiaChanges(changes, result);
+    removeSavedCellState(changes);
+    const notes = [
+      missingCount ? `원본값 없음 ${missingCount}개 제외` : '',
+      available.length - changes.length ? `이미 동일 ${available.length - changes.length}개` : ''
+    ].filter(Boolean);
+    showToast(`원본값 ${changes.length}개를 시스템 기준값으로 저장했습니다.${notes.length ? ` · ${notes.join(' · ')}` : ''}`);
+    void loadLiveDashboardMetrics();
+  } catch (error) {
+    console.error('system source refresh failed', error);
+    showToast(`원본값 갱신 실패: ${error?.message || error}`);
+  } finally {
+    if (label) label.innerHTML = originalLabel;
+    updateSourceRefreshAction();
+  }
 }
 
 function matrixCellClipboardValue(cell) {
@@ -3473,6 +3574,7 @@ priceRuleBulkModal.querySelectorAll('input[name="price-rule-bulk-scope"]').forEa
 }));
 
 document.getElementById('matrix-refresh-btn').addEventListener('click', () => refreshLiveData());
+matrixSourceRefreshButton?.addEventListener('click', refreshSelectedSystemValuesFromSource);
 document.getElementById('matrix-prev').addEventListener('click', () => {
   if (matrixState.loading || matrixState.page <= 1) return;
   matrixState.page -= 1;

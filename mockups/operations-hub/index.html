@@ -7,9 +7,9 @@
     <title>System V3 · 상품 운영 허브</title>
     <link rel="preconnect" href="https://cdnjs.cloudflare.com" crossorigin>
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/pretendard/1.3.9/static/pretendard.css">
-    <link rel="stylesheet" href="./style.css?v=20260825-system-master-r20">
-    <link rel="stylesheet" href="./inventory.css?v=20260825-system-master-r20">
-    <link rel="stylesheet" href="./price-rule-lab.css?v=20260825-system-master-r20">
+    <link rel="stylesheet" href="./style.css?v=20260825-source-refresh-r21">
+    <link rel="stylesheet" href="./inventory.css?v=20260825-source-refresh-r21">
+    <link rel="stylesheet" href="./price-rule-lab.css?v=20260825-source-refresh-r21">
   </head>
   <body>
     <div class="app-shell">
@@ -170,6 +170,7 @@
                 <time id="matrix-mapping-sync-time">-</time>
               </section>
               <button class="matrix-panel-action" id="matrix-refresh-btn"><span>↻</span><b>DB 새로고침</b></button>
+              <button class="matrix-panel-action source-refresh-action" id="matrix-source-refresh-btn" type="button" disabled title="기준재고 또는 기준가격 셀을 선택해주세요."><span>RAW</span><b>선택 셀을<br>원본값으로 갱신</b></button>
               <div class="matrix-action-divider"></div>
               <button class="matrix-panel-action" id="matrix-match-stock-btn"><span>⇄</span><b>셀피아→판매처<br>재고 맞추기</b></button>
               <button class="matrix-panel-action" id="matrix-export-btn"><span>⇩</span><b>검토한 수정본<br>내보내기</b></button>
@@ -604,12 +605,12 @@
     <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.112.3/dist/umd/supabase.js"></script>
-    <script src="./seller-source-parsers.js?v=20260825-system-master-r20"></script>
-    <script src="./seller-export-adapter.js?v=20260825-system-master-r20"></script>
-    <script src="./matrix-csv-export.js?v=20260825-system-master-r20"></script>
-    <script src="./discount-price-math.js?v=20260825-system-master-r20"></script>
-    <script src="./data-service.js?v=20260825-system-master-r20"></script>
-    <script src="./app.js?v=20260825-system-master-r20"></script>
-    <script src="./price-rule-lab.js?v=20260825-system-master-r20"></script>
+    <script src="./seller-source-parsers.js?v=20260825-source-refresh-r21"></script>
+    <script src="./seller-export-adapter.js?v=20260825-source-refresh-r21"></script>
+    <script src="./matrix-csv-export.js?v=20260825-source-refresh-r21"></script>
+    <script src="./discount-price-math.js?v=20260825-source-refresh-r21"></script>
+    <script src="./data-service.js?v=20260825-source-refresh-r21"></script>
+    <script src="./app.js?v=20260825-source-refresh-r21"></script>
+    <script src="./price-rule-lab.js?v=20260825-source-refresh-r21"></script>
   </body>
 </html>
