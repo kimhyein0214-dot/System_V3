@@ -35,7 +35,7 @@ assert.match(source, /MATRIX_ZOOM_MIN = 80;[\s\S]*?MATRIX_ZOOM_MAX = 140;[\s\S]*
 assert.match(source, /MATRIX_ZOOM_STEP = 5;/, "matrix zoom must move in five-percent steps");
 assert.match(html, /value="80">80%[\s\S]*?value="85">85%[\s\S]*?value="140">140%/, "preset zoom options must include five-percent increments");
 assert.match(css, /\.matrix-table\{zoom:var\(--matrix-zoom,1\)\}/, "zoom must apply to the matrix table only");
-assert.match(css, /\.matrix-table \.sellpia-price-col\{left:calc\(604px \+ var\(--image-col-width\)\)\}/, "removing row checkboxes must shift the Sellpia frozen pane to the image boundary");
+assert.match(css, /\.matrix-table \.sellpia-product-col\{left:var\(--image-col-width\)[\s\S]*?\.sellpia-price-col\{left:calc\(var\(--image-col-width\) \+ 614px\)/, "the combined product and option cells must anchor the frozen system pane to the image boundary");
 assert.match(css, /\.matrix-table \.select-col\{display:none\}/, "row-selection checkboxes must be removed from the visible matrix");
 assert.match(html, /id="matrix-freeze-toggle"[^>]*aria-pressed="true"[^>]*>셀피아 고정 ON/, "the toolbar must expose an accessible Sellpia freeze toggle");
 assert.match(source, /MATRIX_FREEZE_KEY = 'system-v3-matrix-sellpia-freeze'[\s\S]*?applyMatrixSellpiaFreeze[\s\S]*?localStorage\.setItem\(MATRIX_FREEZE_KEY/, "the Sellpia freeze preference must be applied and persisted");
@@ -47,7 +47,7 @@ assert.match(source, /MATRIX_PRESETS_KEY = 'system-v3-matrix-presets-v1'/, "pers
 assert.match(source, /modifiedPresetSourceId = activePresetId;[\s\S]*?findIndex\(item => item\.id === editablePresetId\)/, "editing a selected personal preset must update that preset instead of creating a stray copy");
 assert.match(source, /function applyColumnVisibility\([\s\S]*?function applyViewPreset\(/, "presets must control matrix columns and view state");
 assert.match(dataSource, /status === 'attention'[\s\S]*?query\.in\('overall_status'/, "attention presets must filter across the server result set");
-assert.match(dataSource, /\.from\('operations_hub_matrix_cached'\)/, "the UI must read the non-blocking Sellpia-enriched matrix cache");
+assert.match(dataSource, /\.from\('operations_hub_matrix_system_live'\)/, "the UI must read the non-blocking matrix with the system-owned master overlay");
 assert.match(migration, /with \(security_invoker = true\)/, "the live matrix view must honor underlying RLS");
 assert.match(presetMigration, /end::text as overall_status/, "the live matrix view must expose server-filterable overall status");
 assert.match(html, /id="live-connected-sku"[\s\S]*?id="live-inventory-mismatch"[\s\S]*?id="live-today-picked"/, "dashboard header metrics must have live-data targets");
@@ -67,14 +67,14 @@ assert.match(html, /스마트스토어[\s\S]*?상품명 \/ 옵션명[\s\S]*?메�
 assert.match(html, /id="preset-show-status"[\s\S]*?id="preset-show-codes"[\s\S]*?id="preset-show-seller-names"[\s\S]*?id="preset-image-size"/, "view settings must independently control status, codes, seller names, and image size");
 assert.doesNotMatch(source, /sellpiaEditor\('sellpia_product_name'/, "Sellpia product names must not be editable inline in the matrix");
 assert.doesNotMatch(source, /sellpiaEditor\('sellpia_option_name'/, "Sellpia option names must not be editable inline in the matrix");
-assert.match(source, /sellpiaEditor\('sellpia_own_code'[\s\S]*?sellpiaEditor\('sellpia_current_stock'[\s\S]*?sellpiaEditor\('sellpia_sale_price'/, "only frequent Sellpia base fields should remain inline editable");
+assert.match(source, /sellpiaEditor\('sellpia_own_code'[\s\S]*?systemOperationalCell\(product, 'system_stock'[\s\S]*?systemOperationalCell\(product, 'system_base_price'/, "own code plus system-owned stock and base price must remain inline editable");
 assert.match(source, /mapping-code-button[\s\S]*?openMappingSearch[\s\S]*?linkSellerItem/, "seller code cells must open source search and save a manual link");
 assert.match(dataSource, /search_operations_hub_seller_items[\s\S]*?link_operations_hub_seller_item[\s\S]*?save_operations_hub_seller_listing/, "seller search, linking, and detail drafts must use database RPCs");
 assert.match(dataSource, /search_operations_hub_seller_items_v2[\s\S]*?p_page[\s\S]*?p_page_size/, "seller matching search must be paginated instead of silently capped");
 assert.match(source, /상품명 \/ 옵션명[\s\S]*?mapping-pagination[\s\S]*?전체 \$\{formatNumber\(mappingState\.count\)\}개/, "seller search must explain intersection syntax and show total result count");
 assert.match(searchDraftMigration, /product_name[\s\S]*?ilike[\s\S]*?product_term[\s\S]*?option_name[\s\S]*?ilike[\s\S]*?option_term/, "seller search must apply product and option name terms as an intersection");
 assert.match(html, /id="drawer-smart-name"[\s\S]*?id="drawer-make-name"[\s\S]*?id="drawer-ably-name"/, "the detail drawer must edit seller-specific names independently");
-assert.match(source, /price-hover-target[\s\S]*?function showPricePopover[\s\S]*?판매처 원본가[\s\S]*?판매처별 수식 계산가[\s\S]*?반영 예정가/, "seller price cells must keep source, policy, and staged prices visibly separate");
+assert.match(source, /price-hover-target[\s\S]*?function showPricePopover[\s\S]*?판매처 원본가[\s\S]*?시스템 기준가격[\s\S]*?판매처별 수식 계산가[\s\S]*?내보내기 예정가/, "seller price cells must keep source, system, policy, and export-draft prices visibly separate");
 assert.match(sellerDetailMigration, /operations_hub_manual_links[\s\S]*?search_operations_hub_seller_items[\s\S]*?link_operations_hub_seller_item[\s\S]*?smartstore_option_name/, "manual links and seller detail names must persist in the live matrix schema");
 assert.match(mappingSyncMigration, /operations_hub_manual_links_backup_20260818_013437[\s\S]*?mapping_origin[\s\S]*?mapping_batch_id/, "mapping storage changes must retain a rollback copy and preserve origin metadata");
 assert.match(mappingSyncMigration, /save_operations_hub_mapping_batch[\s\S]*?jsonb_array_length\(p_items\)[\s\S]*?operations_hub_manual_links[\s\S]*?operations_hub_link_history/, "automatic and imported mappings must use the audited official overlay path in bounded batches");

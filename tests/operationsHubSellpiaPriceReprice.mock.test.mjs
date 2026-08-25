@@ -2,32 +2,35 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 
 const migration = fs.readFileSync(
-  new URL('../supabase/migrations/20260825013259_reprice_on_sellpia_price_change.sql', import.meta.url),
+  new URL('../supabase/migrations/20260825060000_system_owned_price_stock_and_pricing_reset.sql', import.meta.url),
   'utf8'
 );
 const data = fs.readFileSync(new URL('../mockups/operations-hub/data-service.js', import.meta.url), 'utf8');
 const app = fs.readFileSync(new URL('../mockups/operations-hub/app.js', import.meta.url), 'utf8');
+const html = fs.readFileSync(new URL('../mockups/operations-hub/index.html', import.meta.url), 'utf8');
+const csv = fs.readFileSync(new URL('../mockups/operations-hub/matrix-csv-export.js', import.meta.url), 'utf8');
 const css = fs.readFileSync(new URL('../mockups/operations-hub/style.css', import.meta.url), 'utf8');
 
-assert.match(migration, /reprice_operations_hub_sellpia_price_change[\s\S]*?security invoker/i, 'Sellpia-triggered repricing must run with caller permissions');
-assert.match(migration, /operations_hub_matrix_live[\s\S]*?calculate_operations_hub_price_rule_set/, 'same-transaction repricing must read the uncached Sellpia override');
-assert.match(migration, /source_channel in \('smartstore', 'makeshop'\)/, 'only Smartstore and MakeShop assignments may trigger automatic repricing');
-assert.match(migration, /v_assignment_count <> v_product_count[\s\S]*?v_assignment_rule_count <> 1/, 'partial or mixed product rules must block the whole Sellpia save');
-assert.match(migration, /status in \('processing', 'exported'\)[\s\S]*?raise exception/, 'in-flight or exported price drafts must block automatic replacement');
-assert.match(migration, /v_discount_signature_count <> 1/, 'product options with mixed discount terms must not be repriced partially');
-assert.match(migration, /save_operations_hub_seller_discount_draft\([\s\S]*?'discount_anchor'/, 'automatic repricing must reuse the audited inverse-discount engine');
-assert.match(migration, /if v_has_price_change then[\s\S]*?reprice_operations_hub_sellpia_price_change\(p_sku, v_batch_id\)/, 'Sellpia price saves and seller drafts must share one transaction and batch');
-assert.doesNotMatch(migration.slice(0, migration.indexOf('create or replace function public.apply_operations_hub_sellpia_changes')), /source_channel.*ably/i, 'the repricing helper must leave Ably untouched');
+assert.match(migration, /create table if not exists public\.operations_hub_sku_operational_master[\s\S]*?base_price numeric[\s\S]*?stock_quantity integer/, 'system base price and stock must live in a dedicated canonical table');
+assert.match(migration, /operations_hub_sku_operational_events[\s\S]*?system_base_price[\s\S]*?system_stock/, 'canonical master changes must retain an audit event stream');
+assert.match(migration, /operations_hub_matrix_system_live[\s\S]*?sellpia_source_sale_price[\s\S]*?sellpia_source_stock[\s\S]*?system_base_price[\s\S]*?system_stock/, 'the matrix overlay must expose immutable source comparisons beside system values');
+assert.match(migration, /save_operations_hub_sku_operational_value[\s\S]*?on conflict \(sellpia_sku_code\) do update[\s\S]*?operations_hub_sku_operational_events/, 'system edits must save immediately and atomically append audit history');
+assert.match(migration, /Source uploads[\s\S]*?never write this table[\s\S]*?operations_hub_sellpia_overrides/, 'only explicit system saves may update the compatibility mirror used by existing seller exporters');
+assert.match(migration, /operations_hub_pricing_reset_archives[\s\S]*?price_rule_assignment[\s\S]*?update public\.operations_hub_price_rule_assignments[\s\S]*?is_active = false/, 'the inferred pricing catalog must be archived before being retired');
+assert.match(migration, /enforce_operations_hub_price_assignment_system_base[\s\S]*?base_price is not null[\s\S]*?시스템 기준가격을 먼저 저장/, 'a price combination cannot be assigned before its system base exists');
 
-assert.match(data, /async function attachPriceRuleAssignments[\s\S]*?operations_hub_price_rule_assignments[\s\S]*?operations_hub_price_rule_sets[\s\S]*?__priceRuleAssignments/, 'matrix rows must include active rule names and colors');
-assert.match(data, /saveSellpiaChanges[\s\S]*?change_batch_id[\s\S]*?repricedRows[\s\S]*?repriceRefreshError/, 'a saved price batch must refresh the generated drafts');
-assert.match(data, /RPC above has already committed[\s\S]*?repriceRefreshError/, 'post-commit metadata failures must not cause duplicate Sellpia submissions');
+assert.match(data, /operations_hub_matrix_system_live/, 'interactive and export matrix reads must use the canonical system overlay');
+assert.match(data, /saveSellpiaChanges[\s\S]*?system_base_price','system_stock[\s\S]*?save_operations_hub_sku_operational_value/, 'system stock and price edits must route to the immediate canonical-save RPC');
+assert.match(data, /previewPriceRuleSet[\s\S]*?시스템 기준가격을 먼저 저장해주세요/, 'price calculations must reject missing canonical base prices instead of treating them as zero');
 
-assert.match(app, /priceRuleSummary = prefix === 'ably' \? ''[\s\S]*?fx \$\{escapeHtml\(priceRuleName \|\| '규칙 없음'\)\}[\s\S]*?→ 최종/, 'Smartstore and MakeShop base cells must show rule, discount, and final price while Ably stays unchanged');
-assert.match(app, /sellerBaseMergeSignature[\s\S]*?assignment\?\.price_rule_set_id[\s\S]*?assignment\?\.set_name/, 'base cells with different price rules must not merge');
-assert.match(app, /applySavedSellpiaChanges\(savedChanges, result = \{\}\)[\s\S]*?repricedRows[\s\S]*?renderLiveMatrixRows/, 'generated seller drafts must repaint the current page immediately');
-assert.match(app, /가격규칙 자동 재계산[\s\S]*?적용 가격규칙 없음, 판매처 가격 유지/, 'save feedback must distinguish automatic repricing from untagged price preservation');
-assert.doesNotMatch(app, /판매처별 가격 규칙에서 최종가를 적용해주세요/, 'the obsolete manual-apply instruction must be removed');
-assert.match(css, /price-rule-summary[\s\S]*?price-rule-badge\.assigned[\s\S]*?price-rule-final/, 'price-rule metadata must have a compact readable sale-cell layout');
+assert.match(app, /systemOperationalCell\(product, 'system_stock'[\s\S]*?systemOperationalCell\(product, 'system_base_price'/, 'the matrix must show editable system stock and price cells');
+assert.match(app, /원본 \$\{hasSource \? formatNullableNumber\(sourceValue\)/, 'each canonical value must keep its source comparison visible in the same cell');
+assert.match(app, /basePrice:product\.system_base_price/, 'price combinations must calculate from the canonical system base price');
+assert.doesNotMatch(app, /basePrice:product\??\.sellpia_sale_price/, 'price combinations must never calculate from the uploaded Sellpia price snapshot');
+assert.match(app, /계산 태그[\s\S]*?가격 조합/, 'user-facing pricing terminology must separate atomic calculation tags from ordered combinations');
 
-console.log('Operations hub Sellpia-triggered price repricing contract: passed');
+assert.match(html, /시스템 기준 · 셀피아 원본 비교[\s\S]*?상품코드 \/ 상품명[\s\S]*?옵션코드 \/ 옵션명[\s\S]*?기준재고[\s\S]*?기준가격/, 'the matrix header must expose combined identities and canonical values');
+assert.match(csv, /시스템 기준재고[\s\S]*?셀피아 원본재고[\s\S]*?시스템 기준가격[\s\S]*?셀피아 원본 판매가/, 'CSV output must preserve both canonical and source comparison columns');
+assert.match(css, /sellpia-product-col[\s\S]*?sellpia-option-col[\s\S]*?system-master-cell/, 'combined identities and canonical values must have dedicated frozen-cell styling');
+
+console.log('Operations hub system-owned price and stock contract: passed');

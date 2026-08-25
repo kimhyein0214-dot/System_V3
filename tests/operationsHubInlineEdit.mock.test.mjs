@@ -36,7 +36,7 @@ assert.match(source, /function commitEditableCellValue[\s\S]*?parseEditableInput
 assert.match(source, /matrixBody\.addEventListener\('dblclick'[\s\S]*?const \{numeric, signedNumber\} = parseEditableInputValue\(before, valueType\)[\s\S]*?const parsed = parseEditableInputValue\(save \? input\.value : before, valueType\)/, 'double-click editing must declare signed-number state before validation');
 assert.match(source, /let completed = false[\s\S]*?if \(completed\) return;[\s\S]*?completed = true/, 'blur after Enter must not save the same edit twice');
 assert.match(source, /keyEvent\.key === 'Enter'\) finish\(true\)[\s\S]*?keyEvent\.key === 'Escape'\) finish\(false\)[\s\S]*?input\.addEventListener\('blur', \(\) => finish\(true\)\)/, 'Enter, Escape and blur completion paths must remain wired');
-assert.match(source, /cell\.dataset\.source === 'sellpia'[\s\S]*?commitEditableCellValue\(cell, after\)/, 'Sellpia inline edits must enter the autosave queue');
-assert.match(source, /function addPendingChange[\s\S]*?scheduleSellpiaAutosave\(\)[\s\S]*?function flushPendingSellpiaChanges[\s\S]*?liveData\.saveSellpiaChanges/, 'Sellpia edits must continue from pending state to the Supabase save adapter');
+assert.match(source, /cell\.matches\('\.sellpia-edit'\)[\s\S]*?commitEditableCellValue\(cell, after\)/, 'system-master and permitted Sellpia metadata edits must enter the immediate-save queue');
+assert.match(source, /function addPendingChange[\s\S]*?scheduleSellpiaAutosave\(\)[\s\S]*?function flushPendingSellpiaChanges[\s\S]*?liveData\.saveSellpiaChanges/, 'matrix master edits must continue from the short debounce to the Supabase save adapter');
 
 console.log('Operations hub inline edit validation and save flow: passed');
