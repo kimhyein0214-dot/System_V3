@@ -425,7 +425,7 @@ function mappingCodeButton(product, prefix, label, kind, value, state) {
   return `<button class="mapping-code-button ${state.key}" data-link-source="${prefix}" data-code-kind="${kind}" title="${prompt}">${display}</button>`;
 }
 
-function sellerIdentityCells(product, prefix, label, state) {
+function sellerIdentityCells(product, prefix, label, state, productMerge = null) {
   const productName = String(product[`${prefix}_name`] || '').trim();
   const optionName = String(product[`${prefix}_option_name`] || '').trim();
   const productCode = String(product[`${prefix}_product_code`] || '').trim();
@@ -433,9 +433,11 @@ function sellerIdentityCells(product, prefix, label, state) {
   const isDraft = Boolean(product[`${prefix}_name_is_draft`]);
   const productTitle = [productCode, productName].filter(Boolean).join(' · ');
   const optionTitle = [optionCode, optionName].filter(Boolean).join(' · ');
-  return `<td class="seller-identity-cell seller-product-identity${!productCode && !productName ? ' data-gap' : ''}${isDraft ? ' draft' : ''}" data-channel="${prefix}" title="${escapeHtml(productTitle || '판매처 상품 정보 없음')}">
+  const productRowspan = Math.max(1, Number(productMerge?.rowspan) || 1);
+  const productCell = productMerge?.hidden ? '' : `<td class="seller-identity-cell seller-product-identity${productRowspan > 1 ? ' seller-identity-merged-cell' : ''}${!productCode && !productName ? ' data-gap' : ''}${isDraft ? ' draft' : ''}" data-channel="${prefix}"${productRowspan > 1 ? ` rowspan="${productRowspan}"` : ''} title="${escapeHtml(productTitle || '판매처 상품 정보 없음')}">
       ${mappingCodeButton(product, prefix, label, 'product', productCode, state)}<em>${escapeHtml(productName || '상품명 없음')}${isDraft ? '<i>초안</i>' : ''}</em>
-    </td>
+    </td>`;
+  return `${productCell}
     <td class="seller-identity-cell seller-option-identity${!optionCode && !optionName ? ' data-gap' : ''}" data-channel="${prefix}" title="${escapeHtml(optionTitle || '판매처 옵션 정보 없음')}">
       ${mappingCodeButton(product, prefix, label, 'option', optionCode, state)}<em>${escapeHtml(optionName || '옵션명 없음')}</em>
     </td>`;
@@ -453,7 +455,7 @@ function systemOperationalCell(product, fieldKey, label, sourceValue) {
   </button>`;
 }
 
-function channelInventoryCells(product, prefix, label, baseMerge = null) {
+function channelInventoryCells(product, prefix, label, baseMerge = null, identityMerge = null) {
   const tier = product[`${prefix}_match_tier`];
   const state = matchState(tier);
   const productCode = product[`${prefix}_product_code`] || '';
@@ -535,7 +537,7 @@ function channelInventoryCells(product, prefix, label, baseMerge = null) {
   const finalCell = noPrice
     ? `<td class="data-gap" data-channel="${prefix}">-</td>`
     : `<td data-channel="${prefix}"><button class="editable-cell seller-edit price-hover-target price-layer-cell price-component-final${priceDiff && !priceDraft ? ' diff' : ''}${draftClass(priceDraft)}" data-source="${prefix}" data-field-key="sellpia_sale_price" data-price-component="final" data-field="${label} 최종구매가" data-value="${escapeHtml(effectiveFinalPrice)}" data-baseline="${escapeHtml(finalPrice)}" data-option-price="${escapeHtml(effectiveOptionPrice)}" data-value-type="number" data-change-id="${priceDraft?.change_id || ''}" data-draft-status="${priceDraft?.status || ''}" tabindex="0" data-price-source="${prefix}" data-price-label="${label}" data-original-price="${escapeHtml(finalPrice)}" data-policy-price="${escapeHtml(policyPrice ?? '')}" data-policy-active="${policyActive ? 'true' : 'false'}" data-policy-name="${escapeHtml(policyName)}" data-draft-price="${escapeHtml(effectiveFinalPrice ?? '')}" data-base-price="${escapeHtml(sellpiaPrice ?? '')}" data-price-updated="${escapeHtml(product[`${prefix}_inventory_at`] || '')}" title="${priceDraft ? `반영 예정 ${formatNullableNumber(effectiveFinalPrice)} · 원본 ${formatNullableNumber(finalPrice)}` : policyActive ? `원본 ${formatNullableNumber(finalPrice)} · 수식 계산 ${formatNullableNumber(policyPrice)}` : '수정 가능한 판매처 최종구매가'}">${finalLayers}</button></td>`;
-  return `<td data-channel="${prefix}"${title}><span class="matrix-status ${state.key}">${state.label}</span>${relationBadge}</td>${sellerIdentityCells(product, prefix, label, state)}${stockCell}${baseCell}${discountCell}${optionCell}${finalCell}`;
+  return `<td data-channel="${prefix}"${title}><span class="matrix-status ${state.key}">${state.label}</span>${relationBadge}</td>${sellerIdentityCells(product, prefix, label, state, identityMerge)}${stockCell}${baseCell}${discountCell}${optionCell}${finalCell}`;
 }
 
 function sellpiaProductGroupKey(product) {
@@ -543,6 +545,46 @@ function sellpiaProductGroupKey(product) {
   if (explicit) return String(explicit).trim();
   const sku = String(product?.sellpia_sku_code || '').trim();
   return sku.replace(/-\d+$/, '') || sku;
+}
+
+function buildProductIdentityMerges(products) {
+  const metadata = new Map();
+  const sources = ['sellpia', 'smartstore', 'makeshop', 'ably'];
+  for (const source of sources) {
+    let index = 0;
+    while (index < products.length) {
+      const first = products[index];
+      if (first?.__codeListPlaceholder) {
+        index += 1;
+        continue;
+      }
+      const sellpiaGroup = sellpiaProductGroupKey(first);
+      const productCode = source === 'sellpia' ? sellpiaGroup : String(first?.[`${source}_product_code`] || '').trim();
+      const productName = source === 'sellpia'
+        ? String(first?.sellpia_product_name || first?.display_name || '').trim()
+        : String(first?.[`${source}_name`] || '').trim();
+      const draftState = source === 'sellpia' ? '' : String(Boolean(first?.[`${source}_name_is_draft`]));
+      const signature = JSON.stringify([sellpiaGroup, productCode, productName, draftState]);
+      let end = index + 1;
+      while (productCode && end < products.length) {
+        const candidate = products[end];
+        if (candidate?.__codeListPlaceholder) break;
+        const candidateGroup = sellpiaProductGroupKey(candidate);
+        const candidateCode = source === 'sellpia' ? candidateGroup : String(candidate?.[`${source}_product_code`] || '').trim();
+        const candidateName = source === 'sellpia'
+          ? String(candidate?.sellpia_product_name || candidate?.display_name || '').trim()
+          : String(candidate?.[`${source}_name`] || '').trim();
+        const candidateDraft = source === 'sellpia' ? '' : String(Boolean(candidate?.[`${source}_name_is_draft`]));
+        if (JSON.stringify([candidateGroup, candidateCode, candidateName, candidateDraft]) !== signature) break;
+        end += 1;
+      }
+      const rowspan = productCode ? end - index : 1;
+      metadata.set(`${index}|${source}`, {rowspan, hidden:false});
+      for (let hiddenIndex = index + 1; hiddenIndex < end; hiddenIndex += 1) metadata.set(`${hiddenIndex}|${source}`, {rowspan:0, hidden:true});
+      index = Math.max(end, index + 1);
+    }
+  }
+  return metadata;
 }
 
 function sellerBaseMergeSignature(product, source) {
@@ -634,6 +676,7 @@ function renderLiveMatrixRows(products) {
     return;
   }
   const sellerBaseMerges = buildSellerBaseMerges(products);
+  const productIdentityMerges = buildProductIdentityMerges(products);
   let previousProductGroup = '';
   matrixBody.innerHTML = products.map((product, rowIndex) => {
     if (product.__codeListPlaceholder) return renderCodeListPlaceholderRow(product);
@@ -659,22 +702,24 @@ function renderLiveMatrixRows(products) {
     const profile = product.__profile || {};
     const tagSummary = [profile.shape, profile.tag_summary].filter(Boolean).join(' · ');
     const productGroup = sellpiaProductGroupKey(product);
+    const sellpiaProductMerge = productIdentityMerges.get(`${rowIndex}|sellpia`) || {rowspan:1, hidden:false};
+    const sellpiaProductCell = sellpiaProductMerge.hidden ? '' : `<td class="sticky-col sellpia-product-col product-cell${sellpiaProductMerge.rowspan > 1 ? ' product-identity-merged-cell' : ''}"${sellpiaProductMerge.rowspan > 1 ? ` rowspan="${sellpiaProductMerge.rowspan}"` : ''}><b title="${escapeHtml(productGroup)}">${escapeHtml(productGroup || '-')}</b><em title="${displayName}">${displayName}</em></td>`;
     const groupStart = !previousProductGroup || productGroup !== previousProductGroup;
     previousProductGroup = productGroup;
     return `<tr class="${groupStart ? 'product-group-start' : 'product-group-continuation'}" data-sku="${sku}" data-product-group="${escapeHtml(productGroup)}" data-own-code="${ownCode}" data-image="${imageUrl}" data-status="${overallState}"${inputRow ? ` data-input-row="${inputRow}"` : ''}>
       <td class="sticky-col select-col" aria-hidden="true"></td>
       <td class="sticky-col image-col image-drop-cell" data-image-drop="${sku}" title="이미지를 이 셀에 놓으면 ${sku}.jpg로 저장됩니다.">${matrixImage(product)}<span class="image-drop-hint">DROP</span></td>
-      <td class="sticky-col sellpia-product-col product-cell"><b title="${escapeHtml(productGroup)}">${escapeHtml(productGroup || '-')}</b><em title="${displayName}">${displayName}</em><small>자사코드 ${sellpiaEditor('sellpia_own_code', '셀피아 자사코드', rawOwnCode, {className:'sellpia-text-compact'})}</small></td>
-      <td class="sticky-col sellpia-option-col option-cell"><b>${skuMarkup}</b><em title="${optionName}">${optionName}</em></td>
+      ${sellpiaProductCell}
+      <td class="sticky-col sellpia-option-col option-cell"><b>${skuMarkup}</b><em title="${optionName}">${optionName}</em><small>자사코드 ${sellpiaEditor('sellpia_own_code', '셀피아 자사코드', rawOwnCode, {className:'sellpia-text-compact'})}</small></td>
       <td class="sticky-col sellpia-stock-col number-cell">${systemOperationalCell(product, 'system_stock', '시스템 기준재고', sellpiaSourceStock)}</td>
       <td class="sticky-col sellpia-price-col number-cell">${systemOperationalCell(product, 'system_base_price', '시스템 기준가격', sellpiaSourcePrice)}</td>
       <td class="number-cell${product.sellpia_purchase_price === null || product.sellpia_purchase_price === undefined ? ' data-gap' : ''}">${formatNullableNumber(product.sellpia_purchase_price)}</td>
       <td class="number-cell${product.sellpia_order_unit === null || product.sellpia_order_unit === undefined ? ' data-gap' : ''}">${formatNullableNumber(product.sellpia_order_unit)}</td>
       <td class="number-cell${product.sellpia_minimum_order_unit === null || product.sellpia_minimum_order_unit === undefined ? ' data-gap' : ''}">${formatNullableNumber(product.sellpia_minimum_order_unit)}</td>
       <td class="number-cell inbound-cost-column">${inboundCostCell(product)}</td>
-      ${channelInventoryCells(product, 'smartstore', '스마트스토어', sellerBaseMerges.get(`${rowIndex}|smartstore`))}
-      ${channelInventoryCells(product, 'makeshop', '메이크샵', sellerBaseMerges.get(`${rowIndex}|makeshop`))}
-      ${channelInventoryCells(product, 'ably', '에이블리', sellerBaseMerges.get(`${rowIndex}|ably`))}
+      ${channelInventoryCells(product, 'smartstore', '스마트스토어', sellerBaseMerges.get(`${rowIndex}|smartstore`), productIdentityMerges.get(`${rowIndex}|smartstore`))}
+      ${channelInventoryCells(product, 'makeshop', '메이크샵', sellerBaseMerges.get(`${rowIndex}|makeshop`), productIdentityMerges.get(`${rowIndex}|makeshop`))}
+      ${channelInventoryCells(product, 'ably', '에이블리', sellerBaseMerges.get(`${rowIndex}|ably`), productIdentityMerges.get(`${rowIndex}|ably`))}
       <td class="profile-cell${profile.material ? '' : ' data-gap'}">${escapeHtml(profile.material || '-')}</td><td class="profile-cell${profile.product_group ? '' : ' data-gap'}">${escapeHtml(profile.product_group || '-')}</td><td class="profile-tags-cell">${tagSummary ? `<span class="tag" title="${escapeHtml(tagSummary)}">${escapeHtml(tagSummary)}</span>` : mappingTag}</td><td>${formatLiveTime(product.sellpia_source_updated_at || product.sellpia_inventory_at || product.updated_at)}</td>
     </tr>`;
   }).join('');
@@ -3368,7 +3413,11 @@ document.getElementById('custom-preset-select').addEventListener('change', event
 });
 
 const priceRuleBulkModal = document.getElementById('price-rule-bulk-modal');
-const priceRuleBulkState = {running:false, cancelRequested:false, ruleSets:[], selectedSkus:[], selectedSources:[], codeListSkus:[], filter:null};
+const priceRuleBulkState = {
+  running:false, cancelRequested:false, ruleSets:[], ruleTags:[], composerTagIds:[],
+  selectedSkus:[], selectedSources:[], selectedSourceSkus:{}, selectedCellCount:0,
+  codeListSkus:[], filter:null
+};
 
 function priceRuleBulkScope() {
   return priceRuleBulkModal.querySelector('input[name="price-rule-bulk-scope"]:checked')?.value || '';
@@ -3391,22 +3440,61 @@ function updatePriceRuleBulkSetSummary() {
     : '저장된 계산 순서를 상품에 배정합니다.';
 }
 
+function fillPriceRuleBulkSetSelect(selectedId = '') {
+  const select = document.getElementById('price-rule-bulk-set');
+  select.innerHTML = '<option value="">가격 조합 선택…</option>' + priceRuleBulkState.ruleSets.map(ruleSet => `<option value="${Number(ruleSet.price_rule_set_id)}">${escapeHtml(ruleSet.set_name)}</option>`).join('');
+  select.value = selectedId ? String(selectedId) : '';
+  updatePriceRuleBulkSetSummary();
+}
+
+function resetPriceRuleBulkComposer() {
+  priceRuleBulkState.composerTagIds = [];
+  document.getElementById('price-rule-bulk-composer-name').value = '';
+  renderPriceRuleBulkComposer();
+}
+
+function renderPriceRuleBulkComposer() {
+  const tagsById = new Map(priceRuleBulkState.ruleTags.map(tag => [Number(tag.price_rule_tag_id), tag]));
+  const selected = priceRuleBulkState.composerTagIds.map((tagId, index) => {
+    const tag = tagsById.get(Number(tagId));
+    if (!tag) return '';
+    return `<article data-bulk-composer-index="${index}"><strong>${index + 1}</strong><span><b>${escapeHtml(tag.tag_name)}</b><em>${escapeHtml(priceRuleTagSummary(tag))}</em></span><div><button type="button" data-bulk-composer-move="up" aria-label="위로">↑</button><button type="button" data-bulk-composer-move="down" aria-label="아래로">↓</button><button type="button" data-bulk-composer-remove aria-label="삭제">×</button></div></article>`;
+  }).join('');
+  document.getElementById('price-rule-bulk-composer-steps').innerHTML = selected || '<p>계산 태그를 하나 이상 추가해주세요.</p>';
+  document.getElementById('price-rule-bulk-composer-add').innerHTML = '<option value="">계산 태그 선택…</option>' + priceRuleBulkState.ruleTags
+    .filter(tag => !priceRuleBulkState.composerTagIds.includes(Number(tag.price_rule_tag_id)))
+    .map(tag => `<option value="${Number(tag.price_rule_tag_id)}">${escapeHtml(tag.tag_name)} · ${escapeHtml(priceRuleTagSummary(tag))}</option>`).join('');
+  const hasName = Boolean(document.getElementById('price-rule-bulk-composer-name').value.trim());
+  document.getElementById('price-rule-bulk-composer-save').disabled = !hasName || !priceRuleBulkState.composerTagIds.length || priceRuleBulkState.running;
+}
+
+function syncPriceRuleBulkSources() {
+  const selectedScope = priceRuleBulkScope() === 'selected';
+  priceRuleBulkModal.querySelectorAll('.price-rule-bulk-sources input').forEach(input => {
+    const included = priceRuleBulkState.selectedSources.includes(input.value);
+    input.disabled = selectedScope && !included;
+    if (selectedScope) input.checked = included;
+  });
+}
+
 async function openPriceRuleBulk() {
-  if (!liveData?.loadPriceRuleSets || !liveData?.savePriceRuleAssignmentsBulk || !liveData?.stageAssignedPriceDraftsBulk) {
+  if (!liveData?.loadPriceRuleTags || !liveData?.loadPriceRuleSets || !liveData?.savePriceRuleSet || !liveData?.savePriceRuleAssignmentsBulk || !liveData?.stageAssignedPriceDraftsBulk) {
     showToast('가격 규칙 일괄 배정 기능을 불러오지 못했습니다. 새로고침 후 다시 시도해주세요.');
     return;
   }
   const selectedTargets = selectedMatrixTargets();
   priceRuleBulkState.selectedSkus = selectedTargets.skus;
   priceRuleBulkState.selectedSources = selectedTargets.sources;
+  priceRuleBulkState.selectedSourceSkus = selectedTargets.sourceSkus;
+  priceRuleBulkState.selectedCellCount = selectedTargets.cells.filter(cell => cell.dataset.channel).length;
   priceRuleBulkState.codeListSkus = [...new Set(matrixState.codeListSkus.map(value => String(value || '').trim()).filter(Boolean))];
   priceRuleBulkState.filter = snapshotMatrixExportFilter();
   const counts = {
-    selected:priceRuleBulkState.selectedSources.length ? priceRuleBulkState.selectedSkus.length : 0,
+    selected:priceRuleBulkState.selectedCellCount,
     code_list:priceRuleBulkState.codeListSkus.length,
     filtered:Number(priceRuleBulkState.filter.total || 0)
   };
-  document.getElementById('price-rule-bulk-selected-count').textContent = `${formatNumber(counts.selected)}개`;
+  document.getElementById('price-rule-bulk-selected-count').textContent = `${formatNumber(counts.selected)}개 셀 · ${formatNumber(priceRuleBulkState.selectedSkus.length)}개 SKU`;
   document.getElementById('price-rule-bulk-code-count').textContent = `${formatNumber(counts.code_list)}개`;
   document.getElementById('price-rule-bulk-filtered-count').textContent = `${formatNumber(counts.filtered)}개`;
   let preferredScope = '';
@@ -3422,6 +3510,8 @@ async function openPriceRuleBulk() {
       ? priceRuleBulkState.selectedSources.includes(input.value)
       : true;
   });
+  syncPriceRuleBulkSources();
+  resetPriceRuleBulkComposer();
   document.getElementById('price-rule-bulk-progress').hidden = true;
   document.getElementById('price-rule-bulk-run').disabled = true;
   document.getElementById('price-rule-bulk-stage').disabled = !preferredScope;
@@ -3429,10 +3519,11 @@ async function openPriceRuleBulk() {
   document.getElementById('price-rule-bulk-cancel').textContent = '취소';
   priceRuleBulkModal.hidden = false;
   try {
-    priceRuleBulkState.ruleSets = await liveData.loadPriceRuleSets();
-    const select = document.getElementById('price-rule-bulk-set');
-    select.innerHTML = '<option value="">가격 조합 선택…</option>' + priceRuleBulkState.ruleSets.map(ruleSet => `<option value="${Number(ruleSet.price_rule_set_id)}">${escapeHtml(ruleSet.set_name)}</option>`).join('');
-    updatePriceRuleBulkSetSummary();
+    [priceRuleBulkState.ruleTags, priceRuleBulkState.ruleSets] = await Promise.all([
+      liveData.loadPriceRuleTags(), liveData.loadPriceRuleSets()
+    ]);
+    fillPriceRuleBulkSetSelect();
+    renderPriceRuleBulkComposer();
     document.getElementById('price-rule-bulk-run').disabled = !preferredScope || !priceRuleBulkState.ruleSets.length;
     document.getElementById('price-rule-bulk-run').textContent = '규칙 배정 저장';
   } catch (error) {
@@ -3462,6 +3553,17 @@ async function resolvePriceRuleBulkSkus() {
   return [];
 }
 
+async function resolvePriceRuleBulkTargetGroups(sources) {
+  if (priceRuleBulkScope() === 'selected') {
+    return sources.map(source => ({
+      sources:[source],
+      skus:[...new Set((priceRuleBulkState.selectedSourceSkus[source] || []).map(value => String(value || '').trim()).filter(Boolean))]
+    })).filter(group => group.skus.length);
+  }
+  const skus = [...new Set((await resolvePriceRuleBulkSkus()).map(value => String(value || '').trim()).filter(Boolean))];
+  return skus.length ? [{sources, skus}] : [];
+}
+
 async function runPriceRuleBulk() {
   if (priceRuleBulkState.running) return;
   const ruleSetId = Number(document.getElementById('price-rule-bulk-set').value || 0);
@@ -3478,23 +3580,28 @@ async function runPriceRuleBulk() {
   runButton.textContent = '배정 저장 중…';
   try {
     showPriceRuleBulkProgress(2, '상품 범위 확인 중', '현재 화면의 선택 조건을 SKU 목록으로 확인합니다.');
-    const skus = [...new Set((await resolvePriceRuleBulkSkus()).map(value => String(value || '').trim()).filter(Boolean))];
-    if (!skus.length) throw new Error('배정할 셀피아 SKU를 찾지 못했습니다.');
-    let processed = 0;
+    const targetGroups = await resolvePriceRuleBulkTargetGroups(sources);
+    if (!targetGroups.length) throw new Error('배정할 셀피아 SKU와 판매처 셀을 찾지 못했습니다.');
+    const totalTargets = targetGroups.reduce((sum, group) => sum + group.skus.length * group.sources.length, 0);
+    let processedTargets = 0;
     let assignedRows = 0;
     let skippedSkus = 0;
     const batchSize = 500;
-    while (processed < skus.length) {
-      if (priceRuleBulkState.cancelRequested) throw new Error('가격 규칙 일괄 배정을 중단했습니다.');
-      const batch = skus.slice(processed, processed + batchSize);
-      const result = await liveData.savePriceRuleAssignmentsBulk({skus:batch, sources, ruleSetId});
-      processed += batch.length;
-      assignedRows += Number(result.assigned_rows || 0);
-      skippedSkus += Number(result.skipped_skus || 0);
-      showPriceRuleBulkProgress(30 + (processed / skus.length) * 68, '가격 규칙 배정 중', `${formatNumber(processed)} / ${formatNumber(skus.length)}개 SKU · ${formatNumber(assignedRows)}개 판매처 배정 저장`);
-      await new Promise(resolve => window.setTimeout(resolve, 0));
+    for (const group of targetGroups) {
+      let offset = 0;
+      while (offset < group.skus.length) {
+        if (priceRuleBulkState.cancelRequested) throw new Error('가격 규칙 일괄 배정을 중단했습니다.');
+        const batch = group.skus.slice(offset, offset + batchSize);
+        const result = await liveData.savePriceRuleAssignmentsBulk({skus:batch, sources:group.sources, ruleSetId});
+        offset += batch.length;
+        processedTargets += batch.length * group.sources.length;
+        assignedRows += Number(result.assigned_rows || 0);
+        skippedSkus += Number(result.skipped_skus || 0);
+        showPriceRuleBulkProgress(30 + (processedTargets / totalTargets) * 68, '가격 규칙 배정 중', `${formatNumber(processedTargets)} / ${formatNumber(totalTargets)}개 판매처 셀 · ${formatNumber(assignedRows)}개 배정 저장`);
+        await new Promise(resolve => window.setTimeout(resolve, 0));
+      }
     }
-    showPriceRuleBulkProgress(100, '배정 완료', `${formatNumber(skus.length - skippedSkus)}개 SKU · ${formatNumber(assignedRows)}개 판매처 규칙 저장${skippedSkus ? ` · 미발견 ${formatNumber(skippedSkus)}개` : ''}`);
+    showPriceRuleBulkProgress(100, '배정 완료', `${formatNumber(assignedRows)}개 판매처 셀 규칙 저장${skippedSkus ? ` · 미발견 ${formatNumber(skippedSkus)}개` : ''}`);
     showToast('가격 규칙 일괄 배정을 저장했습니다. 실제 가격 수정안은 아직 만들지 않았습니다.');
     document.getElementById('price-rule-bulk-cancel').textContent = '닫기';
   } catch (error) {
@@ -3521,28 +3628,33 @@ async function runAssignedPriceDraftsBulk() {
   stageButton.textContent = '가격 수정안 생성 중…';
   try {
     showPriceRuleBulkProgress(2, '상품 범위 확인 중', '배정된 가격 조합과 시스템 기준가격을 확인합니다.');
-    const skus = [...new Set((await resolvePriceRuleBulkSkus()).map(value => String(value || '').trim()).filter(Boolean))];
-    if (!skus.length) throw new Error('가격 수정안을 만들 셀피아 SKU를 찾지 못했습니다.');
+    const targetGroups = await resolvePriceRuleBulkTargetGroups(sources);
+    if (!targetGroups.length) throw new Error('가격 수정안을 만들 셀피아 SKU와 판매처 셀을 찾지 못했습니다.');
+    const totalTargets = targetGroups.reduce((sum, group) => sum + group.skus.length * group.sources.length, 0);
     const batchId = createRequestId();
-    let processed = 0;
+    let processedTargets = 0;
     let pendingDrafts = 0;
     let unchangedDrafts = 0;
     let failedRows = 0;
     let unassignedRows = 0;
     const errors = [];
     const batchSize = 100;
-    while (processed < skus.length) {
-      if (priceRuleBulkState.cancelRequested) throw new Error('가격 수정안 생성을 중단했습니다.');
-      const batch = skus.slice(processed, processed + batchSize);
-      const result = await liveData.stageAssignedPriceDraftsBulk({skus:batch, sources, batchId});
-      processed += batch.length;
-      pendingDrafts += Number(result.pending_drafts || 0);
-      unchangedDrafts += Number(result.unchanged_drafts || 0);
-      failedRows += Number(result.failed_rows || 0);
-      unassignedRows += Number(result.unassigned_rows || 0);
-      errors.push(...(Array.isArray(result.errors) ? result.errors : []));
-      showPriceRuleBulkProgress(30 + (processed / skus.length) * 68, '가격 수정안 생성 중', `${formatNumber(processed)} / ${formatNumber(skus.length)}개 SKU · 수정안 ${formatNumber(pendingDrafts)}건 · 동일가 ${formatNumber(unchangedDrafts)}건`);
-      await new Promise(resolve => window.setTimeout(resolve, 0));
+    for (const group of targetGroups) {
+      let offset = 0;
+      while (offset < group.skus.length) {
+        if (priceRuleBulkState.cancelRequested) throw new Error('가격 수정안 생성을 중단했습니다.');
+        const batch = group.skus.slice(offset, offset + batchSize);
+        const result = await liveData.stageAssignedPriceDraftsBulk({skus:batch, sources:group.sources, batchId});
+        offset += batch.length;
+        processedTargets += batch.length * group.sources.length;
+        pendingDrafts += Number(result.pending_drafts || 0);
+        unchangedDrafts += Number(result.unchanged_drafts || 0);
+        failedRows += Number(result.failed_rows || 0);
+        unassignedRows += Number(result.unassigned_rows || 0);
+        errors.push(...(Array.isArray(result.errors) ? result.errors : []));
+        showPriceRuleBulkProgress(30 + (processedTargets / totalTargets) * 68, '가격 수정안 생성 중', `${formatNumber(processedTargets)} / ${formatNumber(totalTargets)}개 판매처 셀 · 수정안 ${formatNumber(pendingDrafts)}건 · 동일가 ${formatNumber(unchangedDrafts)}건`);
+        await new Promise(resolve => window.setTimeout(resolve, 0));
+      }
     }
     const errorSummary = errors.slice(0, 3).map(item => `${item.sku || '-'} ${CHANNEL_LABELS[item.source] || item.source}: ${item.message}`).join(' / ');
     showPriceRuleBulkProgress(100, '가격 수정안 생성 완료', `수정안 ${formatNumber(pendingDrafts)}건 · 동일가 ${formatNumber(unchangedDrafts)}건 · 미배정 ${formatNumber(unassignedRows)}건 · 실패 ${formatNumber(failedRows)}건${errorSummary ? ` · ${errorSummary}` : ''}`);
@@ -3565,12 +3677,52 @@ document.getElementById('price-rule-bulk-cancel').addEventListener('click', clos
 document.getElementById('price-rule-bulk-run').addEventListener('click', runPriceRuleBulk);
 document.getElementById('price-rule-bulk-stage').addEventListener('click', runAssignedPriceDraftsBulk);
 document.getElementById('price-rule-bulk-set').addEventListener('change', updatePriceRuleBulkSetSummary);
+document.getElementById('price-rule-bulk-composer-name').addEventListener('input', renderPriceRuleBulkComposer);
+document.getElementById('price-rule-bulk-composer-add').addEventListener('change', event => {
+  const tagId = Number(event.target.value || 0);
+  if (tagId && !priceRuleBulkState.composerTagIds.includes(tagId)) priceRuleBulkState.composerTagIds.push(tagId);
+  renderPriceRuleBulkComposer();
+});
+document.getElementById('price-rule-bulk-composer-steps').addEventListener('click', event => {
+  const row = event.target.closest('[data-bulk-composer-index]');
+  if (!row) return;
+  const index = Number(row.dataset.bulkComposerIndex);
+  if (event.target.closest('[data-bulk-composer-remove]')) priceRuleBulkState.composerTagIds.splice(index, 1);
+  if (event.target.dataset.bulkComposerMove === 'up' && index > 0) [priceRuleBulkState.composerTagIds[index - 1], priceRuleBulkState.composerTagIds[index]] = [priceRuleBulkState.composerTagIds[index], priceRuleBulkState.composerTagIds[index - 1]];
+  if (event.target.dataset.bulkComposerMove === 'down' && index < priceRuleBulkState.composerTagIds.length - 1) [priceRuleBulkState.composerTagIds[index + 1], priceRuleBulkState.composerTagIds[index]] = [priceRuleBulkState.composerTagIds[index], priceRuleBulkState.composerTagIds[index + 1]];
+  renderPriceRuleBulkComposer();
+});
+document.getElementById('price-rule-bulk-composer-reset').addEventListener('click', resetPriceRuleBulkComposer);
+document.getElementById('price-rule-bulk-composer-save').addEventListener('click', async event => {
+  const setName = document.getElementById('price-rule-bulk-composer-name').value.trim();
+  if (!setName || !priceRuleBulkState.composerTagIds.length || priceRuleBulkState.running) return;
+  const button = event.currentTarget;
+  button.disabled = true;
+  button.textContent = '조합 저장 중…';
+  try {
+    const savedSet = await liveData.savePriceRuleSet({
+      setName,
+      color:'#1558c0',
+      tagIds:priceRuleBulkState.composerTagIds,
+      note:'가격 규칙 일괄 배정 팝업에서 생성'
+    });
+    priceRuleBulkState.ruleSets = await liveData.loadPriceRuleSets();
+    fillPriceRuleBulkSetSelect(savedSet.price_rule_set_id);
+    resetPriceRuleBulkComposer();
+    document.getElementById('price-rule-bulk-run').disabled = !priceRuleBulkScope();
+    void window.SystemV3PriceRuleLab?.refresh?.();
+    showToast(`‘${savedSet.set_name}’ 가격 조합을 저장하고 선택했습니다. 아직 상품에는 배정하지 않았습니다.`);
+  } catch (error) {
+    console.error('bulk price combination save failed', error);
+    showToast(`가격 조합 저장 실패: ${error?.message || error}`);
+  } finally {
+    button.textContent = '조합 저장 후 선택';
+    renderPriceRuleBulkComposer();
+  }
+});
 priceRuleBulkModal.querySelectorAll('input[name="price-rule-bulk-scope"]').forEach(input => input.addEventListener('change', () => {
-  priceRuleBulkModal.querySelectorAll('.price-rule-bulk-sources input').forEach(sourceInput => {
-    sourceInput.checked = input.value === 'selected'
-      ? priceRuleBulkState.selectedSources.includes(sourceInput.value)
-      : true;
-  });
+  priceRuleBulkModal.querySelectorAll('.price-rule-bulk-sources input').forEach(sourceInput => { sourceInput.checked = input.value === 'selected' ? priceRuleBulkState.selectedSources.includes(sourceInput.value) : true; });
+  syncPriceRuleBulkSources();
 }));
 
 document.getElementById('matrix-refresh-btn').addEventListener('click', () => refreshLiveData());
@@ -4591,10 +4743,11 @@ function selectedMatrixTargets() {
   const grid = matrixCellGrid();
   const rows = [...matrixBody.querySelectorAll('tr[data-sku]')];
   const bounds = selectionRectangle(grid);
-  if (!bounds) return {cells:[], skus:[], sources:[]};
+  if (!bounds) return {cells:[], skus:[], sources:[], sourceSkus:{smartstore:[], makeshop:[], ably:[]}};
   const cells = [];
   const skus = new Set();
   const sources = new Set();
+  const sourceSkuSets = {smartstore:new Set(), makeshop:new Set(), ably:new Set()};
   for (let rowIndex = bounds.top; rowIndex <= bounds.bottom; rowIndex += 1) {
     for (let columnIndex = bounds.left; columnIndex <= bounds.right; columnIndex += 1) {
       const cell = grid[rowIndex]?.[columnIndex];
@@ -4602,10 +4755,18 @@ function selectedMatrixTargets() {
       cells.push(cell);
       const sku = rows[rowIndex]?.dataset.sku;
       if (sku) skus.add(sku);
-      if (cell.dataset.channel) sources.add(cell.dataset.channel);
+      if (cell.dataset.channel) {
+        sources.add(cell.dataset.channel);
+        if (sku && sourceSkuSets[cell.dataset.channel]) sourceSkuSets[cell.dataset.channel].add(sku);
+      }
     }
   }
-  return {cells, skus:[...skus], sources:[...sources]};
+  return {
+    cells,
+    skus:[...skus],
+    sources:[...sources],
+    sourceSkus:Object.fromEntries(Object.entries(sourceSkuSets).map(([source, values]) => [source, [...values]]))
+  };
 }
 
 function openSellerExport({action = 'export', rows = []} = {}) {

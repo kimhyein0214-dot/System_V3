@@ -7,9 +7,9 @@
     <title>System V3 · 상품 운영 허브</title>
     <link rel="preconnect" href="https://cdnjs.cloudflare.com" crossorigin>
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/pretendard/1.3.9/static/pretendard.css">
-    <link rel="stylesheet" href="./style.css?v=20260825-representative-tags-r22">
-    <link rel="stylesheet" href="./inventory.css?v=20260825-representative-tags-r22">
-    <link rel="stylesheet" href="./price-rule-lab.css?v=20260825-representative-tags-r22">
+    <link rel="stylesheet" href="./style.css?v=20260825-bulk-composer-r23">
+    <link rel="stylesheet" href="./inventory.css?v=20260825-bulk-composer-r23">
+    <link rel="stylesheet" href="./price-rule-lab.css?v=20260825-bulk-composer-r23">
   </head>
   <body>
     <div class="app-shell">
@@ -576,13 +576,27 @@
         <div class="modal-head"><div><span>상품 범위와 판매처별 규칙 지정</span><h3 id="price-rule-bulk-title">가격 규칙 일괄 배정</h3></div><button id="price-rule-bulk-close" aria-label="가격 규칙 일괄 배정 닫기">×</button></div>
         <div class="price-rule-bulk-body">
           <div class="price-rule-bulk-note"><b>이 단계에서는 판매처 가격을 바꾸지 않습니다.</b><span>가격 조합 배정만 DB에 저장하고, 실제 판매가·옵션가 내보내기 값은 다음 검토 단계에서 별도로 만듭니다.</span></div>
-          <fieldset class="price-rule-bulk-scopes"><legend>적용할 상품 범위</legend>
-            <label><input type="radio" name="price-rule-bulk-scope" value="selected"><span><b>선택한 셀 범위</b><em id="price-rule-bulk-selected-count">0개 SKU</em></span></label>
-            <label><input type="radio" name="price-rule-bulk-scope" value="code_list"><span><b>엑셀 코드목록</b><em id="price-rule-bulk-code-count">0개</em></span></label>
-            <label><input type="radio" name="price-rule-bulk-scope" value="filtered"><span><b>현재 검색·필터 결과</b><em id="price-rule-bulk-filtered-count">0개</em></span></label>
-          </fieldset>
-          <fieldset class="price-rule-bulk-sources"><legend>배정할 판매처</legend><label><input type="checkbox" value="smartstore" checked><span class="dot smart"></span>스마트스토어</label><label><input type="checkbox" value="makeshop" checked><span class="dot make"></span>메이크샵</label><label><input type="checkbox" value="ably" checked><span class="dot ably"></span>에이블리</label></fieldset>
-          <label class="price-rule-bulk-set">가격 조합<select id="price-rule-bulk-set"><option value="">가격 조합 선택…</option></select><span id="price-rule-bulk-set-summary">저장된 계산 순서를 상품에 배정합니다.</span></label>
+          <div class="price-rule-bulk-workspace">
+            <section class="price-rule-bulk-targets">
+              <div class="price-rule-bulk-section-head"><b>1. 적용 대상</b><span>선택한 셀은 판매처까지 정확히 구분합니다.</span></div>
+              <fieldset class="price-rule-bulk-scopes"><legend>적용할 상품 범위</legend>
+                <label><input type="radio" name="price-rule-bulk-scope" value="selected"><span><b>선택한 셀 범위</b><em id="price-rule-bulk-selected-count">0개 셀</em></span></label>
+                <label><input type="radio" name="price-rule-bulk-scope" value="code_list"><span><b>엑셀 코드목록</b><em id="price-rule-bulk-code-count">0개</em></span></label>
+                <label><input type="radio" name="price-rule-bulk-scope" value="filtered"><span><b>현재 검색·필터 결과</b><em id="price-rule-bulk-filtered-count">0개</em></span></label>
+              </fieldset>
+              <fieldset class="price-rule-bulk-sources"><legend>배정할 판매처</legend><label><input type="checkbox" value="smartstore" checked><span class="dot smart"></span>스마트스토어</label><label><input type="checkbox" value="makeshop" checked><span class="dot make"></span>메이크샵</label><label><input type="checkbox" value="ably" checked><span class="dot ably"></span>에이블리</label></fieldset>
+              <label class="price-rule-bulk-set">저장된 가격 조합<select id="price-rule-bulk-set"><option value="">가격 조합 선택…</option></select><span id="price-rule-bulk-set-summary">저장된 계산 순서를 상품에 배정합니다.</span></label>
+            </section>
+            <section class="price-rule-bulk-composer" aria-labelledby="price-rule-bulk-composer-title">
+              <div class="price-rule-bulk-section-head"><div><b id="price-rule-bulk-composer-title">2. 새 가격 조합 만들기</b><span>기존 계산 태그를 골라 순서대로 묶습니다.</span></div><button id="price-rule-bulk-composer-reset" class="btn" type="button">초기화</button></div>
+              <div class="price-rule-bulk-composer-fields">
+                <label>가격 조합 이름<input id="price-rule-bulk-composer-name" maxlength="50" placeholder="예: 판매가 +4,000원 · 즉시할인 -1,000원"></label>
+                <label>계산 태그 추가<select id="price-rule-bulk-composer-add"><option value="">계산 태그 선택…</option></select></label>
+              </div>
+              <div id="price-rule-bulk-composer-steps" class="price-rule-bulk-composer-steps"><p>계산 태그를 하나 이상 추가해주세요.</p></div>
+              <div class="price-rule-bulk-composer-foot"><span>각 SKU의 시스템 기준가격에서 이 순서대로 계산합니다.</span><button id="price-rule-bulk-composer-save" class="btn primary" type="button" disabled>조합 저장 후 선택</button></div>
+            </section>
+          </div>
           <div id="price-rule-bulk-progress" class="price-rule-bulk-progress" hidden><div><b id="price-rule-bulk-progress-title">배정 준비</b><span id="price-rule-bulk-progress-percent">0%</span></div><i><span id="price-rule-bulk-progress-bar"></span></i><p id="price-rule-bulk-progress-detail">상품 범위를 확인합니다.</p></div>
         </div>
         <div class="modal-foot"><button id="price-rule-bulk-cancel" class="btn" type="button">취소</button><button id="price-rule-bulk-run" class="btn" type="button">규칙 배정 저장</button><button id="price-rule-bulk-stage" class="btn primary" type="button">배정 규칙으로 가격 수정안 생성</button></div>
@@ -605,12 +619,12 @@
     <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.112.3/dist/umd/supabase.js"></script>
-    <script src="./seller-source-parsers.js?v=20260825-representative-tags-r22"></script>
-    <script src="./seller-export-adapter.js?v=20260825-representative-tags-r22"></script>
-    <script src="./matrix-csv-export.js?v=20260825-representative-tags-r22"></script>
-    <script src="./discount-price-math.js?v=20260825-representative-tags-r22"></script>
-    <script src="./data-service.js?v=20260825-representative-tags-r22"></script>
-    <script src="./app.js?v=20260825-representative-tags-r22"></script>
-    <script src="./price-rule-lab.js?v=20260825-representative-tags-r22"></script>
+    <script src="./seller-source-parsers.js?v=20260825-bulk-composer-r23"></script>
+    <script src="./seller-export-adapter.js?v=20260825-bulk-composer-r23"></script>
+    <script src="./matrix-csv-export.js?v=20260825-bulk-composer-r23"></script>
+    <script src="./discount-price-math.js?v=20260825-bulk-composer-r23"></script>
+    <script src="./data-service.js?v=20260825-bulk-composer-r23"></script>
+    <script src="./app.js?v=20260825-bulk-composer-r23"></script>
+    <script src="./price-rule-lab.js?v=20260825-bulk-composer-r23"></script>
   </body>
 </html>

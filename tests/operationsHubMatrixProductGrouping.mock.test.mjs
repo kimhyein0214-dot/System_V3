@@ -9,6 +9,9 @@ assert.match(app, /function sellpiaProductGroupKey\(product\)[\s\S]*?sellpia_pro
 assert.match(app, /function renderLiveMatrixRows\(products\)[\s\S]*?product-group-start[\s\S]*?data-product-group/, 'matrix rows must expose the product-group boundary');
 assert.match(css, /product-group-start:not\(:first-child\)>td\{border-top:3px solid/, 'product groups must have a thick visual separator');
 assert.match(app, /function buildSellerBaseMerges\(products\)[\s\S]*?sellerBaseMergeSignature[\s\S]*?rowspan[\s\S]*?hidden:true/, 'seller base prices must merge only when the price signature is compatible');
+assert.match(app, /function buildProductIdentityMerges\(products\)[\s\S]*?sources = \['sellpia', 'smartstore', 'makeshop', 'ably'\][\s\S]*?rowspan[\s\S]*?hidden:true/, 'product codes and product names must merge vertically while SKU option rows stay separate');
+assert.match(app, /sellpiaProductCell[\s\S]*?rowspan[\s\S]*?sellpia-option-col option-cell[\s\S]*?자사코드/, 'Sellpia product identity must be one merged cell and SKU-specific own code must stay with the option cell');
+assert.match(app, /sellerIdentityCells\(product, prefix, label, state, identityMerge\)/, 'seller product identity merges must not merge seller option identities');
 assert.match(app, /seller-base-merged-cell[\s\S]*?data-seller-product-code[\s\S]*?data-group-size/, 'merged seller base-price cells must carry their bulk-save identity');
 assert.match(app, /function matrixCellGrid\(\)[\s\S]*?cell\.rowSpan[\s\S]*?grid\[rowIndex \+ rowOffset\]/, 'cell selection must expand rowspans into a logical matrix grid');
 assert.match(app, /function indexMatrixBodyColumns\(\)[\s\S]*?cell\.dataset\.matrixColumn[\s\S]*?grid\[rowIndex \+ rowOffset\]/, 'column visibility must index logical columns across merged seller price cells');
