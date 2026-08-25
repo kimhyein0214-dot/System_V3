@@ -323,3 +323,24 @@ body.matrix-cell-selecting{user-select:none}
 .matrix-table td.seller-base-merged-cell .editable-cell{border-color:transparent;background:transparent}
 .matrix-table .mapping-code-button.unmatched,.matrix-table .mapping-code-button.unmatched:hover,.matrix-table .mapping-code-button.unmatched:focus-visible{border-color:transparent;border-style:solid;background:transparent}
 .matrix-table .inbound-cost-cell,.matrix-table .inbound-cost-cell:hover{border-color:transparent;border-style:solid;background:transparent}
+
+/* Excel-like matrix column resizing. Widths are stored per browser and sticky offsets follow them. */
+.matrix-table{table-layout:fixed}
+.matrix-table th[data-matrix-column],.matrix-table td[data-matrix-column]{box-sizing:border-box;width:var(--matrix-cell-width)!important;min-width:var(--matrix-cell-width)!important;max-width:var(--matrix-cell-width)!important}
+.matrix-table .column-row th{overflow:visible}
+.matrix-column-resize-handle{position:absolute;top:0;right:-5px;z-index:20;width:10px;height:100%;cursor:col-resize;touch-action:none}
+.matrix-column-resize-handle::after{content:"";position:absolute;top:6px;bottom:6px;left:4px;width:2px;border-radius:2px;background:transparent;transition:background .12s}
+.matrix-table .column-row th:hover>.matrix-column-resize-handle::after,.matrix-column-resize-handle:focus-visible::after,.matrix-column-resize-handle.active::after{background:#3274df}
+.matrix-column-resize-handle:focus-visible{outline:2px solid #3274df;outline-offset:-2px}
+body.matrix-column-resizing,body.matrix-column-resizing *{cursor:col-resize!important;user-select:none!important}
+.matrix-column-reset{white-space:nowrap}
+.matrix-table:not(.sellpia-unfrozen) .select-col{left:0}
+.matrix-table:not(.sellpia-unfrozen) .image-col{left:var(--matrix-col-1-width)}
+.matrix-table:not(.sellpia-unfrozen) .sellpia-sku-col{left:calc(var(--matrix-col-1-width) + var(--matrix-col-2-width))}
+.matrix-table:not(.sellpia-unfrozen) .sellpia-name-col{left:calc(var(--matrix-col-1-width) + var(--matrix-col-2-width) + var(--matrix-col-3-width))}
+.matrix-table:not(.sellpia-unfrozen) .sellpia-option-name-col{left:calc(var(--matrix-col-1-width) + var(--matrix-col-2-width) + var(--matrix-col-3-width) + var(--matrix-col-4-width))}
+.matrix-table:not(.sellpia-unfrozen) .own-code-col{left:calc(var(--matrix-col-1-width) + var(--matrix-col-2-width) + var(--matrix-col-3-width) + var(--matrix-col-4-width) + var(--matrix-col-5-width))}
+.matrix-table:not(.sellpia-unfrozen) .sellpia-stock-col{left:calc(var(--matrix-col-1-width) + var(--matrix-col-2-width) + var(--matrix-col-3-width) + var(--matrix-col-4-width) + var(--matrix-col-5-width) + var(--matrix-col-6-width))}
+.matrix-table:not(.sellpia-unfrozen) .sellpia-price-col{left:calc(var(--matrix-col-1-width) + var(--matrix-col-2-width) + var(--matrix-col-3-width) + var(--matrix-col-4-width) + var(--matrix-col-5-width) + var(--matrix-col-6-width) + var(--matrix-col-7-width))}
+.matrix-table:not(.sellpia-unfrozen) .sellpia-group{left:calc(var(--matrix-col-1-width) + var(--matrix-col-2-width));width:calc(var(--matrix-col-3-width) + var(--matrix-col-4-width) + var(--matrix-col-5-width) + var(--matrix-col-6-width) + var(--matrix-col-7-width) + var(--matrix-col-8-width) + var(--matrix-col-9-width) + var(--matrix-col-10-width) + var(--matrix-col-11-width) + var(--matrix-col-12-width));min-width:0;max-width:none}
+.matrix-table td[data-matrix-column] .sellpia-text-cell span,.matrix-table td[data-matrix-column].sellpia-text-cell span,.matrix-table td[data-matrix-column] .mapping-code-button,.matrix-table td[data-matrix-column].seller-identity-cell>em,.matrix-table td[data-matrix-column].option-cell b,.matrix-table td[data-matrix-column].option-cell em,.matrix-table td[data-matrix-column].product-cell b,.matrix-table td[data-matrix-column].product-cell em{max-width:calc(var(--matrix-cell-width) - 16px)}
