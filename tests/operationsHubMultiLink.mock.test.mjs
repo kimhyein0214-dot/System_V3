@@ -38,6 +38,10 @@ assert.match(disconnectMigration, /v_legacy_count <= 1[\s\S]*마지막 연결/, 
 assert.match(data, /removeListingComponent[\s\S]*disconnect_operations_hub_legacy_listing_component/, "the data adapter must route inferred legacy removals through the atomic RPC");
 assert.match(app, /data-remove-component[\s\S]*removeListingComponent\(\{componentId:card\.dataset\.componentId \|\| null/, "the multi-link editor must let operators remove inferred as well as explicit components");
 assert.match(app, /data-drawer-component-remove[\s\S]*removeListingComponent\(\{componentId:component\.dataset\.componentId \|\| null/, "the product drawer must expose the same inferred-component removal action");
+assert.match(html, /id="listing-link-modal"[\s\S]*id="listing-link-components"[\s\S]*id="listing-link-add-toggle"[\s\S]*\+ SKU 추가 연결/, "matrix code clicks must expose a focused listing link manager with current components and an add action");
+assert.match(app, /loadListingLinkManager[\s\S]*loadListingGraph[\s\S]*openListingLinkManager/, "the focused manager must load the exact seller listing graph before it is opened from a matrix code cell");
+assert.match(app, /data-link-manager-remove[\s\S]*removeListingComponent/, "the focused manager must disconnect a selected component row");
+assert.match(app, /listing-link-add-form[\s\S]*saveListingComponent/, "the focused manager must add another SKU to the selected seller listing");
 assert.doesNotMatch(pageFirstGraphMigration, /from public\.operations_hub_listing_graph_live/i, "listing pagination must not materialize the fully enriched compatibility graph");
 assert.match(pageFirstGraphMigration, /identity_edges as materialized[\s\S]*classified as materialized[\s\S]*filtered as materialized[\s\S]*paged_keys as materialized[\s\S]*paged_components as materialized/, "listing identities must be classified and paged before component enrichment");
 assert.match(pageFirstGraphMigration, /paged_components as materialized[\s\S]*left join public\.operations_hub_sellpia_component_live/, "Sellpia stock enrichment must be scoped to the selected page");

@@ -421,7 +421,7 @@ function matchState(tier) {
 
 function mappingCodeButton(product, prefix, label, kind, value, state) {
   const display = escapeHtml(value || '-');
-  const prompt = state.key === 'unmatched' ? `${label} 원본에서 연결 상품 찾기` : `${label} 연결 확인·변경`;
+  const prompt = state.key === 'unmatched' ? `${label} 판매처 상품 새로 연결` : `${label} 조합 연결 확인·관리`;
   return `<button class="mapping-code-button ${state.key}" data-link-source="${prefix}" data-code-kind="${kind}" title="${prompt}">${display}</button>`;
 }
 
@@ -1705,6 +1705,199 @@ function refreshChangeQueueInBackground() {
   window.setTimeout(() => { void loadChangeQueue({silent:true}); }, 250);
 }
 
+const listingLinkModal = document.getElementById('listing-link-modal');
+const listingLinkComponents = document.getElementById('listing-link-components');
+const listingLinkAddForm = document.getElementById('listing-link-add-form');
+const listingLinkState = {source:'', sku:'', productCode:'', optionCode:'', anchor:null, row:null, matrixProduct:null, requestId:0};
+
+function listingLinkIdentity(row) {
+  return `${row?.source_channel || ''}|${row?.product_code || ''}|${row?.option_code || ''}`;
+}
+
+function closeListingLinkManager() {
+  listingLinkState.requestId += 1;
+  listingLinkModal.hidden = true;
+  listingLinkAddForm.hidden = true;
+}
+
+function renderListingLinkManager(row, {error = ''} = {}) {
+  listingLinkState.row = row || null;
+  const sourceLabel = CHANNEL_LABELS[listingLinkState.source] || listingLinkState.source;
+  const productCode = listingLinkState.productCode;
+  const optionCode = listingLinkState.optionCode;
+  const sellerName = [listingLinkState.matrixProduct?.[`${listingLinkState.source}_name`], listingLinkState.matrixProduct?.[`${listingLinkState.source}_option_name`]].filter(Boolean).join(' · ');
+  document.getElementById('listing-link-kicker').textContent = `${sourceLabel} 조합 연결`;
+  document.getElementById('listing-link-title').textContent = productCode ? '조합 연결 관리' : '판매처 상품 연결';
+  document.getElementById('listing-link-seller-key').textContent = productCode ? `${productCode}${optionCode ? ` / ${optionCode}` : ' / 옵션코드 없음'}` : '판매처 상품 미연결';
+  document.getElementById('listing-link-seller-name').textContent = sellerName || (productCode ? '이 판매처 옵션에 연결된 SKU 전체를 관리합니다.' : '먼저 판매처 상품을 찾아 현재 SKU에 연결합니다.');
+  document.getElementById('listing-link-anchor-sku').textContent = listingLinkState.sku || '-';
+
+  const addToggle = document.getElementById('listing-link-add-toggle');
+  const summary = document.getElementById('listing-link-summary');
+  if (error) {
+    summary.textContent = '연결 정보를 불러오지 못했습니다.';
+    listingLinkComponents.innerHTML = `<div class="listing-link-empty error">${escapeHtml(error)}</div>`;
+    addToggle.hidden = true;
+    return;
+  }
+
+  const components = Array.isArray(row?.components) ? row.components : [];
+  if (!productCode) {
+    summary.innerHTML = `현재 <b>0개</b> 판매처 상품이 연결되어 있습니다.`;
+    listingLinkComponents.innerHTML = '<div class="listing-link-empty">현재 SKU에 이 판매처 상품 연결이 없습니다.</div>';
+    addToggle.hidden = false;
+    addToggle.classList.add('unmatched');
+    addToggle.textContent = '+ 판매처 상품 찾아 연결';
+    document.getElementById('listing-link-foot-note').textContent = '판매처 상품을 고른 뒤 현재 SKU에 연결합니다.';
+    return;
+  }
+
+  summary.innerHTML = `현재 판매처 옵션에 <b>${formatNumber(components.length)}개</b> 셀피아 SKU가 연결되어 있습니다. · ${escapeHtml(row?.is_explicit ? '저장된 조합' : '기존 매칭에서 확인된 연결')}`;
+  listingLinkComponents.innerHTML = components.map(component => {
+    const explicit = Boolean(component.componentId);
+    const roleLabel = component.role === 'primary' ? '기준 구성' : '추가 구성';
+    return `<article class="listing-link-component" data-link-manager-component-id="${component.componentId || ''}" data-link-manager-sku="${escapeHtml(component.sku)}">
+      <div class="listing-link-component-main"><div><h4><b>${escapeHtml(component.sku)}</b><span>${escapeHtml([component.productName, component.optionName].filter(Boolean).join(' · ') || '셀피아 상품정보 없음')}</span></h4><em class="listing-link-provenance${explicit ? ' explicit' : ''}">${explicit ? '저장된 구성' : '기존 매칭'}</em></div>
+      <div class="listing-link-meta"><span>구성수량<b>${formatNumber(component.qty || 1)}</b></span><span>역할<b>${escapeHtml(roleLabel)}</b></span><span>가용재고<b>${formatNullableNumber(component.availableStock)}</b></span></div></div>
+      <div class="listing-link-component-actions"><button type="button" data-link-manager-remove>연결 끊기</button></div>
+    </article>`;
+  }).join('') || '<div class="listing-link-empty">연결된 셀피아 SKU가 없습니다.</div>';
+  addToggle.hidden = false;
+  addToggle.classList.remove('unmatched');
+  addToggle.textContent = '+ SKU 추가 연결';
+  document.getElementById('listing-link-foot-note').textContent = '연결 끊기 이력은 DB에 보존됩니다.';
+}
+
+async function loadListingLinkManager({allowMatrixFallback = false} = {}) {
+  const requestId = ++listingLinkState.requestId;
+  listingLinkComponents.innerHTML = '<div class="listing-link-empty loading">연결된 셀피아 SKU를 확인하고 있습니다.</div>';
+  document.getElementById('listing-link-summary').textContent = '현재 연결을 불러오는 중입니다.';
+  document.getElementById('listing-link-add-toggle').hidden = true;
+  listingLinkAddForm.hidden = true;
+  if (!listingLinkState.productCode) {
+    renderListingLinkManager(null);
+    return;
+  }
+  try {
+    const result = await liveData.loadListingGraph({source:listingLinkState.source, relationType:'all', search:listingLinkState.productCode, page:1, pageSize:100});
+    if (requestId !== listingLinkState.requestId) return;
+    const wanted = `${listingLinkState.source}|${listingLinkState.productCode}|${listingLinkState.optionCode}`;
+    let row = (result.rows || []).find(item => listingLinkIdentity(item) === wanted) || null;
+    if (!row && allowMatrixFallback) {
+      const product = listingLinkState.matrixProduct || {};
+      row = {
+        source_channel:listingLinkState.source,
+        product_code:listingLinkState.productCode,
+        option_code:listingLinkState.optionCode,
+        is_explicit:false,
+        components:[{
+          componentId:null,
+          sku:listingLinkState.sku,
+          qty:1,
+          role:'primary',
+          productName:product.sellpia_product_name || product.sellpia_name || '',
+          optionName:product.sellpia_option_name || '',
+          availableStock:product.system_stock ?? product.sellpia_current_stock ?? null
+        }]
+      };
+    }
+    if (!row) {
+      row = {
+        source_channel:listingLinkState.source,
+        product_code:listingLinkState.productCode,
+        option_code:listingLinkState.optionCode,
+        is_explicit:true,
+        components:[]
+      };
+    }
+    renderListingLinkManager(row);
+  } catch (error) {
+    if (requestId !== listingLinkState.requestId) return;
+    console.error('listing link manager load failed', error);
+    renderListingLinkManager(null, {error:error?.message || String(error)});
+  }
+}
+
+function openListingLinkManager({source, sku, anchor}) {
+  const product = matrixRowsBySku.get(sku) || {};
+  listingLinkState.source = source;
+  listingLinkState.sku = sku;
+  listingLinkState.productCode = String(product[`${source}_product_code`] || '').trim();
+  listingLinkState.optionCode = String(product[`${source}_option_code`] || '').trim();
+  listingLinkState.anchor = anchor;
+  listingLinkState.matrixProduct = product;
+  listingLinkState.row = null;
+  listingLinkModal.hidden = false;
+  renderListingLinkManager(null);
+  void loadListingLinkManager({allowMatrixFallback:true});
+}
+
+document.getElementById('listing-link-close').addEventListener('click', closeListingLinkManager);
+document.getElementById('listing-link-done').addEventListener('click', closeListingLinkManager);
+document.getElementById('listing-link-add-toggle').addEventListener('click', event => {
+  if (!listingLinkState.productCode) {
+    const anchor = listingLinkState.anchor;
+    const source = listingLinkState.source;
+    const sku = listingLinkState.sku;
+    closeListingLinkManager();
+    openMappingSearch({source, sku, anchor});
+    return;
+  }
+  listingLinkAddForm.hidden = false;
+  document.getElementById('listing-link-add-sku').value = '';
+  document.getElementById('listing-link-add-qty').value = '1';
+  document.getElementById('listing-link-add-role').value = 'additional';
+  document.getElementById('listing-link-add-sku').focus();
+});
+document.getElementById('listing-link-add-cancel').addEventListener('click', () => { listingLinkAddForm.hidden = true; });
+listingLinkAddForm.addEventListener('submit', async event => {
+  event.preventDefault();
+  if (!listingLinkState.productCode) return;
+  const button = document.getElementById('listing-link-add-save');
+  const sku = document.getElementById('listing-link-add-sku').value.trim();
+  if (!sku) return;
+  button.disabled = true;
+  try {
+    await liveData.saveListingComponent({
+      source:listingLinkState.source,
+      productCode:listingLinkState.productCode,
+      optionCode:listingLinkState.optionCode,
+      sku,
+      qty:document.getElementById('listing-link-add-qty').value,
+      role:document.getElementById('listing-link-add-role').value
+    });
+    await Promise.all([loadListingLinkManager(), loadLiveMatrix()]);
+    showToast(`${sku} SKU를 조합에 추가했습니다.`);
+  } catch (error) {
+    showToast(`SKU 연결 실패: ${error?.message || error}`);
+  } finally {
+    button.disabled = false;
+  }
+});
+listingLinkComponents.addEventListener('click', async event => {
+  const button = event.target.closest('[data-link-manager-remove]');
+  const component = event.target.closest('[data-link-manager-sku]');
+  if (!button || !component || !listingLinkState.row) return;
+  const sku = component.dataset.linkManagerSku;
+  if (!window.confirm(`${sku} 연결을 끊을까요? 연결 이력은 보존됩니다.`)) return;
+  button.disabled = true;
+  try {
+    await liveData.removeListingComponent({
+      componentId:component.dataset.linkManagerComponentId || null,
+      source:listingLinkState.source,
+      productCode:listingLinkState.productCode,
+      optionCode:listingLinkState.optionCode,
+      sku
+    });
+    await Promise.all([loadListingLinkManager(), loadLiveMatrix()]);
+    showToast(`${sku} 연결을 끊었습니다.`);
+  } catch (error) {
+    showToast(`연결 끊기 실패: ${error?.message || error}`);
+    button.disabled = false;
+  }
+});
+listingLinkModal.addEventListener('click', event => { if (event.target === listingLinkModal) closeListingLinkManager(); });
+
 const mappingPopover = document.getElementById('mapping-popover');
 const mappingSearchInput = document.getElementById('mapping-search-input');
 const mappingSearchResults = document.getElementById('mapping-search-results');
@@ -2960,11 +3153,10 @@ matrixBody.addEventListener('click', event => {
   const mappingButton = event.target.closest('.mapping-code-button');
   if (mappingButton) {
     const row = mappingButton.closest('tr[data-sku]');
-    openMappingSearch({
+    openListingLinkManager({
       source:mappingButton.dataset.linkSource,
       sku:row.dataset.sku,
-      anchor:mappingButton,
-      initialQuery:mappingButton.textContent.trim()
+      anchor:mappingButton
     });
     return;
   }
