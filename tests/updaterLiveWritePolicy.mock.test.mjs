@@ -25,6 +25,8 @@ const hardBlocks = [
   "pre_inspection_order_memo_clear",
   "order_memo_clear_without_item_target",
   "invoice_level_order_memo_clear",
+  "order_memo_target_missing",
+  "order_memo_target_ambiguous",
 ];
 
 const reviewBlocks = [
