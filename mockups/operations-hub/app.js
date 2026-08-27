@@ -1078,7 +1078,11 @@ async function loadLiveMatrix({resetPage = false} = {}) {
     const last = Math.min(result.page * result.pageSize, result.count);
     document.getElementById('matrix-total-count').textContent = formatNumber(result.count);
     document.getElementById('matrix-range').textContent = `${formatNumber(first)}–${formatNumber(last)} / ${formatNumber(result.count)}`;
-    document.getElementById('matrix-page').textContent = result.page;
+    const totalPages = Math.max(1, Math.ceil(result.count / result.pageSize));
+    const matrixPageInput = document.getElementById('matrix-page');
+    matrixPageInput.value = String(result.page);
+    matrixPageInput.max = String(totalPages);
+    document.getElementById('matrix-total-pages').textContent = `/ ${formatNumber(totalPages)}`;
     document.getElementById('matrix-prev').disabled = result.page <= 1;
     document.getElementById('matrix-next').disabled = last >= result.count;
     clearMatrixCellSelection();
@@ -4292,6 +4296,37 @@ document.getElementById('matrix-next').addEventListener('click', () => {
   if (matrixState.loading || matrixState.page * matrixState.pageSize >= matrixState.total) return;
   matrixState.page += 1;
   loadLiveMatrix();
+});
+
+const matrixPageInput = document.getElementById('matrix-page');
+function moveToEnteredMatrixPage() {
+  const totalPages = Math.max(1, Math.ceil(matrixState.total / matrixState.pageSize));
+  if (matrixState.loading) {
+    matrixPageInput.value = String(matrixState.page);
+    return;
+  }
+  const enteredPage = Number(matrixPageInput.value);
+  if (!Number.isFinite(enteredPage)) {
+    matrixPageInput.value = String(matrixState.page);
+    return;
+  }
+  const targetPage = Math.max(1, Math.min(totalPages, Math.trunc(enteredPage)));
+  matrixPageInput.value = String(targetPage);
+  if (targetPage === matrixState.page) return;
+  matrixState.page = targetPage;
+  loadLiveMatrix();
+}
+matrixPageInput.addEventListener('focus', event => event.target.select());
+matrixPageInput.addEventListener('change', moveToEnteredMatrixPage);
+matrixPageInput.addEventListener('keydown', event => {
+  if (event.key === 'Enter') {
+    event.preventDefault();
+    moveToEnteredMatrixPage();
+    matrixPageInput.blur();
+  } else if (event.key === 'Escape') {
+    matrixPageInput.value = String(matrixState.page);
+    matrixPageInput.blur();
+  }
 });
 
 const matrixPageSizeSelect = document.getElementById('matrix-page-size');
