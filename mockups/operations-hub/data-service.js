@@ -671,6 +671,27 @@
     return {rows, count:Number(rows[0]?.total_count || 0), page:safePage, pageSize:safePageSize};
   }
 
+  async function loadSellerProductOptions(source, productCode) {
+    const exactProductCode = cleanText(productCode);
+    if (!exactProductCode) throw new Error('복사할 판매처 상품코드를 확인해주세요.');
+    const options = [];
+    const seen = new Set();
+    const pageSize = 100;
+    for (let page = 1; page <= 20; page += 1) {
+      const result = await searchSellerItems(source, exactProductCode, page, pageSize);
+      const rows = Array.isArray(result.rows) ? result.rows : [];
+      for (const row of rows) {
+        if (cleanText(row.product_code) !== exactProductCode) continue;
+        const optionCode = cleanText(row.option_code);
+        if (seen.has(optionCode)) continue;
+        seen.add(optionCode);
+        options.push(row);
+      }
+      if (rows.length < pageSize || rows.some(row => cleanText(row.product_code) !== exactProductCode)) break;
+    }
+    return options.sort((left, right) => cleanText(left.option_code).localeCompare(cleanText(right.option_code), 'ko', {numeric:true}));
+  }
+
   async function resolveCodeEntries(entries) {
     const normalized = (entries || []).map(entry => ({
       row_no:Math.max(1, Number(entry.row_no) || 1),
@@ -2090,6 +2111,7 @@
     createProductTag,
     saveSellpiaChanges,
     searchSellerItems,
+    loadSellerProductOptions,
     resolveCodeEntries,
     refreshListingGraphCache,
     linkSellerItem,
