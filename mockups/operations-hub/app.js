@@ -1262,6 +1262,16 @@ async function refreshLiveData(options) {
   await loadMappingSyncStatus({markDisplayed:true});
 }
 
+async function refreshMatrixSkus(skus = []) {
+  const targets = [...new Set(skus.map(sku => String(sku || '').trim()).filter(Boolean))];
+  if (!targets.length || !liveData?.loadProductsBySkus) return [];
+  const rows = await liveData.loadProductsBySkus(targets);
+  const refreshedBySku = new Map(rows.map(product => [String(product.sellpia_sku_code || '').trim(), product]));
+  matrixState.rows = matrixState.rows.map(product => refreshedBySku.get(String(product.sellpia_sku_code || '').trim()) || product);
+  renderLiveMatrixRows(matrixState.rows);
+  return rows;
+}
+
 function matrixRowName(row) {
   const sku = String(row?.dataset?.sku || '').trim();
   const product = matrixRowsBySku.get(sku) || {};
@@ -2302,6 +2312,33 @@ mappingSearchInput.addEventListener('input', () => {
   mappingState.timer = setTimeout(runMappingSearch, 260);
 });
 document.getElementById('close-mapping-popover').addEventListener('click', closeMappingSearch);
+
+function applyLocalSellerLink(linked) {
+  const sku = String(linked?.sellpia_sku_code || mappingState.sku || '').trim();
+  const source = String(linked?.source_channel || mappingState.source || '').trim();
+  const product = matrixRowsBySku.get(sku);
+  if (!product || !['smartstore', 'makeshop', 'ably'].includes(source)) return null;
+  product[`${source}_product_code`] = linked?.product_code || '';
+  product[`${source}_option_code`] = linked?.option_code || '';
+  product[`${source}_name`] = linked?.product_name || '';
+  product[`${source}_option_name`] = linked?.option_name || '';
+  product[`${source}_match_tier`] = 'MANUAL_LINKED';
+  product[`${source}_match_score`] = 100;
+  product[`${source}_listing_count`] = Math.max(1, Number(product[`${source}_listing_count`] || 0));
+  product[`${source}_name_is_draft`] = false;
+  product.__manualLinks = {...(product.__manualLinks || {}), [source]:linked};
+  if (product.__sellerProductLinkDrafts?.[source]) {
+    product.__sellerProductLinkDrafts = {...product.__sellerProductLinkDrafts};
+    delete product.__sellerProductLinkDrafts[source];
+  }
+  if (product.__linkSuppressions?.[source]) {
+    product.__linkSuppressions = {...product.__linkSuppressions};
+    delete product.__linkSuppressions[source];
+  }
+  product.overall_status = 'connected';
+  return product;
+}
+
 mappingSearchResults.addEventListener('click', async event => {
   const pageButton = event.target.closest('[data-mapping-page]');
   if (pageButton && !pageButton.disabled) {
@@ -2317,14 +2354,15 @@ mappingSearchResults.addEventListener('click', async event => {
   button.disabled = true;
   button.classList.add('saving');
   try {
+    let linked;
     if (mappingState.mode === 'remaining-options') {
-      await liveData.linkProductDraftOption({
+      linked = await liveData.linkProductDraftOption({
         sku:mappingState.sku,
         source:mappingState.source,
         optionCode:button.dataset.mapOption
       });
     } else {
-      await liveData.linkSellerItem({
+      linked = await liveData.linkSellerItem({
         sku:mappingState.sku,
         source:mappingState.source,
         productCode:button.dataset.mapProduct,
@@ -2333,10 +2371,23 @@ mappingSearchResults.addEventListener('click', async event => {
     }
     const sourceLabel = CHANNEL_LABELS[mappingState.source] || mappingState.source;
     const sku = mappingState.sku;
+    applyLocalSellerLink(linked || {
+      source_channel:mappingState.source,
+      sellpia_sku_code:sku,
+      product_code:button.dataset.mapProduct,
+      option_code:button.dataset.mapOption
+    });
     closeMappingSearch();
     closeProductDrawer();
-    await refreshLiveData();
+    renderLiveMatrixRows(matrixState.rows);
     showToast(`${sku} · ${sourceLabel} 연결을 저장했습니다.`);
+    void refreshMatrixSkus([sku]).catch(error => {
+      console.error('saved seller link targeted refresh failed', error);
+      showToast(`${sku} 연결은 저장됐지만 최신 상세값 조회가 지연됩니다. 화면 연결값은 유지합니다.`);
+    });
+    void loadLiveDashboardMetrics().catch(error => {
+      console.error('saved seller link dashboard refresh failed', error);
+    });
   } catch (error) {
     console.error('seller item link failed', error);
     showToast(`연결 저장 실패: ${error?.message || error}`);
