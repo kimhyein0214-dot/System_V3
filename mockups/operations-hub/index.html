@@ -7,9 +7,9 @@
     <title>System V3 · 상품 운영 허브</title>
     <link rel="preconnect" href="https://cdnjs.cloudflare.com" crossorigin>
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/pretendard/1.3.9/static/pretendard.css">
-    <link rel="stylesheet" href="./style.css?v=20260827-matrix-navigation-r52">
-    <link rel="stylesheet" href="./inventory.css?v=20260827-matrix-navigation-r52">
-    <link rel="stylesheet" href="./price-rule-lab.css?v=20260827-matrix-navigation-r52">
+    <link rel="stylesheet" href="./style.css?v=20260827-relation-folders-r53">
+    <link rel="stylesheet" href="./inventory.css?v=20260827-relation-folders-r53">
+    <link rel="stylesheet" href="./price-rule-lab.css?v=20260827-relation-folders-r53">
   </head>
   <body>
     <div class="app-shell">
@@ -252,26 +252,44 @@
           </div>
           <div id="multi-links" class="page multi-link-page">
             <div class="page-head">
-              <div><h2>다중·조합 연결</h2><p>판매처 상품·옵션 하나에 여러 셀피아 SKU와 구성수량을 연결하고, 조합 가능 재고를 확인합니다.</p></div>
-              <div class="multi-link-head-note"><b>기존 1:1 자동 호환</b><span>수정하는 판매처 옵션만 명시적 구성으로 전환됩니다.</span></div>
+              <div><h2>다중·조합 관리</h2><p>판매처 구성을 폴더로 나누고, 대표 SKU 아래에 종속 SKU를 정리합니다.</p></div>
+              <div class="multi-link-head-note"><b>계산과 분리된 관리 구조</b><span>이번 단계의 폴더·종속관계는 재고와 가격 계산을 바꾸지 않습니다.</span></div>
             </div>
             <div class="multi-link-toolbar">
               <div class="multi-link-search"><span>⌕</span><input id="multi-link-search" placeholder="판매처 코드 / 상품명 / 셀피아 SKU 검색"></div>
               <select id="multi-link-source"><option value="all">전체 판매처</option><option value="smartstore">스마트스토어</option><option value="makeshop">메이크샵</option><option value="ably">에이블리</option></select>
-              <select id="multi-link-type"><option value="complex">다중·조합만</option><option value="multi_bundle">다중+조합</option><option value="bundle">조합 상품</option><option value="multi">1:N 연결</option><option value="single">일반 1:1</option><option value="all">전체 연결</option></select>
+              <select id="multi-link-type"><option value="all">전체 연결</option><option value="complex">다중·조합만</option><option value="multi_bundle">다중+조합</option><option value="bundle">조합 상품</option><option value="multi">1:N 연결</option><option value="single">일반 1:1</option></select>
               <button id="multi-link-refresh" class="btn">새로고침</button>
               <span class="multi-link-result">결과 <b id="multi-link-count">-</b>개</span>
             </div>
             <div class="multi-link-layout">
+              <aside class="relation-folder-panel" aria-label="조합 관리 폴더">
+                <div class="relation-folder-head"><div><span>관리 폴더</span><b>조합 분류</b></div><button id="relation-folder-new" type="button">＋</button></div>
+                <div id="relation-folder-list" class="relation-folder-list"><button class="active" data-relation-folder="all"><span>전체 연결</span><b>-</b></button><button data-relation-folder="unorganized"><span>미분류</span><b>-</b></button></div>
+                <form id="relation-folder-form" class="relation-folder-form" hidden>
+                  <input id="relation-folder-id" type="hidden">
+                  <label>폴더 이름<input id="relation-folder-name" maxlength="60" required placeholder="예: 모음전 관리"></label>
+                  <label>폴더 유형<select id="relation-folder-kind"><option value="collection">모음전</option><option value="one_plus_one">1+1</option><option value="set">세트</option><option value="custom">직접 분류</option></select></label>
+                  <div><button id="relation-folder-cancel" class="btn" type="button">취소</button><button class="btn primary" type="submit">저장</button></div>
+                </form>
+                <p class="relation-folder-note">폴더는 보기와 관리용입니다. 폴더를 보관해도 연결은 삭제되지 않고 미분류로 이동합니다.</p>
+              </aside>
               <section class="multi-link-table-card">
                 <table class="multi-link-table">
-                  <thead><tr><th>유형</th><th>판매처</th><th>상품코드</th><th>옵션코드</th><th>상품명 / 옵션명</th><th>구성</th><th>판매처 / 계산재고</th></tr></thead>
-                  <tbody id="multi-link-body"><tr class="multi-link-empty"><td colspan="7">다중·조합 연결을 불러오는 중입니다.</td></tr></tbody>
+                  <thead><tr><th>관리 분류</th><th>유형</th><th>판매처</th><th>상품코드</th><th>옵션코드</th><th>상품명 / 옵션명</th><th>구성</th><th>판매처 / 계산재고</th></tr></thead>
+                  <tbody id="multi-link-body"><tr class="multi-link-empty"><td colspan="8">다중·조합 연결을 불러오는 중입니다.</td></tr></tbody>
                 </table>
                 <div class="multi-link-foot"><span id="multi-link-range">-</span><div><button id="multi-link-prev" disabled>‹</button><b id="multi-link-page">1</b><button id="multi-link-next" disabled>›</button></div></div>
               </section>
               <aside class="multi-link-editor" aria-label="구성품 편집">
                  <div class="multi-link-editor-head"><span>판매처 옵션 구성</span><h3 id="multi-link-editor-title">연결을 선택해주세요</h3><p id="multi-link-editor-copy">목록의 판매처 옵션을 누르면 현재 구성과 계산 재고를 표시합니다.</p></div>
+                 <form id="multi-link-organization-form" class="multi-link-organization-form">
+                   <div class="multi-link-form-guide"><b>폴더·조합 정보</b><span>선택한 판매처 구성을 폴더에 넣고 관리 이름을 지정합니다.</span></div>
+                   <label>관리 폴더<select id="multi-link-folder"><option value="">미분류</option></select></label>
+                   <label>조합 유형<select id="multi-link-relation-kind"><option value="">지정 안 함</option><option value="collection">모음전</option><option value="one_plus_one">1+1</option><option value="set">세트</option><option value="custom">직접 분류</option></select></label>
+                   <label>조합 이름<input id="multi-link-group-name" maxlength="100" placeholder="예: 여름 귀걸이 모음전"></label>
+                   <button id="multi-link-organization-save" class="btn primary" type="submit" disabled>폴더·조합 정보 저장</button>
+                 </form>
                  <div id="multi-link-components" class="multi-link-components"><div class="multi-link-editor-empty">선택된 판매처 옵션이 없습니다.</div></div>
                 <section id="multi-link-inventory-action" class="multi-link-inventory-action disabled">
                   <div class="multi-link-inventory-head"><div><span>판매처 재고 수정안</span><b id="multi-link-inventory-state">연결을 선택해주세요</b></div><button id="multi-link-open-queue" class="btn" type="button">내보내기 준비 열기</button></div>
@@ -449,7 +467,7 @@
           <label class="preset-name-label">프리셋 이름<input id="preset-name" maxlength="30" placeholder="예: 스마트스토어 재고 확인"></label>
           <div class="view-settings-grid">
             <fieldset><legend>판매처 표시</legend><label><input id="preset-channel-smartstore" type="checkbox"> 스마트스토어</label><label><input id="preset-channel-makeshop" type="checkbox"> 메이크샵</label><label><input id="preset-channel-ably" type="checkbox"> 에이블리</label></fieldset>
-            <fieldset><legend>표시 데이터</legend><label><input id="preset-show-codes" type="checkbox"> 상품·옵션코드</label><label><input id="preset-show-seller-names" type="checkbox"> 판매처 상품명·옵션명</label><label><input id="preset-show-inventory" type="checkbox"> 재고</label><label><input id="preset-show-price" type="checkbox"> 가격</label><label><input id="preset-show-discount" type="checkbox"> 할인정보</label><label><input id="preset-show-attributes" type="checkbox"> 소재·상품군·태그</label><label><input id="preset-show-sync" type="checkbox"> 최근 동기화</label><label><input id="preset-wrap-names" type="checkbox"> 상품명 두 줄 이상 표시</label></fieldset>
+            <fieldset><legend>표시 데이터</legend><label><input id="preset-show-codes" type="checkbox"> 상품·옵션코드</label><label><input id="preset-show-seller-names" type="checkbox"> 판매처 상품명·옵션명</label><label><input id="preset-show-inventory" type="checkbox"> 재고</label><label><input id="preset-show-price" type="checkbox"> 가격</label><label><input id="preset-show-discount" type="checkbox"> 할인정보</label><label><input id="preset-show-attributes" type="checkbox"> 소재·상품군·태그</label><label><input id="preset-show-sync" type="checkbox"> 최근 동기화</label><label><input id="preset-wrap-names" type="checkbox"> 상품명 두 줄 이상 표시</label><label><input id="preset-exclude-combination-skus" type="checkbox"> 조합 SKU 제외</label></fieldset>
           </div>
           <div class="view-settings-selects">
             <label>연결상태<select id="preset-status"><option value="all">전체</option><option value="connected">연결 완료</option><option value="unmatched">미매칭</option></select></label>
@@ -457,7 +475,7 @@
             <label>표 배율<select id="preset-zoom"><option value="80">80%</option><option value="85">85%</option><option value="90">90%</option><option value="95">95%</option><option value="100">100%</option><option value="105">105%</option><option value="110">110%</option><option value="115">115%</option><option value="120">120%</option><option value="125">125%</option><option value="130">130%</option><option value="135">135%</option><option value="140">140%</option></select></label>
             <label>이미지 크기<select id="preset-image-size"><option value="compact">작게</option><option value="default">기본</option><option value="large">크게</option></select></label>
           </div>
-          <p class="view-settings-note">재고·가격 표시를 끄면 셀피아 기준 영역의 재고·가격·매입·발주 관련 열도 함께 숨겨집니다. 상단의 ‘셀피아 고정’ 버튼을 끄면 보이는 모든 열이 좌우로 함께 움직입니다.</p>
+          <p class="view-settings-note">재고·가격 표시를 끄면 셀피아 기준 영역의 재고·가격·매입·발주 관련 열도 함께 숨겨집니다. ‘조합 SKU 제외’는 상위 SKU가 명시된 종속 SKU만 숨기며, 과거 다중 연결은 임의로 추측해 숨기지 않습니다. SKU 오름차순은 999 → 1000 → 10000처럼 숫자 크기로 정렬됩니다.</p>
         </div>
         <div class="modal-foot preset-modal-foot"><button class="btn danger" id="delete-preset" hidden>삭제</button><button class="btn" id="duplicate-preset">복제</button><span></span><button class="btn" id="apply-view-settings">현재 보기에 적용</button><button class="btn primary" id="save-view-preset">내 프리셋 저장</button></div>
       </section>
@@ -656,13 +674,13 @@
     <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.112.3/dist/umd/supabase.js"></script>
-    <script src="./seller-source-parsers.js?v=20260827-matrix-navigation-r52"></script>
-    <script src="./seller-export-adapter.js?v=20260827-matrix-navigation-r52"></script>
-    <script src="./matrix-csv-export.js?v=20260827-matrix-navigation-r52"></script>
-    <script src="./discount-price-math.js?v=20260827-matrix-navigation-r52"></script>
-    <script src="./source-refresh-verifier.js?v=20260827-matrix-navigation-r52"></script>
-    <script src="./data-service.js?v=20260827-matrix-navigation-r52"></script>
-    <script src="./app.js?v=20260827-matrix-navigation-r52"></script>
-    <script src="./price-rule-lab.js?v=20260827-matrix-navigation-r52"></script>
+    <script src="./seller-source-parsers.js?v=20260827-relation-folders-r53"></script>
+    <script src="./seller-export-adapter.js?v=20260827-relation-folders-r53"></script>
+    <script src="./matrix-csv-export.js?v=20260827-relation-folders-r53"></script>
+    <script src="./discount-price-math.js?v=20260827-relation-folders-r53"></script>
+    <script src="./source-refresh-verifier.js?v=20260827-relation-folders-r53"></script>
+    <script src="./data-service.js?v=20260827-relation-folders-r53"></script>
+    <script src="./app.js?v=20260827-relation-folders-r53"></script>
+    <script src="./price-rule-lab.js?v=20260827-relation-folders-r53"></script>
   </body>
 </html>

@@ -7,7 +7,8 @@
   const PICKING_SUPABASE_KEY = 'sb_publishable_XVnKGJo66GZiYTq5Ivu8dA_SjBVvX0g';
   const PAGE_SIZE = 50;
   const MATRIX_PAGE_SIZES = new Set([50, 100, 200]);
-  const MATRIX_SELECT = 'sellpia_sku_code,own_code,image_url,display_name,smartstore_name,smartstore_option_name,smartstore_product_code,smartstore_option_code,smartstore_match_tier,smartstore_match_score,smartstore_listing_count,smartstore_name_is_draft,smartstore_sale_status,makeshop_name,makeshop_option_name,makeshop_product_code,makeshop_option_code,makeshop_match_tier,makeshop_match_score,makeshop_listing_count,makeshop_name_is_draft,makeshop_sale_status,ably_name,ably_option_name,ably_product_code,ably_option_code,ably_match_tier,ably_match_score,ably_listing_count,ably_name_is_draft,ably_sale_status,updated_at,sellpia_product_name,sellpia_option_name,sellpia_own_code,sellpia_current_stock,sellpia_available_stock,sellpia_safety_stock,sellpia_sale_price,sellpia_inventory_at,smartstore_stock,smartstore_price,smartstore_policy_price,smartstore_policy_active,smartstore_policy_name,smartstore_inventory_at,makeshop_stock,makeshop_price,makeshop_policy_price,makeshop_policy_active,makeshop_policy_name,makeshop_inventory_at,ably_stock,ably_price,ably_policy_price,ably_policy_active,ably_policy_name,ably_inventory_at,overall_status,sellpia_override_image_url,sellpia_override_updated_at,sellpia_source_sale_price,sellpia_source_stock,sellpia_source_updated_at,system_base_price,system_stock,system_price_version,system_stock_version,system_price_updated_at,system_stock_updated_at,system_updated_at';
+  const MATRIX_VIEW = 'operations_hub_matrix_managed_live';
+  const MATRIX_SELECT = 'sellpia_sku_code,own_code,image_url,display_name,smartstore_name,smartstore_option_name,smartstore_product_code,smartstore_option_code,smartstore_match_tier,smartstore_match_score,smartstore_listing_count,smartstore_name_is_draft,smartstore_sale_status,makeshop_name,makeshop_option_name,makeshop_product_code,makeshop_option_code,makeshop_match_tier,makeshop_match_score,makeshop_listing_count,makeshop_name_is_draft,makeshop_sale_status,ably_name,ably_option_name,ably_product_code,ably_option_code,ably_match_tier,ably_match_score,ably_listing_count,ably_name_is_draft,ably_sale_status,updated_at,sellpia_product_name,sellpia_option_name,sellpia_own_code,sellpia_current_stock,sellpia_available_stock,sellpia_safety_stock,sellpia_sale_price,sellpia_inventory_at,smartstore_stock,smartstore_price,smartstore_policy_price,smartstore_policy_active,smartstore_policy_name,smartstore_inventory_at,makeshop_stock,makeshop_price,makeshop_policy_price,makeshop_policy_active,makeshop_policy_name,makeshop_inventory_at,ably_stock,ably_price,ably_policy_price,ably_policy_active,ably_policy_name,ably_inventory_at,overall_status,sellpia_override_image_url,sellpia_override_updated_at,sellpia_source_sale_price,sellpia_source_stock,sellpia_source_updated_at,system_base_price,system_stock,system_price_version,system_stock_version,system_price_updated_at,system_stock_updated_at,system_updated_at,is_dependent_combination_sku';
 
   function normalizeConnectionStatus(status) {
     const value = cleanText(status).toLowerCase();
@@ -389,13 +390,15 @@
     return attachLinkSuppressions(await attachPriceRuleAssignments(await attachSellerDrafts(await attachSellerPriceComponents(await attachLinkBadges(await attachProductProfiles(await attachManualLinks(await attachProductLinkDrafts(await attachSystemOperationalDetails(await attachInboundCostDetails(rows))))))))));
   }
 
-  async function loadListingGraph({source = 'all', relationType = 'complex', search = '', page = 1, pageSize = 50} = {}) {
-    const {data, error} = await db.rpc('list_operations_hub_listing_graph', {
+  async function loadListingGraph({source = 'all', relationType = 'complex', search = '', page = 1, pageSize = 50, folderId = null, organizationScope = 'all'} = {}) {
+    const {data, error} = await db.rpc('list_operations_hub_listing_graph_v2', {
       p_source:cleanText(source) || 'all',
       p_relation_type:cleanText(relationType) || 'complex',
       p_search:cleanText(search),
       p_page:Math.max(1, Number(page) || 1),
-      p_page_size:Math.max(1, Math.min(Number(pageSize) || 50, 100))
+      p_page_size:Math.max(1, Math.min(Number(pageSize) || 50, 100)),
+      p_folder_id:folderId === null || folderId === '' ? null : Number(folderId),
+      p_organization_scope:['all','organized','unorganized'].includes(cleanText(organizationScope)) ? cleanText(organizationScope) : 'all'
     });
     if (error) throw error;
     return {
@@ -438,7 +441,7 @@
     return Array.isArray(data) ? data[0] : data;
   }
 
-  async function loadProducts({ page = 1, pageSize = PAGE_SIZE, search = '', searchSources = ['sellpia','smartstore','makeshop','ably'], status = 'all', sort = 'sku_asc', skus = [], codeListRows = [], advancedFilter = null } = {}) {
+  async function loadProducts({ page = 1, pageSize = PAGE_SIZE, search = '', searchSources = ['sellpia','smartstore','makeshop','ably'], status = 'all', sort = 'sku_asc', skus = [], codeListRows = [], advancedFilter = null, excludeCombinationSkus = false } = {}) {
     status = normalizeConnectionStatus(status);
     const safePage = Math.max(1, Number(page) || 1);
     const safePageSize = MATRIX_PAGE_SIZES.has(Number(pageSize)) ? Number(pageSize) : PAGE_SIZE;
@@ -466,7 +469,7 @@
       let products = [];
       if (pageSkus.length) {
         const {data, error} = await db
-          .from('operations_hub_matrix_system_live')
+          .from(MATRIX_VIEW)
           .select(MATRIX_SELECT)
           .in('sellpia_sku_code', pageSkus);
         if (error) throw error;
@@ -496,13 +499,14 @@
     }
     const filterPayload = normalizeConnectionConditions(advancedFilter);
     if (filterPayload.conditions.length) {
-      const result = await loadPagedRpc('load_operations_hub_matrix_filtered', {
+      const result = await loadPagedRpc('load_operations_hub_matrix_filtered_v2', {
         p_search:normalizedSearch(search),
         p_search_sources:searchSources,
         p_status:status,
         p_sort:sort,
         p_filter:filterPayload,
-        p_skus:[]
+        p_skus:[],
+        p_exclude_dependent:Boolean(excludeCombinationSkus)
       });
       return {
         ...result,
@@ -516,8 +520,10 @@
     const allowedSearchSources = ['sellpia','smartstore','makeshop','ably'];
     const activeSearchSources = [...new Set((searchSources || []).map(source => cleanText(source).toLowerCase()).filter(source => allowedSearchSources.includes(source)))];
     let query = db
-      .from('operations_hub_matrix_system_live')
+      .from(MATRIX_VIEW)
       .select(MATRIX_SELECT, { count: 'exact' });
+
+    if (excludeCombinationSkus) query = query.eq('is_dependent_combination_sku', false);
 
     if (intersection) {
       const nameFields = {
@@ -563,14 +569,17 @@
     else if (status === 'unmatched') query = query.eq('overall_status', 'unmatched');
 
     const sortOptions = {
-      sku_asc: ['sellpia_sku_code', true],
       stock_desc: ['system_stock', false],
       price_desc: ['system_base_price', false],
       updated_desc: ['updated_at', false]
     };
-    const [sortColumn, ascending] = sortOptions[sort] || sortOptions.sku_asc;
-    query = query.order(sortColumn, {ascending, nullsFirst:false});
-    if (sortColumn !== 'sellpia_sku_code') query = query.order('sellpia_sku_code', {ascending:true});
+    const sortOption = sortOptions[sort];
+    if (sortOption) query = query.order(sortOption[0], {ascending:sortOption[1], nullsFirst:false});
+    query = query
+      .order('sellpia_sku_prefix_number', {ascending:true, nullsFirst:false})
+      .order('sellpia_sku_has_numeric_suffix', {ascending:true, nullsFirst:true})
+      .order('sellpia_sku_suffix_number', {ascending:true, nullsFirst:true})
+      .order('sellpia_sku_natural_fallback', {ascending:true, nullsFirst:false});
     query = query.range(from, to);
 
     const { data, error, count } = await query;
@@ -584,7 +593,7 @@
     const rows = [];
     for (let offset = 0; offset < normalizedSkus.length; offset += 500) {
       const {data, error} = await db
-        .from('operations_hub_matrix_system_live')
+        .from(MATRIX_VIEW)
         .select(MATRIX_SELECT)
         .in('sellpia_sku_code', normalizedSkus.slice(offset, offset + 500));
       if (error) throw error;
@@ -1357,6 +1366,55 @@
       final_price:result.gross_price,
       steps:[...(result.price_steps || []), ...(result.discount_steps || [])]
     };
+  }
+
+  async function loadRelationFolders() {
+    const {data, error} = await db.rpc('list_operations_hub_relation_folders');
+    if (error) throw error;
+    return {
+      folders:Array.isArray(data?.folders) ? data.folders : [],
+      organizedCount:Number(data?.organizedCount || 0),
+      unorganizedExplicitCount:Number(data?.unorganizedExplicitCount || 0)
+    };
+  }
+
+  async function saveRelationFolder({folderId = null, name, kind = 'custom', sortOrder = 100} = {}) {
+    const {data, error} = await db.rpc('save_operations_hub_relation_folder', {
+      p_folder_id:folderId === null || folderId === '' ? null : Number(folderId),
+      p_folder_name:cleanText(name),
+      p_folder_kind:cleanText(kind) || 'custom',
+      p_sort_order:Math.max(0, Math.min(Math.trunc(Number(sortOrder) || 100), 10000))
+    });
+    if (error) throw error;
+    return Array.isArray(data) ? data[0] : data;
+  }
+
+  async function archiveRelationFolder(folderId) {
+    const {data, error} = await db.rpc('archive_operations_hub_relation_folder', {p_folder_id:Number(folderId)});
+    if (error) throw error;
+    return Number(data || 0);
+  }
+
+  async function saveListingOrganization({source, productCode, optionCode = '', folderId = null, relationKind = null, groupName = null} = {}) {
+    const {data, error} = await db.rpc('save_operations_hub_listing_organization', {
+      p_source:cleanText(source),
+      p_product_code:cleanText(productCode),
+      p_option_code:cleanText(optionCode),
+      p_folder_id:folderId === null || folderId === '' ? null : Number(folderId),
+      p_relation_kind:cleanText(relationKind) || null,
+      p_group_name:cleanText(groupName) || null
+    });
+    if (error) throw error;
+    return data;
+  }
+
+  async function saveListingComponentParent({componentId, parentComponentId = null} = {}) {
+    const {data, error} = await db.rpc('save_operations_hub_listing_component_parent', {
+      p_component_id:Number(componentId),
+      p_parent_component_id:parentComponentId === null || parentComponentId === '' ? null : Number(parentComponentId)
+    });
+    if (error) throw error;
+    return data;
   }
 
   async function savePriceRuleAssignment({sku, source, ruleSetId = null}) {
@@ -2212,6 +2270,11 @@
     loadProductsBySkus,
     loadMatrixExportChunk,
     loadListingGraph,
+    loadRelationFolders,
+    saveRelationFolder,
+    archiveRelationFolder,
+    saveListingOrganization,
+    saveListingComponentParent,
     loadListingConnection,
     saveListingComponent,
     deactivateListingComponent,
