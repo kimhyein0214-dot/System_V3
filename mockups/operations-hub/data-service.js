@@ -674,6 +674,43 @@
     return Array.isArray(data) ? data[0] : data;
   }
 
+  async function attachChangeExportAudit(rows = []) {
+    const changeIds = [...new Set(rows.map(row => Number(row.change_id)).filter(Number.isFinite))];
+    if (!changeIds.length) return rows;
+    const {data, error} = await db
+      .from('operations_hub_export_items')
+      .select('change_id,status,updated_at')
+      .in('change_id', changeIds)
+      .in('status', ['exported','applied','cancelled']);
+    if (error) throw error;
+    const auditByChange = new Map();
+    for (const item of data || []) {
+      const changeId = Number(item.change_id);
+      const audit = auditByChange.get(changeId) || {
+        exported_file_count:0,
+        applied_file_count:0,
+        stale_file_count:0,
+        latest_exported_at:null
+      };
+      if (item.status === 'exported') audit.exported_file_count += 1;
+      else if (item.status === 'applied') audit.applied_file_count += 1;
+      else if (item.status === 'cancelled') audit.stale_file_count += 1;
+      if (!audit.latest_exported_at || new Date(item.updated_at) > new Date(audit.latest_exported_at)) {
+        audit.latest_exported_at = item.updated_at;
+      }
+      auditByChange.set(changeId, audit);
+    }
+    return rows.map(row => {
+      const audit = auditByChange.get(Number(row.change_id)) || {
+        exported_file_count:0,
+        applied_file_count:0,
+        stale_file_count:0,
+        latest_exported_at:null
+      };
+      return {...row, ...audit, has_exported_file:audit.exported_file_count > 0};
+    });
+  }
+
   async function loadChangeQueue({status = 'active', source = 'all', limit = 250} = {}) {
     let query = db
       .from('operations_hub_change_queue')
@@ -681,16 +718,16 @@
       .order('updated_at', {ascending:false})
       .order('change_id', {ascending:false})
       .limit(Math.max(1, Math.min(Number(limit) || 250, 500)));
-    if (status === 'active') query = query.in('status', ['pending','validated','processing','exported','failed']);
+    if (status === 'active') query = query.in('status', ['pending','validated','failed']);
     else if (status !== 'all') query = query.eq('status', cleanText(status));
     if (source !== 'all') query = query.contains('target_channels', [cleanText(source)]);
     const {data, error, count} = await query;
     if (error) throw error;
-    return {rows:data || [], count:Number(count || 0)};
+    return {rows:await attachChangeExportAudit(data || []), count:Number(count || 0)};
   }
 
   async function loadChangeQueueStats() {
-    const statuses = ['pending','validated','processing','exported','failed','applied','saved','cancelled'];
+    const statuses = ['pending','validated','failed','applied','saved','cancelled'];
     const counts = await Promise.all(statuses.map(async status => {
       const {error, count} = await db
         .from('operations_hub_change_queue')
@@ -700,7 +737,7 @@
       return [status, Number(count || 0)];
     }));
     const result = Object.fromEntries(counts);
-    result.active = result.pending + result.validated + result.processing + result.exported + result.failed;
+    result.active = result.pending + result.validated + result.failed;
     return result;
   }
 
