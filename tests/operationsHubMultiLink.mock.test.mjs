@@ -10,6 +10,7 @@ const upsertFix = fs.readFileSync(new URL("../supabase/migrations/20260818034857
 const partialRefreshFix = fs.readFileSync(new URL("../supabase/migrations/20260818035322_global_identity_check_for_partial_link_refresh.sql", import.meta.url), "utf8");
 const inventoryDraftMigration = fs.readFileSync(new URL("../supabase/migrations/20260818045443_operations_hub_bundle_inventory_drafts.sql", import.meta.url), "utf8");
 const disconnectMigration = fs.readFileSync(new URL("../supabase/migrations/20260821200000_disconnect_legacy_listing_component.sql", import.meta.url), "utf8");
+const durableDisconnectMigration = fs.readFileSync(new URL("../supabase/migrations/20260827090000_fix_operations_hub_link_disconnect.sql", import.meta.url), "utf8");
 const pageFirstGraphMigration = fs.readFileSync(new URL("../supabase/migrations/20260823082547_optimize_operations_hub_listing_graph_page_first.sql", import.meta.url), "utf8");
 const exactGraphMigration = fs.readFileSync(new URL("../supabase/migrations/20260825054226_operations_hub_exact_listing_graph.sql", import.meta.url), "utf8");
 
@@ -35,8 +36,12 @@ assert.match(app, /renderMultiLinkInventoryAction[\s\S]*stageListingInventoryDra
 assert.match(html, /drawer-link-manager[\s\S]*drawer-open-multi-links/, "the product drawer must expose integrated component management without removing the full workspace");
 assert.match(app, /loadDrawerListingLinks[\s\S]*data-drawer-component-save[\s\S]*data-drawer-component-remove[\s\S]*data-drawer-stage-stock/, "the integrated drawer must add, edit, remove, and stage listing components");
 assert.match(disconnectMigration, /disconnect_operations_hub_legacy_listing_component[\s\S]*upsert_operations_hub_listing_component[\s\S]*deactivate_operations_hub_listing_component/, "legacy disconnect must promote and soft-deactivate the inferred edge atomically");
-assert.match(disconnectMigration, /v_legacy_count <= 1[\s\S]*마지막 연결/, "legacy disconnect must not remove the last remaining SKU edge");
-assert.match(data, /removeListingComponent[\s\S]*disconnect_operations_hub_legacy_listing_component/, "the data adapter must route inferred legacy removals through the atomic RPC");
+assert.match(durableDisconnectMigration, /operations_hub_link_suppressions[\s\S]*operator_disconnect[\s\S]*suppression_saved/, "operator disconnects must persist an exact suppression instead of being recreated by source caches");
+assert.match(durableDisconnectMigration, /disconnect_operations_hub_listing_component[\s\S]*deactivate_operations_hub_listing_component[\s\S]*operations_hub_link_suppressions/, "explicit and inferred components must share one auditable disconnect transaction");
+assert.doesNotMatch(durableDisconnectMigration, /v_legacy_count\s*<=\s*1|v_remaining\s*<=\s*1/, "the durable disconnect must allow the last remaining 1:1 edge to be removed");
+assert.match(durableDisconnectMigration, /operations_hub_matrix_system_live[\s\S]*jsonb_populate_record[\s\S]*smartstore_link_suppressed[\s\S]*makeshop_link_suppressed[\s\S]*ably_link_suppressed/, "the live matrix must blank suppressed seller links without a full cache rebuild");
+assert.match(durableDisconnectMigration, /save_operations_hub_listing_component[\s\S]*delete from public\.operations_hub_link_suppressions[\s\S]*link_operations_hub_seller_item_v2[\s\S]*delete from public\.operations_hub_link_suppressions/, "an explicit re-link must clear the matching suppression atomically");
+assert.match(data, /attachLinkSuppressions[\s\S]*operations_hub_link_suppressions[\s\S]*removeListingComponent[\s\S]*disconnect_operations_hub_listing_component/, "the data adapter must project durable suppressions and route every removal through the unified RPC");
 assert.match(app, /data-remove-component[\s\S]*removeListingComponent\(\{componentId:card\.dataset\.componentId \|\| null/, "the multi-link editor must let operators remove inferred as well as explicit components");
 assert.match(app, /data-drawer-component-remove[\s\S]*removeListingComponent\(\{componentId:component\.dataset\.componentId \|\| null/, "the product drawer must expose the same inferred-component removal action");
 assert.match(html, /id="listing-link-modal"[\s\S]*id="listing-link-components"[\s\S]*id="listing-link-add-toggle"[\s\S]*\+ SKU 추가 연결/, "matrix code clicks must expose a focused listing link manager with current components and an add action");
