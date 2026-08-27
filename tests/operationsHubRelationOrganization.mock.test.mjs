@@ -27,18 +27,25 @@ assert.match(graph, /parent_node_id <> child_node_id[\s\S]*with recursive descen
 assert.match(graph, /ensure_operations_hub_sellpia_relation_node[\s\S]*sellpia_stock_latest[\s\S]*display_name[\s\S]*ensure_operations_hub_seller_relation_node/, "Sellpia product names and seller listings must create reusable relation nodes");
 assert.doesNotMatch(graph, /component_qty\s*=|component_role\s*=|sellpia_current_stock\s*=|system_base_price\s*=/, "management-only graph writes must not change calculation inputs");
 
-assert.match(html, /id="relation-folder-list"[\s\S]*id="relation-folder-form"[\s\S]*id="multi-link-organization-form"/, "the workspace must expose folder browsing, folder editing, and listing organization");
-assert.match(html, /id="relation-sellpia-search"[\s\S]*id="relation-parent-node"[\s\S]*id="relation-child-node"[\s\S]*id="relation-tree"/, "operators must choose upper and lower nodes directly and inspect the resulting tree");
+assert.match(html, /id="relation-folder-list"[\s\S]*class="relation-workspace"[\s\S]*id="relation-edge-list"[\s\S]*id="relation-graph-board"[\s\S]*id="multi-link-organization-form"/, "the default workspace must show scoped one-edge rows before the optional graph and relationship composer");
+assert.match(html, /id="relation-workspace-search"[\s\S]*id="relation-view-list"[\s\S]*id="relation-view-graph"/, "search and an explicit view switch must control when the full relationship explorer appears");
+assert.match(html, /id="relation-sellpia-search"[\s\S]*id="relation-parent-node"[\s\S]*id="relation-child-node"/, "operators must still prepare nodes and choose upper and lower products directly");
+assert.match(html, /class="multi-link-legacy-workspace"[\s\S]*id="multi-link-body"[\s\S]*id="multi-link-components"/, "legacy SKU quantity and inventory tools must remain available in a collapsed secondary workspace");
 assert.match(html, /id="preset-exclude-combination-skus"[^>]*type="checkbox"/, "view settings must expose dependent combination SKU exclusion");
 assert.match(html, /999 → 1000 → 10000/, "view settings must explain numeric SKU ordering");
 assert.match(app, /excludeCombinationSkus:false[\s\S]*matrixState\.excludeCombinationSkus = Boolean[\s\S]*excludeCombinationSkus:matrixState\.excludeCombinationSkus/, "the exclusion preference must persist into matrix requests");
 assert.match(app, /matrixState\.excludeCombinationSkus && !matrixState\.codeListRows\.length[\s\S]*조합 SKU 제외는 현재 매트릭스 보기 전용/, "CSV export must fail closed instead of silently reintroducing hidden dependent SKUs");
 assert.match(app, /renderRelationFolders[\s\S]*loadRelationFolders/, "the UI must load and render relation folders");
-assert.match(app, /renderRelationTree[\s\S]*ensureSellpiaRelationNode[\s\S]*ensureSellerRelationNode[\s\S]*saveRelationEdge/, "the UI must create either node type and save a user-selected direction");
+assert.match(app, /renderRelationEdgeList[\s\S]*renderRelationTree[\s\S]*setRelationViewMode/, "the UI must default to concise edge rows and reveal the column graph only on demand");
+assert.match(app, /data-explore-relation-node[\s\S]*relationGraphState\.focusNodeId[\s\S]*setRelationViewMode\('graph'\)/, "a multi-membership badge must open the focused node's full relationship component");
+assert.match(app, /const includeLegacy[\s\S]*if \(!includeLegacy\)[\s\S]*loadRelationGraph[\s\S]*loadListingGraph/, "the default relation page must not run the heavy legacy listing query before its details workspace opens");
+assert.match(app, /multi-link-legacy-workspace[\s\S]*addEventListener\('toggle'[\s\S]*forceLegacy:true/, "opening the legacy details workspace must explicitly load its listing graph");
+assert.match(app, /ensureSellpiaRelationNode[\s\S]*ensureSellerRelationNode[\s\S]*saveRelationEdge/, "the UI must create either node type and save a user-selected direction");
 assert.match(app, /data-remove-relation-edge[\s\S]*removeRelationEdge/, "operators must be able to remove only the selected relation edge");
 assert.match(app, /saveListingComponentParent/, "the UI must save component dependencies");
 assert.match(data, /list_operations_hub_relation_folders[\s\S]*search_operations_hub_sellpia_product_groups[\s\S]*ensure_operations_hub_sellpia_relation_node[\s\S]*ensure_operations_hub_seller_relation_node[\s\S]*save_operations_hub_relation_edge/, "the data adapter must expose bounded relation-node and edge RPCs");
 assert.match(data, /\.order\('sellpia_sku_prefix_number'[\s\S]*\.order\('sellpia_sku_suffix_number'/, "ordinary matrix reads must use natural numeric ordering");
-assert.match(css, /relation-folder-panel[\s\S]*multi-link-organization-form[\s\S]*relation-tree-children[\s\S]*multi-link-component\.is-dependent/, "folder, arbitrary-depth graph, and component hierarchy must have visible structure");
+assert.match(css, /relation-workspace-head[\s\S]*relation-edge-row[\s\S]*relation-graph-columns[\s\S]*multi-link-legacy-workspace/, "scoped edges, on-demand graph columns, and collapsed legacy tools must have visible structure");
+assert.match(css, /multi-link-component\.is-dependent/, "the preserved SKU detail workspace must retain component dependency styling");
 
 console.log("Operations hub relation organization and natural SKU ordering contract: passed");

@@ -7,9 +7,9 @@
     <title>System V3 · 상품 운영 허브</title>
     <link rel="preconnect" href="https://cdnjs.cloudflare.com" crossorigin>
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/pretendard/1.3.9/static/pretendard.css">
-    <link rel="stylesheet" href="./style.css?v=20260827-relation-graph-r54">
-    <link rel="stylesheet" href="./inventory.css?v=20260827-relation-graph-r54">
-    <link rel="stylesheet" href="./price-rule-lab.css?v=20260827-relation-graph-r54">
+    <link rel="stylesheet" href="./style.css?v=20260827-relation-workspace-r55">
+    <link rel="stylesheet" href="./inventory.css?v=20260827-relation-workspace-r55">
+    <link rel="stylesheet" href="./price-rule-lab.css?v=20260827-relation-workspace-r55">
   </head>
   <body>
     <div class="app-shell">
@@ -252,19 +252,12 @@
           </div>
           <div id="multi-links" class="page multi-link-page">
             <div class="page-head">
-              <div><h2>다중·조합 관리</h2><p>판매처 구성을 폴더로 나누고, 대표 SKU 아래에 종속 SKU를 정리합니다.</p></div>
+              <div><h2>다중·조합 관리</h2><p>보기 분류별로 상위·하위 관계를 간단히 관리하고, 필요할 때 전체 소속을 추적합니다.</p></div>
               <div class="multi-link-head-note"><b>계산과 분리된 관리 구조</b><span>이번 단계의 폴더·종속관계는 재고와 가격 계산을 바꾸지 않습니다.</span></div>
-            </div>
-            <div class="multi-link-toolbar">
-              <div class="multi-link-search"><span>⌕</span><input id="multi-link-search" placeholder="판매처 코드 / 상품명 / 셀피아 SKU 검색"></div>
-              <select id="multi-link-source"><option value="all">전체 판매처</option><option value="smartstore">스마트스토어</option><option value="makeshop">메이크샵</option><option value="ably">에이블리</option></select>
-              <select id="multi-link-type"><option value="all">전체 연결</option><option value="complex">다중·조합만</option><option value="multi_bundle">다중+조합</option><option value="bundle">조합 상품</option><option value="multi">1:N 연결</option><option value="single">일반 1:1</option></select>
-              <button id="multi-link-refresh" class="btn">새로고침</button>
-              <span class="multi-link-result">결과 <b id="multi-link-count">-</b>개</span>
             </div>
             <div class="multi-link-layout">
               <aside class="relation-folder-panel" aria-label="조합 관리 폴더">
-                <div class="relation-folder-head"><div><span>관리 폴더</span><b>조합 분류</b></div><button id="relation-folder-new" type="button">＋</button></div>
+                <div class="relation-folder-head"><div><span>보기 분류</span><b>관계 필터</b></div><button id="relation-folder-new" type="button">＋</button></div>
                 <div id="relation-folder-list" class="relation-folder-list"><button class="active" data-relation-folder="all"><span>전체 연결</span><b>-</b></button><button data-relation-folder="unorganized"><span>미분류</span><b>-</b></button></div>
                 <form id="relation-folder-form" class="relation-folder-form" hidden>
                   <input id="relation-folder-id" type="hidden">
@@ -272,19 +265,25 @@
                   <label>폴더 유형<select id="relation-folder-kind"><option value="collection">모음전</option><option value="one_plus_one">1+1</option><option value="set">세트</option><option value="custom">직접 분류</option></select></label>
                   <div><button id="relation-folder-cancel" class="btn" type="button">취소</button><button class="btn primary" type="submit">저장</button></div>
                 </form>
-                <p class="relation-folder-note">폴더는 보기와 관리용입니다. 폴더를 보관해도 연결은 삭제되지 않고 미분류로 이동합니다.</p>
+                <p class="relation-folder-note">분류는 보기 필터입니다. 실제 상위·하위 관계는 상품 사이에 한 건씩 저장됩니다.</p>
               </aside>
-              <section class="multi-link-table-card">
-                <table class="multi-link-table">
-                  <thead><tr><th>관리 분류</th><th>유형</th><th>판매처</th><th>상품코드</th><th>옵션코드</th><th>상품명 / 옵션명</th><th>구성</th><th>판매처 / 계산재고</th></tr></thead>
-                  <tbody id="multi-link-body"><tr class="multi-link-empty"><td colspan="8">다중·조합 연결을 불러오는 중입니다.</td></tr></tbody>
-                </table>
-                <div class="multi-link-foot"><span id="multi-link-range">-</span><div><button id="multi-link-prev" disabled>‹</button><b id="multi-link-page">1</b><button id="multi-link-next" disabled>›</button></div></div>
-              </section>
-              <aside class="multi-link-editor" aria-label="구성품 편집">
-                 <div class="multi-link-editor-head"><span>판매처 옵션 구성</span><h3 id="multi-link-editor-title">연결을 선택해주세요</h3><p id="multi-link-editor-copy">목록의 판매처 옵션을 누르면 현재 구성과 계산 재고를 표시합니다.</p></div>
-                 <section id="multi-link-organization-form" class="multi-link-organization-form">
-                   <div class="multi-link-form-guide"><b>상위·하위 관계 직접 구성</b><span>상품 유형은 설명과 필터에만 사용합니다. 어느 노드든 상위·하위가 될 수 있고 손자 단계까지 이어집니다.</span></div>
+              <section class="relation-workspace" aria-label="상품 관계 관리">
+                <header class="relation-workspace-head">
+                  <div><span>선택한 보기</span><h3 id="relation-workspace-scope">전체 연결</h3><p>기본 화면은 상위와 하위의 한 관계씩만 간단히 보여줍니다.</p></div>
+                  <div class="relation-workspace-actions">
+                    <label class="relation-workspace-search"><span>⌕</span><input id="relation-workspace-search" autocomplete="off" placeholder="여러 분류에 속한 SKU 검색"></label>
+                    <div class="relation-view-switch"><button id="relation-view-list" class="active" type="button">선택 분류</button><button id="relation-view-graph" type="button">전체 관계 보기</button></div>
+                    <button id="relation-add-toggle" class="btn primary" type="button">＋ 관계 추가</button>
+                  </div>
+                </header>
+                <div class="relation-edge-summary"><b id="relation-edge-summary">관계를 불러오는 중입니다.</b><span>다른 분류에 중복 소속된 상품은 별도 배지로 표시됩니다.</span></div>
+                <div id="relation-edge-list" class="relation-edge-list"><div class="relation-workspace-empty">등록된 관계를 불러오는 중입니다.</div></div>
+                <section id="relation-graph-board" class="relation-graph-board" hidden>
+                  <div class="relation-tree-head"><div><b>전체 관계 보기</b><span id="relation-graph-copy">검색하거나 ‘다른 관계’ 배지를 누르면 연결된 모든 위치를 표시합니다.</span></div><button id="relation-tree-refresh" type="button">새로고침</button></div>
+                  <div id="relation-tree" class="relation-tree"><span>등록된 관계 노드가 없습니다.</span></div>
+                </section>
+                <section id="multi-link-organization-form" class="multi-link-organization-form relation-compose-panel" hidden>
+                   <div class="multi-link-form-guide"><b>상위·하위 관계 한 건 추가</b><span>상품 두 개를 준비한 뒤 상위와 하위를 직접 선택합니다. 분류와 유형은 방향을 강제하지 않습니다.</span></div>
                    <label>관리 폴더<select id="multi-link-folder"><option value="">미분류</option></select></label>
                    <label>노드 설명 유형<select id="multi-link-relation-kind"><option value="individual">개별상품</option><option value="collection">모음전·기획전</option><option value="one_plus_one">1+1</option><option value="set">세트</option><option value="custom">직접 분류</option></select></label>
                    <div class="relation-node-create seller-node-create">
@@ -300,30 +299,50 @@
                    </div>
                    <div class="relation-edge-compose">
                      <label>상위 노드<select id="relation-parent-node"><option value="">상위를 선택해주세요</option></select></label>
-                     <span>↓</span>
+                     <span>→</span>
                      <label>하위 노드<select id="relation-child-node"><option value="">하위를 선택해주세요</option></select></label>
                      <button id="relation-edge-save" class="btn primary" type="button" disabled>상위 → 하위 연결 저장</button>
                    </div>
-                   <div class="relation-tree-head"><b>현재 관계 구조</b><button id="relation-tree-refresh" type="button">새로고침</button></div>
-                   <div id="relation-tree" class="relation-tree"><span>등록된 관계 노드가 없습니다.</span></div>
-                 </section>
-                 <div id="multi-link-components" class="multi-link-components"><div class="multi-link-editor-empty">선택된 판매처 옵션이 없습니다.</div></div>
-                <section id="multi-link-inventory-action" class="multi-link-inventory-action disabled">
-                  <div class="multi-link-inventory-head"><div><span>판매처 재고 수정안</span><b id="multi-link-inventory-state">연결을 선택해주세요</b></div><button id="multi-link-open-queue" class="btn" type="button">내보내기 준비 열기</button></div>
-                  <div class="multi-link-inventory-values"><p><span>판매처 원본</span><b id="multi-link-seller-stock">-</b></p><i>→</i><p><span>조합 계산</span><b id="multi-link-calculated-stock">-</b></p></div>
-                  <p id="multi-link-inventory-copy">명시적으로 저장한 구성만 재고 수정안으로 만들 수 있습니다.</p>
-                  <button id="multi-link-stage-stock" class="btn primary" type="button" disabled>계산재고를 내보내기 준비에 등록</button>
                 </section>
-                <form id="multi-link-form" class="multi-link-form">
-                  <div class="multi-link-form-guide"><b>SKU 구성 추가·수정</b><span>기존 1:1 옵션에 두 번째 SKU를 추가하면 현재 SKU도 자동 보존됩니다.</span></div>
-                  <label>판매처<select id="multi-link-form-source" required><option value="smartstore">스마트스토어</option><option value="makeshop">메이크샵</option><option value="ably">에이블리</option></select></label>
-                  <label>상품코드<input id="multi-link-form-product" required autocomplete="off"></label>
-                  <label>옵션코드<input id="multi-link-form-option" autocomplete="off"></label>
-                  <label>셀피아 SKU<input id="multi-link-form-sku" required autocomplete="off"></label>
-                  <div class="multi-link-form-row"><label>구성수량<input id="multi-link-form-qty" type="number" min="1" step="1" value="1" required></label><label>역할<select id="multi-link-form-role"><option value="additional">추가 구성</option><option value="primary">기준 구성</option></select></label></div>
-                  <button id="multi-link-save" class="btn primary" type="submit">구성 저장</button>
-                </form>
-              </aside>
+                <details class="multi-link-legacy-workspace">
+                  <summary><span>기존 SKU 구성·재고 상세 작업</span><em>판매처 옵션별 구성수량과 계산재고가 필요할 때만 펼치세요.</em></summary>
+                  <div class="multi-link-toolbar">
+                    <div class="multi-link-search"><span>⌕</span><input id="multi-link-search" placeholder="판매처 코드 / 상품명 / 셀피아 SKU 검색"></div>
+                    <select id="multi-link-source"><option value="all">전체 판매처</option><option value="smartstore">스마트스토어</option><option value="makeshop">메이크샵</option><option value="ably">에이블리</option></select>
+                    <select id="multi-link-type"><option value="all">전체 연결</option><option value="complex">다중·조합만</option><option value="multi_bundle">다중+조합</option><option value="bundle">조합 상품</option><option value="multi">1:N 연결</option><option value="single">일반 1:1</option></select>
+                    <button id="multi-link-refresh" class="btn">새로고침</button>
+                    <span class="multi-link-result">결과 <b id="multi-link-count">-</b>개</span>
+                  </div>
+                  <div class="multi-link-legacy-grid">
+                    <section class="multi-link-table-card">
+                      <table class="multi-link-table">
+                        <thead><tr><th>관리 분류</th><th>유형</th><th>판매처</th><th>상품코드</th><th>옵션코드</th><th>상품명 / 옵션명</th><th>구성</th><th>판매처 / 계산재고</th></tr></thead>
+                        <tbody id="multi-link-body"><tr class="multi-link-empty"><td colspan="8">다중·조합 연결을 불러오는 중입니다.</td></tr></tbody>
+                      </table>
+                      <div class="multi-link-foot"><span id="multi-link-range">-</span><div><button id="multi-link-prev" disabled>‹</button><b id="multi-link-page">1</b><button id="multi-link-next" disabled>›</button></div></div>
+                    </section>
+                    <aside class="multi-link-editor" aria-label="구성품 편집">
+                      <div class="multi-link-editor-head"><span>판매처 옵션 구성</span><h3 id="multi-link-editor-title">연결을 선택해주세요</h3><p id="multi-link-editor-copy">목록의 판매처 옵션을 누르면 현재 구성과 계산 재고를 표시합니다.</p></div>
+                      <div id="multi-link-components" class="multi-link-components"><div class="multi-link-editor-empty">선택된 판매처 옵션이 없습니다.</div></div>
+                      <section id="multi-link-inventory-action" class="multi-link-inventory-action disabled">
+                        <div class="multi-link-inventory-head"><div><span>판매처 재고 수정안</span><b id="multi-link-inventory-state">연결을 선택해주세요</b></div><button id="multi-link-open-queue" class="btn" type="button">내보내기 준비 열기</button></div>
+                        <div class="multi-link-inventory-values"><p><span>판매처 원본</span><b id="multi-link-seller-stock">-</b></p><i>→</i><p><span>조합 계산</span><b id="multi-link-calculated-stock">-</b></p></div>
+                        <p id="multi-link-inventory-copy">명시적으로 저장한 구성만 재고 수정안으로 만들 수 있습니다.</p>
+                        <button id="multi-link-stage-stock" class="btn primary" type="button" disabled>계산재고를 내보내기 준비에 등록</button>
+                      </section>
+                      <form id="multi-link-form" class="multi-link-form">
+                        <div class="multi-link-form-guide"><b>SKU 구성 추가·수정</b><span>기존 1:1 옵션에 두 번째 SKU를 추가하면 현재 SKU도 자동 보존됩니다.</span></div>
+                        <label>판매처<select id="multi-link-form-source" required><option value="smartstore">스마트스토어</option><option value="makeshop">메이크샵</option><option value="ably">에이블리</option></select></label>
+                        <label>상품코드<input id="multi-link-form-product" required autocomplete="off"></label>
+                        <label>옵션코드<input id="multi-link-form-option" autocomplete="off"></label>
+                        <label>셀피아 SKU<input id="multi-link-form-sku" required autocomplete="off"></label>
+                        <div class="multi-link-form-row"><label>구성수량<input id="multi-link-form-qty" type="number" min="1" step="1" value="1" required></label><label>역할<select id="multi-link-form-role"><option value="additional">추가 구성</option><option value="primary">기준 구성</option></select></label></div>
+                        <button id="multi-link-save" class="btn primary" type="submit">구성 저장</button>
+                      </form>
+                    </aside>
+                  </div>
+                </details>
+              </section>
             </div>
           </div>
           <div id="inventory" class="page">
@@ -691,13 +710,13 @@
     <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.112.3/dist/umd/supabase.js"></script>
-    <script src="./seller-source-parsers.js?v=20260827-relation-graph-r54"></script>
-    <script src="./seller-export-adapter.js?v=20260827-relation-graph-r54"></script>
-    <script src="./matrix-csv-export.js?v=20260827-relation-graph-r54"></script>
-    <script src="./discount-price-math.js?v=20260827-relation-graph-r54"></script>
-    <script src="./source-refresh-verifier.js?v=20260827-relation-graph-r54"></script>
-    <script src="./data-service.js?v=20260827-relation-graph-r54"></script>
-    <script src="./app.js?v=20260827-relation-graph-r54"></script>
-    <script src="./price-rule-lab.js?v=20260827-relation-graph-r54"></script>
+    <script src="./seller-source-parsers.js?v=20260827-relation-workspace-r55"></script>
+    <script src="./seller-export-adapter.js?v=20260827-relation-workspace-r55"></script>
+    <script src="./matrix-csv-export.js?v=20260827-relation-workspace-r55"></script>
+    <script src="./discount-price-math.js?v=20260827-relation-workspace-r55"></script>
+    <script src="./source-refresh-verifier.js?v=20260827-relation-workspace-r55"></script>
+    <script src="./data-service.js?v=20260827-relation-workspace-r55"></script>
+    <script src="./app.js?v=20260827-relation-workspace-r55"></script>
+    <script src="./price-rule-lab.js?v=20260827-relation-workspace-r55"></script>
   </body>
 </html>
