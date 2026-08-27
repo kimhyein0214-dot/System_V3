@@ -41,8 +41,9 @@ assert.doesNotMatch(app, /basePrice:product\??\.sellpia_sale_price/, 'price comb
 assert.match(app, /계산 태그[\s\S]*?가격 조합/, 'user-facing pricing terminology must separate atomic calculation tags from ordered combinations');
 
 assert.match(html, /시스템 기준 · 셀피아 원본 비교[\s\S]*?>SKU<[\s\S]*?>상품명<[\s\S]*?>옵션명<[\s\S]*?>자사코드<[\s\S]*?기준재고[\s\S]*?기준가격/, 'the matrix header must expose separate Sellpia identities and canonical values');
-assert.match(html, /id="matrix-source-refresh-btn"[\s\S]*?원본값으로 갱신/, 'the work tools must expose selected-cell source refresh');
-assert.match(html, /id="matrix-source-refresh-btn"[\s\S]*?title="원본값을 가진 기준값 또는 판매처 셀을 선택해주세요\."/, 'the source-refresh action must explain that seller cells are supported');
+assert.doesNotMatch(html, /id="matrix-source-refresh-btn"/, 'selected-cell source refresh must not remain in the permanent work tools');
+assert.match(html, /id="matrix-context-source-refresh"[\s\S]*?원본값으로 갱신[\s\S]*?id="matrix-context-source-refresh-count"/, 'the right-click work menu must expose selected-cell source refresh');
+assert.match(app, /matrixContextSourceRefresh\.title = targets\.length === 0[\s\S]*?원본값을 가진 기준값 또는 판매처 셀을 선택해주세요\./, 'the source-refresh action must explain that seller cells are supported');
 assert.match(csv, /시스템 기준재고[\s\S]*?셀피아 원본재고[\s\S]*?시스템 기준가격[\s\S]*?셀피아 원본 판매가/, 'CSV output must preserve both canonical and source comparison columns');
 assert.match(css, /sellpia-sku-col[\s\S]*?sellpia-name-col[\s\S]*?sellpia-option-name-col[\s\S]*?own-code-col[\s\S]*?system-master-cell/, 'separate Sellpia identities and canonical values must have dedicated frozen-cell styling');
 

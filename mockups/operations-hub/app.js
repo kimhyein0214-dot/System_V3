@@ -109,14 +109,16 @@ const ATTRIBUTE_OPTIONS = Object.freeze({
 const matrixTable = document.querySelector('.matrix-table');
 const matrixCellSelection = {anchor:null, focus:null, dragging:false, selected:new Set(), dragBase:new Set(), dragMode:'replace'};
 const matrixContextMenu = document.getElementById('matrix-context-menu');
+const matrixContextSourceRefresh = document.getElementById('matrix-context-source-refresh');
+const matrixContextSourceRefreshCount = document.getElementById('matrix-context-source-refresh-count');
 const matrixContextDisconnect = document.getElementById('matrix-context-disconnect');
 const matrixContextDisconnectCount = document.getElementById('matrix-context-disconnect-count');
 let matrixContextTargets = [];
+let matrixSourceRefreshInFlight = false;
 const matrixZoomOut = document.getElementById('matrix-zoom-out');
 const matrixZoomValue = document.getElementById('matrix-zoom-value');
 const matrixZoomIn = document.getElementById('matrix-zoom-in');
 const matrixFreezeToggle = document.getElementById('matrix-freeze-toggle');
-const matrixSourceRefreshButton = document.getElementById('matrix-source-refresh-btn');
 const MATRIX_ZOOM_KEY = 'system-v3-matrix-zoom';
 const MATRIX_FREEZE_KEY = 'system-v3-matrix-sellpia-freeze';
 const MATRIX_COLUMN_WIDTHS_KEY = 'system-v3-matrix-column-widths-v3';
@@ -2650,11 +2652,16 @@ function selectedSourceRefreshTargets() {
 }
 
 function updateSourceRefreshAction() {
-  if (!matrixSourceRefreshButton) return;
+  if (!matrixContextSourceRefresh || !matrixContextSourceRefreshCount) return;
   const targets = selectedSourceRefreshTargets();
   const available = targets.filter(target => target.hasSource).length;
-  matrixSourceRefreshButton.disabled = sellpiaSaveInFlight || available === 0;
-  matrixSourceRefreshButton.title = targets.length === 0
+  matrixContextSourceRefresh.disabled = matrixSourceRefreshInFlight || sellpiaSaveInFlight || available === 0;
+  matrixContextSourceRefreshCount.textContent = matrixSourceRefreshInFlight
+    ? 'DB 저장·확인 중…'
+    : available
+      ? `원본값 ${formatNumber(available)}셀`
+      : '갱신할 셀 없음';
+  matrixContextSourceRefresh.title = targets.length === 0
     ? '원본값을 가진 기준값 또는 판매처 셀을 선택해주세요.'
     : available === 0
       ? `선택한 ${targets.length}개 셀에 적용할 원본값이 없습니다.`
@@ -2712,7 +2719,7 @@ function clearMatrixCellSelection() {
 }
 
 async function refreshSelectedSystemValuesFromSource() {
-  if (!matrixSourceRefreshButton || sellpiaSaveInFlight || !liveData?.saveSellpiaChanges || !liveData?.loadProductsBySkus) return;
+  if (matrixSourceRefreshInFlight || sellpiaSaveInFlight || !liveData?.saveSellpiaChanges || !liveData?.loadProductsBySkus) return;
   let targets = selectedSourceRefreshTargets();
   if (!targets.length) {
     showToast('원본값을 적용할 기준값 또는 판매처 셀을 선택해주세요.');
@@ -2736,10 +2743,8 @@ async function refreshSelectedSystemValuesFromSource() {
     showToast(`선택한 셀은 이미 원본값과 같습니다.${suffix}`);
     return;
   }
-  const label = matrixSourceRefreshButton.querySelector('b');
-  const originalLabel = label?.innerHTML || '선택 셀을<br>원본값으로 갱신';
-  matrixSourceRefreshButton.disabled = true;
-  if (label) label.textContent = '원본값 DB 저장 중…';
+  matrixSourceRefreshInFlight = true;
+  updateSourceRefreshAction();
   const verificationTargets = [];
   const attemptedSkus = new Set(changes.map(target => target.sku));
   const requireSellerSave = (result, target) => {
@@ -2846,7 +2851,7 @@ async function refreshSelectedSystemValuesFromSource() {
     }
 
     if (!verificationTargets.length) throw new Error('DB에서 확인할 저장 대상이 없습니다.');
-    if (label) label.textContent = 'DB 저장 확인 중…';
+    if (matrixContextSourceRefreshCount) matrixContextSourceRefreshCount.textContent = 'DB 저장 확인 중…';
     const refreshedRows = await reloadAndRender(verificationTargets.map(target => target.sku));
     const verification = sourceRefreshVerifier?.verifySourceRefreshTargets(verificationTargets, refreshedRows);
     if (!verification || verification.failures.length) {
@@ -2870,7 +2875,7 @@ async function refreshSelectedSystemValuesFromSource() {
     }
     showToast(`원본값 저장·확인 실패: ${error?.message || error}`);
   } finally {
-    if (label) label.innerHTML = originalLabel;
+    matrixSourceRefreshInFlight = false;
     updateSourceRefreshAction();
   }
 }
@@ -4397,7 +4402,6 @@ document.getElementById('price-rule-bulk-composer-save').addEventListener('click
   }
 });
 document.getElementById('matrix-refresh-btn').addEventListener('click', () => refreshLiveData());
-matrixSourceRefreshButton?.addEventListener('click', refreshSelectedSystemValuesFromSource);
 document.getElementById('matrix-prev').addEventListener('click', () => {
   if (matrixState.loading || matrixState.page <= 1) return;
   matrixState.page -= 1;
@@ -5513,20 +5517,22 @@ function closeMatrixContextMenu() {
 }
 
 function openMatrixContextMenu(clientX, clientY, anchorCell) {
-  if (!matrixContextMenu || !matrixContextDisconnect || !matrixContextDisconnectCount) return;
+  if (!matrixContextMenu || !matrixContextSourceRefresh || !matrixContextSourceRefreshCount || !matrixContextDisconnect || !matrixContextDisconnectCount) return;
   matrixContextTargets = selectedMatrixDisconnectTargets();
   const labels = [...new Set(matrixContextTargets.map(target => CHANNEL_LABELS[target.source] || target.source))];
   matrixContextDisconnect.disabled = matrixContextTargets.length === 0;
   matrixContextDisconnectCount.textContent = matrixContextTargets.length
     ? `${labels.length === 1 ? `${labels[0]} ` : ''}연결 ${formatNumber(matrixContextTargets.length)}건`
     : '해제할 연결 없음';
+  updateSourceRefreshAction();
   matrixContextMenu.hidden = false;
   const fallbackRect = anchorCell?.getBoundingClientRect?.() || {left:12, bottom:12};
   const wantedLeft = Number(clientX) > 0 ? Number(clientX) : fallbackRect.left;
   const wantedTop = Number(clientY) > 0 ? Number(clientY) : fallbackRect.bottom;
   matrixContextMenu.style.left = `${Math.max(8, Math.min(wantedLeft, window.innerWidth - matrixContextMenu.offsetWidth - 8))}px`;
   matrixContextMenu.style.top = `${Math.max(8, Math.min(wantedTop, window.innerHeight - matrixContextMenu.offsetHeight - 8))}px`;
-  matrixContextDisconnect.focus({preventScroll:true});
+  const preferredAction = !matrixContextSourceRefresh.disabled ? matrixContextSourceRefresh : matrixContextDisconnect;
+  preferredAction.focus({preventScroll:true});
 }
 
 function matrixDisconnectTargetLabel(target) {
@@ -5597,6 +5603,12 @@ async function disconnectSelectedMatrixLinks() {
     showToast(`연결 해제 실패: ${failures[0]?.error?.message || failures[0]?.error || 'DB 오류'}`);
   }
 }
+
+matrixContextSourceRefresh?.addEventListener('click', event => {
+  event.stopPropagation();
+  closeMatrixContextMenu();
+  void refreshSelectedSystemValuesFromSource();
+});
 
 matrixContextDisconnect?.addEventListener('click', event => {
   event.stopPropagation();
