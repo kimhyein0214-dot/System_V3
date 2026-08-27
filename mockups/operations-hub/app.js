@@ -539,6 +539,27 @@ function indexMatrixBodyColumns() {
   });
 }
 
+function applyMatrixGroupBoundaries(visible) {
+  matrixTable.querySelectorAll('[class*="matrix-group-start-"]').forEach(cell => {
+    [...cell.classList].filter(name => name.startsWith('matrix-group-start-')).forEach(name => cell.classList.remove(name));
+  });
+  const columnHeaders = matrixTable.querySelectorAll('.column-row th');
+  const groups = [
+    {key:'smartstore', header:'.smart-group', indexes:[13,14,15,16,17,18,19,20,21]},
+    {key:'makeshop', header:'.make-group', indexes:[22,23,24,25,26,27,28,29,30]},
+    {key:'ably', header:'.ably-group', indexes:[31,32,33,34,35,36,37,38,39]},
+    {key:'operations', header:'.ops-group', indexes:[40,41,42,43]}
+  ];
+  groups.forEach(group => {
+    const firstVisible = group.indexes.find(index => visible.has(index));
+    if (!firstVisible) return;
+    const className = `matrix-group-start-${group.key}`;
+    matrixTable.querySelector(group.header)?.classList.add(className);
+    columnHeaders[firstVisible - 3]?.classList.add(className);
+    matrixBody.querySelectorAll(`[data-matrix-column="${firstVisible}"]`).forEach(cell => cell.classList.add(className));
+  });
+}
+
 function applyColumnVisibility(view = activeView) {
   const visible = viewColumnIndexes(view);
   indexMatrixBodyColumns();
@@ -562,6 +583,7 @@ function applyColumnVisibility(view = activeView) {
     header.hidden = count === 0;
     if (count) header.colSpan = count;
   });
+  applyMatrixGroupBoundaries(visible);
   matrixTable.dataset.imageSize = ['compact','default','large'].includes(view.imageSize) ? view.imageSize : 'default';
   matrixTable.classList.toggle('wrap-names', Boolean(view.wrapNames));
   applyMatrixColumnWidths(view);
