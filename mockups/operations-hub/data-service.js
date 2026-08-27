@@ -7,7 +7,7 @@
   const PICKING_SUPABASE_KEY = 'sb_publishable_XVnKGJo66GZiYTq5Ivu8dA_SjBVvX0g';
   const PAGE_SIZE = 50;
   const MATRIX_PAGE_SIZES = new Set([50, 100, 200]);
-  const MATRIX_SELECT = 'sellpia_sku_code,own_code,image_url,display_name,smartstore_name,smartstore_option_name,smartstore_product_code,smartstore_option_code,smartstore_match_tier,smartstore_match_score,smartstore_listing_count,smartstore_name_is_draft,smartstore_sale_status,makeshop_name,makeshop_option_name,makeshop_product_code,makeshop_option_code,makeshop_match_tier,makeshop_match_score,makeshop_listing_count,makeshop_name_is_draft,makeshop_sale_status,ably_name,ably_option_name,ably_product_code,ably_option_code,ably_match_tier,ably_match_score,ably_listing_count,ably_name_is_draft,ably_sale_status,updated_at,sellpia_product_name,sellpia_option_name,sellpia_own_code,sellpia_current_stock,sellpia_available_stock,sellpia_safety_stock,sellpia_sale_price,sellpia_inventory_at,smartstore_stock,smartstore_price,smartstore_policy_price,smartstore_policy_active,smartstore_policy_name,smartstore_inventory_at,makeshop_stock,makeshop_price,makeshop_policy_price,makeshop_policy_active,makeshop_policy_name,makeshop_inventory_at,ably_stock,ably_price,ably_policy_price,ably_policy_active,ably_policy_name,ably_inventory_at,overall_status,sellpia_override_image_url,sellpia_override_updated_at,sellpia_source_sale_price,sellpia_source_stock,sellpia_source_updated_at,system_base_price,system_stock,system_price_version,system_stock_version,system_price_updated_at,system_stock_updated_at,system_updated_at';
+  const MATRIX_SELECT = 'sellpia_sku_code,own_code,image_url,display_name,smartstore_name,smartstore_option_name,smartstore_product_code,smartstore_option_code,smartstore_match_tier,smartstore_match_score,smartstore_listing_count,smartstore_name_is_draft,smartstore_sale_status,makeshop_name,makeshop_option_name,makeshop_product_code,makeshop_option_code,makeshop_match_tier,makeshop_match_score,makeshop_listing_count,makeshop_name_is_draft,makeshop_sale_status,ably_name,ably_option_name,ably_product_code,ably_option_code,ably_match_tier,ably_match_score,ably_listing_count,ably_name_is_draft,ably_sale_status,updated_at,sellpia_product_name,sellpia_option_name,sellpia_own_code,sellpia_current_stock,sellpia_available_stock,sellpia_safety_stock,sellpia_sale_price,sellpia_inventory_at,smartstore_stock,smartstore_price,smartstore_policy_price,smartstore_policy_active,smartstore_policy_name,smartstore_inventory_at,makeshop_stock,makeshop_price,makeshop_policy_price,makeshop_policy_active,makeshop_policy_name,makeshop_inventory_at,ably_stock,ably_price,ably_policy_price,ably_policy_active,ably_policy_name,ably_inventory_at,overall_status,sellpia_override_image_url,sellpia_override_updated_at,sellpia_source_sale_price,sellpia_source_stock,sellpia_source_updated_at,system_base_price,system_stock,system_price_version,system_stock_version,system_price_updated_at,system_stock_updated_at,system_updated_at,smartstore_link_suppressed,makeshop_link_suppressed,ably_link_suppressed';
 
   function normalizeConnectionStatus(status) {
     const value = cleanText(status).toLowerCase();
@@ -122,6 +122,59 @@
       ...product,
       __linkBadges:badgesBySku.get(cleanText(product?.sellpia_sku_code)) || {}
     }));
+  }
+
+  async function attachLinkSuppressions(rows) {
+    const products = Array.isArray(rows) ? rows : [];
+    const skus = [...new Set(products.map(row => cleanText(row?.sellpia_sku_code)).filter(Boolean))];
+    if (!skus.length) return products;
+    const suppressionRows = [];
+    for (let offset = 0; offset < skus.length; offset += 500) {
+      const {data, error} = await db
+        .from('operations_hub_link_suppressions')
+        .select('source_channel,sellpia_sku_code,product_code,option_code,reason,suppressed_at')
+        .in('sellpia_sku_code', skus.slice(offset, offset + 500));
+      if (error) throw error;
+      suppressionRows.push(...(data || []));
+    }
+    const bySkuSource = new Map();
+    for (const suppression of suppressionRows) {
+      const key = `${cleanText(suppression.sellpia_sku_code)}|${cleanText(suppression.source_channel)}`;
+      if (!bySkuSource.has(key)) bySkuSource.set(key, []);
+      bySkuSource.get(key).push(suppression);
+    }
+    const nullableSuffixes = [
+      'name','option_name','product_code','option_code','match_tier','match_score',
+      'sale_status','stock','price','policy_price','policy_active','policy_name','inventory_at'
+    ];
+    return products.map(product => {
+      const projected = {...product, __linkSuppressions:{}};
+      const sku = cleanText(product?.sellpia_sku_code);
+      for (const source of ['smartstore','makeshop','ably']) {
+        const candidates = bySkuSource.get(`${sku}|${source}`) || [];
+        const productCode = cleanText(product?.[`${source}_product_code`]);
+        const optionCode = cleanText(product?.[`${source}_option_code`]);
+        const viewSuppressed = product?.[`${source}_link_suppressed`] === true;
+        const suppression = candidates.find(item => (
+          cleanText(item.product_code) === productCode
+          && cleanText(item.option_code) === optionCode
+        )) || (viewSuppressed ? candidates[0] : null);
+        if (!suppression) continue;
+        projected.__linkSuppressions[source] = suppression;
+        projected[`${source}_link_suppressed`] = true;
+        for (const suffix of nullableSuffixes) projected[`${source}_${suffix}`] = null;
+        projected[`${source}_listing_count`] = 0;
+        projected[`${source}_name_is_draft`] = false;
+        if (projected.__sellerPriceComponents?.[source]) {
+          projected.__sellerPriceComponents = {...projected.__sellerPriceComponents};
+          delete projected.__sellerPriceComponents[source];
+        }
+      }
+      projected.overall_status = ['smartstore','makeshop','ably'].some(source => cleanText(projected[`${source}_product_code`]))
+        ? 'connected'
+        : 'unmatched';
+      return projected;
+    });
   }
 
   async function attachSellerPriceComponents(rows) {
@@ -247,7 +300,7 @@
   }
 
   async function attachProductMetadata(rows) {
-    return attachPriceRuleAssignments(await attachSellerDrafts(await attachSellerPriceComponents(await attachLinkBadges(await attachProductProfiles(await attachSystemOperationalDetails(await attachInboundCostDetails(rows)))))));
+    return attachLinkSuppressions(await attachPriceRuleAssignments(await attachSellerDrafts(await attachSellerPriceComponents(await attachLinkBadges(await attachProductProfiles(await attachSystemOperationalDetails(await attachInboundCostDetails(rows))))))));
   }
 
   async function loadListingGraph({source = 'all', relationType = 'complex', search = '', page = 1, pageSize = 50} = {}) {
@@ -268,7 +321,7 @@
   }
 
   async function saveListingComponent({source, productCode, optionCode = '', sku, qty = 1, role = 'additional'} = {}) {
-    const {data, error} = await db.rpc('upsert_operations_hub_listing_component', {
+    const {data, error} = await db.rpc('save_operations_hub_listing_component', {
       p_source:cleanText(source),
       p_product_code:cleanText(productCode),
       p_option_code:cleanText(optionCode),
@@ -477,7 +530,7 @@
     });
     if (error) throw error;
     return {
-      rows:await attachSystemOperationalDetails(await attachInboundCostDetails(Array.isArray(data?.rows) ? data.rows : [])),
+      rows:await attachLinkSuppressions(await attachSystemOperationalDetails(await attachInboundCostDetails(Array.isArray(data?.rows) ? data.rows : []))),
       offset:Number(data?.offset || offset || 0),
       limit:Number(data?.limit || limit || 1000)
     };
@@ -647,7 +700,7 @@
   }
 
   async function linkSellerItem({sku, source, productCode, optionCode = ''}) {
-    const {data, error} = await db.rpc('link_operations_hub_seller_item', {
+    const {data, error} = await db.rpc('link_operations_hub_seller_item_v2', {
       p_sku:cleanText(sku),
       p_source:cleanText(source),
       p_product_code:cleanText(productCode),
@@ -880,8 +933,8 @@
   }
 
   async function removeListingComponent({componentId = null, source, productCode, optionCode = '', sku} = {}) {
-    if (componentId) return deactivateListingComponent(componentId);
-    const {data, error} = await db.rpc('disconnect_operations_hub_legacy_listing_component', {
+    const {data, error} = await db.rpc('disconnect_operations_hub_listing_component', {
+      p_component_id:componentId ? Number(componentId) : null,
       p_source:cleanText(source),
       p_product_code:cleanText(productCode),
       p_option_code:cleanText(optionCode),
