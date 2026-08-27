@@ -127,8 +127,10 @@
 .matrix-context-menu{position:fixed;z-index:70;width:230px;padding:7px;border:1px solid #b7c7dc;border-radius:8px;background:#fff;box-shadow:0 12px 34px rgba(15,23,42,.24)}
 .matrix-context-menu[hidden]{display:none}
 .matrix-context-menu>span{display:block;padding:4px 7px 7px;color:#64748b;font-size:8px;font-weight:900}
-.matrix-context-menu>button{width:100%;min-height:46px;display:flex;align-items:center;justify-content:space-between;gap:10px;border:1px solid transparent;border-radius:6px;background:#fff;padding:8px;text-align:left;color:#b42318;cursor:pointer}
-.matrix-context-menu>button:hover:not(:disabled),.matrix-context-menu>button:focus-visible{border-color:#fecaca;background:#fff1f2;outline:0}
+.matrix-context-menu>button{width:100%;min-height:46px;display:flex;align-items:center;justify-content:space-between;gap:10px;border:1px solid transparent;border-radius:6px;background:#fff;padding:8px;text-align:left;color:#1d4ed8;cursor:pointer}
+.matrix-context-menu>button+button{margin-top:4px;border-top-color:#e2e8f0}
+.matrix-context-menu>button:hover:not(:disabled),.matrix-context-menu>button:focus-visible{border-color:#bfdbfe;background:#eff6ff;outline:0}
+.matrix-context-menu>button.danger{color:#b42318}.matrix-context-menu>button.danger:hover:not(:disabled),.matrix-context-menu>button.danger:focus-visible{border-color:#fecaca;background:#fff1f2}
 .matrix-context-menu>button:disabled{color:#94a3b8;cursor:not-allowed}
 .matrix-context-menu>button b{font-size:10px}.matrix-context-menu>button em{max-width:135px;color:inherit;font-size:8px;font-style:normal;font-weight:800;text-align:right}
 .matrix-table tbody td.select-col,.matrix-table tbody td.image-drop-cell{cursor:default}
