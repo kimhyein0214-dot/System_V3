@@ -1395,6 +1395,79 @@
     return Number(data || 0);
   }
 
+  async function searchSellpiaRelationProducts(search = '', limit = 20) {
+    const {data, error} = await db.rpc('search_operations_hub_sellpia_product_groups', {
+      p_search:cleanText(search),
+      p_limit:Math.max(1, Math.min(Number(limit) || 20, 50))
+    });
+    if (error) throw error;
+    return {
+      groups:Array.isArray(data?.groups) ? data.groups : [],
+      matchedCount:Number(data?.matchedCount || 0)
+    };
+  }
+
+  async function loadSellpiaRelationProduct(productCode) {
+    const {data, error} = await db.rpc('get_operations_hub_sellpia_product_group', {
+      p_product_code:cleanText(productCode)
+    });
+    if (error) throw error;
+    return data || null;
+  }
+
+  async function ensureSellpiaRelationNode({productCode, folderId = null, relationKind = 'individual'} = {}) {
+    const {data, error} = await db.rpc('ensure_operations_hub_sellpia_relation_node', {
+      p_sellpia_product_code:cleanText(productCode),
+      p_folder_id:folderId === null || folderId === '' ? null : Number(folderId),
+      p_relation_kind:cleanText(relationKind) || 'individual'
+    });
+    if (error) throw error;
+    return data;
+  }
+
+  async function ensureSellerRelationNode({source, productCode, optionCode = '', folderId = null, relationKind = 'custom'} = {}) {
+    const {data, error} = await db.rpc('ensure_operations_hub_seller_relation_node', {
+      p_source:cleanText(source),
+      p_product_code:cleanText(productCode),
+      p_option_code:cleanText(optionCode),
+      p_folder_id:folderId === null || folderId === '' ? null : Number(folderId),
+      p_relation_kind:cleanText(relationKind) || 'custom'
+    });
+    if (error) throw error;
+    return data;
+  }
+
+  async function loadRelationNodes({search = '', folderId = null, limit = 500} = {}) {
+    const {data, error} = await db.rpc('list_operations_hub_relation_nodes', {
+      p_search:cleanText(search),
+      p_folder_id:folderId === null || folderId === '' ? null : Number(folderId),
+      p_limit:Math.max(1, Math.min(Number(limit) || 500, 1000))
+    });
+    if (error) throw error;
+    return {
+      nodes:Array.isArray(data?.nodes) ? data.nodes : [],
+      edges:Array.isArray(data?.edges) ? data.edges : []
+    };
+  }
+
+  async function saveRelationEdge({parentNodeId, childNodeId, sortOrder = 100} = {}) {
+    const {data, error} = await db.rpc('save_operations_hub_relation_edge', {
+      p_parent_node_id:Number(parentNodeId),
+      p_child_node_id:Number(childNodeId),
+      p_sort_order:Math.max(0, Math.min(Number(sortOrder) || 100, 10000))
+    });
+    if (error) throw error;
+    return data;
+  }
+
+  async function removeRelationEdge(edgeId) {
+    const {data, error} = await db.rpc('remove_operations_hub_relation_edge', {
+      p_edge_id:Number(edgeId)
+    });
+    if (error) throw error;
+    return data;
+  }
+
   async function saveListingOrganization({source, productCode, optionCode = '', folderId = null, relationKind = null, groupName = null} = {}) {
     const {data, error} = await db.rpc('save_operations_hub_listing_organization', {
       p_source:cleanText(source),
@@ -2273,6 +2346,13 @@
     loadRelationFolders,
     saveRelationFolder,
     archiveRelationFolder,
+    searchSellpiaRelationProducts,
+    loadSellpiaRelationProduct,
+    ensureSellpiaRelationNode,
+    ensureSellerRelationNode,
+    loadRelationNodes,
+    saveRelationEdge,
+    removeRelationEdge,
     saveListingOrganization,
     saveListingComponentParent,
     loadListingConnection,

@@ -90,6 +90,7 @@ const initialMatrixPageSize = [50, 100, 200].includes(storedMatrixPageSize) ? st
 const MATRIX_TRANSIENT_RETRY_DELAYS_MS = [1500, 5000, 12000];
 const matrixState = {page:1, pageSize:initialMatrixPageSize, search:'', searchSources:['sellpia','smartstore','makeshop','ably'], status:'all', sort:'sku_asc', excludeCombinationSkus:false, advancedFilter:{logic:'and', conditions:[]}, total:0, rows:[], loading:false, requestId:0, codeListSkus:[], codeListRows:[], codeListName:''};
 const multiLinkState = {page:1, pageSize:50, search:'', source:'all', relationType:'all', folderId:null, organizationScope:'all', folders:[], foldersLoaded:false, total:0, allTotal:0, loading:false, requestId:0, rows:[], selected:null, loaded:false};
+const relationGraphState = {nodes:[], edges:[], selectedProduct:null, loading:false, requestId:0, searchTimer:null};
 const mappingSyncState = {displayedVersion:'', checking:false, autoRefreshing:false, latest:null};
 const matrixRowsBySku = new Map();
 const drawerState = {
@@ -6287,7 +6288,7 @@ function multiLinkRelationLabel(type, componentCount = 0, listingCount = 0) {
   return '일반 1:1';
 }
 
-const RELATION_KIND_LABELS = Object.freeze({collection:'모음전', one_plus_one:'1+1', set:'세트', custom:'직접 분류'});
+const RELATION_KIND_LABELS = Object.freeze({individual:'개별상품', collection:'모음전·기획전', one_plus_one:'1+1', set:'세트', custom:'직접 분류'});
 
 function renderRelationFolders() {
   const list = document.getElementById('relation-folder-list');
@@ -6314,6 +6315,110 @@ async function loadRelationFolders({force = false} = {}) {
   multiLinkState.unorganizedExplicitCount = result.unorganizedExplicitCount;
   multiLinkState.foldersLoaded = true;
   renderRelationFolders();
+}
+
+function relationNodeLabel(node) {
+  const identity = node.nodeType === 'sellpia_product'
+    ? `셀피아 ${node.sellpiaProductCode || ''}`
+    : node.nodeType === 'seller_listing'
+      ? `${multiLinkChannelLabel(node.source)} ${node.sellerProductCode || ''}${node.sellerOptionCode ? ` / ${node.sellerOptionCode}` : ''}`
+      : '직접 노드';
+  return `${identity} · ${node.displayName || '이름 없음'}`;
+}
+
+function renderRelationNodeSelectors(preferred = {}) {
+  const options = relationGraphState.nodes.map(node => `<option value="${Number(node.nodeId)}">${escapeHtml(relationNodeLabel(node))}</option>`).join('');
+  const parent = document.getElementById('relation-parent-node');
+  const child = document.getElementById('relation-child-node');
+  const previousParent = preferred.parentNodeId || parent.value;
+  const previousChild = preferred.childNodeId || child.value;
+  parent.innerHTML = '<option value="">상위를 선택해주세요</option>' + options;
+  child.innerHTML = '<option value="">하위를 선택해주세요</option>' + options;
+  if (relationGraphState.nodes.some(node => String(node.nodeId) === String(previousParent))) parent.value = String(previousParent);
+  if (relationGraphState.nodes.some(node => String(node.nodeId) === String(previousChild))) child.value = String(previousChild);
+  document.getElementById('relation-edge-save').disabled = !parent.value || !child.value || parent.value === child.value;
+}
+
+function renderRelationTree() {
+  const box = document.getElementById('relation-tree');
+  const nodes = relationGraphState.nodes;
+  const edges = relationGraphState.edges;
+  if (!nodes.length) {
+    box.innerHTML = '<span>등록된 관계 노드가 없습니다.</span>';
+    renderRelationNodeSelectors();
+    return;
+  }
+  const byId = new Map(nodes.map(node => [String(node.nodeId), node]));
+  const children = new Map();
+  const childIds = new Set();
+  edges.forEach(edge => {
+    const parentKey = String(edge.parentNodeId);
+    if (!children.has(parentKey)) children.set(parentKey, []);
+    children.get(parentKey).push(edge);
+    childIds.add(String(edge.childNodeId));
+  });
+  const roots = nodes.filter(node => !childIds.has(String(node.nodeId)));
+  const renderBranch = (node, path = new Set(), depth = 0, incomingEdge = null) => {
+    const key = String(node.nodeId);
+    if (path.has(key)) return '';
+    const nextPath = new Set(path); nextPath.add(key);
+    const descendants = (children.get(key) || []).map(edge => {
+      const child = byId.get(String(edge.childNodeId));
+      return child ? renderBranch(child, nextPath, depth + 1, edge) : '';
+    }).join('');
+    return `<div class="relation-tree-branch" style="--tree-depth:${depth}">
+      <div class="relation-tree-node ${escapeHtml(node.nodeType)}">
+        <span>${escapeHtml(RELATION_KIND_LABELS[node.relationKind] || '직접 분류')}</span>
+        <b>${escapeHtml(node.displayName || '이름 없음')}</b>
+        <em>${escapeHtml(node.nodeType === 'sellpia_product' ? `셀피아 ${node.sellpiaProductCode || ''}` : `${multiLinkChannelLabel(node.source)} ${node.sellerProductCode || ''}${node.sellerOptionCode ? ` / ${node.sellerOptionCode}` : ''}`)}</em>
+        ${incomingEdge ? `<button type="button" data-remove-relation-edge="${Number(incomingEdge.edgeId)}">관계 해제</button>` : ''}
+      </div>${descendants ? `<div class="relation-tree-children">${descendants}</div>` : ''}
+    </div>`;
+  };
+  const visibleRoots = roots.length ? roots : nodes;
+  box.innerHTML = visibleRoots.map(node => renderBranch(node)).join('');
+  renderRelationNodeSelectors();
+}
+
+async function loadRelationGraph(preferred = {}) {
+  if (!liveData?.loadRelationNodes || relationGraphState.loading) return;
+  const requestId = ++relationGraphState.requestId;
+  relationGraphState.loading = true;
+  try {
+    const result = await liveData.loadRelationNodes({limit:1000});
+    if (requestId !== relationGraphState.requestId) return;
+    relationGraphState.nodes = result.nodes;
+    relationGraphState.edges = result.edges;
+    renderRelationTree();
+    renderRelationNodeSelectors(preferred);
+  } catch (error) {
+    document.getElementById('relation-tree').innerHTML = `<span class="error">관계 구조 조회 실패: ${escapeHtml(error?.message || error)}</span>`;
+  } finally {
+    if (requestId === relationGraphState.requestId) relationGraphState.loading = false;
+  }
+}
+
+function renderSellpiaRelationResults(groups) {
+  const box = document.getElementById('relation-sellpia-results');
+  if (!groups.length) {
+    box.hidden = false;
+    box.innerHTML = '<span>일치하는 셀피아 상품이 없습니다.</span>';
+    return;
+  }
+  box.hidden = false;
+  box.innerHTML = groups.map(group => `<button type="button" data-relation-product-code="${escapeHtml(group.productCode)}"><b>${escapeHtml(group.productCode)}</b><span>${escapeHtml(group.productName || '상품명 없음')}</span><em>${formatNumber(group.optionCount || 0)}개 옵션</em></button>`).join('');
+}
+
+function renderSellpiaRelationPreview(product) {
+  const box = document.getElementById('relation-sellpia-preview');
+  const button = document.getElementById('relation-create-sellpia-node');
+  relationGraphState.selectedProduct = product || null;
+  button.disabled = !product;
+  if (!product) {
+    box.innerHTML = '<span>셀피아 상품을 선택해주세요.</span>';
+    return;
+  }
+  box.innerHTML = `<div class="relation-sellpia-product"><b>${escapeHtml(product.productCode)} · ${escapeHtml(product.productName || '상품명 없음')}</b><span>${formatNumber(product.optionCount || 0)}개 하위 옵션</span></div><div class="relation-sellpia-options">${(product.options || []).map(option => `<span><b>${escapeHtml(option.sku)}</b><em>${escapeHtml(option.optionName || '옵션명 없음')}</em></span>`).join('')}</div>`;
 }
 
 function openRelationFolderForm(folder = null) {
@@ -6441,15 +6546,16 @@ function renderMultiLinkEditor(row) {
   const title = document.getElementById('multi-link-editor-title');
   const copy = document.getElementById('multi-link-editor-copy');
   const componentsBox = document.getElementById('multi-link-components');
-  const organizationSave = document.getElementById('multi-link-organization-save');
+  const sellerNodeButton = document.getElementById('relation-create-seller-node');
+  const sellerNodeCopy = document.getElementById('relation-current-seller-copy');
   if (!row) {
     title.textContent = '새 판매처 구성 등록';
     copy.textContent = '판매처 코드와 셀피아 SKU를 입력하면 새 연결을 만들 수 있습니다.';
     componentsBox.innerHTML = '<div class="multi-link-editor-empty">선택된 판매처 옵션이 없습니다.</div>';
     document.getElementById('multi-link-folder').value = '';
-    document.getElementById('multi-link-relation-kind').value = '';
-    document.getElementById('multi-link-group-name').value = '';
-    organizationSave.disabled = true;
+    document.getElementById('multi-link-relation-kind').value = 'individual';
+    sellerNodeCopy.textContent = '목록에서 판매처 행을 선택해주세요.';
+    sellerNodeButton.disabled = true;
     return;
   }
   title.textContent = `${multiLinkChannelLabel(row.source_channel)} · ${row.product_code}${row.option_code ? ` / ${row.option_code}` : ''}`;
@@ -6458,9 +6564,9 @@ function renderMultiLinkEditor(row) {
   document.getElementById('multi-link-form-product').value = row.product_code || '';
   document.getElementById('multi-link-form-option').value = row.option_code || '';
   document.getElementById('multi-link-folder').value = row.folder_id || '';
-  document.getElementById('multi-link-relation-kind').value = row.relation_kind || row.folder_kind || '';
-  document.getElementById('multi-link-group-name').value = row.group_name || '';
-  organizationSave.disabled = false;
+  document.getElementById('multi-link-relation-kind').value = row.relation_kind || row.folder_kind || 'custom';
+  sellerNodeCopy.textContent = `${multiLinkChannelLabel(row.source_channel)} ${row.product_code}${row.option_code ? ` / ${row.option_code}` : ''} · ${row.product_name || '상품명 없음'}`;
+  sellerNodeButton.disabled = false;
   const components = Array.isArray(row.components) ? row.components : [];
   const parentOptions = component => '<option value="">최상위 SKU</option>' + components.filter(candidate => candidate.componentId && candidate.componentId !== component.componentId).map(candidate => `<option value="${Number(candidate.componentId)}"${String(candidate.componentId) === String(component.parentComponentId || '') ? ' selected' : ''}>${escapeHtml(candidate.sku)} · ${escapeHtml(candidate.optionName || candidate.productName || '이름 없음')}</option>`).join('');
   componentsBox.innerHTML = orderedDependencyComponents(components).map(component => {
@@ -6483,7 +6589,7 @@ async function loadMultiLinks({resetPage = false, selectKey = ''} = {}) {
   const body = document.getElementById('multi-link-body');
   body.innerHTML = '<tr class="multi-link-empty loading"><td colspan="8">Supabase에서 판매처 연결 구조를 불러오는 중입니다.</td></tr>';
   try {
-    await loadRelationFolders();
+    await Promise.all([loadRelationFolders(), loadRelationGraph()]);
     const result = await liveData.loadListingGraph({
       source:multiLinkState.source,
       relationType:multiLinkState.relationType,
@@ -6648,29 +6754,106 @@ document.getElementById('multi-link-folder').addEventListener('change', event =>
   if (folder) document.getElementById('multi-link-relation-kind').value = folder.kind || 'custom';
 });
 
-document.getElementById('multi-link-organization-form').addEventListener('submit', async event => {
-  event.preventDefault();
+document.getElementById('relation-sellpia-search').addEventListener('input', event => {
+  const search = event.target.value.trim();
+  clearTimeout(relationGraphState.searchTimer);
+  renderSellpiaRelationPreview(null);
+  if (!search) {
+    document.getElementById('relation-sellpia-results').hidden = true;
+    return;
+  }
+  relationGraphState.searchTimer = setTimeout(async () => {
+    try {
+      const result = await liveData.searchSellpiaRelationProducts(search, 20);
+      renderSellpiaRelationResults(result.groups);
+    } catch (error) {
+      document.getElementById('relation-sellpia-results').hidden = false;
+      document.getElementById('relation-sellpia-results').innerHTML = `<span class="error">상품 검색 실패: ${escapeHtml(error?.message || error)}</span>`;
+    }
+  }, 260);
+});
+
+document.getElementById('relation-sellpia-results').addEventListener('click', async event => {
+  const button = event.target.closest('[data-relation-product-code]');
+  if (!button) return;
+  try {
+    const product = await liveData.loadSellpiaRelationProduct(button.dataset.relationProductCode);
+    renderSellpiaRelationPreview(product);
+    document.getElementById('relation-sellpia-results').hidden = true;
+    document.getElementById('relation-sellpia-search').value = `${product.productCode} · ${product.productName}`;
+  } catch (error) { showToast(`셀피아 상품 조회 실패: ${error?.message || error}`); }
+});
+
+document.getElementById('relation-create-sellpia-node').addEventListener('click', async event => {
+  const product = relationGraphState.selectedProduct;
+  if (!product) return;
+  const button = event.currentTarget;
+  button.disabled = true;
+  try {
+    const node = await liveData.ensureSellpiaRelationNode({
+      productCode:product.productCode,
+      folderId:document.getElementById('multi-link-folder').value || null,
+      relationKind:document.getElementById('multi-link-relation-kind').value || 'individual'
+    });
+    await loadRelationGraph({parentNodeId:node.nodeId});
+    showToast(`${node.displayName} 노드를 준비했습니다. 상위·하위 위치를 선택해주세요.`);
+  } catch (error) { showToast(`셀피아 관계 노드 준비 실패: ${error?.message || error}`); }
+  finally { button.disabled = false; }
+});
+
+document.getElementById('relation-create-seller-node').addEventListener('click', async event => {
   const row = multiLinkState.selected;
   if (!row) return;
-  const button = document.getElementById('multi-link-organization-save');
+  const button = event.currentTarget;
   button.disabled = true;
-  button.textContent = '저장 중…';
+  const original = button.textContent;
+  button.textContent = '노드 준비 중…';
   try {
-    await liveData.saveListingOrganization({
+    const node = await liveData.ensureSellerRelationNode({
       source:row.source_channel,
       productCode:row.product_code,
       optionCode:row.option_code,
       folderId:document.getElementById('multi-link-folder').value || null,
-      relationKind:document.getElementById('multi-link-relation-kind').value || null,
-      groupName:document.getElementById('multi-link-group-name').value || null
+      relationKind:document.getElementById('multi-link-relation-kind').value || 'custom'
     });
-    const selectedKey = multiLinkKey(row);
-    await loadRelationFolders({force:true});
-    await Promise.all([loadMultiLinks({selectKey:selectedKey}), loadLiveMatrix()]);
-    showToast('폴더와 조합 정보를 저장했습니다. 이제 SKU 종속관계를 지정할 수 있습니다.');
-  } catch (error) { showToast(`조합 정보 저장 실패: ${error?.message || error}`); }
-  finally { button.disabled = false; button.textContent = '폴더·조합 정보 저장'; }
+    await loadRelationGraph({childNodeId:node.nodeId});
+    showToast(`${node.displayName} 노드를 준비했습니다. 상위·하위 위치를 선택해주세요.`);
+  } catch (error) { showToast(`판매처 관계 노드 준비 실패: ${error?.message || error}`); }
+  finally { button.disabled = false; button.textContent = original; }
 });
+
+['relation-parent-node','relation-child-node'].forEach(id => document.getElementById(id).addEventListener('change', () => {
+  const parent = document.getElementById('relation-parent-node').value;
+  const child = document.getElementById('relation-child-node').value;
+  document.getElementById('relation-edge-save').disabled = !parent || !child || parent === child;
+}));
+
+document.getElementById('relation-edge-save').addEventListener('click', async event => {
+  const parentNodeId = document.getElementById('relation-parent-node').value;
+  const childNodeId = document.getElementById('relation-child-node').value;
+  if (!parentNodeId || !childNodeId || parentNodeId === childNodeId) return;
+  const button = event.currentTarget;
+  button.disabled = true;
+  try {
+    await liveData.saveRelationEdge({parentNodeId, childNodeId});
+    await loadRelationGraph();
+    showToast('상위 → 하위 관계를 저장했습니다. 가격·재고 계산에는 반영하지 않았습니다.');
+  } catch (error) { showToast(`관계 저장 실패: ${error?.message || error}`); }
+  finally { button.disabled = false; }
+});
+
+document.getElementById('relation-tree').addEventListener('click', async event => {
+  const button = event.target.closest('[data-remove-relation-edge]');
+  if (!button || !window.confirm('이 상위·하위 관계만 해제할까요? 노드와 실제 상품 연결은 유지됩니다.')) return;
+  button.disabled = true;
+  try {
+    await liveData.removeRelationEdge(button.dataset.removeRelationEdge);
+    await loadRelationGraph();
+    showToast('상위·하위 관계를 해제했습니다.');
+  } catch (error) { showToast(`관계 해제 실패: ${error?.message || error}`); }
+});
+
+document.getElementById('relation-tree-refresh').addEventListener('click', () => loadRelationGraph());
 
 document.getElementById('multi-link-stage-stock').addEventListener('click', async event => {
   const row = multiLinkState.selected;
