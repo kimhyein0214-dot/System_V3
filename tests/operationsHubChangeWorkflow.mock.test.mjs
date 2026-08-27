@@ -8,9 +8,13 @@ const migration = fs.readFileSync(
   new URL("../supabase/migrations/20260814043000_operations_hub_change_workflow.sql", import.meta.url),
   "utf8",
 );
+const lifecycleMigration = fs.readFileSync(
+  new URL("../supabase/migrations/20260827023043_separate_change_state_from_export_history.sql", import.meta.url),
+  "utf8",
+);
 
 assert.match(migration, /change_batch_id uuid[\s\S]*?validation_errors jsonb[\s\S]*?retry_count integer[\s\S]*?max_retry_count integer/, "queue rows must carry idempotency, validation, and retry state");
-assert.match(migration, /status in \('pending', 'validated', 'processing', 'applied', 'failed', 'saved', 'cancelled'\)/, "the workflow must expose explicit durable states");
+assert.match(lifecycleMigration, /status in \('pending', 'validated', 'applied', 'failed', 'saved', 'cancelled'\)/, "the current workflow must expose only durable change states");
 assert.match(migration, /operations_hub_change_queue_batch_item_uidx[\s\S]*?coalesce\(source_channel, ''\)/, "one batch cannot duplicate the same seller field");
 assert.match(migration, /create table if not exists public\.operations_hub_change_events[\s\S]*?create trigger operations_hub_change_queue_event_trigger/, "every queue transition must be audited by a trigger");
 for (const rpc of ["validate_operations_hub_changes", "cancel_operations_hub_changes", "retry_operations_hub_changes", "claim_operations_hub_changes", "complete_operations_hub_change"]) {

@@ -16,6 +16,8 @@ const conflictMigration = fs.readFileSync(new URL('../supabase/migrations/202608
 const inventoryBatchMigration = fs.readFileSync(new URL('../supabase/migrations/20260814190000_operations_hub_inventory_match_batches.sql', import.meta.url), 'utf8');
 const priceComponentMigration = fs.readFileSync(new URL('../supabase/migrations/20260821014626_operations_hub_seller_price_components.sql', import.meta.url), 'utf8');
 const priceExportMigration = fs.readFileSync(new URL('../supabase/migrations/20260821020657_operations_hub_export_price_components.sql', import.meta.url), 'utf8');
+const lifecycleMigration = fs.readFileSync(new URL('../supabase/migrations/20260827023043_separate_change_state_from_export_history.sql', import.meta.url), 'utf8');
+const cancellationOptimization = fs.readFileSync(new URL('../supabase/migrations/20260827023224_optimize_cancelled_export_invalidation.sql', import.meta.url), 'utf8');
 
 for (const table of ['operations_hub_export_batches', 'operations_hub_export_items']) {
   assert.match(migration, new RegExp(`create table if not exists public\\.${table}`), `${table} must persist the export audit trail`);
@@ -25,7 +27,11 @@ for (const rpc of ['prepare_operations_hub_export', 'complete_operations_hub_exp
   assert.match(migration + failureMigration, new RegExp(`create or replace function public\\.${rpc}`), `${rpc} must exist`);
 }
 assert.doesNotMatch(migration + failureMigration, /security definer/i, 'export RPCs must not bypass RLS');
-assert.match(migration, /status in \('pending', 'validated', 'processing', 'exported', 'applied'/, 'queue must distinguish file export from marketplace apply');
+assert.match(lifecycleMigration, /status in \('pending', 'validated', 'applied', 'failed', 'saved', 'cancelled'\)/, 'queue state must exclude file-generation states');
+assert.match(lifecycleMigration, /where status in \('processing', 'exported'\)[\s\S]*?normalize_operations_hub_change_status/, 'legacy file states must normalize without deleting export history');
+assert.match(lifecycleMigration, /operations_hub_export_items[\s\S]*?status = 'cancelled'[\s\S]*?최신 반영본이 아닙니다/, 'cancelling an edit must mark its exported file audit stale');
+assert.doesNotMatch(cancellationOptimization, /update public\.operations_hub_export_batches/, 'per-edit cancellation must not rescan or rewrite the immutable export batch');
+assert.match(lifecycleMigration, /queue\.status = 'validated'[\s\S]*?item\.status = 'exported'[\s\S]*?set status = 'applied'/, 'manual apply confirmation must require a separate exported item');
 assert.match(migration, /else[\s\S]*?sellpia_current_stock is distinct from t\.seller_stock/, 'inventory reconciliation must export only stock differences');
 assert.match(partialMigration, /blocking_reason is null[\s\S]*?then 'exported' else 'failed'/, 'valid rows must export while unresolved original rows remain failed');
 
@@ -66,7 +72,10 @@ assert.match(data, /prepareSellerExport[\s\S]*?range\(from, from \+ pageSize - 1
 assert.match(data, /rpc\('prepare_operations_hub_change_export'/, 'the frontend must use the optimized bulk preparation RPC');
 assert.match(data, /completeSellerExport[\s\S]*?confirmChangesApplied/, 'the frontend adapter must expose export and manual apply confirmation');
 assert.match(data, /p_skipped_items:[\s\S]*?export_item_id[\s\S]*?reason/, 'runtime export conflicts must be sent back to the database');
-assert.match(app, /buildExportArchive[\s\S]*?completeSellerExport\(\{batchId, success:true/, 'files must be built before the queue is marked exported');
+assert.match(app, /buildExportArchive[\s\S]*?completeSellerExport\(\{batchId, success:true/, 'files must be built before their export audit is finalized');
+assert.match(data, /attachChangeExportAudit[\s\S]*?has_exported_file:audit\.exported_file_count > 0/, 'queue rows must derive file history from export items');
+assert.match(app, /row\.status === 'validated' && row\.has_exported_file/, 'manual apply confirmation must use validated edits with an exported-file audit');
+assert.doesNotMatch(html, /<option value="(?:processing|exported)">/, 'file lifecycle states must not appear in the change-status filter');
 assert.match(app, /skippedItems:result\.skippedItems[\s\S]*?제외목록 CSV/, 'successful exports must report row conflicts without aborting the whole archive');
 assert.match(adapterSource, /SystemV3_내보내기_제외목록\.csv/, 'the archive must include a CSV describing skipped conflicts');
 assert.match(app, /confirmChangesApplied/, 'marketplace upload confirmation must be a separate action');

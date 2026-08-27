@@ -1586,7 +1586,7 @@ function drawerFieldLabel(fieldKey) {
 }
 
 function drawerStatusLabel(status) {
-  return {pending:'반영 대기',validated:'검증 완료',processing:'처리 중',exported:'내보냄',applied:'반영 완료',failed:'실패',saved:'DB 초안',cancelled:'취소'}[status] || status || '기록';
+  return {pending:'반영 대기',validated:'검증 완료',processing:'기존 파일 처리 이력',exported:'기존 파일 내보내기 이력',applied:'반영 완료',failed:'실패',saved:'DB 초안',cancelled:'취소'}[status] || status || '기록';
 }
 
 function historyValue(value) {
@@ -4920,7 +4920,7 @@ const QUEUE_FIELD_LABELS = {
   seller_option_name:'판매처 옵션명'
 };
 const QUEUE_STATUS_LABELS = {
-  pending:'검증 대기', validated:'검증 완료', processing:'파일 생성 중', exported:'내보냄', applied:'반영 완료',
+  pending:'검증 대기', validated:'검증 완료', applied:'반영 완료',
   failed:'실패', saved:'DB 내부 저장', cancelled:'취소'
 };
 const QUEUE_EVENT_LABELS = {
@@ -4947,13 +4947,22 @@ function queueMessage(row) {
   return row.error_message || validation || row.status_message || '-';
 }
 
+function queueExportAuditMarkup(row) {
+  if (Number(row.exported_file_count || 0) > 0) {
+    return `<small class="queue-export-audit ready" title="최근 내보내기 ${escapeHtml(formatLiveTime(row.latest_exported_at))}">내보낸 파일 ${formatNumber(row.exported_file_count)}건</small>`;
+  }
+  if (Number(row.applied_file_count || 0) > 0) return `<small class="queue-export-audit applied">반영 확인 파일 ${formatNumber(row.applied_file_count)}건</small>`;
+  if (Number(row.stale_file_count || 0) > 0) return `<small class="queue-export-audit stale">만료된 파일 ${formatNumber(row.stale_file_count)}건</small>`;
+  return '';
+}
+
 function renderChangeQueue(rows) {
   queueState.rows = rows;
   if (!rows.length) {
     queueBody.innerHTML = '<tr class="queue-empty"><td colspan="10">현재 조건에 해당하는 내보내기 준비 항목이 없습니다.</td></tr>';
   } else {
     queueBody.innerHTML = rows.map(row => {
-      const selectable = ['pending','validated','exported','failed'].includes(row.status);
+      const selectable = ['pending','validated','failed'].includes(row.status);
       const before = escapeHtml(queueScalar(row.before_value));
       const after = escapeHtml(queueScalar(row.after_value));
       const message = escapeHtml(queueMessage(row));
@@ -4965,7 +4974,7 @@ function renderChangeQueue(rows) {
         <td>${queueTargetMarkup(row)}</td>
         <td>${escapeHtml(QUEUE_FIELD_LABELS[row.field_key] || row.field_key)}</td>
         <td class="queue-value"><b title="${before}">${before}</b><em title="${after}">→ ${after}</em></td>
-        <td><span class="queue-status ${escapeHtml(row.status)}">${escapeHtml(QUEUE_STATUS_LABELS[row.status] || row.status)}</span></td>
+        <td><span class="queue-status ${escapeHtml(row.status)}">${escapeHtml(QUEUE_STATUS_LABELS[row.status] || row.status)}</span>${queueExportAuditMarkup(row)}</td>
         <td>${Number(row.retry_count || 0)} / ${Number(row.max_retry_count || 3)}</td>
         <td>${formatLiveTime(row.requested_at)}</td>
         <td class="queue-message" title="${message}">${message}</td>
@@ -4988,7 +4997,7 @@ function updateQueueSelection() {
   document.getElementById('queue-validate').disabled = !selected.some(row => ['pending','failed'].includes(row.status));
   document.getElementById('queue-cancel').disabled = !selected.some(row => ['pending','validated','failed'].includes(row.status));
   document.getElementById('queue-retry').disabled = !selected.some(row => row.status === 'failed' && Number(row.retry_count) < Number(row.max_retry_count));
-  document.getElementById('queue-confirm-applied').disabled = !selected.some(row => row.status === 'exported');
+  document.getElementById('queue-confirm-applied').disabled = !selected.some(row => row.status === 'validated' && row.has_exported_file);
 }
 
 async function loadChangeQueue({silent = false} = {}) {
@@ -5419,7 +5428,7 @@ async function runSellerExport() {
       return;
     }
 
-    showSellerExportProgress(4, '수정안 확인 중', '검토한 판매처 수정안을 내보내기 상태로 확정합니다.');
+    showSellerExportProgress(4, '수정안 확인 중', '검토한 판매처 수정안으로 파일 생성 대상을 확정합니다. 수정 상태는 그대로 유지됩니다.');
     let changeIds;
     if (sellerExportState.rows.length) {
       const scopedRows = sellerExportRowsForSources(sellerExportState.rows, sources);
@@ -5642,7 +5651,7 @@ document.getElementById('matrix-csv-cancel').addEventListener('click', closeMatr
 document.getElementById('matrix-csv-run').addEventListener('click', runMatrixCsvExport);
 matrixCsvModal.addEventListener('click', event => { if (event.target === matrixCsvModal) closeMatrixCsvExport(); });
 document.getElementById('queue-confirm-applied').addEventListener('click', async event => {
-  const rows = selectedQueueRows().filter(row => row.status === 'exported');
+  const rows = selectedQueueRows().filter(row => row.status === 'validated' && row.has_exported_file);
   if (!rows.length || !window.confirm(`${rows.length}건이 판매처에 실제 업로드 완료되었음을 확인할까요?`)) return;
   const button = event.currentTarget; button.disabled = true;
   try {
