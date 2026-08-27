@@ -13,6 +13,7 @@ const disconnectMigration = fs.readFileSync(new URL("../supabase/migrations/2026
 const durableDisconnectMigration = fs.readFileSync(new URL("../supabase/migrations/20260827090000_fix_operations_hub_link_disconnect.sql", import.meta.url), "utf8");
 const linkTimeoutMigration = fs.readFileSync(new URL("../supabase/migrations/20260827103000_optimize_operations_hub_link_mutations.sql", import.meta.url), "utf8");
 const linkConflictFixMigration = fs.readFileSync(new URL("../supabase/migrations/20260827103500_fix_link_cache_upsert_conflict.sql", import.meta.url), "utf8");
+const browserRefreshGuardMigration = fs.readFileSync(new URL("../supabase/migrations/20260827104000_block_browser_full_legacy_cache_refresh.sql", import.meta.url), "utf8");
 const performanceRestoreMigration = fs.readFileSync(new URL("../supabase/migrations/20260827093000_restore_operations_hub_matrix_system_live_performance.sql", import.meta.url), "utf8");
 const pageFirstGraphMigration = fs.readFileSync(new URL("../supabase/migrations/20260823082547_optimize_operations_hub_listing_graph_page_first.sql", import.meta.url), "utf8");
 const exactGraphMigration = fs.readFileSync(new URL("../supabase/migrations/20260825054226_operations_hub_exact_listing_graph.sql", import.meta.url), "utf8");
@@ -63,6 +64,7 @@ assert.match(linkTimeoutMigration, /upsert_operations_hub_listing_component[\s\S
 assert.doesNotMatch(linkTimeoutMigration, /operations_hub_matrix_live/, "link mutations must not scan the catalog-wide live matrix");
 assert.match(linkConflictFixMigration, /link_operations_hub_seller_item_v2[\s\S]*delete from public\.operations_hub_listing_legacy_cache[\s\S]*insert into public\.operations_hub_listing_legacy_cache/, "manual links must refresh only their exact cached edge");
 assert.match(linkConflictFixMigration, /on conflict on constraint operations_hub_listing_legacy_cache_pkey/, "targeted cache upserts must avoid PL/pgSQL output-column ambiguity");
+assert.match(browserRefreshGuardMigration, /p_skus is null and current_user in \('anon', 'authenticated'\)[\s\S]*?return 0/, "old public browser tabs must not trigger full-catalog cache rebuilds");
 assert.doesNotMatch(pageFirstGraphMigration, /from public\.operations_hub_listing_graph_live/i, "listing pagination must not materialize the fully enriched compatibility graph");
 assert.match(pageFirstGraphMigration, /identity_edges as materialized[\s\S]*classified as materialized[\s\S]*filtered as materialized[\s\S]*paged_keys as materialized[\s\S]*paged_components as materialized/, "listing identities must be classified and paged before component enrichment");
 assert.match(pageFirstGraphMigration, /paged_components as materialized[\s\S]*left join public\.operations_hub_sellpia_component_live/, "Sellpia stock enrichment must be scoped to the selected page");
