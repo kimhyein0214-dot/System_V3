@@ -83,6 +83,7 @@ const SELLPIA_AUTOSAVE_DELAY_MS = 450;
 const liveData = window.SystemV3Data;
 const matrixCsv = window.SystemV3MatrixCsv;
 const discountPriceMath = window.SystemV3DiscountPriceMath;
+const sourceRefreshVerifier = window.SystemV3SourceRefreshVerifier;
 const MATRIX_PAGE_SIZE_KEY = 'system-v3-matrix-page-size';
 const storedMatrixPageSize = Number(localStorage.getItem(MATRIX_PAGE_SIZE_KEY));
 const initialMatrixPageSize = [50, 100, 200].includes(storedMatrixPageSize) ? storedMatrixPageSize : 50;
@@ -2625,7 +2626,7 @@ function clearMatrixCellSelection() {
 }
 
 async function refreshSelectedSystemValuesFromSource() {
-  if (!matrixSourceRefreshButton || sellpiaSaveInFlight || !liveData?.saveSellpiaChanges) return;
+  if (!matrixSourceRefreshButton || sellpiaSaveInFlight || !liveData?.saveSellpiaChanges || !liveData?.loadProductsBySkus) return;
   let targets = selectedSourceRefreshTargets();
   if (!targets.length) {
     showToast('원본값을 적용할 기준값 또는 판매처 셀을 선택해주세요.');
@@ -2652,8 +2653,33 @@ async function refreshSelectedSystemValuesFromSource() {
   const label = matrixSourceRefreshButton.querySelector('b');
   const originalLabel = label?.innerHTML || '선택 셀을<br>원본값으로 갱신';
   matrixSourceRefreshButton.disabled = true;
-  if (label) label.textContent = '원본값 저장 중…';
-  let sellerSavedCount = 0;
+  if (label) label.textContent = '원본값 DB 저장 중…';
+  const verificationTargets = [];
+  const attemptedSkus = new Set(changes.map(target => target.sku));
+  const requireSellerSave = (result, target) => {
+    if (!result || !['pending', 'unchanged'].includes(String(result.draft_status || ''))) {
+      throw new Error(`${target.field} 저장 결과를 확인할 수 없습니다.`);
+    }
+    return result;
+  };
+  const registerSellerItems = (items, target) => {
+    const normalized = Array.isArray(items) ? items : [];
+    if (!normalized.length) throw new Error(`${target.field} 저장 결과가 비어 있습니다.`);
+    for (const saved of normalized) {
+      const sku = String(saved?.sku || target.sku || '').trim();
+      if (!sku) throw new Error(`${target.field} 저장 SKU를 확인할 수 없습니다.`);
+      requireSellerSave(saved.result, target);
+      attemptedSkus.add(sku);
+      verificationTargets.push({...target, sku, groupSize:1});
+    }
+  };
+  const reloadAndRender = async skus => {
+    const rows = await liveData.loadProductsBySkus([...new Set(skus)].filter(Boolean));
+    const refreshedBySku = new Map(rows.map(product => [String(product.sellpia_sku_code || '').trim(), product]));
+    matrixState.rows = matrixState.rows.map(product => refreshedBySku.get(String(product.sellpia_sku_code || '').trim()) || product);
+    renderLiveMatrixRows(matrixState.rows);
+    return rows;
+  };
   try {
     const systemChanges = changes.filter(target => target.kind === 'system');
     if (systemChanges.length) {
@@ -2661,13 +2687,15 @@ async function refreshSelectedSystemValuesFromSource() {
         systemChangeSource:'source_accept',
         systemMetadata:{ui:'matrix-source-refresh', selected_cell_count:targets.length}
       });
-      applySavedSellpiaChanges(systemChanges, result);
-      removeSavedCellState(systemChanges);
+      if (!result || Number(result.savedCount) !== systemChanges.length || (result.systemRows || []).length !== systemChanges.length) {
+        throw new Error(`시스템 기준값 저장 결과가 요청 ${systemChanges.length}건과 일치하지 않습니다.`);
+      }
+      verificationTargets.push(...systemChanges);
     }
 
     for (const target of changes.filter(item => item.kind !== 'system')) {
       const product = matrixRowsBySku.get(target.sku);
-      if (!product) continue;
+      if (!product) throw new Error(`화면 데이터에서 SKU ${target.sku}를 찾지 못했습니다.`);
       if (target.kind === 'seller_stock') {
         const result = await liveData.saveSellerValueDraft({
           sku:target.sku,
@@ -2675,8 +2703,7 @@ async function refreshSelectedSystemValuesFromSource() {
           fieldKey:'sellpia_current_stock',
           after:Number(target.after)
         });
-        applyLocalSellerDraft(product, target.source, 'sellpia_current_stock', target.after, result);
-        sellerSavedCount += 1;
+        registerSellerItems([{sku:target.sku, result}], target);
         continue;
       }
 
@@ -2701,8 +2728,7 @@ async function refreshSelectedSystemValuesFromSource() {
                   ?? 0
               })
             }]};
-        for (const saved of result.items || []) applyLocalSellerPriceDraft(matrixRowsBySku.get(saved.sku), target.source, saved.result);
-        sellerSavedCount += Math.max(1, Number(result.count || result.items?.length || 1));
+        registerSellerItems(result.items, target);
         continue;
       }
 
@@ -2716,8 +2742,7 @@ async function refreshSelectedSystemValuesFromSource() {
           targetBasePrice:Number(target.after),
           basePriceSource:'source'
         });
-        for (const saved of result.items || []) applyLocalSellerPriceDraft(matrixRowsBySku.get(saved.sku), target.source, saved.result);
-        sellerSavedCount += Number(result.savedCount || result.items?.length || 1);
+        registerSellerItems(result.items, target);
         continue;
       }
       const result = await liveData.saveSellerPriceDraft({
@@ -2731,20 +2756,33 @@ async function refreshSelectedSystemValuesFromSource() {
         basePriceSource:target.priceComponent === 'base' ? 'source' : (component.base_price_source || 'source'),
         priceRuleSetId:component.price_rule_set_id || null
       });
-      applyLocalSellerPriceDraft(product, target.source, result);
-      sellerSavedCount += 1;
+      registerSellerItems([{sku:target.sku, result}], target);
     }
-    if (sellerSavedCount) renderLiveMatrixRows(matrixState.rows);
+
+    if (!verificationTargets.length) throw new Error('DB에서 확인할 저장 대상이 없습니다.');
+    if (label) label.textContent = 'DB 저장 확인 중…';
+    const refreshedRows = await reloadAndRender(verificationTargets.map(target => target.sku));
+    const verification = sourceRefreshVerifier?.verifySourceRefreshTargets(verificationTargets, refreshedRows);
+    if (!verification || verification.failures.length) {
+      const failure = verification?.failures?.[0];
+      const target = failure?.target;
+      const labelText = target ? `${target.sku} ${target.field}` : '선택 원본값';
+      throw new Error(`${labelText} DB 재조회 값이 원본과 일치하지 않습니다.`);
+    }
     const notes = [
       missingCount ? `원본값 없음 ${missingCount}개 제외` : '',
       available.length - changes.length ? `이미 동일 ${available.length - changes.length}개` : ''
     ].filter(Boolean);
-    showToast(`선택한 원본값 ${changes.length}개를 저장했습니다.${notes.length ? ` · ${notes.join(' · ')}` : ''}`);
+    showToast(`원본값 DB 저장·확인 완료 · 선택 ${changes.length}셀 · 확인 ${verification.verifiedCount}항목${notes.length ? ` · ${notes.join(' · ')}` : ''}`);
     void loadLiveDashboardMetrics();
   } catch (error) {
     console.error('selected source refresh failed', error);
-    if (sellerSavedCount) renderLiveMatrixRows(matrixState.rows);
-    showToast(`원본값 갱신 실패: ${error?.message || error}`);
+    try {
+      if (attemptedSkus.size) await reloadAndRender([...attemptedSkus]);
+    } catch (refreshError) {
+      console.error('selected source refresh recovery reload failed', refreshError);
+    }
+    showToast(`원본값 저장·확인 실패: ${error?.message || error}`);
   } finally {
     if (label) label.innerHTML = originalLabel;
     updateSourceRefreshAction();

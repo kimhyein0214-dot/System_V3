@@ -439,6 +439,21 @@
     return { rows: await attachProductMetadata(data || []), count: count || 0, page: safePage, pageSize: safePageSize };
   }
 
+  async function loadProductsBySkus(skus = []) {
+    const normalizedSkus = [...new Set((Array.isArray(skus) ? skus : []).map(cleanText).filter(Boolean))];
+    if (!normalizedSkus.length) return [];
+    const rows = [];
+    for (let offset = 0; offset < normalizedSkus.length; offset += 500) {
+      const {data, error} = await db
+        .from('operations_hub_matrix_system_live')
+        .select(MATRIX_SELECT)
+        .in('sellpia_sku_code', normalizedSkus.slice(offset, offset + 500));
+      if (error) throw error;
+      rows.push(...(data || []));
+    }
+    return attachProductMetadata(rows);
+  }
+
   async function loadMatrixExportChunk({
     offset = 0,
     limit = 1000,
@@ -1970,6 +1985,7 @@
   global.SystemV3Data = Object.freeze({
     pageSize: PAGE_SIZE,
     loadProducts,
+    loadProductsBySkus,
     loadMatrixExportChunk,
     loadListingGraph,
     loadListingConnection,
