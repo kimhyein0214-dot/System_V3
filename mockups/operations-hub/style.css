@@ -120,6 +120,10 @@
 .matrix-table tbody td{cursor:cell}
 .matrix-table tbody td.matrix-cell-selected{outline:2px solid #4d8ee8;outline-offset:-2px;background:#eaf3ff}
 .matrix-table tbody td.matrix-cell-anchor{outline:3px solid var(--blue);outline-offset:-3px}
+.matrix-table .matrix-group-start-smartstore{box-shadow:inset 5px 0 0 #4c9a5d!important}
+.matrix-table .matrix-group-start-makeshop{box-shadow:inset 5px 0 0 #477fbd!important}
+.matrix-table .matrix-group-start-ably{box-shadow:inset 5px 0 0 #8658b6!important}
+.matrix-table .matrix-group-start-operations{box-shadow:inset 5px 0 0 #ae8332!important}
 .matrix-context-menu{position:fixed;z-index:70;width:230px;padding:7px;border:1px solid #b7c7dc;border-radius:8px;background:#fff;box-shadow:0 12px 34px rgba(15,23,42,.24)}
 .matrix-context-menu[hidden]{display:none}
 .matrix-context-menu>span{display:block;padding:4px 7px 7px;color:#64748b;font-size:8px;font-weight:900}
