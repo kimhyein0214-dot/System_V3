@@ -299,8 +299,44 @@
     }));
   }
 
+  async function attachProductLinkDrafts(rows) {
+    const products = Array.isArray(rows) ? rows : [];
+    const skus = [...new Set(products.map(row => cleanText(row?.sellpia_sku_code)).filter(Boolean))];
+    if (!skus.length) return products;
+    const drafts = [];
+    for (let offset = 0; offset < skus.length; offset += 500) {
+      const {data, error} = await db
+        .from('operations_hub_product_link_drafts')
+        .select('source_channel,sellpia_sku_code,product_code,product_name,updated_at')
+        .in('sellpia_sku_code', skus.slice(offset, offset + 500));
+      if (error) throw error;
+      drafts.push(...(data || []));
+    }
+    const bySku = new Map();
+    for (const draft of drafts) {
+      const sku = cleanText(draft.sellpia_sku_code);
+      const source = cleanText(draft.source_channel);
+      if (!sku || !['smartstore', 'makeshop', 'ably'].includes(source)) continue;
+      if (!bySku.has(sku)) bySku.set(sku, {});
+      bySku.get(sku)[source] = draft;
+    }
+    return products.map(product => {
+      const productDrafts = bySku.get(cleanText(product?.sellpia_sku_code)) || {};
+      const projected = {...product, __sellerProductLinkDrafts:productDrafts};
+      for (const source of ['smartstore', 'makeshop', 'ably']) {
+        const draft = productDrafts[source];
+        if (!draft || cleanText(projected[`${source}_match_tier`])) continue;
+        projected[`${source}_product_code`] = draft.product_code;
+        projected[`${source}_name`] = draft.product_name;
+        projected[`${source}_option_code`] = null;
+        projected[`${source}_option_name`] = null;
+      }
+      return projected;
+    });
+  }
+
   async function attachProductMetadata(rows) {
-    return attachLinkSuppressions(await attachPriceRuleAssignments(await attachSellerDrafts(await attachSellerPriceComponents(await attachLinkBadges(await attachProductProfiles(await attachSystemOperationalDetails(await attachInboundCostDetails(rows))))))));
+    return attachLinkSuppressions(await attachPriceRuleAssignments(await attachSellerDrafts(await attachSellerPriceComponents(await attachLinkBadges(await attachProductProfiles(await attachProductLinkDrafts(await attachSystemOperationalDetails(await attachInboundCostDetails(rows)))))))));
   }
 
   async function loadListingGraph({source = 'all', relationType = 'complex', search = '', page = 1, pageSize = 50} = {}) {
@@ -946,6 +982,35 @@
       p_base_price_source:cleanText(basePriceSource) || 'tag',
       p_price_rule_set_id:priceRuleSetId ? Number(priceRuleSetId) : null,
       p_batch_id:batchId
+    });
+    if (error) throw error;
+    return Array.isArray(data) ? data[0] : data;
+  }
+
+  async function saveProductLinkDraft({sku, source, productCode}) {
+    const {data, error} = await db.rpc('save_operations_hub_product_link_draft', {
+      p_sku:cleanText(sku),
+      p_source:cleanText(source),
+      p_product_code:cleanText(productCode)
+    });
+    if (error) throw error;
+    return Array.isArray(data) ? data[0] : data;
+  }
+
+  async function clearProductLinkDraft({sku, source}) {
+    const {data, error} = await db.rpc('clear_operations_hub_product_link_draft', {
+      p_sku:cleanText(sku),
+      p_source:cleanText(source)
+    });
+    if (error) throw error;
+    return Boolean(data);
+  }
+
+  async function linkProductDraftOption({sku, source, optionCode = ''}) {
+    const {data, error} = await db.rpc('link_operations_hub_product_link_draft_option', {
+      p_sku:cleanText(sku),
+      p_source:cleanText(source),
+      p_option_code:cleanText(optionCode)
     });
     if (error) throw error;
     return Array.isArray(data) ? data[0] : data;
@@ -2115,6 +2180,9 @@
     resolveCodeEntries,
     refreshListingGraphCache,
     linkSellerItem,
+    saveProductLinkDraft,
+    clearProductLinkDraft,
+    linkProductDraftOption,
     saveSellerListing,
     loadChangeQueue,
     loadChangeQueueStats,

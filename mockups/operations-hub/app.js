@@ -111,12 +111,15 @@ const matrixCellSelection = {anchor:null, focus:null, dragging:false, selected:n
 const matrixContextMenu = document.getElementById('matrix-context-menu');
 const matrixContextSourceRefresh = document.getElementById('matrix-context-source-refresh');
 const matrixContextSourceRefreshCount = document.getElementById('matrix-context-source-refresh-count');
-const matrixContextOptionLink = document.getElementById('matrix-context-option-link');
-const matrixContextOptionLinkDetail = document.getElementById('matrix-context-option-link-detail');
+const matrixContextProductCopy = document.getElementById('matrix-context-product-copy');
+const matrixContextProductCopyDetail = document.getElementById('matrix-context-product-copy-detail');
+const matrixContextOptionAdd = document.getElementById('matrix-context-option-add');
+const matrixContextOptionAddDetail = document.getElementById('matrix-context-option-add-detail');
 const matrixContextDisconnect = document.getElementById('matrix-context-disconnect');
 const matrixContextDisconnectCount = document.getElementById('matrix-context-disconnect-count');
 let matrixContextTargets = [];
-let matrixContextOptionLinkTarget = null;
+let matrixContextProductCopyTarget = null;
+let matrixContextOptionAddTarget = null;
 let matrixSourceRefreshInFlight = false;
 const matrixZoomOut = document.getElementById('matrix-zoom-out');
 const matrixZoomValue = document.getElementById('matrix-zoom-value');
@@ -661,9 +664,18 @@ function matchState(tier) {
 }
 
 function mappingCodeButton(product, prefix, label, kind, value, state) {
-  const display = escapeHtml(value || '-');
-  const prompt = state.key === 'unmatched' ? `${label} 판매처 상품 새로 연결` : `${label} 조합 연결 확인·관리`;
-  return `<button class="mapping-code-button ${state.key}" data-link-source="${prefix}" data-code-kind="${kind}" title="${prompt}">${display}</button>`;
+  const pendingDraft = product.__sellerProductLinkDrafts?.[prefix];
+  const pendingOption = Boolean(pendingDraft && kind === 'option' && !value);
+  const display = escapeHtml(pendingOption ? '+ 옵션 추가' : (value || '-'));
+  const prompt = pendingDraft
+    ? pendingOption
+      ? `${label} 상품코드는 복제됨 · 아직 연결하지 않은 옵션 추가`
+      : `${label} 상품코드만 복제된 상태 · 옵션은 아직 연결되지 않음`
+    : state.key === 'unmatched'
+      ? `${label} 판매처 상품 새로 연결`
+      : `${label} 조합 연결 확인·관리`;
+  const visualState = pendingDraft ? (pendingOption ? 'option-pending' : 'product-pending') : state.key;
+  return `<button class="mapping-code-button ${visualState}" data-link-source="${prefix}" data-code-kind="${kind}" title="${prompt}">${display}</button>`;
 }
 
 function sellerIdentityCells(product, prefix, label, state, productMerge = null, relationBadge = '') {
@@ -672,6 +684,7 @@ function sellerIdentityCells(product, prefix, label, state, productMerge = null,
   const productCode = String(product[`${prefix}_product_code`] || '').trim();
   const optionCode = String(product[`${prefix}_option_code`] || '').trim();
   const isDraft = Boolean(product[`${prefix}_name_is_draft`]);
+  const pendingDraft = product.__sellerProductLinkDrafts?.[prefix];
   const productTitle = [productCode, productName].filter(Boolean).join(' · ');
   const optionTitle = [optionCode, optionName].filter(Boolean).join(' · ');
   const productRowspan = Math.max(1, Number(productMerge?.rowspan) || 1);
@@ -682,8 +695,8 @@ function sellerIdentityCells(product, prefix, label, state, productMerge = null,
       <em class="${productName ? '' : 'seller-name-missing'}">${escapeHtml(productName || '상품명 없음')}${isDraft ? '<i>초안</i>' : ''}</em>
     </td>`;
   return `${productCells}
-    <td class="seller-identity-cell seller-option-identity${!optionCode && !optionName ? ' data-gap' : ''}" data-channel="${prefix}" title="${escapeHtml(optionTitle || '판매처 옵션 정보 없음')}">
-      ${mappingCodeButton(product, prefix, label, 'option', optionCode, state)}<em class="${optionName ? '' : 'seller-name-missing'}">${escapeHtml(optionName || '옵션명 없음')}</em>${relationBadge}
+    <td class="seller-identity-cell seller-option-identity${!optionCode && !optionName ? ' data-gap' : ''}${pendingDraft ? ' option-selection-pending' : ''}" data-channel="${prefix}" title="${escapeHtml(pendingDraft ? '상품코드 복제 완료 · 옵션 선택 대기' : (optionTitle || '판매처 옵션 정보 없음'))}">
+      ${mappingCodeButton(product, prefix, label, 'option', optionCode, state)}<em class="${optionName ? '' : 'seller-name-missing'}">${escapeHtml(pendingDraft ? '옵션 선택 대기' : (optionName || '옵션명 없음'))}</em>${relationBadge}
     </td>`;
 }
 
@@ -2304,12 +2317,20 @@ mappingSearchResults.addEventListener('click', async event => {
   button.disabled = true;
   button.classList.add('saving');
   try {
-    await liveData.linkSellerItem({
-      sku:mappingState.sku,
-      source:mappingState.source,
-      productCode:button.dataset.mapProduct,
-      optionCode:button.dataset.mapOption
-    });
+    if (mappingState.mode === 'remaining-options') {
+      await liveData.linkProductDraftOption({
+        sku:mappingState.sku,
+        source:mappingState.source,
+        optionCode:button.dataset.mapOption
+      });
+    } else {
+      await liveData.linkSellerItem({
+        sku:mappingState.sku,
+        source:mappingState.source,
+        productCode:button.dataset.mapProduct,
+        optionCode:button.dataset.mapOption
+      });
+    }
     const sourceLabel = CHANNEL_LABELS[mappingState.source] || mappingState.source;
     const sku = mappingState.sku;
     closeMappingSearch();
@@ -3709,8 +3730,24 @@ matrixBody.addEventListener('click', event => {
   const mappingButton = event.target.closest('.mapping-code-button');
   if (mappingButton) {
     const row = mappingButton.closest('tr[data-sku]');
+    const source = mappingButton.dataset.linkSource;
+    const product = matrixRowsBySku.get(row?.dataset.sku);
+    const pendingDraft = product?.__sellerProductLinkDrafts?.[source];
+    if (pendingDraft) {
+      if (mappingButton.dataset.codeKind === 'option') {
+        openMappingSearch({
+          source,
+          sku:row.dataset.sku,
+          anchor:mappingButton,
+          fixedProductCode:pendingDraft.product_code
+        });
+      } else {
+        showToast(`${pendingDraft.product_code} 상품코드만 복제된 상태입니다. 옵션 셀의 ‘+ 옵션 추가’를 눌러 연결하세요.`);
+      }
+      return;
+    }
     openListingLinkManager({
-      source:mappingButton.dataset.linkSource,
+      source,
       sku:row.dataset.sku,
       anchor:mappingButton
     });
@@ -5530,6 +5567,7 @@ function selectedMatrixDisconnectTargets() {
   for (const [source, skus] of Object.entries(selected.sourceSkus)) {
     for (const sku of skus) {
       const product = matrixRowsBySku.get(sku) || {};
+      if (product.__sellerProductLinkDrafts?.[source] && !product[`${source}_match_tier`]) continue;
       const productCode = String(product[`${source}_product_code`] || '').trim();
       const optionCode = String(product[`${source}_option_code`] || '').trim();
       if (!productCode) continue;
@@ -5549,23 +5587,28 @@ function selectedMatrixDisconnectTargets() {
   return targets;
 }
 
-function matrixOptionLinkContext(anchorCell) {
+function matrixSellerIdentityContext(anchorCell) {
   const cell = anchorCell?.closest?.('td');
   if (!cell?.matches('.seller-product-code-cell,.seller-option-identity')) {
-    return {enabled:false, detail:'상품코드 또는 옵션 셀에서 사용'};
+    return {cell:null, source:'', sku:'', product:null, detail:'상품코드 또는 옵션 셀에서 사용'};
   }
   const source = String(cell.dataset.channel || '').trim();
   const row = cell.closest('tr[data-sku]');
   const sku = String(row?.dataset.sku || '').trim();
   const product = matrixRowsBySku.get(sku);
   if (!product || !['smartstore', 'makeshop', 'ably'].includes(source)) {
-    return {enabled:false, detail:'연결할 판매처 행을 확인해주세요'};
+    return {cell, source, sku, product:null, detail:'연결할 판매처 행을 확인해주세요'};
   }
+  return {cell, source, sku, product, detail:''};
+}
+
+function matrixProductCopyContext(anchorCell) {
+  const context = matrixSellerIdentityContext(anchorCell);
+  if (!context.product) return {enabled:false, detail:context.detail};
+  const {cell, source, sku, product} = context;
   const currentProductCode = String(product[`${source}_product_code`] || '').trim();
-  const currentOptionCode = String(product[`${source}_option_code`] || '').trim();
-  if (currentProductCode && currentOptionCode) {
-    return {enabled:false, detail:'이미 옵션코드까지 연결됨'};
-  }
+  if (product.__sellerProductLinkDrafts?.[source]) return {enabled:false, detail:`${currentProductCode} · 복제 완료`};
+  if (currentProductCode) return {enabled:false, detail:'이미 실제 연결이 있는 행'};
   const productGroup = sellpiaProductGroupKey(product);
   const candidateCodes = [...new Set([...matrixRowsBySku.values()]
     .filter(candidate => sellpiaProductGroupKey(candidate) === productGroup)
@@ -5573,14 +5616,33 @@ function matrixOptionLinkContext(anchorCell) {
     .filter(Boolean))];
   if (!candidateCodes.length) return {enabled:false, detail:'같은 상품군에 복사할 코드 없음'};
   if (candidateCodes.length > 1) return {enabled:false, detail:`상품코드 후보 ${formatNumber(candidateCodes.length)}개`};
-  const productCode = currentProductCode || candidateCodes[0];
+  const productCode = candidateCodes[0];
   return {
     enabled:true,
     source,
     sku,
     productCode,
     anchor:cell,
-    detail:`${productCode} · 남은 옵션 보기`
+    detail:`${productCode} · 코드만 복제`
+  };
+}
+
+function matrixOptionAddContext(anchorCell) {
+  const context = matrixSellerIdentityContext(anchorCell);
+  if (!context.product) return {enabled:false, detail:context.detail};
+  const {cell, source, sku, product} = context;
+  const draft = product.__sellerProductLinkDrafts?.[source];
+  if (!draft) {
+    const actualCode = String(product[`${source}_product_code`] || '').trim();
+    return {enabled:false, detail:actualCode ? '이미 실제 연결된 행' : '상품코드를 먼저 복제해주세요'};
+  }
+  return {
+    enabled:true,
+    source,
+    sku,
+    productCode:String(draft.product_code || '').trim(),
+    anchor:cell,
+    detail:`${draft.product_code} · 미연결 옵션만 보기`
   };
 }
 
@@ -5588,20 +5650,24 @@ function closeMatrixContextMenu() {
   if (!matrixContextMenu) return;
   matrixContextMenu.hidden = true;
   matrixContextTargets = [];
-  matrixContextOptionLinkTarget = null;
+  matrixContextProductCopyTarget = null;
+  matrixContextOptionAddTarget = null;
 }
 
 function openMatrixContextMenu(clientX, clientY, anchorCell) {
-  if (!matrixContextMenu || !matrixContextSourceRefresh || !matrixContextSourceRefreshCount || !matrixContextOptionLink || !matrixContextOptionLinkDetail || !matrixContextDisconnect || !matrixContextDisconnectCount) return;
+  if (!matrixContextMenu || !matrixContextSourceRefresh || !matrixContextSourceRefreshCount || !matrixContextProductCopy || !matrixContextProductCopyDetail || !matrixContextOptionAdd || !matrixContextOptionAddDetail || !matrixContextDisconnect || !matrixContextDisconnectCount) return;
   matrixContextTargets = selectedMatrixDisconnectTargets();
-  matrixContextOptionLinkTarget = matrixOptionLinkContext(anchorCell);
+  matrixContextProductCopyTarget = matrixProductCopyContext(anchorCell);
+  matrixContextOptionAddTarget = matrixOptionAddContext(anchorCell);
   const labels = [...new Set(matrixContextTargets.map(target => CHANNEL_LABELS[target.source] || target.source))];
   matrixContextDisconnect.disabled = matrixContextTargets.length === 0;
   matrixContextDisconnectCount.textContent = matrixContextTargets.length
     ? `${labels.length === 1 ? `${labels[0]} ` : ''}연결 ${formatNumber(matrixContextTargets.length)}건`
     : '해제할 연결 없음';
-  matrixContextOptionLink.disabled = !matrixContextOptionLinkTarget.enabled;
-  matrixContextOptionLinkDetail.textContent = matrixContextOptionLinkTarget.detail;
+  matrixContextProductCopy.disabled = !matrixContextProductCopyTarget.enabled;
+  matrixContextProductCopyDetail.textContent = matrixContextProductCopyTarget.detail;
+  matrixContextOptionAdd.disabled = !matrixContextOptionAddTarget.enabled;
+  matrixContextOptionAddDetail.textContent = matrixContextOptionAddTarget.detail;
   updateSourceRefreshAction();
   matrixContextMenu.hidden = false;
   const fallbackRect = anchorCell?.getBoundingClientRect?.() || {left:12, bottom:12};
@@ -5609,8 +5675,10 @@ function openMatrixContextMenu(clientX, clientY, anchorCell) {
   const wantedTop = Number(clientY) > 0 ? Number(clientY) : fallbackRect.bottom;
   matrixContextMenu.style.left = `${Math.max(8, Math.min(wantedLeft, window.innerWidth - matrixContextMenu.offsetWidth - 8))}px`;
   matrixContextMenu.style.top = `${Math.max(8, Math.min(wantedTop, window.innerHeight - matrixContextMenu.offsetHeight - 8))}px`;
-  const preferredAction = !matrixContextOptionLink.disabled
-    ? matrixContextOptionLink
+  const preferredAction = !matrixContextProductCopy.disabled
+    ? matrixContextProductCopy
+    : !matrixContextOptionAdd.disabled
+      ? matrixContextOptionAdd
     : !matrixContextSourceRefresh.disabled
       ? matrixContextSourceRefresh
       : matrixContextDisconnect;
@@ -5692,9 +5760,28 @@ matrixContextSourceRefresh?.addEventListener('click', event => {
   void refreshSelectedSystemValuesFromSource();
 });
 
-matrixContextOptionLink?.addEventListener('click', event => {
+matrixContextProductCopy?.addEventListener('click', async event => {
   event.stopPropagation();
-  const target = matrixContextOptionLinkTarget;
+  const target = matrixContextProductCopyTarget;
+  if (!target?.enabled) return;
+  closeMatrixContextMenu();
+  try {
+    await liveData.saveProductLinkDraft({
+      sku:target.sku,
+      source:target.source,
+      productCode:target.productCode
+    });
+    await loadLiveMatrix();
+    showToast(`${target.sku} · ${target.productCode} 상품코드만 복제했습니다. 옵션은 아직 연결되지 않았습니다.`);
+  } catch (error) {
+    console.error('seller product code draft save failed', error);
+    showToast(`상품코드 복제 실패: ${error?.message || error}`);
+  }
+});
+
+matrixContextOptionAdd?.addEventListener('click', event => {
+  event.stopPropagation();
+  const target = matrixContextOptionAddTarget;
   if (!target?.enabled) return;
   closeMatrixContextMenu();
   openMappingSearch({
