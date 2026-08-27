@@ -111,9 +111,12 @@ const matrixCellSelection = {anchor:null, focus:null, dragging:false, selected:n
 const matrixContextMenu = document.getElementById('matrix-context-menu');
 const matrixContextSourceRefresh = document.getElementById('matrix-context-source-refresh');
 const matrixContextSourceRefreshCount = document.getElementById('matrix-context-source-refresh-count');
+const matrixContextOptionLink = document.getElementById('matrix-context-option-link');
+const matrixContextOptionLinkDetail = document.getElementById('matrix-context-option-link-detail');
 const matrixContextDisconnect = document.getElementById('matrix-context-disconnect');
 const matrixContextDisconnectCount = document.getElementById('matrix-context-disconnect-count');
 let matrixContextTargets = [];
+let matrixContextOptionLinkTarget = null;
 let matrixSourceRefreshInFlight = false;
 const matrixZoomOut = document.getElementById('matrix-zoom-out');
 const matrixZoomValue = document.getElementById('matrix-zoom-value');
@@ -2160,7 +2163,7 @@ listingLinkModal.addEventListener('click', event => { if (event.target === listi
 const mappingPopover = document.getElementById('mapping-popover');
 const mappingSearchInput = document.getElementById('mapping-search-input');
 const mappingSearchResults = document.getElementById('mapping-search-results');
-const mappingState = {source:'', sku:'', anchor:null, requestId:0, timer:null, page:1, pageSize:24, count:0};
+const mappingState = {source:'', sku:'', anchor:null, requestId:0, timer:null, page:1, pageSize:24, count:0, mode:'search', fixedProductCode:''};
 
 function positionFloatingPanel(panel, anchor, width = 500) {
   const rect = anchor?.getBoundingClientRect?.() || {left:20, right:20, top:100, bottom:130};
@@ -2180,36 +2183,63 @@ function closeMappingSearch() {
   clearTimeout(mappingState.timer);
 }
 
-function openMappingSearch({source, sku, anchor, initialQuery = ''}) {
+function openMappingSearch({source, sku, anchor, initialQuery = '', fixedProductCode = ''}) {
+  const exactProductCode = String(fixedProductCode || '').trim();
   mappingState.source = source;
   mappingState.sku = sku;
   mappingState.anchor = anchor;
   mappingState.page = 1;
   mappingState.count = 0;
-  document.getElementById('mapping-source-label').textContent = CHANNEL_LABELS[source] || source;
+  mappingState.mode = exactProductCode ? 'remaining-options' : 'search';
+  mappingState.fixedProductCode = exactProductCode;
+  mappingPopover.classList.toggle('remaining-options-mode', Boolean(exactProductCode));
+  document.getElementById('mapping-source-label').textContent = exactProductCode
+    ? `${CHANNEL_LABELS[source] || source} · 상품코드 ${exactProductCode}`
+    : CHANNEL_LABELS[source] || source;
   document.getElementById('mapping-target-sku').textContent = sku;
-  mappingSearchInput.value = initialQuery === '-' ? '' : initialQuery;
-  document.getElementById('mapping-search-help').textContent = '코드 또는 상품명으로 검색합니다. 상품명 / 옵션명 형식은 두 조건의 교집합입니다.';
-  mappingSearchResults.innerHTML = '<div class="mapping-empty">검색어를 입력해주세요.</div>';
+  mappingSearchInput.readOnly = Boolean(exactProductCode);
+  mappingSearchInput.value = exactProductCode || (initialQuery === '-' ? '' : initialQuery);
+  document.getElementById('mapping-search-help').textContent = exactProductCode
+    ? `같은 상품코드 ${exactProductCode}에서 아직 다른 SKU에 연결되지 않은 옵션코드와 옵션명만 표시합니다.`
+    : '코드 또는 상품명으로 검색합니다. 상품명 / 옵션명 형식은 두 조건의 교집합입니다.';
+  mappingSearchResults.innerHTML = exactProductCode
+    ? '<div class="mapping-empty loading"><b>남은 옵션 확인 중</b><span>이미 연결된 옵션은 제외합니다.</span></div>'
+    : '<div class="mapping-empty">검색어를 입력해주세요.</div>';
   mappingPopover.hidden = false;
   positionFloatingPanel(mappingPopover, anchor);
-  mappingSearchInput.focus();
-  mappingSearchInput.select();
-  if (mappingSearchInput.value.trim()) runMappingSearch();
+  if (exactProductCode) {
+    void runMappingSearch();
+  } else {
+    mappingSearchInput.focus();
+    mappingSearchInput.select();
+    if (mappingSearchInput.value.trim()) runMappingSearch();
+  }
 }
 
 function renderMappingResults(result) {
   const items = Array.isArray(result?.rows) ? result.rows : [];
+  const remainingOptionsMode = mappingState.mode === 'remaining-options';
   mappingState.count = Number(result?.count || 0);
   mappingState.page = Number(result?.page || 1);
   const pageSize = Number(result?.pageSize || mappingState.pageSize);
   const totalPages = Math.max(1, Math.ceil(mappingState.count / pageSize));
   if (!items.length) {
-    mappingSearchResults.innerHTML = '<div class="mapping-empty"><b>검색 결과가 없습니다.</b><span>코드 일부 또는 상품명으로 다시 검색해주세요.</span></div>';
+    mappingSearchResults.innerHTML = remainingOptionsMode
+      ? '<div class="mapping-empty"><b>남은 옵션이 없습니다.</b><span>이 상품코드의 옵션이 모두 연결됐거나 원본에 옵션이 없습니다.</span></div>'
+      : '<div class="mapping-empty"><b>검색 결과가 없습니다.</b><span>코드 일부 또는 상품명으로 다시 검색해주세요.</span></div>';
     return;
   }
   const rows = items.map(item => {
     const linked = Array.isArray(item.linked_skus) ? item.linked_skus : [];
+    if (remainingOptionsMode) {
+      return `<article class="mapping-result-item mapping-remaining-option">
+        <button data-map-product="${escapeHtml(item.product_code)}" data-map-option="${escapeHtml(item.option_code || '')}" data-linked-skus="[]">
+          <span class="mapping-result-codes"><b>${escapeHtml(item.option_code || '옵션코드 없음')}</b><em>옵션코드</em></span>
+          <span class="mapping-result-names"><b>${escapeHtml(item.option_name || '옵션명 없음')}</b><em>옵션명</em></span>
+          <span class="mapping-result-meta"><span class="mapping-free">연결 가능</span></span>
+        </button>
+      </article>`;
+    }
     const otherLinks = linked.filter(sku => sku !== mappingState.sku);
     const warning = otherLinks.length ? `<span class="mapping-linked-warning">다른 SKU ${escapeHtml(otherLinks.slice(0,3).join(', '))}${otherLinks.length > 3 ? ` 외 ${otherLinks.length - 3}` : ''} 연결됨</span>` : '<span class="mapping-free">연결 가능</span>';
     return `<article class="mapping-result-item">
@@ -2220,14 +2250,16 @@ function renderMappingResults(result) {
       </button>
     </article>`;
   }).join('');
-  mappingSearchResults.innerHTML = `${rows}<nav class="mapping-pagination" aria-label="검색 결과 페이지">
-    <span>전체 ${formatNumber(mappingState.count)}개 · ${mappingState.page}/${totalPages}쪽</span>
-    <div><button type="button" data-mapping-page="${mappingState.page - 1}" ${mappingState.page <= 1 ? 'disabled' : ''}>이전</button><button type="button" data-mapping-page="${mappingState.page + 1}" ${mappingState.page >= totalPages ? 'disabled' : ''}>다음</button></div>
-  </nav>`;
+  mappingSearchResults.innerHTML = remainingOptionsMode
+    ? `${rows}<nav class="mapping-pagination mapping-remaining-count" aria-label="남은 옵션 수"><span>남은 옵션 ${formatNumber(mappingState.count)}개</span></nav>`
+    : `${rows}<nav class="mapping-pagination" aria-label="검색 결과 페이지">
+      <span>전체 ${formatNumber(mappingState.count)}개 · ${mappingState.page}/${totalPages}쪽</span>
+      <div><button type="button" data-mapping-page="${mappingState.page - 1}" ${mappingState.page <= 1 ? 'disabled' : ''}>이전</button><button type="button" data-mapping-page="${mappingState.page + 1}" ${mappingState.page >= totalPages ? 'disabled' : ''}>다음</button></div>
+    </nav>`;
 }
 
 async function runMappingSearch(page = mappingState.page) {
-  const keyword = mappingSearchInput.value.trim();
+  const keyword = mappingState.mode === 'remaining-options' ? mappingState.fixedProductCode : mappingSearchInput.value.trim();
   if (!keyword) {
     mappingSearchResults.innerHTML = '<div class="mapping-empty">검색어를 입력해주세요.</div>';
     return;
@@ -2235,9 +2267,16 @@ async function runMappingSearch(page = mappingState.page) {
   const requestId = ++mappingState.requestId;
   mappingSearchResults.innerHTML = '<div class="mapping-empty loading"><b>원본 검색 중</b><span>최신 정규화 데이터를 확인합니다.</span></div>';
   try {
-    const result = await liveData.searchSellerItems(mappingState.source, keyword, page, mappingState.pageSize);
+    let resolved;
+    if (mappingState.mode === 'remaining-options') {
+      const rows = await liveData.loadSellerProductOptions(mappingState.source, mappingState.fixedProductCode);
+      const remaining = rows.filter(item => !Array.isArray(item.linked_skus) || item.linked_skus.length === 0);
+      resolved = {rows:remaining, count:remaining.length, page:1, pageSize:Math.max(1, remaining.length)};
+    } else {
+      resolved = await liveData.searchSellerItems(mappingState.source, keyword, page, mappingState.pageSize);
+    }
     if (requestId !== mappingState.requestId) return;
-    renderMappingResults(result);
+    renderMappingResults(resolved);
   } catch (error) {
     console.error('seller source search failed', error);
     mappingSearchResults.innerHTML = `<div class="mapping-empty error"><b>검색하지 못했습니다.</b><span>${escapeHtml(error?.message || error)}</span></div>`;
@@ -5510,20 +5549,59 @@ function selectedMatrixDisconnectTargets() {
   return targets;
 }
 
+function matrixOptionLinkContext(anchorCell) {
+  const cell = anchorCell?.closest?.('td');
+  if (!cell?.matches('.seller-product-code-cell,.seller-option-identity')) {
+    return {enabled:false, detail:'상품코드 또는 옵션 셀에서 사용'};
+  }
+  const source = String(cell.dataset.channel || '').trim();
+  const row = cell.closest('tr[data-sku]');
+  const sku = String(row?.dataset.sku || '').trim();
+  const product = matrixRowsBySku.get(sku);
+  if (!product || !['smartstore', 'makeshop', 'ably'].includes(source)) {
+    return {enabled:false, detail:'연결할 판매처 행을 확인해주세요'};
+  }
+  const currentProductCode = String(product[`${source}_product_code`] || '').trim();
+  const currentOptionCode = String(product[`${source}_option_code`] || '').trim();
+  if (currentProductCode && currentOptionCode) {
+    return {enabled:false, detail:'이미 옵션코드까지 연결됨'};
+  }
+  const productGroup = sellpiaProductGroupKey(product);
+  const candidateCodes = [...new Set([...matrixRowsBySku.values()]
+    .filter(candidate => sellpiaProductGroupKey(candidate) === productGroup)
+    .map(candidate => String(candidate?.[`${source}_product_code`] || '').trim())
+    .filter(Boolean))];
+  if (!candidateCodes.length) return {enabled:false, detail:'같은 상품군에 복사할 코드 없음'};
+  if (candidateCodes.length > 1) return {enabled:false, detail:`상품코드 후보 ${formatNumber(candidateCodes.length)}개`};
+  const productCode = currentProductCode || candidateCodes[0];
+  return {
+    enabled:true,
+    source,
+    sku,
+    productCode,
+    anchor:cell,
+    detail:`${productCode} · 남은 옵션 보기`
+  };
+}
+
 function closeMatrixContextMenu() {
   if (!matrixContextMenu) return;
   matrixContextMenu.hidden = true;
   matrixContextTargets = [];
+  matrixContextOptionLinkTarget = null;
 }
 
 function openMatrixContextMenu(clientX, clientY, anchorCell) {
-  if (!matrixContextMenu || !matrixContextSourceRefresh || !matrixContextSourceRefreshCount || !matrixContextDisconnect || !matrixContextDisconnectCount) return;
+  if (!matrixContextMenu || !matrixContextSourceRefresh || !matrixContextSourceRefreshCount || !matrixContextOptionLink || !matrixContextOptionLinkDetail || !matrixContextDisconnect || !matrixContextDisconnectCount) return;
   matrixContextTargets = selectedMatrixDisconnectTargets();
+  matrixContextOptionLinkTarget = matrixOptionLinkContext(anchorCell);
   const labels = [...new Set(matrixContextTargets.map(target => CHANNEL_LABELS[target.source] || target.source))];
   matrixContextDisconnect.disabled = matrixContextTargets.length === 0;
   matrixContextDisconnectCount.textContent = matrixContextTargets.length
     ? `${labels.length === 1 ? `${labels[0]} ` : ''}연결 ${formatNumber(matrixContextTargets.length)}건`
     : '해제할 연결 없음';
+  matrixContextOptionLink.disabled = !matrixContextOptionLinkTarget.enabled;
+  matrixContextOptionLinkDetail.textContent = matrixContextOptionLinkTarget.detail;
   updateSourceRefreshAction();
   matrixContextMenu.hidden = false;
   const fallbackRect = anchorCell?.getBoundingClientRect?.() || {left:12, bottom:12};
@@ -5531,7 +5609,11 @@ function openMatrixContextMenu(clientX, clientY, anchorCell) {
   const wantedTop = Number(clientY) > 0 ? Number(clientY) : fallbackRect.bottom;
   matrixContextMenu.style.left = `${Math.max(8, Math.min(wantedLeft, window.innerWidth - matrixContextMenu.offsetWidth - 8))}px`;
   matrixContextMenu.style.top = `${Math.max(8, Math.min(wantedTop, window.innerHeight - matrixContextMenu.offsetHeight - 8))}px`;
-  const preferredAction = !matrixContextSourceRefresh.disabled ? matrixContextSourceRefresh : matrixContextDisconnect;
+  const preferredAction = !matrixContextOptionLink.disabled
+    ? matrixContextOptionLink
+    : !matrixContextSourceRefresh.disabled
+      ? matrixContextSourceRefresh
+      : matrixContextDisconnect;
   preferredAction.focus({preventScroll:true});
 }
 
@@ -5608,6 +5690,19 @@ matrixContextSourceRefresh?.addEventListener('click', event => {
   event.stopPropagation();
   closeMatrixContextMenu();
   void refreshSelectedSystemValuesFromSource();
+});
+
+matrixContextOptionLink?.addEventListener('click', event => {
+  event.stopPropagation();
+  const target = matrixContextOptionLinkTarget;
+  if (!target?.enabled) return;
+  closeMatrixContextMenu();
+  openMappingSearch({
+    source:target.source,
+    sku:target.sku,
+    anchor:target.anchor,
+    fixedProductCode:target.productCode
+  });
 });
 
 matrixContextDisconnect?.addEventListener('click', event => {
