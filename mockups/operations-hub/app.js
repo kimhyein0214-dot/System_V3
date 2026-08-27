@@ -107,7 +107,7 @@ const ATTRIBUTE_OPTIONS = Object.freeze({
   shape:['세트','링','바벨/바','볼','진주','큐빅/스톤','투명/리테이너','체인','모티브','기타']
 });
 const matrixTable = document.querySelector('.matrix-table');
-const matrixCellSelection = {anchor:null, focus:null, dragging:false};
+const matrixCellSelection = {anchor:null, focus:null, dragging:false, selected:new Set(), dragBase:new Set(), dragMode:'replace'};
 const matrixContextMenu = document.getElementById('matrix-context-menu');
 const matrixContextDisconnect = document.getElementById('matrix-context-disconnect');
 const matrixContextDisconnectCount = document.getElementById('matrix-context-disconnect-count');
@@ -2494,6 +2494,47 @@ function selectionRectangle(grid = matrixCellGrid()) {
   };
 }
 
+function matrixCellsInRectangle(grid = matrixCellGrid()) {
+  const bounds = selectionRectangle(grid);
+  const cells = new Set();
+  if (!bounds) return cells;
+  for (let rowIndex = bounds.top; rowIndex <= bounds.bottom; rowIndex += 1) {
+    for (let columnIndex = bounds.left; columnIndex <= bounds.right; columnIndex += 1) {
+      const cell = grid[rowIndex]?.[columnIndex];
+      if (cell) cells.add(cell);
+    }
+  }
+  return cells;
+}
+
+function matrixSelectedBounds(grid = matrixCellGrid()) {
+  const selected = matrixCellSelection.selected;
+  let top = Infinity;
+  let bottom = -1;
+  let left = Infinity;
+  let right = -1;
+  grid.forEach((row, rowIndex) => row.forEach((cell, columnIndex) => {
+    if (!cell || !selected.has(cell)) return;
+    top = Math.min(top, rowIndex);
+    bottom = Math.max(bottom, rowIndex);
+    left = Math.min(left, columnIndex);
+    right = Math.max(right, columnIndex);
+  }));
+  return bottom < 0 ? null : {top, bottom, left, right};
+}
+
+function applyMatrixDragSelection(grid = matrixCellGrid()) {
+  const rectangle = matrixCellsInRectangle(grid);
+  if (matrixCellSelection.dragMode === 'toggle') {
+    const next = new Set(matrixCellSelection.dragBase);
+    rectangle.forEach(cell => next.has(cell) ? next.delete(cell) : next.add(cell));
+    matrixCellSelection.selected = next;
+  } else {
+    matrixCellSelection.selected = rectangle;
+  }
+  paintMatrixCellSelection();
+}
+
 function selectedSourceRefreshTargets() {
   const targets = [];
   const seen = new Set();
@@ -2599,41 +2640,46 @@ function updateSourceRefreshAction() {
 }
 
 function paintMatrixCellSelection() {
-  const grid = matrixCellGrid();
   matrixBody.querySelectorAll('td.matrix-cell-selected,td.matrix-cell-anchor').forEach(cell => {
     cell.classList.remove('matrix-cell-selected', 'matrix-cell-anchor');
     cell.setAttribute('aria-selected', 'false');
   });
-  const bounds = selectionRectangle(grid);
-  if (!bounds) {
-    updateSelectedCount();
-    updateSourceRefreshAction();
-    return;
+  matrixCellSelection.selected = new Set([...matrixCellSelection.selected].filter(cell => cell?.isConnected));
+  matrixCellSelection.selected.forEach(cell => {
+    cell.classList.add('matrix-cell-selected');
+    cell.setAttribute('aria-selected', 'true');
+  });
+  if (matrixCellSelection.anchor?.isConnected && matrixCellSelection.selected.has(matrixCellSelection.anchor)) {
+    matrixCellSelection.anchor.classList.add('matrix-cell-anchor');
   }
-  for (let rowIndex = bounds.top; rowIndex <= bounds.bottom; rowIndex += 1) {
-    for (let columnIndex = bounds.left; columnIndex <= bounds.right; columnIndex += 1) {
-      const cell = grid[rowIndex]?.[columnIndex];
-      if (!cell) continue;
-      cell.classList.add('matrix-cell-selected');
-      cell.setAttribute('aria-selected', 'true');
-    }
-  }
-  matrixCellSelection.anchor?.classList.add('matrix-cell-anchor');
   updateSelectedCount();
   updateSourceRefreshAction();
 }
 
-function selectMatrixCell(cell, {extend = false} = {}) {
+function selectMatrixCell(cell, {extend = false, toggle = false} = {}) {
   if (!cell?.matches('td') || !cell.closest('tr[data-sku]')) return;
+  if (toggle) {
+    matrixCellSelection.dragBase = new Set(matrixCellSelection.selected);
+    matrixCellSelection.dragMode = 'toggle';
+    matrixCellSelection.anchor = cell;
+    matrixCellSelection.focus = cell;
+    applyMatrixDragSelection();
+    return;
+  }
   if (!extend || !matrixCellSelection.anchor?.isConnected) matrixCellSelection.anchor = cell;
   matrixCellSelection.focus = cell;
-  paintMatrixCellSelection();
+  matrixCellSelection.dragBase = new Set();
+  matrixCellSelection.dragMode = 'replace';
+  applyMatrixDragSelection();
 }
 
 function clearMatrixCellSelection() {
   matrixCellSelection.dragging = false;
   matrixCellSelection.anchor = null;
   matrixCellSelection.focus = null;
+  matrixCellSelection.selected.clear();
+  matrixCellSelection.dragBase.clear();
+  matrixCellSelection.dragMode = 'replace';
   matrixBody.querySelectorAll('td.matrix-cell-selected,td.matrix-cell-anchor').forEach(cell => {
     cell.classList.remove('matrix-cell-selected', 'matrix-cell-anchor');
     cell.setAttribute('aria-selected', 'false');
@@ -2822,13 +2868,14 @@ function matrixCellClipboardValue(cell) {
 
 function matrixSelectionClipboardText() {
   const grid = matrixCellGrid();
-  const bounds = selectionRectangle(grid);
+  const bounds = matrixSelectedBounds(grid);
   if (!bounds) return '';
   const rows = [];
   for (let rowIndex = bounds.top; rowIndex <= bounds.bottom; rowIndex += 1) {
     const values = [];
     for (let columnIndex = bounds.left; columnIndex <= bounds.right; columnIndex += 1) {
-      values.push(matrixCellClipboardValue(grid[rowIndex]?.[columnIndex]));
+      const cell = grid[rowIndex]?.[columnIndex];
+      values.push(matrixCellSelection.selected.has(cell) ? matrixCellClipboardValue(cell) : '');
     }
     rows.push(values.join('\t'));
   }
@@ -2884,10 +2931,12 @@ function isClipboardTypingTarget(target) {
 }
 
 matrixBody.addEventListener('mousedown', event => {
-  if (event.target.closest('.row-check,.inline-editor,[data-open-multi-link],[data-open-sku-links],[data-discount-edit]')) return;
+  const selectionModifier = event.ctrlKey || event.metaKey;
+  if (event.target.closest('.row-check,.inline-editor')) return;
+  if (!selectionModifier && event.target.closest('[data-open-multi-link],[data-open-sku-links],[data-discount-edit]')) return;
   const cell = event.target.closest('td');
   if (!cell || event.button !== 0) return;
-  selectMatrixCell(cell, {extend:event.shiftKey});
+  selectMatrixCell(cell, {extend:event.shiftKey, toggle:selectionModifier});
   if (isClipboardTypingTarget(document.activeElement)) document.activeElement.blur();
   matrixCellSelection.dragging = true;
   document.body.classList.add('matrix-cell-selecting');
@@ -2899,7 +2948,7 @@ matrixBody.addEventListener('mouseover', event => {
   const cell = event.target.closest('td');
   if (!cell || cell === matrixCellSelection.focus) return;
   matrixCellSelection.focus = cell;
-  paintMatrixCellSelection();
+  applyMatrixDragSelection();
 });
 
 document.addEventListener('mouseup', () => {
@@ -2931,8 +2980,7 @@ document.addEventListener('copy', event => {
   if (!text) return;
   event.clipboardData?.setData('text/plain', text);
   event.preventDefault();
-  const bounds = selectionRectangle();
-  const count = bounds ? (bounds.bottom - bounds.top + 1) * (bounds.right - bounds.left + 1) : 0;
+  const count = matrixCellSelection.selected.size;
   showToast(`${count}개 셀을 복사했습니다.`);
 });
 
@@ -2965,7 +3013,9 @@ document.addEventListener('paste', event => {
     lastCell = cell.closest('td');
   }));
   matrixCellSelection.focus = lastCell;
-  paintMatrixCellSelection();
+  matrixCellSelection.dragMode = 'replace';
+  matrixCellSelection.dragBase = new Set();
+  applyMatrixDragSelection();
   const notes = [invalid ? `형식 오류 ${invalid}개 제외` : '', overflow ? `현재 페이지 밖 ${overflow}개 제외` : ''].filter(Boolean);
   showToast(`${changed}개 셀을 붙여넣었습니다.${notes.length ? ` · ${notes.join(' · ')}` : ''}`);
 });
@@ -3559,6 +3609,7 @@ document.getElementById('advanced-filter-chips').addEventListener('click', event
 document.getElementById('advanced-filter-clear').addEventListener('click', () => setAdvancedFilter({logic:'and', conditions:[]}));
 
 matrixBody.addEventListener('click', event => {
+  if ((event.ctrlKey || event.metaKey) && event.target.closest('td')) return;
   const priceEditButton = event.target.closest('[data-price-edit]');
   if (priceEditButton) {
     const editable = priceEditButton.closest('td')?.querySelector('.price-component-base');
@@ -3601,7 +3652,7 @@ matrixBody.addEventListener('click', event => {
   }
   if (event.target.closest('.row-check')) return;
   const cell = event.target.closest('td');
-  if (cell) selectMatrixCell(cell, {extend:event.shiftKey});
+  if (cell && !event.ctrlKey && !event.metaKey) selectMatrixCell(cell, {extend:event.shiftKey});
 });
 
 matrixBody.addEventListener('mouseover', event => {
@@ -5380,17 +5431,17 @@ function selectedMatrixSkus() {
 function selectedMatrixTargets() {
   const grid = matrixCellGrid();
   const rows = [...matrixBody.querySelectorAll('tr[data-sku]')];
-  const bounds = selectionRectangle(grid);
-  if (!bounds) return {cells:[], skus:[], sources:[], sourceSkus:{smartstore:[], makeshop:[], ably:[]}};
-  const cells = [];
+  const selectedCells = matrixCellSelection.selected;
+  if (!selectedCells.size) return {cells:[], skus:[], sources:[], sourceSkus:{smartstore:[], makeshop:[], ably:[]}};
+  const cells = new Set();
   const skus = new Set();
   const sources = new Set();
   const sourceSkuSets = {smartstore:new Set(), makeshop:new Set(), ably:new Set()};
-  for (let rowIndex = bounds.top; rowIndex <= bounds.bottom; rowIndex += 1) {
-    for (let columnIndex = bounds.left; columnIndex <= bounds.right; columnIndex += 1) {
+  for (let rowIndex = 0; rowIndex < grid.length; rowIndex += 1) {
+    for (let columnIndex = 0; columnIndex < grid[rowIndex].length; columnIndex += 1) {
       const cell = grid[rowIndex]?.[columnIndex];
-      if (!cell) continue;
-      cells.push(cell);
+      if (!cell || !selectedCells.has(cell)) continue;
+      cells.add(cell);
       const sku = rows[rowIndex]?.dataset.sku;
       if (sku) skus.add(sku);
       if (cell.dataset.channel) {
@@ -5400,7 +5451,7 @@ function selectedMatrixTargets() {
     }
   }
   return {
-    cells,
+    cells:[...cells],
     skus:[...skus],
     sources:[...sources],
     sourceSkus:Object.fromEntries(Object.entries(sourceSkuSets).map(([source, values]) => [source, [...values]]))

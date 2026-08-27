@@ -77,7 +77,7 @@ assert.match(dataSource, /`sellpia\/\$\{safeSku\}\.jpg`[\s\S]*?upsert:true/, "dr
 assert.match(editMigration, /operations_hub_sellpia_overrides[\s\S]*?operations_hub_change_queue[\s\S]*?operations_hub_dashboard_metrics/, "Sellpia edits, seller outbox, and live dashboard metrics must persist in Supabase");
 assert.match(css, /--thumb-width:84px;--thumb-height:63px[\s\S]*?object-fit:contain/, "matrix thumbnails must be larger and show the complete image without cropping");
 assert.match(html, /스마트스토어[\s\S]*?상품코드[\s\S]*?상품명[\s\S]*?옵션코드 \/ 옵션명[\s\S]*?메이크샵[\s\S]*?에이블리/, "every seller group must expose independently copyable product codes and names plus option identities");
-assert.match(html, /style\.css\?v=20260827-matrix-menu-r45[\s\S]*?data-service\.js\?v=20260827-matrix-menu-r45[\s\S]*?app\.js\?v=20260827-matrix-menu-r45/, "the deployed page must invalidate cached assets when the matrix context menu ships");
+assert.match(html, /style\.css\?v=20260827-multi-select-r46[\s\S]*?data-service\.js\?v=20260827-multi-select-r46[\s\S]*?app\.js\?v=20260827-multi-select-r46/, "the deployed page must invalidate cached assets when non-contiguous matrix selection ships");
 assert.match(source, /seller-product-code-cell[\s\S]*?mappingCodeButton[\s\S]*?seller-product-name-cell[\s\S]*?seller-option-identity/, "seller product codes and product names must render in separate matrix cells");
 assert.doesNotMatch(html, /id="preset-show-status"/, "seller connection labels must not return through view settings");
 assert.doesNotMatch(source.slice(source.indexOf('function viewColumnIndexes'), source.indexOf('function indexMatrixBodyColumns')), /groups\.status/, "seller connection-status columns must stay hidden in every matrix preset");
@@ -103,7 +103,7 @@ assert.match(mappingSyncMigration, /operations_hub_mapping_sync_status[\s\S]*?co
 assert.match(html, /id="matrix-mapping-sync"[\s\S]*?id="matrix-mapping-sync-state"[\s\S]*?id="matrix-mapping-sync-time"/, "the permanent action panel must show mapping synchronization state");
 assert.match(dataSource, /operations_hub_mapping_sync_status[\s\S]*?loadMappingSyncStatus/, "the frontend must read mapping synchronization state from Supabase");
 assert.match(source, /loadMappingSyncStatus\(\{autoRefresh:true\}\)[\s\S]*?15000/, "the matrix must detect external mapping changes without requiring a manual page reload");
-assert.match(source, /function matrixSelectionClipboardText\([\s\S]*?rows\.join\('\\n'\)/, "selected Sellpia cells must copy to an Excel-compatible tab and newline grid");
+assert.match(source, /function matrixSelectionClipboardText\([\s\S]*?matrixSelectedBounds[\s\S]*?matrixCellSelection\.selected\.has\(cell\)[\s\S]*?rows\.join\('\\n'\)/, "selected contiguous or disjoint cells must copy to an Excel-compatible tab and newline grid");
 assert.match(source, /document\.addEventListener\('paste'[\s\S]*?normalizePastedRows[\s\S]*?commitEditableCellValue/, "Excel clipboard grids must paste into the selected editable Sellpia cell range");
 assert.match(source, /function parseEditableInputValue\([\s\S]*?signedNumber[\s\S]*?\^\-\?\\d\+[\s\S]*?valid/, "clipboard paste and inline editing must share numeric validation, including signed option prices");
 assert.match(source, /function commitEditableCellValue\([\s\S]*?parseEditableInputValue\(value, cell\.dataset\.valueType\)[\s\S]*?parsed\.valid/, "clipboard paste must reject invalid stock and price values through the common parser");
