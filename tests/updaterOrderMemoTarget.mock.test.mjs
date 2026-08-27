@@ -45,6 +45,7 @@ function makeTask(ordNo) {
     orderMemoAmbiguousKeys: new Set(),
     orderMemoNormalizedMap: new Map(),
     orderMemoNormalizedAmbiguousKeys: new Set(),
+    orderMemoRequestedCount: 0,
   };
 }
 
@@ -65,6 +66,7 @@ assert.deepEqual(
   orderMemoTargetForGridRow(smartstoreTask, { c_item_no: "525_2026082185840321" }, 0),
   {
     found: true,
+    known: true,
     value: "합배송 확인",
     matchMethod: "item_no_exact",
     matchedItemNo: "525_2026082185840321",
@@ -112,6 +114,7 @@ assert.deepEqual(
   orderMemoTargetForGridRow(ambiguousTask, { c_item_no: "9_dup" }, 0),
   {
     found: false,
+    known: false,
     value: "",
     matchMethod: "none",
     matchedItemNo: "",
@@ -129,9 +132,33 @@ const blankTask = addRows(makeTask("order-D"), [{
   item_no: "525_blank",
   sellpia_order_item_no: "blank",
   order_memo: "",
+  order_memo_updated_at: "2026-08-27T00:00:00Z",
 }]);
 const blankTarget = orderMemoTargetForGridRow(blankTask, { c_item_no: "525_blank" }, 0);
 assert.equal(blankTarget.found, true);
 assert.equal(blankTarget.value, "");
+assert.equal(blankTask.orderMemoRequestedCount, 1);
+
+const unsetTask = addRows(makeTask("order-E"), [{
+  ord_no: "order-E",
+  item_no: "525_unset",
+  sellpia_order_item_no: "unset",
+  order_memo: "",
+  order_memo_updated_at: "",
+}]);
+assert.deepEqual(
+  orderMemoTargetForGridRow(unsetTask, { c_item_no: "525_unset" }, 0),
+  {
+    found: false,
+    known: true,
+    value: "",
+    matchMethod: "item_no_exact",
+    matchedItemNo: "525_unset",
+    warning: "",
+  },
+);
+assert.equal(unsetTask.orderMemoRequestedCount, 0);
+
+assert.match(source, /order_memo,order_memo_updated_at/);
 
 console.log("Updater order-memo target matching: passed");
