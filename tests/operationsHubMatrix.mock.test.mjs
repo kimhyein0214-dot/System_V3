@@ -87,6 +87,7 @@ assert.match(source, /sellpiaEditor\('sellpia_own_code'[\s\S]*?systemOperational
 assert.match(source, /mapping-code-button[\s\S]*?openListingLinkManager[\s\S]*?openMappingSearch[\s\S]*?linkSellerItem/, "seller code cells must open link management first and keep source search for unmatched rows");
 assert.match(source, /listing-link-add-toggle[\s\S]*?event\.stopPropagation\(\)[\s\S]*?openMappingSearch/, "opening seller search from the link manager must not be closed by the same bubbled click");
 assert.match(source, /data-open-sku-links[\s\S]*?drawerState\.activeTab = 'connections'[\s\S]*?openProductDrawer\(row\)/, "clicking a Sellpia SKU must open its connection information directly");
+assert.match(source, /function matrixRowName\(row\)[\s\S]*?matrixRowsBySku\.get\(sku\)[\s\S]*?sellpia-name-col span[\s\S]*?sellpia-option-name-col span/, "the product drawer must read the current separated Sellpia name cells without relying on removed product-cell markup");
 assert.match(dataSource, /search_operations_hub_seller_items[\s\S]*?link_operations_hub_seller_item[\s\S]*?save_operations_hub_seller_listing/, "seller search, linking, and detail drafts must use database RPCs");
 assert.match(dataSource, /search_operations_hub_seller_items_v2[\s\S]*?p_page[\s\S]*?p_page_size/, "seller matching search must be paginated instead of silently capped");
 assert.match(source, /상품명 \/ 옵션명[\s\S]*?mapping-pagination[\s\S]*?전체 \$\{formatNumber\(mappingState\.count\)\}개/, "seller search must explain intersection syntax and show total result count");

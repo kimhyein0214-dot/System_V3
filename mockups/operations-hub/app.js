@@ -1220,12 +1220,14 @@ async function refreshLiveData(options) {
 }
 
 function matrixRowName(row) {
+  const sku = String(row?.dataset?.sku || '').trim();
+  const product = matrixRowsBySku.get(sku) || {};
   return {
-    sku: row.dataset.sku,
+    sku,
     ownCode: row.dataset.ownCode || '-',
     image: row.dataset.image || '',
-    name: row.querySelector('.product-cell b').textContent,
-    option: row.querySelector('.product-cell em').textContent
+    name:String(product.sellpia_product_name || product.display_name || row.querySelector('.sellpia-name-col span')?.textContent || '상품명 없음').trim(),
+    option:String(product.sellpia_option_name || row.querySelector('.sellpia-option-name-col span')?.textContent || '옵션명 없음').trim()
   };
 }
 
