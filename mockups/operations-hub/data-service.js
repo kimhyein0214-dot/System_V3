@@ -707,7 +707,6 @@
       p_option_code:cleanText(optionCode)
     });
     if (error) throw error;
-    await refreshListingGraphCache([sku]);
     return Array.isArray(data) ? data[0] : data;
   }
 
@@ -723,7 +722,6 @@
       p_batch_id:batchId
     });
     if (error) throw error;
-    await refreshListingGraphCache([sku]);
     return Array.isArray(data) ? data[0] : data;
   }
 

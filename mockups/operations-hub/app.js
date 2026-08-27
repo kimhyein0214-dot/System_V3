@@ -1016,7 +1016,6 @@ async function loadMappingSyncStatus({markDisplayed = false, autoRefresh = false
       }
       mappingSyncState.autoRefreshing = true;
       renderMappingSyncStatus(status, 'changed');
-      if (liveData?.refreshListingGraphCache) await liveData.refreshListingGraphCache();
       const refreshed = await loadLiveMatrix();
       if (refreshed) mappingSyncState.displayedVersion = version;
       mappingSyncState.autoRefreshing = false;

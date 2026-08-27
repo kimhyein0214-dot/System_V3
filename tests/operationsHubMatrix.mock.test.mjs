@@ -77,7 +77,7 @@ assert.match(dataSource, /`sellpia\/\$\{safeSku\}\.jpg`[\s\S]*?upsert:true/, "dr
 assert.match(editMigration, /operations_hub_sellpia_overrides[\s\S]*?operations_hub_change_queue[\s\S]*?operations_hub_dashboard_metrics/, "Sellpia edits, seller outbox, and live dashboard metrics must persist in Supabase");
 assert.match(css, /--thumb-width:84px;--thumb-height:63px[\s\S]*?object-fit:contain/, "matrix thumbnails must be larger and show the complete image without cropping");
 assert.match(html, /스마트스토어[\s\S]*?상품코드[\s\S]*?상품명[\s\S]*?옵션코드 \/ 옵션명[\s\S]*?메이크샵[\s\S]*?에이블리/, "every seller group must expose independently copyable product codes and names plus option identities");
-assert.match(html, /style\.css\?v=20260827-link-ui-r43[\s\S]*?data-service\.js\?v=20260827-link-ui-r43[\s\S]*?app\.js\?v=20260827-link-ui-r43/, "the deployed page must invalidate cached 40-column assets when the 43-column link UI ships");
+assert.match(html, /style\.css\?v=20260827-link-timeout-r44[\s\S]*?data-service\.js\?v=20260827-link-timeout-r44[\s\S]*?app\.js\?v=20260827-link-timeout-r44/, "the deployed page must invalidate cached assets when the link-timeout fix ships");
 assert.match(source, /seller-product-code-cell[\s\S]*?mappingCodeButton[\s\S]*?seller-product-name-cell[\s\S]*?seller-option-identity/, "seller product codes and product names must render in separate matrix cells");
 assert.doesNotMatch(html, /id="preset-show-status"/, "seller connection labels must not return through view settings");
 assert.doesNotMatch(source.slice(source.indexOf('function viewColumnIndexes'), source.indexOf('function indexMatrixBodyColumns')), /groups\.status/, "seller connection-status columns must stay hidden in every matrix preset");

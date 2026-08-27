@@ -11,6 +11,8 @@ const partialRefreshFix = fs.readFileSync(new URL("../supabase/migrations/202608
 const inventoryDraftMigration = fs.readFileSync(new URL("../supabase/migrations/20260818045443_operations_hub_bundle_inventory_drafts.sql", import.meta.url), "utf8");
 const disconnectMigration = fs.readFileSync(new URL("../supabase/migrations/20260821200000_disconnect_legacy_listing_component.sql", import.meta.url), "utf8");
 const durableDisconnectMigration = fs.readFileSync(new URL("../supabase/migrations/20260827090000_fix_operations_hub_link_disconnect.sql", import.meta.url), "utf8");
+const linkTimeoutMigration = fs.readFileSync(new URL("../supabase/migrations/20260827103000_optimize_operations_hub_link_mutations.sql", import.meta.url), "utf8");
+const linkConflictFixMigration = fs.readFileSync(new URL("../supabase/migrations/20260827103500_fix_link_cache_upsert_conflict.sql", import.meta.url), "utf8");
 const performanceRestoreMigration = fs.readFileSync(new URL("../supabase/migrations/20260827093000_restore_operations_hub_matrix_system_live_performance.sql", import.meta.url), "utf8");
 const pageFirstGraphMigration = fs.readFileSync(new URL("../supabase/migrations/20260823082547_optimize_operations_hub_listing_graph_page_first.sql", import.meta.url), "utf8");
 const exactGraphMigration = fs.readFileSync(new URL("../supabase/migrations/20260825054226_operations_hub_exact_listing_graph.sql", import.meta.url), "utf8");
@@ -55,6 +57,12 @@ assert.doesNotMatch(exactGraphMigration, /sku_listing_counts|listing_spread|clas
 assert.match(exactGraphMigration, /security invoker[\s\S]*revoke all[\s\S]*grant execute/i, "the exact listing RPC must preserve invoker permissions");
 assert.match(app, /data-link-manager-remove[\s\S]*removeListingComponent/, "the focused manager must disconnect a selected component row");
 assert.match(app, /listing-link-add-form[\s\S]*saveListingComponent/, "the focused manager must add another SKU to the selected seller listing");
+assert.doesNotMatch(data, /linkSellerItem\([\s\S]{0,900}?refreshListingGraphCache\(\[sku\]\)/, "a committed manual link must not be reported as failed when legacy cache refresh times out");
+assert.doesNotMatch(app, /mappingSyncState\.autoRefreshing[\s\S]{0,500}?refreshListingGraphCache\(\)/, "mapping status polling must not launch a catalog-wide legacy cache rebuild from the browser");
+assert.match(linkTimeoutMigration, /upsert_operations_hub_listing_component[\s\S]*operations_hub_listing_legacy_cache/, "component promotion must use the indexed exact-listing cache");
+assert.doesNotMatch(linkTimeoutMigration, /operations_hub_matrix_live/, "link mutations must not scan the catalog-wide live matrix");
+assert.match(linkConflictFixMigration, /link_operations_hub_seller_item_v2[\s\S]*delete from public\.operations_hub_listing_legacy_cache[\s\S]*insert into public\.operations_hub_listing_legacy_cache/, "manual links must refresh only their exact cached edge");
+assert.match(linkConflictFixMigration, /on conflict on constraint operations_hub_listing_legacy_cache_pkey/, "targeted cache upserts must avoid PL/pgSQL output-column ambiguity");
 assert.doesNotMatch(pageFirstGraphMigration, /from public\.operations_hub_listing_graph_live/i, "listing pagination must not materialize the fully enriched compatibility graph");
 assert.match(pageFirstGraphMigration, /identity_edges as materialized[\s\S]*classified as materialized[\s\S]*filtered as materialized[\s\S]*paged_keys as materialized[\s\S]*paged_components as materialized/, "listing identities must be classified and paged before component enrichment");
 assert.match(pageFirstGraphMigration, /paged_components as materialized[\s\S]*left join public\.operations_hub_sellpia_component_live/, "Sellpia stock enrichment must be scoped to the selected page");
