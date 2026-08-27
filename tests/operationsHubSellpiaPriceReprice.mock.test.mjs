@@ -19,7 +19,7 @@ assert.match(migration, /Source uploads[\s\S]*?never write this table[\s\S]*?ope
 assert.match(migration, /operations_hub_pricing_reset_archives[\s\S]*?price_rule_assignment[\s\S]*?update public\.operations_hub_price_rule_assignments[\s\S]*?is_active = false/, 'the inferred pricing catalog must be archived before being retired');
 assert.match(migration, /enforce_operations_hub_price_assignment_system_base[\s\S]*?base_price is not null[\s\S]*?시스템 기준가격을 먼저 저장/, 'a price combination cannot be assigned before its system base exists');
 
-assert.match(data, /operations_hub_matrix_system_live/, 'interactive and export matrix reads must use the canonical system overlay');
+assert.match(data, /MATRIX_VIEW = 'operations_hub_matrix_managed_live'/, 'interactive reads must use the managed wrapper over the canonical system overlay');
 assert.match(data, /saveSellpiaChanges[\s\S]*?system_base_price','system_stock[\s\S]*?save_operations_hub_sku_operational_value/, 'system stock and price edits must route to the immediate canonical-save RPC');
 assert.match(data, /systemChangeSource[\s\S]*?p_change_source:systemChangeSource[\s\S]*?p_metadata:systemMetadata/, 'explicit source acceptance must be preserved in the canonical audit event');
 assert.match(data, /previewPriceRuleSet[\s\S]*?시스템 기준가격을 먼저 저장해주세요/, 'price calculations must reject missing canonical base prices instead of treating them as zero');
@@ -31,7 +31,7 @@ assert.match(app, /원본 숫자는 자동 반영되지 않으며[\s\S]*?선택 
 assert.match(app, /refreshSelectedSystemValuesFromSource[\s\S]*?loadProductsBySkus[\s\S]*?systemChangeSource:'source_accept'[\s\S]*?verifySourceRefreshTargets/, 'selected source values must save immediately and pass a targeted database reread before the matrix reports success');
 assert.doesNotMatch(app.slice(app.indexOf('async function refreshSelectedSystemValuesFromSource'), app.indexOf('function matrixCellClipboardValue')), /if \(!product\) continue/, 'a missing selected SKU must fail visibly instead of being silently skipped');
 assert.doesNotMatch(app.slice(app.indexOf('async function refreshSelectedSystemValuesFromSource'), app.indexOf('function matrixCellClipboardValue')), /원본값 \$\{changes\.length\}개를 저장/, 'the success message must not reuse the requested-cell count as the persisted count');
-assert.match(data, /loadProductsBySkus[\s\S]*?operations_hub_matrix_system_live[\s\S]*?attachProductMetadata/, 'source refresh verification must reread the saved SKUs with active draft and price metadata attached');
+assert.match(data, /loadProductsBySkus[\s\S]*?\.from\(MATRIX_VIEW\)[\s\S]*?attachProductMetadata/, 'source refresh verification must reread the saved SKUs with active draft and price metadata attached');
 assert.match(app, /selectedSourceRefreshTargets[\s\S]*?seller-edit\[data-source\]\[data-field-key\][\s\S]*?seller_price[\s\S]*?seller_discount/, 'selected source refresh must recognize seller stock, price component, and discount cells in addition to system cells');
 assert.match(app, /sellerEditor\.dataset\.baseline[\s\S]*?saveSellerValueDraft[\s\S]*?saveSellerProductDiscountDrafts[\s\S]*?saveSellerProductBaseDrafts[\s\S]*?saveSellerPriceDraft/, 'seller source refresh must restore the selected raw value through the matching seller draft workflow');
 assert.match(app, /saveSellerProductBaseDrafts\([\s\S]*?basePriceSource:'source'/, 'restoring a merged seller base-price cell must mark the restored group value as source-owned');
