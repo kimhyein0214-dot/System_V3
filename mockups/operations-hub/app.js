@@ -108,6 +108,10 @@ const ATTRIBUTE_OPTIONS = Object.freeze({
 });
 const matrixTable = document.querySelector('.matrix-table');
 const matrixCellSelection = {anchor:null, focus:null, dragging:false};
+const matrixContextMenu = document.getElementById('matrix-context-menu');
+const matrixContextDisconnect = document.getElementById('matrix-context-disconnect');
+const matrixContextDisconnectCount = document.getElementById('matrix-context-disconnect-count');
+let matrixContextTargets = [];
 const matrixZoomOut = document.getElementById('matrix-zoom-out');
 const matrixZoomValue = document.getElementById('matrix-zoom-value');
 const matrixZoomIn = document.getElementById('matrix-zoom-in');
@@ -2903,6 +2907,24 @@ document.addEventListener('mouseup', () => {
   document.body.classList.remove('matrix-cell-selecting');
 });
 
+matrixBody.addEventListener('contextmenu', event => {
+  const cell = event.target.closest('td');
+  if (!cell || !cell.closest('tr[data-sku]')) return;
+  event.preventDefault();
+  if (!cell.classList.contains('matrix-cell-selected')) selectMatrixCell(cell);
+  openMatrixContextMenu(event.clientX, event.clientY, cell);
+});
+
+document.addEventListener('click', event => {
+  if (matrixContextMenu?.hidden || event.target.closest('#matrix-context-menu')) return;
+  closeMatrixContextMenu();
+});
+document.addEventListener('keydown', event => {
+  if (event.key === 'Escape') closeMatrixContextMenu();
+});
+window.addEventListener('resize', closeMatrixContextMenu);
+window.addEventListener('scroll', closeMatrixContextMenu, true);
+
 document.addEventListener('copy', event => {
   if (!matrixCellSelection.anchor?.isConnected || isClipboardTypingTarget(document.activeElement)) return;
   const text = matrixSelectionClipboardText();
@@ -5384,6 +5406,129 @@ function selectedMatrixTargets() {
     sourceSkus:Object.fromEntries(Object.entries(sourceSkuSets).map(([source, values]) => [source, [...values]]))
   };
 }
+
+function selectedMatrixDisconnectTargets() {
+  const selected = selectedMatrixTargets();
+  const targets = [];
+  const seen = new Set();
+  for (const [source, skus] of Object.entries(selected.sourceSkus)) {
+    for (const sku of skus) {
+      const product = matrixRowsBySku.get(sku) || {};
+      const productCode = String(product[`${source}_product_code`] || '').trim();
+      const optionCode = String(product[`${source}_option_code`] || '').trim();
+      if (!productCode) continue;
+      const key = [source, productCode, optionCode, sku].join('\u0000');
+      if (seen.has(key)) continue;
+      seen.add(key);
+      targets.push({
+        source,
+        sku,
+        productCode,
+        optionCode,
+        productName:String(product[`${source}_name`] || '').trim(),
+        optionName:String(product[`${source}_option_name`] || '').trim()
+      });
+    }
+  }
+  return targets;
+}
+
+function closeMatrixContextMenu() {
+  if (!matrixContextMenu) return;
+  matrixContextMenu.hidden = true;
+  matrixContextTargets = [];
+}
+
+function openMatrixContextMenu(clientX, clientY, anchorCell) {
+  if (!matrixContextMenu || !matrixContextDisconnect || !matrixContextDisconnectCount) return;
+  matrixContextTargets = selectedMatrixDisconnectTargets();
+  const labels = [...new Set(matrixContextTargets.map(target => CHANNEL_LABELS[target.source] || target.source))];
+  matrixContextDisconnect.disabled = matrixContextTargets.length === 0;
+  matrixContextDisconnectCount.textContent = matrixContextTargets.length
+    ? `${labels.length === 1 ? `${labels[0]} ` : ''}연결 ${formatNumber(matrixContextTargets.length)}건`
+    : '해제할 연결 없음';
+  matrixContextMenu.hidden = false;
+  const fallbackRect = anchorCell?.getBoundingClientRect?.() || {left:12, bottom:12};
+  const wantedLeft = Number(clientX) > 0 ? Number(clientX) : fallbackRect.left;
+  const wantedTop = Number(clientY) > 0 ? Number(clientY) : fallbackRect.bottom;
+  matrixContextMenu.style.left = `${Math.max(8, Math.min(wantedLeft, window.innerWidth - matrixContextMenu.offsetWidth - 8))}px`;
+  matrixContextMenu.style.top = `${Math.max(8, Math.min(wantedTop, window.innerHeight - matrixContextMenu.offsetHeight - 8))}px`;
+  matrixContextDisconnect.focus({preventScroll:true});
+}
+
+function matrixDisconnectTargetLabel(target) {
+  const seller = CHANNEL_LABELS[target.source] || target.source;
+  const option = target.optionCode ? ` / 옵션 ${target.optionCode}` : '';
+  return `${target.sku} ↔ ${seller} ${target.productCode}${option}`;
+}
+
+async function resolveMatrixDisconnectComponentIds(targets) {
+  const listingKeys = new Map();
+  for (const target of targets) {
+    const key = [target.source, target.productCode, target.optionCode].join('\u0000');
+    if (!listingKeys.has(key)) listingKeys.set(key, target);
+  }
+  const settled = await Promise.allSettled([...listingKeys.entries()].map(async ([key, target]) => {
+    const graph = await liveData.loadListingConnection({
+      source:target.source,
+      productCode:target.productCode,
+      optionCode:target.optionCode
+    });
+    return [key, graph];
+  }));
+  const graphs = new Map(settled.filter(result => result.status === 'fulfilled').map(result => result.value));
+  return targets.map(target => {
+    const key = [target.source, target.productCode, target.optionCode].join('\u0000');
+    const components = Array.isArray(graphs.get(key)?.components) ? graphs.get(key).components : [];
+    const component = components.find(item => String(item?.sku || '').trim() === target.sku);
+    return {...target, componentId:component?.componentId || null};
+  });
+}
+
+async function disconnectSelectedMatrixLinks() {
+  const targets = [...matrixContextTargets];
+  if (!targets.length || !liveData?.removeListingComponent) return;
+  const preview = targets.slice(0, 8).map(matrixDisconnectTargetLabel);
+  const more = targets.length > preview.length ? `\n외 ${formatNumber(targets.length - preview.length)}건` : '';
+  const confirmed = window.confirm(`선택한 연결 ${formatNumber(targets.length)}건을 해제할까요?\n\n${preview.join('\n')}${more}\n\n각 SKU의 해당 판매처 연결만 해제하며, 같은 조합의 다른 구성 SKU는 유지됩니다.`);
+  if (!confirmed) return;
+  closeMatrixContextMenu();
+  matrixContextDisconnect.disabled = true;
+  matrixContextDisconnectCount.textContent = '연결 해제 중…';
+  const resolvedTargets = await resolveMatrixDisconnectComponentIds(targets);
+  const failures = [];
+  let successCount = 0;
+  for (let offset = 0; offset < resolvedTargets.length; offset += 3) {
+    const batch = resolvedTargets.slice(offset, offset + 3);
+    const settled = await Promise.allSettled(batch.map(target => liveData.removeListingComponent({
+      componentId:target.componentId,
+      source:target.source,
+      productCode:target.productCode,
+      optionCode:target.optionCode,
+      sku:target.sku
+    })));
+    settled.forEach((result, index) => {
+      if (result.status === 'fulfilled') successCount += 1;
+      else failures.push({target:batch[index], error:result.reason});
+    });
+  }
+  if (successCount) {
+    await loadLiveMatrix();
+    void loadLiveDashboardMetrics();
+  }
+  if (!failures.length) {
+    showToast(`선택 연결 ${formatNumber(successCount)}건을 해제했습니다.`);
+  } else if (successCount) {
+    showToast(`연결 해제 ${formatNumber(successCount)}건 완료 · ${formatNumber(failures.length)}건 실패`);
+  } else {
+    showToast(`연결 해제 실패: ${failures[0]?.error?.message || failures[0]?.error || 'DB 오류'}`);
+  }
+}
+
+matrixContextDisconnect?.addEventListener('click', event => {
+  event.stopPropagation();
+  void disconnectSelectedMatrixLinks();
+});
 
 function openSellerExport({action = 'export', rows = []} = {}) {
   sellerExportState.rows = rows;
