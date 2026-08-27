@@ -76,7 +76,8 @@ assert.match(source, /image-drop-cell[\s\S]*?uploadSellpiaImage/, "image cells m
 assert.match(dataSource, /`sellpia\/\$\{safeSku\}\.jpg`[\s\S]*?upsert:true/, "dropped images must be normalized to the Sellpia SKU filename");
 assert.match(editMigration, /operations_hub_sellpia_overrides[\s\S]*?operations_hub_change_queue[\s\S]*?operations_hub_dashboard_metrics/, "Sellpia edits, seller outbox, and live dashboard metrics must persist in Supabase");
 assert.match(css, /--thumb-width:84px;--thumb-height:63px[\s\S]*?object-fit:contain/, "matrix thumbnails must be larger and show the complete image without cropping");
-assert.match(html, /스마트스토어[\s\S]*?상품명 \/ 옵션명[\s\S]*?메이크샵[\s\S]*?에이블리/, "every seller group must expose product and option names for verification");
+assert.match(html, /스마트스토어[\s\S]*?상품코드[\s\S]*?상품명[\s\S]*?옵션코드 \/ 옵션명[\s\S]*?메이크샵[\s\S]*?에이블리/, "every seller group must expose independently copyable product codes and names plus option identities");
+assert.match(source, /seller-product-code-cell[\s\S]*?mappingCodeButton[\s\S]*?seller-product-name-cell[\s\S]*?seller-option-identity/, "seller product codes and product names must render in separate matrix cells");
 assert.doesNotMatch(html, /id="preset-show-status"/, "seller connection labels must not return through view settings");
 assert.doesNotMatch(source.slice(source.indexOf('function viewColumnIndexes'), source.indexOf('function indexMatrixBodyColumns')), /groups\.status/, "seller connection-status columns must stay hidden in every matrix preset");
 assert.match(html, /id="preset-show-codes"[\s\S]*?id="preset-show-seller-names"[\s\S]*?id="preset-image-size"/, "view settings must still independently control codes, seller names, and image size");
@@ -84,6 +85,8 @@ assert.doesNotMatch(source, /sellpiaEditor\('sellpia_product_name'/, "Sellpia pr
 assert.doesNotMatch(source, /sellpiaEditor\('sellpia_option_name'/, "Sellpia option names must not be editable inline in the matrix");
 assert.match(source, /sellpiaEditor\('sellpia_own_code'[\s\S]*?systemOperationalCell\(product, 'system_stock'[\s\S]*?systemOperationalCell\(product, 'system_base_price'/, "own code plus system-owned stock and base price must remain inline editable");
 assert.match(source, /mapping-code-button[\s\S]*?openListingLinkManager[\s\S]*?openMappingSearch[\s\S]*?linkSellerItem/, "seller code cells must open link management first and keep source search for unmatched rows");
+assert.match(source, /listing-link-add-toggle[\s\S]*?event\.stopPropagation\(\)[\s\S]*?openMappingSearch/, "opening seller search from the link manager must not be closed by the same bubbled click");
+assert.match(source, /data-open-sku-links[\s\S]*?drawerState\.activeTab = 'connections'[\s\S]*?openProductDrawer\(row\)/, "clicking a Sellpia SKU must open its connection information directly");
 assert.match(dataSource, /search_operations_hub_seller_items[\s\S]*?link_operations_hub_seller_item[\s\S]*?save_operations_hub_seller_listing/, "seller search, linking, and detail drafts must use database RPCs");
 assert.match(dataSource, /search_operations_hub_seller_items_v2[\s\S]*?p_page[\s\S]*?p_page_size/, "seller matching search must be paginated instead of silently capped");
 assert.match(source, /상품명 \/ 옵션명[\s\S]*?mapping-pagination[\s\S]*?전체 \$\{formatNumber\(mappingState\.count\)\}개/, "seller search must explain intersection syntax and show total result count");

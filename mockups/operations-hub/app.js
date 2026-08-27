@@ -115,7 +115,8 @@ const matrixFreezeToggle = document.getElementById('matrix-freeze-toggle');
 const matrixSourceRefreshButton = document.getElementById('matrix-source-refresh-btn');
 const MATRIX_ZOOM_KEY = 'system-v3-matrix-zoom';
 const MATRIX_FREEZE_KEY = 'system-v3-matrix-sellpia-freeze';
-const MATRIX_COLUMN_WIDTHS_KEY = 'system-v3-matrix-column-widths-v2';
+const MATRIX_COLUMN_WIDTHS_KEY = 'system-v3-matrix-column-widths-v3';
+const MATRIX_COLUMN_COUNT = 43;
 const MATRIX_ZOOM_MIN = 80;
 const MATRIX_ZOOM_MAX = 140;
 const MATRIX_ZOOM_STEP = 5;
@@ -123,10 +124,10 @@ const MATRIX_COLUMN_MIN_WIDTH = 56;
 const MATRIX_COLUMN_MAX_WIDTH = 720;
 const MATRIX_COLUMN_DEFAULT_WIDTHS = Object.freeze({
   3:110, 4:260, 5:220, 6:150, 7:104, 8:112, 9:96, 10:88, 11:108, 12:110,
-  13:92, 14:220, 15:220, 16:96, 17:120, 18:126, 19:102, 20:120,
-  21:92, 22:220, 23:220, 24:96, 25:120, 26:126, 27:102, 28:120,
-  29:92, 30:220, 31:220, 32:96, 33:120, 34:126, 35:102, 36:120,
-  37:100, 38:110, 39:180, 40:120
+  13:92, 14:150, 15:260, 16:220, 17:96, 18:120, 19:126, 20:102, 21:120,
+  22:92, 23:150, 24:260, 25:220, 26:96, 27:120, 28:126, 29:102, 30:120,
+  31:92, 32:150, 33:260, 34:220, 35:96, 36:120, 37:126, 38:102, 39:120,
+  40:100, 41:110, 42:180, 43:120
 });
 const MATRIX_PRESETS_KEY = 'system-v3-matrix-presets-v1';
 const MATRIX_ACTIVE_PRESET_KEY = 'system-v3-matrix-active-preset';
@@ -244,7 +245,7 @@ function readMatrixColumnWidths() {
     return Object.fromEntries(Object.entries(parsed).filter(([index, width]) => {
       const columnIndex = Number(index);
       const columnWidth = Number(width);
-      return columnIndex >= 3 && columnIndex <= 40 && Number.isFinite(columnWidth)
+      return columnIndex >= 3 && columnIndex <= MATRIX_COLUMN_COUNT && Number.isFinite(columnWidth)
         && columnWidth >= MATRIX_COLUMN_MIN_WIDTH && columnWidth <= MATRIX_COLUMN_MAX_WIDTH;
     }).map(([index, width]) => [index, Math.round(Number(width))]));
   } catch {
@@ -274,7 +275,7 @@ function ensureMatrixColumnStructure() {
   if (!colgroup) {
     colgroup = document.createElement('colgroup');
     colgroup.dataset.matrixColumns = 'true';
-    for (let index = 1; index <= 40; index += 1) {
+    for (let index = 1; index <= MATRIX_COLUMN_COUNT; index += 1) {
       const column = document.createElement('col');
       column.dataset.matrixColumn = String(index);
       column.style.width = `var(--matrix-col-${index}-width)`;
@@ -303,7 +304,7 @@ function ensureMatrixColumnStructure() {
 function bindMatrixColumnWidthsToCells() {
   matrixTable.querySelectorAll('[data-matrix-column]').forEach(cell => {
     const index = Number(cell.dataset.matrixColumn);
-    if (index >= 1 && index <= 40 && !cell.matches('col') && (Number(cell.colSpan) || 1) === 1) {
+    if (index >= 1 && index <= MATRIX_COLUMN_COUNT && !cell.matches('col') && (Number(cell.colSpan) || 1) === 1) {
       cell.style.setProperty('--matrix-cell-width', `var(--matrix-col-${index}-width)`);
     }
   });
@@ -314,7 +315,7 @@ function applyMatrixColumnWidths(view = activeView) {
   bindMatrixColumnWidthsToCells();
   const visible = viewColumnIndexes(view);
   let tableWidth = 0;
-  for (let index = 1; index <= 40; index += 1) {
+  for (let index = 1; index <= MATRIX_COLUMN_COUNT; index += 1) {
     const width = matrixColumnWidth(index);
     matrixTable.style.setProperty(`--matrix-col-${index}-width`, `${width}px`);
     const column = matrixTable.querySelector(`col[data-matrix-column="${index}"]`);
@@ -327,7 +328,7 @@ function applyMatrixColumnWidths(view = activeView) {
 }
 
 function setMatrixColumnWidth(index, width, {persist = false, announce = false} = {}) {
-  if (index < 3 || index > 40) return;
+  if (index < 3 || index > MATRIX_COLUMN_COUNT) return;
   matrixColumnWidths[index] = Math.max(MATRIX_COLUMN_MIN_WIDTH, Math.min(MATRIX_COLUMN_MAX_WIDTH, Math.round(Number(width) || MATRIX_COLUMN_DEFAULT_WIDTHS[index] || 112)));
   applyMatrixColumnWidths(activeView);
   if (persist) saveMatrixColumnWidths();
@@ -370,7 +371,7 @@ function hideMatrixColumnResizeGuide() {
 function startMatrixColumnResize(event, handle) {
   if (event.button !== undefined && event.button !== 0) return;
   const index = Number(handle.dataset.resizeColumn);
-  if (index < 3 || index > 40) return;
+  if (index < 3 || index > MATRIX_COLUMN_COUNT) return;
   matrixColumnResizeState = {index, startX:event.clientX, currentX:event.clientX, startWidth:matrixColumnWidth(index)};
   document.body.classList.add('matrix-column-resizing');
   handle.classList.add('active');
@@ -496,9 +497,9 @@ function viewColumnIndexes(view) {
   if (view.showInventory) visible.add(7);
   if (view.showPrice) [8,9,10,11,12].forEach(index => visible.add(index));
   const channelColumns = {
-    smartstore:{codes:[14,15], names:[14,15], inventory:[16], price:[17,19,20], discount:[18]},
-    makeshop:{codes:[22,23], names:[22,23], inventory:[24], price:[25,27,28], discount:[26]},
-    ably:{codes:[30,31], names:[30,31], inventory:[32], price:[33,35,36], discount:[34]}
+    smartstore:{codes:[14,16], names:[15,16], inventory:[17], price:[18,20,21], discount:[19]},
+    makeshop:{codes:[23,25], names:[24,25], inventory:[26], price:[27,29,30], discount:[28]},
+    ably:{codes:[32,34], names:[33,34], inventory:[35], price:[36,38,39], discount:[37]}
   };
   Object.entries(channelColumns).forEach(([channel, groups]) => {
     if (!view.channels[channel]) return;
@@ -508,8 +509,8 @@ function viewColumnIndexes(view) {
     if (view.showPrice) groups.price.forEach(index => visible.add(index));
     if (view.showDiscount ?? view.showPrice ?? true) groups.discount.forEach(index => visible.add(index));
   });
-  if (view.showAttributes) [37,38,39].forEach(index => visible.add(index));
-  if (view.showSync) visible.add(40);
+  if (view.showAttributes) [40,41,42].forEach(index => visible.add(index));
+  if (view.showSync) visible.add(43);
   return visible;
 }
 
@@ -538,7 +539,7 @@ function applyColumnVisibility(view = activeView) {
   const visible = viewColumnIndexes(view);
   indexMatrixBodyColumns();
   const columnHeaders = matrixTable.querySelectorAll('.column-row th');
-  for (let index = 3; index <= 40; index += 1) {
+  for (let index = 3; index <= MATRIX_COLUMN_COUNT; index += 1) {
     const show = visible.has(index);
     const header = columnHeaders[index - 3];
     if (header) header.hidden = !show;
@@ -546,10 +547,10 @@ function applyColumnVisibility(view = activeView) {
   }
   const groupConfig = [
     ['.sellpia-group', [3,4,5,6,7,8,9,10,11,12]],
-    ['.smart-group', [13,14,15,16,17,18,19,20]],
-    ['.make-group', [21,22,23,24,25,26,27,28]],
-    ['.ably-group', [29,30,31,32,33,34,35,36]],
-    ['.ops-group', [37,38,39,40]]
+    ['.smart-group', [13,14,15,16,17,18,19,20,21]],
+    ['.make-group', [22,23,24,25,26,27,28,29,30]],
+    ['.ably-group', [31,32,33,34,35,36,37,38,39]],
+    ['.ops-group', [40,41,42,43]]
   ];
   groupConfig.forEach(([selector, indexes]) => {
     const header = matrixTable.querySelector(selector);
@@ -643,10 +644,13 @@ function sellerIdentityCells(product, prefix, label, state, productMerge = null,
   const productTitle = [productCode, productName].filter(Boolean).join(' · ');
   const optionTitle = [optionCode, optionName].filter(Boolean).join(' · ');
   const productRowspan = Math.max(1, Number(productMerge?.rowspan) || 1);
-  const productCell = productMerge?.hidden ? '' : `<td class="seller-identity-cell seller-product-identity${productRowspan > 1 ? ' seller-identity-merged-cell' : ''}${!productCode && !productName ? ' data-gap' : ''}${isDraft ? ' draft' : ''}" data-channel="${prefix}"${productRowspan > 1 ? ` rowspan="${productRowspan}"` : ''} title="${escapeHtml(productTitle || '판매처 상품 정보 없음')}">
-      ${mappingCodeButton(product, prefix, label, 'product', productCode, state)}<em class="${productName ? '' : 'seller-name-missing'}">${escapeHtml(productName || '상품명 없음')}${isDraft ? '<i>초안</i>' : ''}</em>
+  const productCells = productMerge?.hidden ? '' : `<td class="seller-identity-cell seller-product-code-cell${productRowspan > 1 ? ' seller-identity-merged-cell' : ''}${!productCode ? ' data-gap' : ''}" data-channel="${prefix}"${productRowspan > 1 ? ` rowspan="${productRowspan}"` : ''} title="${escapeHtml(productCode || '판매처 상품코드 없음')}">
+      ${mappingCodeButton(product, prefix, label, 'product', productCode, state)}
+    </td>
+    <td class="seller-identity-cell seller-product-name-cell${productRowspan > 1 ? ' seller-identity-merged-cell' : ''}${!productName ? ' data-gap' : ''}${isDraft ? ' draft' : ''}" data-channel="${prefix}"${productRowspan > 1 ? ` rowspan="${productRowspan}"` : ''} title="${escapeHtml(productTitle || '판매처 상품명 없음')}">
+      <em class="${productName ? '' : 'seller-name-missing'}">${escapeHtml(productName || '상품명 없음')}${isDraft ? '<i>초안</i>' : ''}</em>
     </td>`;
-  return `${productCell}
+  return `${productCells}
     <td class="seller-identity-cell seller-option-identity${!optionCode && !optionName ? ' data-gap' : ''}" data-channel="${prefix}" title="${escapeHtml(optionTitle || '판매처 옵션 정보 없음')}">
       ${mappingCodeButton(product, prefix, label, 'option', optionCode, state)}<em class="${optionName ? '' : 'seller-name-missing'}">${escapeHtml(optionName || '옵션명 없음')}</em>${relationBadge}
     </td>`;
@@ -854,12 +858,13 @@ function codeListSourceLabel(source) {
 }
 
 function codeListPlaceholderSellerCells(codeRow, source) {
-  if (codeRow.source_channel !== source) return '<td class="data-gap">-</td>'.repeat(8);
+  if (codeRow.source_channel !== source) return '<td class="data-gap">-</td>'.repeat(9);
   const reason = escapeHtml(codeRow.reason || codeListIssueLabel(codeRow.match_status));
   const inputCode = escapeHtml(codeRow.input_code || '-');
   const state = 'unmatched';
   return `<td><span class="matrix-status ${state}">${reason}</span></td>
-    <td class="seller-identity-cell code-list-placeholder-code" title="${inputCode}"><b>${inputCode}</b><em>원본 상품코드</em></td>
+    <td class="seller-identity-cell code-list-placeholder-code" title="${inputCode}"><b>${inputCode}</b></td>
+    <td class="seller-identity-cell data-gap"><em>상품명 없음</em></td>
     <td class="seller-identity-cell data-gap"><b>-</b><em>${escapeHtml(codeListSourceLabel(source))}</em></td>
     <td class="data-gap">-</td><td class="data-gap">-</td><td class="data-gap">-</td><td class="data-gap">-</td><td class="data-gap">-</td>`;
 }
@@ -891,7 +896,7 @@ function renderLiveMatrixRows(products) {
   clearMatrixCellSelection();
   matrixRowsBySku.clear();
   if (!products.length) {
-    matrixBody.innerHTML = '<tr class="matrix-empty-row"><td colspan="40"><b>검색 결과가 없습니다.</b><span>SKU 또는 자사코드를 다시 확인해주세요.</span></td></tr>';
+    matrixBody.innerHTML = `<tr class="matrix-empty-row"><td colspan="${MATRIX_COLUMN_COUNT}"><b>검색 결과가 없습니다.</b><span>SKU 또는 자사코드를 다시 확인해주세요.</span></td></tr>`;
     return;
   }
   const sellerBaseMerges = buildSellerBaseMerges(products);
@@ -928,7 +933,7 @@ function renderLiveMatrixRows(products) {
     return `<tr class="${groupStart ? 'product-group-start' : 'product-group-continuation'}" data-sku="${sku}" data-product-group="${escapeHtml(productGroup)}" data-own-code="${ownCode}" data-image="${imageUrl}" data-status="${overallState}"${inputRow ? ` data-input-row="${inputRow}"` : ''}>
       <td class="sticky-col select-col" aria-hidden="true"></td>
       <td class="sticky-col image-col image-drop-cell" data-image-drop="${sku}" title="이미지를 이 셀에 놓으면 ${sku}.jpg로 저장됩니다.">${matrixImage(product)}<span class="image-drop-hint">DROP</span></td>
-      <td class="sticky-col sellpia-sku-col sellpia-code-cell"><b>${skuMarkup}</b></td>
+      <td class="sticky-col sellpia-sku-col sellpia-code-cell"><button type="button" class="sellpia-sku-link" data-open-sku-links title="이 SKU의 판매처 연결정보 열기">${skuMarkup}</button></td>
       <td class="sticky-col sellpia-name-col sellpia-text-cell"><span title="${displayName}">${displayName}</span></td>
       <td class="sticky-col sellpia-option-name-col sellpia-text-cell"><span title="${optionName}">${optionName}</span></td>
       <td class="sticky-col own-code-col">${sellpiaEditor('sellpia_own_code', '셀피아 자사코드', rawOwnCode, {className:'sellpia-text-compact'})}</td>
@@ -2060,6 +2065,7 @@ document.getElementById('listing-link-close').addEventListener('click', closeLis
 document.getElementById('listing-link-done').addEventListener('click', closeListingLinkManager);
 document.getElementById('listing-link-add-toggle').addEventListener('click', event => {
   if (!listingLinkState.productCode) {
+    event.stopPropagation();
     const anchor = listingLinkState.anchor;
     const source = listingLinkState.source;
     const sku = listingLinkState.sku;
@@ -2873,7 +2879,7 @@ function isClipboardTypingTarget(target) {
 }
 
 matrixBody.addEventListener('mousedown', event => {
-  if (event.target.closest('.row-check,.inline-editor,[data-open-multi-link],[data-discount-edit]')) return;
+  if (event.target.closest('.row-check,.inline-editor,[data-open-multi-link],[data-open-sku-links],[data-discount-edit]')) return;
   const cell = event.target.closest('td');
   if (!cell || event.button !== 0) return;
   selectMatrixCell(cell, {extend:event.shiftKey});
@@ -3544,6 +3550,15 @@ matrixBody.addEventListener('click', event => {
   const discountButton = event.target.closest('[data-discount-edit]');
   if (discountButton) {
     openDiscountEditor(discountButton);
+    return;
+  }
+  const skuLink = event.target.closest('[data-open-sku-links]');
+  if (skuLink) {
+    const row = skuLink.closest('tr[data-sku]');
+    if (row) {
+      drawerState.activeTab = 'connections';
+      openProductDrawer(row);
+    }
     return;
   }
   const multiLinkButton = event.target.closest('[data-open-multi-link]');

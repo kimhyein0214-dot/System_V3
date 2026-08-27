@@ -5,7 +5,7 @@ const app = fs.readFileSync(new URL('../mockups/operations-hub/app.js', import.m
 const html = fs.readFileSync(new URL('../mockups/operations-hub/index.html', import.meta.url), 'utf8');
 const css = fs.readFileSync(new URL('../mockups/operations-hub/style.css', import.meta.url), 'utf8');
 
-assert.match(app, /MATRIX_COLUMN_WIDTHS_KEY = 'system-v3-matrix-column-widths-v2'/, 'column widths must persist under the corrected visible-column mapping');
+assert.match(app, /MATRIX_COLUMN_WIDTHS_KEY = 'system-v3-matrix-column-widths-v3'/, 'column widths must persist under the current separated seller-column mapping');
 assert.match(app, /if \(index === 1\) return 0/, 'the permanently hidden legacy selection column must not consume matrix width');
 assert.match(app, /const show = index === 1 \? false : index === 2 \|\| visible\.has\(index\)/, 'the hidden selection colgroup entry must not shift visible columns by one');
 assert.match(app, /matrix-column-resize-handle[\s\S]*?pointerdown[\s\S]*?pointermove[\s\S]*?pointerup/, 'header separators must support pointer dragging');

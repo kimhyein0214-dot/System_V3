@@ -310,6 +310,8 @@ body.matrix-cell-selecting{user-select:none}
 .matrix-table .sellpia-group{left:var(--image-col-width);width:956px;min-width:956px}
 .matrix-table .sellpia-code-cell,.matrix-table .sellpia-text-cell,.matrix-table .own-code-col{text-align:center;vertical-align:middle}
 .matrix-table .sellpia-code-cell b{display:block;overflow:hidden;color:#1d4ed8;font-size:12px;line-height:1.35;text-overflow:ellipsis}
+.matrix-table .sellpia-sku-link{width:100%;border:0;background:transparent;padding:7px 5px;overflow:hidden;color:#1d4ed8;font:inherit;font-size:12px;font-weight:1000;line-height:1.35;text-overflow:ellipsis;white-space:nowrap;cursor:pointer}.matrix-table .sellpia-sku-link:hover,.matrix-table .sellpia-sku-link:focus-visible{border-radius:6px;background:#eaf2ff;outline:1px solid #9ebcf0}.matrix-table .sellpia-sku-link .code-list-sku-cell{align-items:center}
+.matrix-table .seller-product-code-cell{width:150px;min-width:150px;max-width:150px}.matrix-table .seller-product-name-cell{width:260px;min-width:260px;max-width:260px}.matrix-table .seller-product-name-cell>em{max-width:244px}
 .matrix-table .sellpia-text-cell{white-space:normal!important}
 .matrix-table .sellpia-text-cell span{display:block;overflow:hidden;color:#111827;font-size:11px;font-weight:800;line-height:1.4;text-overflow:ellipsis;white-space:nowrap}
 .matrix-table.wrap-names .sellpia-text-cell span{display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:2;white-space:normal}
