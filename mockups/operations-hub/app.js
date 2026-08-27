@@ -492,7 +492,9 @@ function formatLiveTime(value) {
 }
 
 function viewColumnIndexes(view) {
-  const visible = new Set([1,2,3,4,5,6,7,8,9,10,11,12]);
+  const visible = new Set([1,2,3,4,5,6]);
+  if (view.showInventory) visible.add(7);
+  if (view.showPrice) [8,9,10,11,12].forEach(index => visible.add(index));
   const channelColumns = {
     smartstore:{codes:[14,15], names:[14,15], inventory:[16], price:[17,19,20], discount:[18]},
     makeshop:{codes:[22,23], names:[22,23], inventory:[24], price:[25,27,28], discount:[26]},
@@ -543,6 +545,7 @@ function applyColumnVisibility(view = activeView) {
     matrixBody.querySelectorAll(`[data-matrix-column="${index}"]`).forEach(cell => { cell.hidden = !show; });
   }
   const groupConfig = [
+    ['.sellpia-group', [3,4,5,6,7,8,9,10,11,12]],
     ['.smart-group', [13,14,15,16,17,18,19,20]],
     ['.make-group', [21,22,23,24,25,26,27,28]],
     ['.ably-group', [29,30,31,32,33,34,35,36]],
@@ -3793,9 +3796,9 @@ function parseCodeListRows(rows) {
   const headerIndex = rows.findIndex((row, index) => {
     if (index > 14) return false;
     const headers = (row || []).map(normalizeCodeListHeader);
-    return CODE_LIST_SOURCES.every(source => source.aliases.some(alias => headers.includes(normalizeCodeListHeader(alias))));
+    return CODE_LIST_SOURCES.some(source => source.aliases.some(alias => headers.includes(normalizeCodeListHeader(alias))));
   });
-  if (headerIndex < 0) throw new Error('셀피아·스마트스토어·메이크샵·에이블리 4개 헤더를 찾지 못했습니다.');
+  if (headerIndex < 0) throw new Error('셀피아·스마트스토어·메이크샵·에이블리 중 코드 열을 찾지 못했습니다.');
   const headers = (rows[headerIndex] || []).map(normalizeCodeListHeader);
   const indexes = Object.fromEntries(CODE_LIST_SOURCES.map(source => [
     source.key,
@@ -3805,7 +3808,7 @@ function parseCodeListRows(rows) {
   const invalid = [];
   rows.slice(headerIndex + 1).forEach((row, offset) => {
     const rowNo = headerIndex + offset + 2;
-    const values = CODE_LIST_SOURCES.map(source => ({
+    const values = CODE_LIST_SOURCES.filter(source => indexes[source.key] >= 0).map(source => ({
       source:source.key,
       label:source.label,
       code:String(row?.[indexes[source.key]] ?? '').trim()

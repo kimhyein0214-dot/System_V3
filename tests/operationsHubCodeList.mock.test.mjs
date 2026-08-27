@@ -30,7 +30,10 @@ assert.match(app, /if \(matrixState\.search\) loadLiveMatrix/, "changing a sourc
 assert.match(data, /find_operations_hub_listing_skus_by_sources/, "combined-code lookup must honor selected seller sources");
 assert.match(data, /activeSearchSources\.flatMap/, "text search fields must be built from selected sources");
 assert.match(sourceFilterMigration, /join allowed_sources source on source\.source_channel = link\.source_channel/i, "database composite lookup must be source-limited");
-assert.match(html, /셀피아[\s\S]*?스마트스토어[\s\S]*?메이크샵[\s\S]*?에이블리/, "the upload guide must keep the four source columns fixed");
+assert.match(html, /필요한 코드 열만[\s\S]*?셀피아 한 열만 쓰거나/, "the upload guide must allow a one-column Sellpia review list");
+assert.match(html, /셀피아[\s\S]*?스마트스토어[\s\S]*?메이크샵[\s\S]*?에이블리/, "the upload guide must still show all supported source columns");
+assert.match(app, /CODE_LIST_SOURCES\.some\(source => source\.aliases\.some/, "a code list must accept any one recognized source header");
+assert.match(app, /CODE_LIST_SOURCES\.filter\(source => indexes\[source\.key\] >= 0\)/, "missing optional source columns must not be read through a negative column index");
 assert.match(app, /values\.length > 1[\s\S]*?한 행에 코드가 여러 개 있음/, "each input row must contain exactly one source code");
 assert.match(app, /sheet_to_json\(sheet, \{header:1, raw:false, defval:''\}\)/, "formatted Excel codes must be read without numeric coercion");
 assert.match(app, /matrixState\.codeListRows = codeListSession\.resultRows\.map\(item => \(\{\.\.\.item\}\)\)[\s\S]*?loadLiveMatrix\(\{resetPage:true\}\)/, "ordered Excel result rows must drive the live matrix view");
