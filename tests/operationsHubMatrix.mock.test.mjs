@@ -52,6 +52,9 @@ assert.match(html, /id="view-settings-modal"[\s\S]*?id="save-view-preset"/, "mat
 assert.match(source, /MATRIX_PRESETS_KEY = 'system-v3-matrix-presets-v1'/, "personal presets must persist locally");
 assert.match(source, /modifiedPresetSourceId = activePresetId;[\s\S]*?findIndex\(item => item\.id === editablePresetId\)/, "editing a selected personal preset must update that preset instead of creating a stray copy");
 assert.match(source, /function applyColumnVisibility\([\s\S]*?function applyViewPreset\(/, "presets must control matrix columns and view state");
+assert.match(source, /const visible = new Set\(\[1,2,3,4,5,6\]\);[\s\S]*?if \(view\.showInventory\) visible\.add\(7\);[\s\S]*?if \(view\.showPrice\) \[8,9,10,11,12\]/, "Sellpia inventory and price-procurement columns must obey the same view switches as seller columns");
+assert.match(source, /\['\.sellpia-group', \[3,4,5,6,7,8,9,10,11,12\]\]/, "the Sellpia group header must shrink with its visible columns");
+assert.match(html, /재고·가격 표시를 끄면 셀피아 기준 영역의 재고·가격·매입·발주 관련 열도 함께 숨겨집니다/, "view settings must explain that Sellpia operational columns also hide");
 assert.match(html, /id="matrix-status-filter"><option value="all">전체 연결상태<\/option><option value="connected">연결 완료<\/option><option value="unmatched">미매칭<\/option><\/select>/, "the connection filter must expose only connected and unmatched states");
 assert.match(source, /function normalizeConnectionStatus\([\s\S]*?status === 'review'[\s\S]*?return 'connected'[\s\S]*?status === 'attention'[\s\S]*?return 'unmatched'/, "legacy review and attention presets must migrate into the binary connection model");
 assert.match(source, /function matchState\(tier\)[\s\S]*?if \(!tier\)[\s\S]*?unmatched[\s\S]*?return \{key:'connected', label:'연결 완료'\}/, "every seller link tier, including FAST_REVIEW, must render as connected");
