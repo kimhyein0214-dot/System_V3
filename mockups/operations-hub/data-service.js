@@ -335,8 +335,58 @@
     });
   }
 
+  async function attachManualLinks(rows) {
+    const products = Array.isArray(rows) ? rows : [];
+    const skus = [...new Set(products.map(row => cleanText(row?.sellpia_sku_code)).filter(Boolean))];
+    if (!skus.length) return products;
+    const links = [];
+    for (let offset = 0; offset < skus.length; offset += 500) {
+      const {data, error} = await db
+        .from('operations_hub_manual_links')
+        .select('source_channel,sellpia_sku_code,product_code,option_code,product_name,option_name,mapping_origin,match_tier,match_score,updated_at')
+        .in('sellpia_sku_code', skus.slice(offset, offset + 500));
+      if (error) throw error;
+      links.push(...(data || []));
+    }
+    const bySku = new Map();
+    for (const link of links) {
+      const sku = cleanText(link.sellpia_sku_code);
+      const source = cleanText(link.source_channel);
+      if (!sku || !['smartstore', 'makeshop', 'ably'].includes(source)) continue;
+      if (!bySku.has(sku)) bySku.set(sku, {});
+      bySku.get(sku)[source] = link;
+    }
+    return products.map(product => {
+      const manualLinks = bySku.get(cleanText(product?.sellpia_sku_code)) || {};
+      const projected = {...product, __manualLinks:manualLinks};
+      for (const source of ['smartstore', 'makeshop', 'ably']) {
+        const link = manualLinks[source];
+        if (!link) continue;
+        const cachedIdentityMatches = cleanText(projected[`${source}_product_code`]) === cleanText(link.product_code)
+          && cleanText(projected[`${source}_option_code`]) === cleanText(link.option_code);
+        projected[`${source}_product_code`] = link.product_code;
+        projected[`${source}_option_code`] = link.option_code;
+        projected[`${source}_name`] = link.product_name;
+        projected[`${source}_option_name`] = link.option_name;
+        projected[`${source}_match_tier`] = link.match_tier || 'MANUAL_LINKED';
+        projected[`${source}_match_score`] = link.match_score ?? 100;
+        projected[`${source}_listing_count`] = Math.max(1, Number(projected[`${source}_listing_count`] || 0));
+        projected[`${source}_name_is_draft`] = false;
+        if (!cachedIdentityMatches) {
+          for (const suffix of ['sale_status','stock','price','policy_price','policy_active','policy_name','inventory_at']) {
+            projected[`${source}_${suffix}`] = null;
+          }
+        }
+      }
+      projected.overall_status = ['smartstore','makeshop','ably'].some(source => cleanText(projected[`${source}_match_tier`]))
+        ? 'connected'
+        : projected.overall_status;
+      return projected;
+    });
+  }
+
   async function attachProductMetadata(rows) {
-    return attachLinkSuppressions(await attachPriceRuleAssignments(await attachSellerDrafts(await attachSellerPriceComponents(await attachLinkBadges(await attachProductProfiles(await attachProductLinkDrafts(await attachSystemOperationalDetails(await attachInboundCostDetails(rows)))))))));
+    return attachLinkSuppressions(await attachPriceRuleAssignments(await attachSellerDrafts(await attachSellerPriceComponents(await attachLinkBadges(await attachProductProfiles(await attachManualLinks(await attachProductLinkDrafts(await attachSystemOperationalDetails(await attachInboundCostDetails(rows))))))))));
   }
 
   async function loadListingGraph({source = 'all', relationType = 'complex', search = '', page = 1, pageSize = 50} = {}) {
