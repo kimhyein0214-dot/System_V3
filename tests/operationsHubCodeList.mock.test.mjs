@@ -13,6 +13,10 @@ const sourceFilterMigration = fs.readFileSync(
   new URL("../supabase/migrations/20260814030241_operations_hub_search_source_filters.sql", import.meta.url),
   "utf8",
 );
+const sellpiaPrefixMigration = fs.readFileSync(
+  new URL("../supabase/migrations/20260827044857_support_sellpia_prefix_code_list_lookup.sql", import.meta.url),
+  "utf8",
+);
 
 assert.match(html, /id="code-list-open"[^>]*>[\s\S]*?엑셀 코드목록/, "the matrix must expose the Excel code-list entry point");
 for (const source of ["sellpia", "smartstore", "makeshop", "ably"]) {
@@ -48,6 +52,9 @@ for (const rpc of ["find_operations_hub_listing_skus", "resolve_operations_hub_c
 }
 assert.match(migration, /item\.product_code \|\| '-' \|\| item\.option_code/, "seller listing keys must be compared in the database");
 assert.match(migration, /then 'option'[\s\S]*?then 'product'/, "exact listing matches must take priority over product-wide expansion");
+assert.match(sellpiaPrefixMigration, /then 'sku'[\s\S]*?then 'prefix'/, "exact Sellpia SKU matches must take priority over prefix expansion");
+assert.match(sellpiaPrefixMigration, /left\(matrix\.sellpia_sku_code, char_length\(input\.input_code\) \+ 1\) = input\.input_code \|\| '-'/, "Sellpia prefix matching must require a literal hyphen boundary");
+assert.match(sellpiaPrefixMigration, /input\.match_scope = 'prefix'[\s\S]*?left\(matrix\.sellpia_sku_code, char_length\(input\.input_code\) \+ 1\) = input\.input_code \|\| '-'/, "a Sellpia prefix input must expand to every option SKU in the matched product");
 assert.doesNotMatch(app, /split\(['"]-['"]\)/, "hyphenated seller codes must never be parsed by splitting on a hyphen");
 assert.match(migration, /with ordinality[\s\S]*?input_order[\s\S]*?result_order/, "Excel row order must survive resolution and pagination");
 
