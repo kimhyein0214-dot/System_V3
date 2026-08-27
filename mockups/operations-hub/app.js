@@ -107,6 +107,7 @@ const ATTRIBUTE_OPTIONS = Object.freeze({
   shape:['세트','링','바벨/바','볼','진주','큐빅/스톤','투명/리테이너','체인','모티브','기타']
 });
 const matrixTable = document.querySelector('.matrix-table');
+const matrixShell = document.querySelector('.matrix-shell');
 const matrixCellSelection = {anchor:null, focus:null, dragging:false, selected:new Set(), dragBase:new Set(), dragMode:'replace'};
 const matrixContextMenu = document.getElementById('matrix-context-menu');
 const matrixContextSourceRefresh = document.getElementById('matrix-context-source-refresh');
@@ -118,7 +119,8 @@ const matrixContextOptionAddDetail = document.getElementById('matrix-context-opt
 const matrixContextDisconnect = document.getElementById('matrix-context-disconnect');
 const matrixContextDisconnectCount = document.getElementById('matrix-context-disconnect-count');
 let matrixContextTargets = [];
-let matrixContextProductCopyTarget = null;
+let matrixContextProductCopyTargets = [];
+let matrixContextProductCopySkipped = 0;
 let matrixContextOptionAddTarget = null;
 let matrixSourceRefreshInFlight = false;
 const matrixZoomOut = document.getElementById('matrix-zoom-out');
@@ -628,7 +630,7 @@ function applyViewPreset(view, {id = null, reload = true, announce = true} = {})
   applyColumnVisibility(activeView);
   renderAdvancedFilterBar();
   setActivePresetUi();
-  if (reload) loadLiveMatrix({resetPage:true});
+  if (reload) loadLiveMatrix();
   if (announce) showToast(`${activeView.name} 보기를 적용했습니다.`);
 }
 
@@ -1078,7 +1080,7 @@ async function loadMappingSyncStatus({markDisplayed = false, autoRefresh = false
   }
 }
 
-async function loadLiveMatrix({resetPage = false} = {}) {
+async function loadLiveMatrix({resetPage = false, resetScroll = resetPage} = {}) {
   if (!liveData) return false;
   if (resetPage) matrixState.page = 1;
   const requestId = ++matrixState.requestId;
@@ -1119,6 +1121,11 @@ async function loadLiveMatrix({resetPage = false} = {}) {
       }
     }
     if (requestId !== matrixState.requestId) return false;
+    const totalPages = Math.max(1, Math.ceil(result.count / result.pageSize));
+    if (matrixState.page > totalPages) {
+      matrixState.page = totalPages;
+      return loadLiveMatrix({resetScroll});
+    }
     matrixState.total = result.count;
     matrixState.rows = result.rows;
     renderLiveMatrixRows(result.rows);
@@ -1126,13 +1133,13 @@ async function loadLiveMatrix({resetPage = false} = {}) {
     const last = Math.min(result.page * result.pageSize, result.count);
     document.getElementById('matrix-total-count').textContent = formatNumber(result.count);
     document.getElementById('matrix-range').textContent = `${formatNumber(first)}–${formatNumber(last)} / ${formatNumber(result.count)}`;
-    const totalPages = Math.max(1, Math.ceil(result.count / result.pageSize));
     const matrixPageInput = document.getElementById('matrix-page');
     matrixPageInput.value = String(result.page);
     matrixPageInput.max = String(totalPages);
     document.getElementById('matrix-total-pages').textContent = `/ ${formatNumber(totalPages)}`;
     document.getElementById('matrix-prev').disabled = result.page <= 1;
     document.getElementById('matrix-next').disabled = last >= result.count;
+    if (resetScroll && matrixShell) matrixShell.scrollTop = 0;
     clearMatrixCellSelection();
     updateSelectedCount();
     matrixState.lastLoadedAt = new Date().toISOString();
@@ -4532,12 +4539,12 @@ document.getElementById('matrix-refresh-btn').addEventListener('click', () => re
 document.getElementById('matrix-prev').addEventListener('click', () => {
   if (matrixState.loading || matrixState.page <= 1) return;
   matrixState.page -= 1;
-  loadLiveMatrix();
+  loadLiveMatrix({resetScroll:true});
 });
 document.getElementById('matrix-next').addEventListener('click', () => {
   if (matrixState.loading || matrixState.page * matrixState.pageSize >= matrixState.total) return;
   matrixState.page += 1;
-  loadLiveMatrix();
+  loadLiveMatrix({resetScroll:true});
 });
 
 const matrixPageInput = document.getElementById('matrix-page');
@@ -4556,7 +4563,7 @@ function moveToEnteredMatrixPage() {
   matrixPageInput.value = String(targetPage);
   if (targetPage === matrixState.page) return;
   matrixState.page = targetPage;
-  loadLiveMatrix();
+  loadLiveMatrix({resetScroll:true});
 }
 matrixPageInput.addEventListener('focus', event => event.target.select());
 matrixPageInput.addEventListener('change', moveToEnteredMatrixPage);
@@ -4578,7 +4585,7 @@ matrixPageSizeSelect.addEventListener('change', event => {
   if (![50, 100, 200].includes(nextPageSize) || nextPageSize === matrixState.pageSize) return;
   matrixState.pageSize = nextPageSize;
   localStorage.setItem(MATRIX_PAGE_SIZE_KEY, String(nextPageSize));
-  loadLiveMatrix({resetPage:true});
+  loadLiveMatrix({resetPage:true, resetScroll:true});
 });
 
 document.getElementById('close-drawer').addEventListener('click', closeProductDrawer);
@@ -5678,6 +5685,55 @@ function matrixProductCopyContext(anchorCell) {
   };
 }
 
+function selectedMatrixProductCopyContexts(anchorCell) {
+  const selectedProductCodeCells = selectedMatrixTargets().cells
+    .filter(cell => cell.matches('.seller-product-code-cell'));
+  const candidateCells = selectedProductCodeCells.length ? selectedProductCodeCells : [anchorCell];
+  const targets = [];
+  const seen = new Set();
+  let skipped = 0;
+  let firstDisabledDetail = '';
+  for (const cell of candidateCells) {
+    const target = matrixProductCopyContext(cell);
+    if (!target.enabled) {
+      skipped += 1;
+      if (!firstDisabledDetail) firstDisabledDetail = target.detail;
+      continue;
+    }
+    const key = [target.source, target.sku].join('\u0000');
+    if (seen.has(key)) continue;
+    seen.add(key);
+    targets.push(target);
+  }
+  return {
+    targets,
+    skipped,
+    detail:targets.length
+      ? `${formatNumber(targets.length)}개 행 · 상품코드만 복제${skipped ? ` · ${formatNumber(skipped)}개 제외` : ''}`
+      : firstDisabledDetail || '복제할 행을 선택해주세요'
+  };
+}
+
+function applyLocalProductLinkDraft(target, savedDraft = null) {
+  const product = matrixRowsBySku.get(target.sku);
+  if (!product) return null;
+  const draft = {
+    source_channel:target.source,
+    sellpia_sku_code:target.sku,
+    product_code:target.productCode,
+    product_name:'',
+    ...(savedDraft || {})
+  };
+  product.__sellerProductLinkDrafts = {...(product.__sellerProductLinkDrafts || {}), [target.source]:draft};
+  product[`${target.source}_product_code`] = draft.product_code;
+  product[`${target.source}_name`] = draft.product_name || '';
+  product[`${target.source}_option_code`] = null;
+  product[`${target.source}_option_name`] = null;
+  product[`${target.source}_match_tier`] = null;
+  product[`${target.source}_name_is_draft`] = true;
+  return product;
+}
+
 function matrixOptionAddContext(anchorCell) {
   const context = matrixSellerIdentityContext(anchorCell);
   if (!context.product) return {enabled:false, detail:context.detail};
@@ -5701,22 +5757,25 @@ function closeMatrixContextMenu() {
   if (!matrixContextMenu) return;
   matrixContextMenu.hidden = true;
   matrixContextTargets = [];
-  matrixContextProductCopyTarget = null;
+  matrixContextProductCopyTargets = [];
+  matrixContextProductCopySkipped = 0;
   matrixContextOptionAddTarget = null;
 }
 
 function openMatrixContextMenu(clientX, clientY, anchorCell) {
   if (!matrixContextMenu || !matrixContextSourceRefresh || !matrixContextSourceRefreshCount || !matrixContextProductCopy || !matrixContextProductCopyDetail || !matrixContextOptionAdd || !matrixContextOptionAddDetail || !matrixContextDisconnect || !matrixContextDisconnectCount) return;
   matrixContextTargets = selectedMatrixDisconnectTargets();
-  matrixContextProductCopyTarget = matrixProductCopyContext(anchorCell);
+  const productCopyContext = selectedMatrixProductCopyContexts(anchorCell);
+  matrixContextProductCopyTargets = productCopyContext.targets;
+  matrixContextProductCopySkipped = productCopyContext.skipped;
   matrixContextOptionAddTarget = matrixOptionAddContext(anchorCell);
   const labels = [...new Set(matrixContextTargets.map(target => CHANNEL_LABELS[target.source] || target.source))];
   matrixContextDisconnect.disabled = matrixContextTargets.length === 0;
   matrixContextDisconnectCount.textContent = matrixContextTargets.length
     ? `${labels.length === 1 ? `${labels[0]} ` : ''}연결 ${formatNumber(matrixContextTargets.length)}건`
     : '해제할 연결 없음';
-  matrixContextProductCopy.disabled = !matrixContextProductCopyTarget.enabled;
-  matrixContextProductCopyDetail.textContent = matrixContextProductCopyTarget.detail;
+  matrixContextProductCopy.disabled = matrixContextProductCopyTargets.length === 0;
+  matrixContextProductCopyDetail.textContent = productCopyContext.detail;
   matrixContextOptionAdd.disabled = !matrixContextOptionAddTarget.enabled;
   matrixContextOptionAddDetail.textContent = matrixContextOptionAddTarget.detail;
   updateSourceRefreshAction();
@@ -5813,20 +5872,44 @@ matrixContextSourceRefresh?.addEventListener('click', event => {
 
 matrixContextProductCopy?.addEventListener('click', async event => {
   event.stopPropagation();
-  const target = matrixContextProductCopyTarget;
-  if (!target?.enabled) return;
+  const targets = [...matrixContextProductCopyTargets];
+  const skipped = matrixContextProductCopySkipped;
+  if (!targets.length) return;
   closeMatrixContextMenu();
-  try {
-    await liveData.saveProductLinkDraft({
+  const successes = [];
+  const failures = [];
+  for (let offset = 0; offset < targets.length; offset += 3) {
+    const batch = targets.slice(offset, offset + 3);
+    const settled = await Promise.allSettled(batch.map(target => liveData.saveProductLinkDraft({
       sku:target.sku,
       source:target.source,
       productCode:target.productCode
+    })));
+    settled.forEach((result, index) => {
+      const target = batch[index];
+      if (result.status === 'fulfilled') {
+        successes.push(target);
+        applyLocalProductLinkDraft(target, result.value);
+      } else {
+        failures.push({target, error:result.reason});
+      }
     });
-    await loadLiveMatrix();
-    showToast(`${target.sku} · ${target.productCode} 상품코드만 복제했습니다. 옵션은 아직 연결되지 않았습니다.`);
-  } catch (error) {
-    console.error('seller product code draft save failed', error);
-    showToast(`상품코드 복제 실패: ${error?.message || error}`);
+  }
+  if (successes.length) {
+    renderLiveMatrixRows(matrixState.rows);
+    const skus = [...new Set(successes.map(target => target.sku))];
+    void refreshMatrixSkus(skus).catch(error => {
+      console.error('saved product link drafts targeted refresh failed', error);
+      showToast(`상품코드 ${formatNumber(successes.length)}건은 저장됐지만 최신 상세값 조회가 지연됩니다. 화면 복제값은 유지합니다.`);
+    });
+  }
+  if (!failures.length) {
+    showToast(`선택한 ${formatNumber(successes.length)}개 행에 상품코드만 복제했습니다.${skipped ? ` · ${formatNumber(skipped)}개 행 제외` : ''} 옵션은 아직 연결되지 않았습니다.`);
+  } else if (successes.length) {
+    showToast(`상품코드 복제 ${formatNumber(successes.length)}건 완료 · ${formatNumber(failures.length)}건 실패${skipped ? ` · ${formatNumber(skipped)}개 제외` : ''}`);
+  } else {
+    console.error('seller product code draft saves failed', failures);
+    showToast(`상품코드 복제 실패: ${failures[0]?.error?.message || failures[0]?.error || 'DB 오류'}`);
   }
 });
 
