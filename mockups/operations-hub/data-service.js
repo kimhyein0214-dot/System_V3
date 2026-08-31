@@ -1425,6 +1425,16 @@
     return data;
   }
 
+  async function ensureSellpiaSkuRelationNode({sku, folderId = null, relationKind = 'individual'} = {}) {
+    const {data, error} = await db.rpc('ensure_operations_hub_sellpia_sku_relation_node', {
+      p_sellpia_sku_code:cleanText(sku),
+      p_folder_id:folderId === null || folderId === '' ? null : Number(folderId),
+      p_relation_kind:cleanText(relationKind) || 'individual'
+    });
+    if (error) throw error;
+    return data;
+  }
+
   async function ensureSellerRelationNode({source, productCode, optionCode = '', folderId = null, relationKind = 'custom'} = {}) {
     const {data, error} = await db.rpc('ensure_operations_hub_seller_relation_node', {
       p_source:cleanText(source),
@@ -1466,6 +1476,16 @@
     });
     if (error) throw error;
     return data;
+  }
+
+  async function applyRelationBoard({nodes = [], edges = [], removeEdgeIds = []} = {}) {
+    const {data, error} = await db.rpc('apply_operations_hub_relation_board', {
+      p_nodes:Array.isArray(nodes) ? nodes : [],
+      p_edges:Array.isArray(edges) ? edges : [],
+      p_remove_edge_ids:[...new Set((removeEdgeIds || []).map(Number).filter(Number.isFinite))]
+    });
+    if (error) throw error;
+    return data || null;
   }
 
   async function saveListingOrganization({source, productCode, optionCode = '', folderId = null, relationKind = null, groupName = null} = {}) {
@@ -2349,10 +2369,12 @@
     searchSellpiaRelationProducts,
     loadSellpiaRelationProduct,
     ensureSellpiaRelationNode,
+    ensureSellpiaSkuRelationNode,
     ensureSellerRelationNode,
     loadRelationNodes,
     saveRelationEdge,
     removeRelationEdge,
+    applyRelationBoard,
     saveListingOrganization,
     saveListingComponentParent,
     loadListingConnection,

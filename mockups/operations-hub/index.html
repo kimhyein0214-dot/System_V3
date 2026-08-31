@@ -7,9 +7,9 @@
     <title>System V3 · 상품 운영 허브</title>
     <link rel="preconnect" href="https://cdnjs.cloudflare.com" crossorigin>
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/pretendard/1.3.9/static/pretendard.css">
-    <link rel="stylesheet" href="./style.css?v=20260827-relation-workspace-r55">
-    <link rel="stylesheet" href="./inventory.css?v=20260827-relation-workspace-r55">
-    <link rel="stylesheet" href="./price-rule-lab.css?v=20260827-relation-workspace-r55">
+    <link rel="stylesheet" href="./style.css?v=20260831-relation-pointer-board-r57">
+    <link rel="stylesheet" href="./inventory.css?v=20260831-relation-pointer-board-r57">
+    <link rel="stylesheet" href="./price-rule-lab.css?v=20260831-relation-pointer-board-r57">
   </head>
   <body>
     <div class="app-shell">
@@ -273,7 +273,7 @@
                   <div class="relation-workspace-actions">
                     <label class="relation-workspace-search"><span>⌕</span><input id="relation-workspace-search" autocomplete="off" placeholder="여러 분류에 속한 SKU 검색"></label>
                     <div class="relation-view-switch"><button id="relation-view-list" class="active" type="button">선택 분류</button><button id="relation-view-graph" type="button">전체 관계 보기</button></div>
-                    <button id="relation-add-toggle" class="btn primary" type="button">＋ 관계 추가</button>
+                    <button id="relation-add-toggle" class="btn primary" type="button">＋ 관계 편집</button>
                   </div>
                 </header>
                 <div class="relation-edge-summary"><b id="relation-edge-summary">관계를 불러오는 중입니다.</b><span>다른 분류에 중복 소속된 상품은 별도 배지로 표시됩니다.</span></div>
@@ -283,7 +283,25 @@
                   <div id="relation-tree" class="relation-tree"><span>등록된 관계 노드가 없습니다.</span></div>
                 </section>
                 <section id="multi-link-organization-form" class="multi-link-organization-form relation-compose-panel" hidden>
-                   <div class="multi-link-form-guide"><b>상위·하위 관계 한 건 추가</b><span>상품 두 개를 준비한 뒤 상위와 하위를 직접 선택합니다. 분류와 유형은 방향을 강제하지 않습니다.</span></div>
+                   <div class="multi-link-form-guide"><b>상품 옵션 관계 작업판</b><span>상품코드 하나로 옵션을 전부 불러온 뒤, 왼쪽은 부모·오른쪽은 자식이 되도록 드래그하세요.</span></div>
+                   <form id="relation-product-loader" class="relation-product-loader">
+                     <label>상품 출처<select id="relation-board-source"><option value="sellpia">셀피아</option><option value="smartstore">스마트스토어</option><option value="makeshop">메이크샵</option><option value="ably">에이블리</option></select></label>
+                     <label>상품코드<input id="relation-board-product-code" autocomplete="off" required placeholder="옵션코드가 아닌 상품코드만 입력"></label>
+                     <button id="relation-board-load" class="btn primary" type="submit">상품 불러오기</button>
+                   </form>
+                   <div id="relation-board-products" class="relation-board-products"><span>아직 불러온 상품이 없습니다.</span></div>
+                   <div class="relation-board-toolbar">
+                     <div><b>옵션 종속관계</b><span id="relation-board-summary">상품을 불러오면 모든 옵션이 미배치 칸에 나타납니다.</span></div>
+                     <div><button id="relation-board-add-level" class="btn" type="button">＋ 하위 단계</button><button id="relation-board-reset" class="btn" type="button">작업 취소</button></div>
+                   </div>
+                   <div id="relation-drag-board" class="relation-drag-board"><div class="relation-board-empty">상품을 먼저 불러와주세요.</div></div>
+                   <div class="relation-board-savebar">
+                     <div><b id="relation-board-change-count">변경 없음</b><span id="relation-board-change-copy">드래그한 관계는 저장 버튼을 누르기 전까지 DB에 반영되지 않습니다.</span></div>
+                     <button id="relation-board-save" class="btn primary" type="button" disabled>관계 변경 저장</button>
+                   </div>
+                   <details class="relation-single-link-fallback">
+                     <summary>기존 방식으로 관계 한 건 직접 추가</summary>
+                     <div class="relation-single-link-inner">
                    <label>관리 폴더<select id="multi-link-folder"><option value="">미분류</option></select></label>
                    <label>노드 설명 유형<select id="multi-link-relation-kind"><option value="individual">개별상품</option><option value="collection">모음전·기획전</option><option value="one_plus_one">1+1</option><option value="set">세트</option><option value="custom">직접 분류</option></select></label>
                    <div class="relation-node-create seller-node-create">
@@ -301,8 +319,10 @@
                      <label>상위 노드<select id="relation-parent-node"><option value="">상위를 선택해주세요</option></select></label>
                      <span>→</span>
                      <label>하위 노드<select id="relation-child-node"><option value="">하위를 선택해주세요</option></select></label>
-                     <button id="relation-edge-save" class="btn primary" type="button" disabled>상위 → 하위 연결 저장</button>
-                   </div>
+                      <button id="relation-edge-save" class="btn primary" type="button" disabled>상위 → 하위 연결 저장</button>
+                    </div>
+                     </div>
+                   </details>
                 </section>
                 <details class="multi-link-legacy-workspace">
                   <summary><span>기존 SKU 구성·재고 상세 작업</span><em>판매처 옵션별 구성수량과 계산재고가 필요할 때만 펼치세요.</em></summary>
@@ -710,13 +730,13 @@
     <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.112.3/dist/umd/supabase.js"></script>
-    <script src="./seller-source-parsers.js?v=20260827-relation-workspace-r55"></script>
-    <script src="./seller-export-adapter.js?v=20260827-relation-workspace-r55"></script>
-    <script src="./matrix-csv-export.js?v=20260827-relation-workspace-r55"></script>
-    <script src="./discount-price-math.js?v=20260827-relation-workspace-r55"></script>
-    <script src="./source-refresh-verifier.js?v=20260827-relation-workspace-r55"></script>
-    <script src="./data-service.js?v=20260827-relation-workspace-r55"></script>
-    <script src="./app.js?v=20260827-relation-workspace-r55"></script>
-    <script src="./price-rule-lab.js?v=20260827-relation-workspace-r55"></script>
+    <script src="./seller-source-parsers.js?v=20260831-relation-pointer-board-r57"></script>
+    <script src="./seller-export-adapter.js?v=20260831-relation-pointer-board-r57"></script>
+    <script src="./matrix-csv-export.js?v=20260831-relation-pointer-board-r57"></script>
+    <script src="./discount-price-math.js?v=20260831-relation-pointer-board-r57"></script>
+    <script src="./source-refresh-verifier.js?v=20260831-relation-pointer-board-r57"></script>
+    <script src="./data-service.js?v=20260831-relation-pointer-board-r57"></script>
+    <script src="./app.js?v=20260831-relation-pointer-board-r57"></script>
+    <script src="./price-rule-lab.js?v=20260831-relation-pointer-board-r57"></script>
   </body>
 </html>

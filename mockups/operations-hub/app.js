@@ -91,6 +91,7 @@ const MATRIX_TRANSIENT_RETRY_DELAYS_MS = [1500, 5000, 12000];
 const matrixState = {page:1, pageSize:initialMatrixPageSize, search:'', searchSources:['sellpia','smartstore','makeshop','ably'], status:'all', sort:'sku_asc', excludeCombinationSkus:false, advancedFilter:{logic:'and', conditions:[]}, total:0, rows:[], loading:false, requestId:0, codeListSkus:[], codeListRows:[], codeListName:''};
 const multiLinkState = {page:1, pageSize:50, search:'', source:'all', relationType:'all', folderId:null, organizationScope:'all', folders:[], foldersLoaded:false, total:0, allTotal:0, loading:false, requestId:0, rows:[], selected:null, loaded:false};
 const relationGraphState = {nodes:[], edges:[], selectedProduct:null, loading:false, requestId:0, searchTimer:null, viewMode:'list', search:'', focusNodeId:null};
+const relationBoardState = {nodes:new Map(), loadedProducts:new Map(), initialEdges:new Map(), levelCount:3, draggingKey:null, pointerDrag:null, nativeDragging:false, saving:false};
 const mappingSyncState = {displayedVersion:'', checking:false, autoRefreshing:false, latest:null};
 const matrixRowsBySku = new Map();
 const drawerState = {
@@ -6327,6 +6328,8 @@ async function loadRelationFolders({force = false} = {}) {
 function relationNodeLabel(node) {
   const identity = node.nodeType === 'sellpia_product'
     ? `셀피아 ${node.sellpiaProductCode || ''}`
+    : node.nodeType === 'sellpia_sku'
+      ? `셀피아 SKU ${node.sellpiaSkuCode || ''}`
     : node.nodeType === 'seller_listing'
       ? `${multiLinkChannelLabel(node.source)} ${node.sellerProductCode || ''}${node.sellerOptionCode ? ` / ${node.sellerOptionCode}` : ''}`
       : '직접 노드';
@@ -6349,6 +6352,8 @@ function relationNodeCard(node, currentEdgeId = null) {
   const otherCount = Math.max(0, incidentCount - (currentEdgeId ? 1 : 0));
   const identity = node.nodeType === 'sellpia_product'
     ? `셀피아 ${node.sellpiaProductCode || '-'}`
+    : node.nodeType === 'sellpia_sku'
+      ? `셀피아 SKU ${node.sellpiaSkuCode || '-'}`
     : node.nodeType === 'seller_listing'
       ? `${multiLinkChannelLabel(node.source)} ${node.sellerProductCode || '-'}${node.sellerOptionCode ? ` / ${node.sellerOptionCode}` : ''}`
       : '직접 노드';
@@ -6461,7 +6466,7 @@ function renderRelationTree() {
       const parentEdges = incoming.get(String(node.nodeId)) || [];
       const childEdges = outgoing.get(String(node.nodeId)) || [];
       return `<article class="relation-graph-node${String(node.nodeId) === String(relationGraphState.focusNodeId || '') ? ' focused' : ''}">
-        <span>${escapeHtml(node.nodeType === 'sellpia_product' ? `셀피아 ${node.sellpiaProductCode || '-'}` : `${multiLinkChannelLabel(node.source)} ${node.sellerProductCode || '-'}`)}</span>
+        <span>${escapeHtml(node.nodeType === 'sellpia_product' ? `셀피아 ${node.sellpiaProductCode || '-'}` : node.nodeType === 'sellpia_sku' ? `셀피아 SKU ${node.sellpiaSkuCode || '-'}` : `${multiLinkChannelLabel(node.source)} ${node.sellerProductCode || '-'}`)}</span>
         <b>${escapeHtml(node.displayName || '이름 없음')}</b>
         <em>${escapeHtml(RELATION_KIND_LABELS[node.relationKind] || '직접 분류')} · 상위 ${parentEdges.length} · 하위 ${childEdges.length}</em>
         ${parentEdges.length ? `<div class="relation-graph-parent-links">${parentEdges.map(edge => `<button type="button" data-focus-relation-node="${Number(edge.parentNodeId)}">← ${escapeHtml(byId.get(String(edge.parentNodeId))?.displayName || '상위')}</button>`).join('')}</div>` : ''}
@@ -6531,6 +6536,327 @@ function renderSellpiaRelationPreview(product) {
     return;
   }
   box.innerHTML = `<div class="relation-sellpia-product"><b>${escapeHtml(product.productCode)} · ${escapeHtml(product.productName || '상품명 없음')}</b><span>${formatNumber(product.optionCount || 0)}개 하위 옵션</span></div><div class="relation-sellpia-options">${(product.options || []).map(option => `<span><b>${escapeHtml(option.sku)}</b><em>${escapeHtml(option.optionName || '옵션명 없음')}</em></span>`).join('')}</div>`;
+}
+
+function relationBoardIdentityFromGraph(node) {
+  if (node.nodeType === 'sellpia_sku') return `sellpia-sku|${node.sellpiaSkuCode || ''}`;
+  if (node.nodeType === 'seller_listing') return `seller|${node.source || ''}|${node.sellerProductCode || ''}|${node.sellerOptionCode || ''}`;
+  if (node.nodeType === 'sellpia_product') return `sellpia-product|${node.sellpiaProductCode || ''}`;
+  return `node|${node.nodeId}`;
+}
+
+function relationBoardNodeFromGraph(node) {
+  return {
+    key:relationBoardIdentityFromGraph(node),
+    nodeId:Number(node.nodeId),
+    nodeType:node.nodeType,
+    source:node.source || (node.nodeType.startsWith('sellpia') ? 'sellpia' : ''),
+    productCode:node.sellerProductCode || node.sellpiaProductCode || '',
+    optionCode:node.sellerOptionCode || '',
+    sku:node.sellpiaSkuCode || '',
+    displayName:node.displayName || '이름 없음',
+    folderId:node.folderId ?? null,
+    relationKind:node.relationKind || 'custom',
+    parentKeys:[],
+    level:null,
+    touched:false,
+    loaded:false,
+    existing:true
+  };
+}
+
+function relationBoardDisplayIdentity(node) {
+  if (node.nodeType === 'sellpia_sku') return `셀피아 SKU ${node.sku || '-'}`;
+  if (node.nodeType === 'sellpia_product') return `셀피아 상품 ${node.productCode || '-'}`;
+  if (node.nodeType === 'seller_listing') return `${multiLinkChannelLabel(node.source)} ${node.productCode || '-'}${node.optionCode ? ` / ${node.optionCode}` : ''}`;
+  return '기존 관계 노드';
+}
+
+function relationBoardDescendantKeys(rootKey) {
+  const descendants = new Set();
+  const queue = [rootKey];
+  while (queue.length) {
+    const parentKey = queue.shift();
+    relationBoardState.nodes.forEach(node => {
+      if (!descendants.has(node.key) && node.parentKeys.includes(parentKey)) {
+        descendants.add(node.key);
+        queue.push(node.key);
+      }
+    });
+  }
+  descendants.delete(rootKey);
+  return descendants;
+}
+
+function normalizeRelationBoardBranch(rootKey) {
+  const root = relationBoardState.nodes.get(rootKey);
+  if (!root || root.level === null) return;
+  const queue = [root];
+  const visited = new Set([root.key]);
+  while (queue.length) {
+    const parent = queue.shift();
+    relationBoardState.nodes.forEach(child => {
+      if (visited.has(child.key) || !child.parentKeys.includes(parent.key)) return;
+      child.level = Number(parent.level) + 1;
+      child.touched = true;
+      visited.add(child.key);
+      queue.push(child);
+    });
+  }
+}
+
+function moveRelationBoardNode(key, level, parentKey = null) {
+  const node = relationBoardState.nodes.get(key);
+  if (!node) return;
+  const descendants = relationBoardDescendantKeys(key);
+  if (parentKey && (parentKey === key || descendants.has(parentKey))) {
+    showToast('자기 자신이나 현재 하위 상품 아래로는 이동할 수 없습니다.');
+    return;
+  }
+  if (level === null) {
+    node.level = null;
+    node.parentKeys = [];
+    node.touched = true;
+    descendants.forEach(childKey => {
+      const child = relationBoardState.nodes.get(childKey);
+      if (child) { child.level = null; child.touched = true; }
+    });
+  } else {
+    node.level = Math.max(0, Number(level) || 0);
+    node.parentKeys = parentKey ? [parentKey] : [];
+    node.touched = true;
+    normalizeRelationBoardBranch(key);
+  }
+  relationBoardState.levelCount = Math.max(relationBoardState.levelCount, node.level === null ? 3 : node.level + 1);
+  renderRelationBoard();
+}
+
+function hydrateRelationBoardGraphContext(seedKeys = []) {
+  const graphByKey = new Map(relationGraphState.nodes.map(node => [relationBoardIdentityFromGraph(node), node]));
+  const graphById = new Map(relationGraphState.nodes.map(node => [String(node.nodeId), node]));
+  const includedIds = new Set(seedKeys.map(key => graphByKey.get(key)).filter(Boolean).map(node => String(node.nodeId)));
+  let changed = true;
+  while (changed) {
+    changed = false;
+    relationGraphState.edges.forEach(edge => {
+      const parent = String(edge.parentNodeId);
+      const child = String(edge.childNodeId);
+      if (includedIds.has(parent) || includedIds.has(child)) {
+        if (!includedIds.has(parent)) { includedIds.add(parent); changed = true; }
+        if (!includedIds.has(child)) { includedIds.add(child); changed = true; }
+      }
+    });
+  }
+  includedIds.forEach(nodeId => {
+    const graphNode = graphById.get(nodeId);
+    if (!graphNode) return;
+    const key = relationBoardIdentityFromGraph(graphNode);
+    const staged = relationBoardState.nodes.get(key);
+    if (staged) {
+      staged.nodeId = Number(graphNode.nodeId);
+      staged.existing = true;
+      staged.displayName = staged.displayName || graphNode.displayName;
+    } else {
+      relationBoardState.nodes.set(key, relationBoardNodeFromGraph(graphNode));
+    }
+  });
+  relationGraphState.edges.forEach(edge => {
+    const parent = graphById.get(String(edge.parentNodeId));
+    const child = graphById.get(String(edge.childNodeId));
+    if (!parent || !child || !includedIds.has(String(parent.nodeId)) || !includedIds.has(String(child.nodeId))) return;
+    const parentKey = relationBoardIdentityFromGraph(parent);
+    const childKey = relationBoardIdentityFromGraph(child);
+    relationBoardState.initialEdges.set(`${parentKey}\u0000${childKey}`, {edgeId:Number(edge.edgeId), parentKey, childKey, sortOrder:Number(edge.sortOrder || 100)});
+  });
+  const incidentKeys = new Set();
+  relationBoardState.initialEdges.forEach(edge => { incidentKeys.add(edge.parentKey); incidentKeys.add(edge.childKey); });
+  relationBoardState.nodes.forEach(node => {
+    if (node.touched) return;
+    node.parentKeys = [...relationBoardState.initialEdges.values()].filter(edge => edge.childKey === node.key).map(edge => edge.parentKey);
+    node.level = incidentKeys.has(node.key) ? 0 : null;
+  });
+  for (let pass = 0; pass < relationBoardState.nodes.size; pass += 1) {
+    let moved = false;
+    relationBoardState.nodes.forEach(node => {
+      if (node.touched || !node.parentKeys.length) return;
+      const parentDepths = node.parentKeys.map(key => relationBoardState.nodes.get(key)?.level).filter(level => level !== null && level !== undefined);
+      if (!parentDepths.length) return;
+      const next = Math.max(...parentDepths) + 1;
+      if (node.level !== next) { node.level = next; moved = true; }
+    });
+    if (!moved) break;
+  }
+  const maxLevel = Math.max(0, ...[...relationBoardState.nodes.values()].map(node => node.level ?? 0));
+  relationBoardState.levelCount = Math.max(relationBoardState.levelCount, maxLevel + 1);
+}
+
+function relationBoardDesiredEdges() {
+  const result = new Map();
+  relationBoardState.nodes.forEach(node => {
+    if (node.level === null) return;
+    node.parentKeys.forEach((parentKey, index) => {
+      const parent = relationBoardState.nodes.get(parentKey);
+      if (!parent || parent.level === null) return;
+      result.set(`${parentKey}\u0000${node.key}`, {parentKey, childKey:node.key, sortOrder:(index + 1) * 100});
+    });
+  });
+  return result;
+}
+
+function relationBoardChanges() {
+  const desired = relationBoardDesiredEdges();
+  const additions = [...desired.entries()].filter(([key]) => !relationBoardState.initialEdges.has(key)).map(([, edge]) => edge);
+  const removals = [...relationBoardState.initialEdges.entries()].filter(([key]) => !desired.has(key)).map(([, edge]) => edge);
+  return {desired, additions, removals};
+}
+
+function renderRelationBoardProducts() {
+  const box = document.getElementById('relation-board-products');
+  const products = [...relationBoardState.loadedProducts.values()];
+  box.innerHTML = products.length ? products.map(product => `<article><span>${escapeHtml(product.source === 'sellpia' ? '셀피아' : multiLinkChannelLabel(product.source))}</span><b>${escapeHtml(product.productCode)} · ${escapeHtml(product.productName || '상품명 없음')}</b><em>${formatNumber(product.optionCount)}개 옵션</em></article>`).join('') : '<span>아직 불러온 상품이 없습니다.</span>';
+}
+
+function renderRelationBoardCard(node) {
+  const parentCount = node.parentKeys.length;
+  return `<article class="relation-board-node${node.loaded ? ' loaded' : ' context'}" data-board-node-key="${escapeHtml(node.key)}">
+    <div><span>${escapeHtml(relationBoardDisplayIdentity(node))}</span><b title="${escapeHtml(node.displayName)}">${escapeHtml(node.displayName)}</b><em>${parentCount > 1 ? `상위 ${formatNumber(parentCount)}곳` : node.existing ? '저장된 노드' : '저장 전'}</em></div>
+    <div class="relation-board-node-actions"><button type="button" data-board-root="${escapeHtml(node.key)}">최상위</button><button type="button" data-board-unassign="${escapeHtml(node.key)}">미배치</button></div>
+  </article>`;
+}
+
+function renderRelationBoard() {
+  const board = document.getElementById('relation-drag-board');
+  renderRelationBoardProducts();
+  const nodes = [...relationBoardState.nodes.values()];
+  if (!nodes.length) {
+    board.innerHTML = '<div class="relation-board-empty">상품을 먼저 불러와주세요.</div>';
+    document.getElementById('relation-board-summary').textContent = '상품을 불러오면 모든 옵션이 미배치 칸에 나타납니다.';
+    document.getElementById('relation-board-change-count').textContent = '변경 없음';
+    document.getElementById('relation-board-save').disabled = true;
+    return;
+  }
+  const unassigned = nodes.filter(node => node.level === null);
+  const maxLevel = Math.max(relationBoardState.levelCount - 1, ...nodes.map(node => node.level ?? 0));
+  const columns = [];
+  columns.push(`<section class="relation-board-column unassigned"><header><span>대기</span><b>미배치 옵션</b><em>${formatNumber(unassigned.length)}</em></header><div class="relation-board-column-drop" data-board-drop="unassigned">이곳에 놓으면 현재 상위 관계에서 빠집니다.</div><div>${unassigned.map(renderRelationBoardCard).join('') || '<p>미배치 옵션이 없습니다.</p>'}</div></section>`);
+  for (let level = 0; level <= maxLevel; level += 1) {
+    const levelNodes = nodes.filter(node => node.level === level);
+    let body = '';
+    if (level === 0) {
+      body = `<div class="relation-board-column-drop" data-board-drop-level="0">이곳에 놓으면 최상위 부모가 됩니다.</div><div>${levelNodes.map(renderRelationBoardCard).join('') || '<p>최상위 상품을 놓아주세요.</p>'}</div>`;
+    } else {
+      const parents = nodes.filter(node => node.level === level - 1);
+      body = parents.length ? parents.map(parent => {
+        const children = levelNodes.filter(node => node.parentKeys[0] === parent.key);
+        return `<section class="relation-board-parent-lane"><header><span>${escapeHtml(parent.displayName)}</span><b>의 자식</b></header><div class="relation-board-parent-drop" data-board-parent-key="${escapeHtml(parent.key)}">여기에 옵션 놓기</div><div>${children.map(renderRelationBoardCard).join('') || '<p>연결된 자식이 없습니다.</p>'}</div></section>`;
+      }).join('') : '<p class="relation-board-level-empty">왼쪽 단계에 부모 상품을 먼저 배치해주세요.</p>';
+      const ungrouped = levelNodes.filter(node => !parents.some(parent => parent.key === node.parentKeys[0]));
+      if (ungrouped.length) body += `<section class="relation-board-parent-lane orphan"><header><span>상위 확인 필요</span></header><div>${ungrouped.map(renderRelationBoardCard).join('')}</div></section>`;
+    }
+    const title = level === 0 ? '최상위 부모' : level === 1 ? '자식' : level === 2 ? '손자' : `${level + 1}단계 하위`;
+    columns.push(`<section class="relation-board-column" data-board-level="${level}"><header><span>${level + 1}단계</span><b>${title}</b><em>${formatNumber(levelNodes.length)}</em></header>${body}</section>`);
+  }
+  board.innerHTML = columns.join('');
+  const changes = relationBoardChanges();
+  const assignedCount = nodes.filter(node => node.level !== null).length;
+  document.getElementById('relation-board-summary').textContent = `${formatNumber(nodes.length)}개 옵션·노드 · 배치 ${formatNumber(assignedCount)}개 · 미배치 ${formatNumber(unassigned.length)}개`;
+  document.getElementById('relation-board-change-count').textContent = changes.additions.length || changes.removals.length ? `추가 ${formatNumber(changes.additions.length)}건 · 해제 ${formatNumber(changes.removals.length)}건` : '변경 없음';
+  document.getElementById('relation-board-change-copy').textContent = changes.additions.length || changes.removals.length ? '저장하면 표시된 관계 변경을 한 번에 반영합니다.' : '드래그한 관계는 저장 버튼을 누르기 전까지 DB에 반영되지 않습니다.';
+  document.getElementById('relation-board-save').disabled = relationBoardState.saving || (!changes.additions.length && !changes.removals.length);
+}
+
+function resetRelationBoard({confirmChanges = false} = {}) {
+  const changes = relationBoardChanges();
+  if (confirmChanges && (changes.additions.length || changes.removals.length) && !window.confirm('저장하지 않은 관계 변경을 취소할까요?')) return false;
+  relationBoardState.nodes.clear();
+  relationBoardState.loadedProducts.clear();
+  relationBoardState.initialEdges.clear();
+  relationBoardState.levelCount = 3;
+  relationBoardState.draggingKey = null;
+  renderRelationBoard();
+  return true;
+}
+
+async function loadRelationBoardProduct(source, productCode) {
+  const folder = multiLinkState.folders.find(item => String(item.folderId) === String(multiLinkState.folderId));
+  const folderId = multiLinkState.folderId;
+  const relationKind = folder?.kind || (source === 'sellpia' ? 'individual' : 'custom');
+  let productName = '';
+  let options = [];
+  if (source === 'sellpia') {
+    const product = await liveData.loadSellpiaRelationProduct(productCode);
+    if (!product) throw new Error(`셀피아 상품코드 ${productCode}를 찾을 수 없습니다.`);
+    productName = product.productName || '';
+    options = (product.options || []).map(option => ({
+      key:`sellpia-sku|${option.sku}`,
+      nodeType:'sellpia_sku', source:'sellpia', productCode:product.productCode, optionCode:'', sku:option.sku,
+      displayName:[product.productName, option.optionName].filter(Boolean).join(' · ') || option.sku,
+      folderId, relationKind, loaded:true
+    }));
+  } else {
+    const rows = await liveData.loadSellerProductOptions(source, productCode);
+    if (!rows.length) throw new Error(`${multiLinkChannelLabel(source)} 상품코드 ${productCode}의 옵션을 찾을 수 없습니다.`);
+    productName = rows[0]?.product_name || '';
+    options = rows.map(row => ({
+      key:`seller|${source}|${row.product_code}|${row.option_code || ''}`,
+      nodeType:'seller_listing', source, productCode:row.product_code, optionCode:row.option_code || '', sku:'',
+      displayName:[row.product_name, row.option_name].filter(Boolean).join(' · ') || `${row.product_code} / ${row.option_code || '-'}`,
+      folderId, relationKind, loaded:true
+    }));
+  }
+  const graphByKey = new Map(relationGraphState.nodes.map(node => [relationBoardIdentityFromGraph(node), node]));
+  options.forEach(option => {
+    const existing = graphByKey.get(option.key);
+    const previous = relationBoardState.nodes.get(option.key);
+    relationBoardState.nodes.set(option.key, {
+      ...relationBoardNodeFromGraph(existing || {nodeId:0, nodeType:option.nodeType, displayName:option.displayName}),
+      ...previous,
+      ...option,
+      nodeId:existing ? Number(existing.nodeId) : (previous?.nodeId || null),
+      existing:Boolean(existing || previous?.existing),
+      parentKeys:previous?.parentKeys || [],
+      level:previous?.level ?? null,
+      touched:Boolean(previous?.touched)
+    });
+  });
+  relationBoardState.loadedProducts.set(`${source}|${productCode}`, {source, productCode, productName, optionCount:options.length});
+  hydrateRelationBoardGraphContext(options.map(option => option.key));
+  renderRelationBoard();
+  return options.length;
+}
+
+async function saveRelationBoard() {
+  const changes = relationBoardChanges();
+  if (!changes.additions.length && !changes.removals.length) return;
+  const assignedKeys = new Set();
+  changes.desired.forEach(edge => { assignedKeys.add(edge.parentKey); assignedKeys.add(edge.childKey); });
+  const nodes = [...assignedKeys].map(key => relationBoardState.nodes.get(key)).filter(Boolean).map(node => node.nodeId ? {
+    clientKey:node.key, nodeId:node.nodeId
+  } : node.nodeType === 'sellpia_sku' ? {
+    clientKey:node.key, nodeType:'sellpia_sku', sellpiaSkuCode:node.sku, folderId:node.folderId, relationKind:node.relationKind
+  } : {
+    clientKey:node.key, nodeType:'seller_listing', source:node.source, productCode:node.productCode, optionCode:node.optionCode,
+    folderId:node.folderId, relationKind:node.relationKind
+  });
+  const edges = [...changes.desired.values()].map(edge => ({parentKey:edge.parentKey, childKey:edge.childKey, sortOrder:edge.sortOrder}));
+  const removeEdgeIds = changes.removals.map(edge => edge.edgeId).filter(Boolean);
+  if (!window.confirm(`관계 ${changes.additions.length}건을 추가하고 ${changes.removals.length}건을 해제할까요?\n상품 원본·가격·재고는 변경되지 않습니다.`)) return;
+  const button = document.getElementById('relation-board-save');
+  relationBoardState.saving = true;
+  button.disabled = true;
+  button.textContent = '관계 저장 중…';
+  try {
+    const result = await liveData.applyRelationBoard({nodes, edges, removeEdgeIds});
+    await loadRelationGraph();
+    resetRelationBoard();
+    showToast(`관계 변경을 저장했습니다. 추가 ${formatNumber(changes.additions.length)}건 · 해제 ${formatNumber(changes.removals.length)}건`);
+  } catch (error) {
+    showToast(`관계 작업판 저장 실패: ${error?.message || error}`);
+  } finally {
+    relationBoardState.saving = false;
+    button.textContent = '관계 변경 저장';
+    renderRelationBoard();
+  }
 }
 
 function openRelationFolderForm(folder = null) {
@@ -6968,7 +7294,7 @@ document.getElementById('relation-edge-save').addEventListener('click', async ev
     await loadRelationGraph();
     setRelationViewMode('list');
     document.getElementById('multi-link-organization-form').hidden = true;
-    document.getElementById('relation-add-toggle').textContent = '＋ 관계 추가';
+    document.getElementById('relation-add-toggle').textContent = '＋ 관계 편집';
     showToast('상위 → 하위 관계를 저장했습니다. 가격·재고 계산에는 반영하지 않았습니다.');
   } catch (error) { showToast(`관계 저장 실패: ${error?.message || error}`); }
   finally { button.disabled = false; }
@@ -7017,8 +7343,148 @@ document.getElementById('relation-workspace-search').addEventListener('input', e
 document.getElementById('relation-add-toggle').addEventListener('click', event => {
   const form = document.getElementById('multi-link-organization-form');
   form.hidden = !form.hidden;
-  event.currentTarget.textContent = form.hidden ? '＋ 관계 추가' : '관계 추가 닫기';
-  if (!form.hidden) form.scrollIntoView({behavior:'smooth', block:'nearest'});
+  event.currentTarget.textContent = form.hidden ? '＋ 관계 편집' : '관계 편집 닫기';
+  if (!form.hidden) {
+    renderRelationBoard();
+    form.scrollIntoView({behavior:'smooth', block:'nearest'});
+  }
+});
+
+document.getElementById('relation-product-loader').addEventListener('submit', async event => {
+  event.preventDefault();
+  const source = document.getElementById('relation-board-source').value;
+  const productCode = document.getElementById('relation-board-product-code').value.trim();
+  if (!productCode) return;
+  const button = document.getElementById('relation-board-load');
+  const original = button.textContent;
+  button.disabled = true;
+  button.textContent = '옵션 불러오는 중…';
+  try {
+    const count = await loadRelationBoardProduct(source, productCode);
+    document.getElementById('relation-board-product-code').value = '';
+    showToast(`${source === 'sellpia' ? '셀피아' : multiLinkChannelLabel(source)} ${productCode}의 옵션 ${formatNumber(count)}개를 불러왔습니다.`);
+  } catch (error) {
+    showToast(`상품 옵션 불러오기 실패: ${error?.message || error}`);
+  } finally {
+    button.disabled = false;
+    button.textContent = original;
+  }
+});
+
+document.getElementById('relation-board-add-level').addEventListener('click', () => {
+  if (relationBoardState.levelCount >= 6) {
+    showToast('관계 작업판은 현재 6단계까지 표시할 수 있습니다.');
+    return;
+  }
+  relationBoardState.levelCount += 1;
+  renderRelationBoard();
+});
+
+document.getElementById('relation-board-reset').addEventListener('click', () => resetRelationBoard({confirmChanges:true}));
+document.getElementById('relation-board-save').addEventListener('click', saveRelationBoard);
+
+document.getElementById('relation-drag-board').addEventListener('click', event => {
+  const root = event.target.closest('[data-board-root]');
+  if (root) { moveRelationBoardNode(root.dataset.boardRoot, 0); return; }
+  const unassign = event.target.closest('[data-board-unassign]');
+  if (unassign) moveRelationBoardNode(unassign.dataset.boardUnassign, null);
+});
+
+function applyRelationBoardDropTarget(key, target) {
+  if (!target || !key) return false;
+  target.classList.remove('relation-board-drop-active');
+  if (target.dataset.boardDrop === 'unassigned') {
+    moveRelationBoardNode(key, null);
+    return true;
+  }
+  if (target.dataset.boardParentKey) {
+    const parent = relationBoardState.nodes.get(target.dataset.boardParentKey);
+    if (parent?.level !== null) moveRelationBoardNode(key, Number(parent.level) + 1, parent.key);
+    return true;
+  }
+  const level = Number(target.dataset.boardDropLevel);
+  if (level === 0) {
+    moveRelationBoardNode(key, 0);
+    return true;
+  }
+  const parents = [...relationBoardState.nodes.values()].filter(node => node.level === level - 1);
+  if (parents.length === 1) moveRelationBoardNode(key, level, parents[0].key);
+  else showToast('왼쪽에 부모가 여러 개입니다. 원하는 부모 이름 아래의 ‘여기에 옵션 놓기’ 영역에 드롭해주세요.');
+  return true;
+}
+
+function clearRelationBoardDrag() {
+  document.querySelectorAll('.relation-board-node.dragging').forEach(item => item.classList.remove('dragging'));
+  document.querySelectorAll('.relation-board-drop-active').forEach(item => item.classList.remove('relation-board-drop-active'));
+  relationBoardState.draggingKey = null;
+  relationBoardState.pointerDrag = null;
+}
+
+document.getElementById('relation-drag-board').addEventListener('dragstart', event => {
+  const card = event.target.closest('[data-board-node-key]');
+  if (!card) return;
+  relationBoardState.draggingKey = card.dataset.boardNodeKey;
+  relationBoardState.nativeDragging = true;
+  card.classList.add('dragging');
+  event.dataTransfer.effectAllowed = 'move';
+  event.dataTransfer.setData('text/plain', relationBoardState.draggingKey);
+});
+
+document.getElementById('relation-drag-board').addEventListener('dragend', event => {
+  event.target.closest('[data-board-node-key]')?.classList.remove('dragging');
+  relationBoardState.nativeDragging = false;
+  clearRelationBoardDrag();
+});
+
+document.getElementById('relation-drag-board').addEventListener('dragover', event => {
+  const target = event.target.closest('[data-board-parent-key],[data-board-drop-level],[data-board-drop]');
+  if (!target || !relationBoardState.draggingKey) return;
+  event.preventDefault();
+  event.dataTransfer.dropEffect = 'move';
+  target.classList.add('relation-board-drop-active');
+});
+
+document.getElementById('relation-drag-board').addEventListener('dragleave', event => {
+  const target = event.target.closest('[data-board-parent-key],[data-board-drop-level],[data-board-drop]');
+  if (target && !target.contains(event.relatedTarget)) target.classList.remove('relation-board-drop-active');
+});
+
+document.getElementById('relation-drag-board').addEventListener('drop', event => {
+  const target = event.target.closest('[data-board-parent-key],[data-board-drop-level],[data-board-drop]');
+  const key = relationBoardState.draggingKey || event.dataTransfer.getData('text/plain');
+  if (!target || !key) return;
+  event.preventDefault();
+  applyRelationBoardDropTarget(key, target);
+});
+
+document.getElementById('relation-drag-board').addEventListener('pointerdown', event => {
+  if (event.pointerType === 'touch' || event.target.closest('button')) return;
+  const card = event.target.closest('[data-board-node-key]');
+  if (!card || event.button !== 0) return;
+  relationBoardState.draggingKey = card.dataset.boardNodeKey;
+  relationBoardState.pointerDrag = {key:card.dataset.boardNodeKey, x:event.clientX, y:event.clientY, moved:false};
+  card.classList.add('dragging');
+});
+
+document.getElementById('relation-drag-board').addEventListener('pointermove', event => {
+  const drag = relationBoardState.pointerDrag;
+  if (!drag) return;
+  if (!drag.moved && Math.hypot(event.clientX - drag.x, event.clientY - drag.y) < 6) return;
+  drag.moved = true;
+  document.querySelectorAll('.relation-board-drop-active').forEach(item => item.classList.remove('relation-board-drop-active'));
+  event.target.closest('[data-board-parent-key],[data-board-drop-level],[data-board-drop]')?.classList.add('relation-board-drop-active');
+});
+
+document.getElementById('relation-drag-board').addEventListener('pointerup', event => {
+  const drag = relationBoardState.pointerDrag;
+  if (!drag) return;
+  const target = event.target.closest('[data-board-parent-key],[data-board-drop-level],[data-board-drop]');
+  if (drag.moved && target) applyRelationBoardDropTarget(drag.key, target);
+  clearRelationBoardDrag();
+});
+
+document.getElementById('relation-drag-board').addEventListener('pointercancel', () => {
+  if (!relationBoardState.nativeDragging) clearRelationBoardDrag();
 });
 
 document.getElementById('relation-tree-refresh').addEventListener('click', () => loadRelationGraph());
