@@ -1204,7 +1204,7 @@ async function loadLiveMatrix({resetPage = false, resetScroll = resetPage} = {})
     return true;
   } catch (error) {
     if (requestId !== matrixState.requestId || isMatrixAbortError(error)) return false;
-    console.error('operations hub matrix load failed', error);
+    console.error('operations hub matrix load failed', error?.code || '', error?.message || String(error));
     if (keepRenderedRows) {
       setMatrixConnection('error', 'DB 조회 지연 · 기존 화면 유지');
       showToast('새 데이터 조회가 지연되어 기존 화면을 유지합니다. 저장된 수정값은 사라지지 않습니다.');
