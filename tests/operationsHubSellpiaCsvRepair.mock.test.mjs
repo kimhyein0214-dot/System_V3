@@ -8,6 +8,7 @@ const dashboardMigration = fs.readFileSync(new URL('../supabase/migrations/20260
 const searchMigration = fs.readFileSync(new URL('../supabase/migrations/20260820190000_optimize_operations_hub_listing_source_search.sql', import.meta.url), 'utf8');
 const indexedSearchMigration = fs.readFileSync(new URL('../supabase/migrations/20260820191500_index_operations_hub_listing_source_search.sql', import.meta.url), 'utf8');
 const staleRefreshMigration = fs.readFileSync(new URL('../supabase/migrations/20260820193000_skip_unchanged_operations_hub_cache_refresh.sql', import.meta.url), 'utf8');
+const pageFirstMigration = fs.readFileSync(new URL('../supabase/migrations/20260831151000_operations_hub_matrix_page_v3.sql', import.meta.url), 'utf8');
 
 const sellpiaParser = dataService.slice(
   dataService.indexOf('async function parseSellpiaFile'),
@@ -20,7 +21,7 @@ assert.match(dataService, /!\/\^\\d\+-\\d\+\$\/\.test\(sku\)/, 'Sellpia uploads 
 assert.match(dataService, /operations-hub-sellpia-2026\.08\.25-v4/, 'the guarded Sellpia parser must publish the procurement-aware parser version');
 assert.doesNotMatch(dataService, /\.from\('operations_hub_matrix_live'\)/, 'interactive matrix reads must not hit the expensive live view');
 assert.match(dataService, /\.from\('operations_hub_matrix_cached'\)/, 'interactive matrix reads must use the non-blocking cache');
-assert.match(dataService, /directSellpiaSku[\s\S]*exactMatchSkus[\s\S]*query\.in\('sellpia_sku_code'/, 'exact Sellpia SKU searches must avoid a wide multi-column scan');
+assert.match(pageFirstMigration, /operations_hub_matrix_export_cache cache[\s\S]*?cache\.sellpia_sku_code[\s\S]*?ilike '%' \|\| v_search \|\| '%'/, 'Sellpia searches must stay on the compact page-key cache instead of the wide managed view');
 assert.match(app, /MATRIX_TRANSIENT_RETRY_DELAYS_MS = \[700\]/, 'matrix reads must use one short bounded retry instead of amplifying a timeout storm');
 assert.match(app, /attempt <= MATRIX_TRANSIENT_RETRY_DELAYS_MS\.length[\s\S]*DB 재시도 중/, 'matrix reads must retry transient database timeouts automatically');
 

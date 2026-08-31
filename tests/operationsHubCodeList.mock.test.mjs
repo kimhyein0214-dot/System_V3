@@ -17,6 +17,10 @@ const sellpiaPrefixMigration = fs.readFileSync(
   new URL("../supabase/migrations/20260827044857_support_sellpia_prefix_code_list_lookup.sql", import.meta.url),
   "utf8",
 );
+const pageFirstMigration = fs.readFileSync(
+  new URL("../supabase/migrations/20260831151000_operations_hub_matrix_page_v3.sql", import.meta.url),
+  "utf8",
+);
 
 assert.match(html, /id="code-list-open"[^>]*>[\s\S]*?엑셀 코드목록/, "the matrix must expose the Excel code-list entry point");
 for (const source of ["sellpia", "smartstore", "makeshop", "ably"]) {
@@ -31,8 +35,8 @@ assert.match(css, /\.matrix-search-group \.matrix-search input\{[^}]*font-size:1
 assert.match(css, /\.matrix-search-sources label\{[^}]*font-size:12px/, "search-source labels must scale with the enlarged search header");
 assert.match(html, /class="matrix-action-panel"[\s\S]*?id="matrix-refresh-btn"[\s\S]*?id="matrix-bulk-btn"[\s\S]*?id="code-list-open"/, "matrix actions and saved views must live in the persistent right panel");
 assert.match(app, /if \(matrixState\.search\) loadLiveMatrix/, "changing a source reloads only an active search");
-assert.match(data, /find_operations_hub_listing_skus_by_sources/, "combined-code lookup must honor selected seller sources");
-assert.match(data, /activeSearchSources\.flatMap/, "text search fields must be built from selected sources");
+assert.match(pageFirstMigration, /p_search_sources[\s\S]*?v_sources[\s\S]*?'smartstore' = any\(v_sources\)[\s\S]*?'makeshop' = any\(v_sources\)[\s\S]*?'ably' = any\(v_sources\)/, "combined-code lookup must honor selected seller sources");
+assert.match(data, /load_operations_hub_matrix_page_v3[\s\S]*?p_search_sources:searchSources/, "the selected source list must be sent to the page-first search RPC");
 assert.match(sourceFilterMigration, /join allowed_sources source on source\.source_channel = link\.source_channel/i, "database composite lookup must be source-limited");
 assert.match(html, /필요한 코드 열만[\s\S]*?셀피아 한 열만 쓰거나/, "the upload guide must allow a one-column Sellpia review list");
 assert.match(html, /셀피아[\s\S]*?스마트스토어[\s\S]*?메이크샵[\s\S]*?에이블리/, "the upload guide must still show all supported source columns");
@@ -47,7 +51,7 @@ assert.match(data, /pageRows\.map\(codeRow =>[\s\S]*?__codeListPlaceholder:true/
 assert.match(app, /function renderCodeListPlaceholderRow[\s\S]*?code-list-placeholder-row/, "the matrix must render an explicit placeholder for unresolved Excel rows");
 assert.match(app, /<em>엑셀 \$\{inputRow\}행<\/em>/, "matched rows must expose their original Excel row number");
 assert.match(app, /matrixState\.codeListRows\.length\)\}개 결과/, "the active Excel-list pill must count result rows rather than unique SKUs");
-for (const rpc of ["find_operations_hub_listing_skus", "resolve_operations_hub_code_entries", "load_operations_hub_code_list"]) {
+for (const rpc of ["resolve_operations_hub_code_entries", "load_operations_hub_code_list"]) {
   assert.match(data, new RegExp(rpc), `${rpc} must be called through the database client`);
 }
 assert.match(migration, /item\.product_code \|\| '-' \|\| item\.option_code/, "seller listing keys must be compared in the database");
