@@ -787,6 +787,17 @@
     return options.sort((left, right) => cleanText(left.option_code).localeCompare(cleanText(right.option_code), 'ko', {numeric:true}));
   }
 
+  async function resolveRelationImportCodes(codes) {
+    const normalized = [...new Set((codes || []).map(cleanText).filter(Boolean))];
+    if (!normalized.length) return [];
+    if (normalized.length > 500) throw new Error('관계 일괄 등록 코드는 한 번에 최대 500개입니다.');
+    const {data, error} = await db.rpc('resolve_operations_hub_relation_import_codes', {
+      p_codes:normalized
+    });
+    if (error) throw error;
+    return Array.isArray(data?.items) ? data.items : [];
+  }
+
   async function resolveCodeEntries(entries) {
     const normalized = (entries || []).map(entry => ({
       row_no:Math.max(1, Number(entry.row_no) || 1),
@@ -2392,6 +2403,7 @@
     saveSellpiaChanges,
     searchSellerItems,
     loadSellerProductOptions,
+    resolveRelationImportCodes,
     resolveCodeEntries,
     refreshListingGraphCache,
     linkSellerItem,
