@@ -88,8 +88,10 @@ const relationImportParser = window.RelationImportParser;
 const MATRIX_PAGE_SIZE_KEY = 'system-v3-matrix-page-size';
 const storedMatrixPageSize = Number(localStorage.getItem(MATRIX_PAGE_SIZE_KEY));
 const initialMatrixPageSize = [50, 100, 200].includes(storedMatrixPageSize) ? storedMatrixPageSize : 50;
-const MATRIX_TRANSIENT_RETRY_DELAYS_MS = [1500, 5000, 12000];
-const matrixState = {page:1, pageSize:initialMatrixPageSize, search:'', searchSources:['sellpia','smartstore','makeshop','ably'], status:'all', sort:'sku_asc', excludeCombinationSkus:false, advancedFilter:{logic:'and', conditions:[]}, total:0, rows:[], loading:false, requestId:0, codeListSkus:[], codeListRows:[], codeListName:''};
+const MATRIX_SEARCH_DEBOUNCE_MS = 600;
+const MATRIX_TRANSIENT_RETRY_DELAYS_MS = [700];
+const MAPPING_SYNC_POLL_INTERVAL_MS = 60000;
+const matrixState = {page:1, pageSize:initialMatrixPageSize, search:'', searchSources:['sellpia','smartstore','makeshop','ably'], status:'all', sort:'sku_asc', excludeCombinationSkus:false, advancedFilter:{logic:'and', conditions:[]}, total:0, rows:[], loading:false, requestId:0, requestController:null, codeListSkus:[], codeListRows:[], codeListName:''};
 const multiLinkState = {page:1, pageSize:50, search:'', source:'all', relationType:'all', folderId:null, organizationScope:'all', folders:[], foldersLoaded:false, total:0, allTotal:0, loading:false, requestId:0, rows:[], selected:null, loaded:false};
 const relationGraphState = {nodes:[], edges:[], selectedProduct:null, loading:false, requestId:0, searchTimer:null, viewMode:'list', search:'', focusNodeId:null};
 const relationBoardState = {nodes:new Map(), loadedProducts:new Map(), initialEdges:new Map(), levelCount:3, draggingKey:null, pointerDrag:null, nativeDragging:false, saving:false};
@@ -620,7 +622,17 @@ function setActivePresetUi() {
   document.getElementById('view-settings-btn').textContent = activePresetId === 'temporary' ? '보기 설정 · 수정됨' : '보기 설정';
 }
 
+function matrixDataViewSignature(view) {
+  return JSON.stringify({
+    status:view?.status || 'all',
+    sort:view?.sort || 'sku_asc',
+    excludeCombinationSkus:Boolean(view?.excludeCombinationSkus),
+    advancedFilter:cloneAdvancedFilter(view?.advancedFilter)
+  });
+}
+
 function applyViewPreset(view, {id = null, reload = true, announce = true} = {}) {
+  const previousDataSignature = matrixDataViewSignature(activeView);
   activeView = cloneView({...cloneView(DEFAULT_VIEW_OPTIONS), ...view, channels:{...DEFAULT_VIEW_OPTIONS.channels, ...view.channels}});
   if (id) {
     activePresetId = id;
@@ -636,7 +648,7 @@ function applyViewPreset(view, {id = null, reload = true, announce = true} = {})
   applyColumnVisibility(activeView);
   renderAdvancedFilterBar();
   setActivePresetUi();
-  if (reload) loadLiveMatrix();
+  if (reload && previousDataSignature !== matrixDataViewSignature(activeView)) loadLiveMatrix();
   if (announce) showToast(`${activeView.name} 보기를 적용했습니다.`);
 }
 
@@ -1086,9 +1098,44 @@ async function loadMappingSyncStatus({markDisplayed = false, autoRefresh = false
   }
 }
 
+function isMatrixAbortError(error) {
+  const name = String(error?.name || '').toLowerCase();
+  const message = `${error?.code || ''} ${error?.message || error}`.toLowerCase();
+  return name === 'aborterror'
+    || message.includes('aborterror')
+    || message.includes('signal is aborted')
+    || message.includes('request was aborted')
+    || message.includes('요청이 취소');
+}
+
+function waitForMatrixRetry(delayMs, signal) {
+  return new Promise((resolve, reject) => {
+    if (signal?.aborted) {
+      const error = new Error('요청이 취소되었습니다.');
+      error.name = 'AbortError';
+      reject(error);
+      return;
+    }
+    const timer = setTimeout(() => {
+      signal?.removeEventListener('abort', abort);
+      resolve();
+    }, delayMs);
+    const abort = () => {
+      clearTimeout(timer);
+      const error = new Error('요청이 취소되었습니다.');
+      error.name = 'AbortError';
+      reject(error);
+    };
+    signal?.addEventListener('abort', abort, {once:true});
+  });
+}
+
 async function loadLiveMatrix({resetPage = false, resetScroll = resetPage} = {}) {
   if (!liveData) return false;
   if (resetPage) matrixState.page = 1;
+  matrixState.requestController?.abort();
+  const requestController = new AbortController();
+  matrixState.requestController = requestController;
   const requestId = ++matrixState.requestId;
   matrixState.loading = true;
   setMatrixConnection('loading', 'DB 조회 중');
@@ -1107,7 +1154,8 @@ async function loadLiveMatrix({resetPage = false, resetScroll = resetPage} = {})
       excludeCombinationSkus:matrixState.excludeCombinationSkus,
       skus:matrixState.codeListSkus,
       codeListRows:matrixState.codeListRows,
-      advancedFilter:matrixState.advancedFilter
+      advancedFilter:matrixState.advancedFilter,
+      signal:requestController.signal
     };
     let result;
     for (let attempt = 0; attempt <= MATRIX_TRANSIENT_RETRY_DELAYS_MS.length; attempt += 1) {
@@ -1121,10 +1169,10 @@ async function loadLiveMatrix({resetPage = false, resetScroll = resetPage} = {})
           || message.includes('canceling statement')
           || message.includes('fetch failed')
           || message.includes('failed to fetch');
-        if (!transient || attempt >= MATRIX_TRANSIENT_RETRY_DELAYS_MS.length || requestId !== matrixState.requestId) throw error;
+        if (isMatrixAbortError(error) || !transient || attempt >= MATRIX_TRANSIENT_RETRY_DELAYS_MS.length || requestId !== matrixState.requestId) throw error;
         const retryDelay = MATRIX_TRANSIENT_RETRY_DELAYS_MS[attempt];
         setMatrixConnection('loading', `DB 재시도 중 · ${attempt + 1}/${MATRIX_TRANSIENT_RETRY_DELAYS_MS.length}`);
-        await new Promise(resolve => setTimeout(resolve, retryDelay));
+        await waitForMatrixRetry(retryDelay, requestController.signal);
       }
     }
     if (requestId !== matrixState.requestId) return false;
@@ -1155,6 +1203,7 @@ async function loadLiveMatrix({resetPage = false, resetScroll = resetPage} = {})
       : `LIVE · ${formatNumber(result.count)} SKU`);
     return true;
   } catch (error) {
+    if (requestId !== matrixState.requestId || isMatrixAbortError(error)) return false;
     console.error('operations hub matrix load failed', error);
     if (keepRenderedRows) {
       setMatrixConnection('error', 'DB 조회 지연 · 기존 화면 유지');
@@ -1166,7 +1215,10 @@ async function loadLiveMatrix({resetPage = false, resetScroll = resetPage} = {})
     }
     return false;
   } finally {
-    if (requestId === matrixState.requestId) matrixState.loading = false;
+    if (requestId === matrixState.requestId) {
+      matrixState.loading = false;
+      if (matrixState.requestController === requestController) matrixState.requestController = null;
+    }
   }
 }
 
@@ -4235,10 +4287,17 @@ codeListApply.addEventListener('click', () => {
 codeListFilterPill.addEventListener('click', clearCodeListFilter);
 
 let matrixSearchTimer;
-document.getElementById('matrix-search').addEventListener('input', event => {
+codeListSearchInput.addEventListener('input', event => {
   matrixState.search = event.target.value.trim();
   clearTimeout(matrixSearchTimer);
-  matrixSearchTimer = setTimeout(() => loadLiveMatrix({resetPage:true}), 280);
+  matrixSearchTimer = setTimeout(() => loadLiveMatrix({resetPage:true}), MATRIX_SEARCH_DEBOUNCE_MS);
+});
+codeListSearchInput.addEventListener('keydown', event => {
+  if (event.key !== 'Enter' || event.isComposing) return;
+  event.preventDefault();
+  clearTimeout(matrixSearchTimer);
+  matrixState.search = event.currentTarget.value.trim();
+  loadLiveMatrix({resetPage:true});
 });
 
 matrixSearchSourceInputs.forEach(input => input.addEventListener('change', event => {
@@ -8441,7 +8500,11 @@ updateCodeListFilterUi();
 if (liveData) {
   refreshLiveData({resetPage:true});
   window.setInterval(() => Promise.all([loadLiveSourceStatus(), loadLiveDashboardMetrics()]), 60000);
-  window.setInterval(() => loadMappingSyncStatus({autoRefresh:true}), 15000);
+  window.setInterval(() => {
+    const dashboardVisible = document.getElementById('dashboard')?.classList.contains('active-page');
+    if (document.hidden || !dashboardVisible || matrixState.loading || sellpiaSaveInFlight || pendingChanges.length) return;
+    loadMappingSyncStatus({autoRefresh:true});
+  }, MAPPING_SYNC_POLL_INTERVAL_MS);
   window.setInterval(() => {
     if (document.getElementById('jobs').classList.contains('active-page')) loadChangeQueue({silent:true});
   }, 30000);

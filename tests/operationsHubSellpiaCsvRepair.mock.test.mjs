@@ -21,7 +21,7 @@ assert.match(dataService, /operations-hub-sellpia-2026\.08\.25-v4/, 'the guarded
 assert.doesNotMatch(dataService, /\.from\('operations_hub_matrix_live'\)/, 'interactive matrix reads must not hit the expensive live view');
 assert.match(dataService, /\.from\('operations_hub_matrix_cached'\)/, 'interactive matrix reads must use the non-blocking cache');
 assert.match(dataService, /directSellpiaSku[\s\S]*exactMatchSkus[\s\S]*query\.in\('sellpia_sku_code'/, 'exact Sellpia SKU searches must avoid a wide multi-column scan');
-assert.match(app, /MATRIX_TRANSIENT_RETRY_DELAYS_MS = \[1500, 5000, 12000\]/, 'matrix reads must use progressive transient retry delays');
+assert.match(app, /MATRIX_TRANSIENT_RETRY_DELAYS_MS = \[700\]/, 'matrix reads must use one short bounded retry instead of amplifying a timeout storm');
 assert.match(app, /attempt <= MATRIX_TRANSIENT_RETRY_DELAYS_MS\.length[\s\S]*DB 재시도 중/, 'matrix reads must retry transient database timeouts automatically');
 
 assert.match(migration, /date '1899-12-30'/, 'the repair must use the Excel serial-date epoch');
