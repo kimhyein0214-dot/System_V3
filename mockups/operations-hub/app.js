@@ -91,7 +91,7 @@ const initialMatrixPageSize = [50, 100, 200].includes(storedMatrixPageSize) ? st
 const MATRIX_SEARCH_DEBOUNCE_MS = 600;
 const MATRIX_TRANSIENT_RETRY_DELAYS_MS = [700];
 const MAPPING_SYNC_POLL_INTERVAL_MS = 60000;
-const matrixState = {page:1, pageSize:initialMatrixPageSize, search:'', searchSources:['sellpia','smartstore','makeshop','ably'], status:'all', sort:'sku_asc', excludeCombinationSkus:false, advancedFilter:{logic:'and', conditions:[]}, total:0, rows:[], loading:false, requestId:0, requestController:null, codeListSkus:[], codeListRows:[], codeListName:''};
+const matrixState = {page:1, pageSize:initialMatrixPageSize, search:'', searchSources:['sellpia','smartstore','makeshop','ably'], status:'all', sort:'sku_asc', excludeCombinationSkus:false, includeRelatedSkuContext:true, advancedFilter:{logic:'and', conditions:[]}, total:0, directCount:0, relatedCount:0, rows:[], loading:false, requestId:0, requestController:null, codeListSkus:[], codeListRows:[], codeListName:''};
 const multiLinkState = {page:1, pageSize:50, search:'', source:'all', relationType:'all', folderId:null, organizationScope:'all', folders:[], foldersLoaded:false, total:0, allTotal:0, loading:false, requestId:0, rows:[], selected:null, loaded:false};
 const relationGraphState = {nodes:[], edges:[], selectedProduct:null, loading:false, requestId:0, searchTimer:null, viewMode:'list', search:'', focusNodeId:null};
 const relationBoardState = {nodes:new Map(), loadedProducts:new Map(), initialEdges:new Map(), levelCount:3, draggingKey:null, pointerDrag:null, nativeDragging:false, saving:false};
@@ -166,6 +166,7 @@ const DEFAULT_VIEW_OPTIONS = {
   status:'all',
   sort:'sku_asc',
   excludeCombinationSkus:false,
+  includeRelatedSkuContext:true,
   advancedFilter:{logic:'and', conditions:[]},
   zoom:100
 };
@@ -491,6 +492,35 @@ function formatNullableNumber(value) {
   return Number.isFinite(number) ? number.toLocaleString('ko-KR') : '-';
 }
 
+function matrixRelationContext(product) {
+  const raw = product?.matrix_context;
+  if (!raw || typeof raw !== 'object') return {kind:'direct', rootSku:'', direction:'self', depth:0, pathSkus:[]};
+  const kind = String(raw.kind || '').trim().toLowerCase() === 'related' ? 'related' : 'direct';
+  const rootSku = String(raw.rootSku || '').trim() || String(product?.sellpia_sku_code || '').trim();
+  const direction = String(raw.direction || (kind === 'related' ? 'related' : 'self')).trim();
+  const depth = Math.max(0, Number(raw.depth) || 0);
+  const pathSkus = (Array.isArray(raw.pathSkus) ? raw.pathSkus : []).map(value => String(value || '').trim()).filter(Boolean);
+  return {kind, rootSku, direction, depth, pathSkus};
+}
+
+function isRelatedMatrixContext(product) {
+  return product?.matrix_context?.kind === 'related';
+}
+
+function matrixRelationDirectionLabel(direction) {
+  if (direction === 'ancestor') return '상위 관계';
+  if (direction === 'descendant') return '하위 관계';
+  return '관계 SKU';
+}
+
+function matrixRelationPathBadge(product) {
+  const context = matrixRelationContext(product);
+  if (context.kind !== 'related') return '';
+  const path = context.pathSkus.length ? context.pathSkus.join(' → ') : context.rootSku;
+  const label = `${matrixRelationDirectionLabel(context.direction)}${context.depth ? ` · ${context.depth}단계` : ''}`;
+  return `<em class="matrix-related-context-badge" title="${escapeHtml(path)}">${escapeHtml(label)}</em>`;
+}
+
 function inboundCostCell(product) {
   const cost = formatNullableNumber(product.actual_inbound_cost);
   const tagName = product.inbound_cost_formula_tag_name || '';
@@ -627,6 +657,7 @@ function matrixDataViewSignature(view) {
     status:view?.status || 'all',
     sort:view?.sort || 'sku_asc',
     excludeCombinationSkus:Boolean(view?.excludeCombinationSkus),
+    includeRelatedSkuContext:view?.includeRelatedSkuContext !== false,
     advancedFilter:cloneAdvancedFilter(view?.advancedFilter)
   });
 }
@@ -642,6 +673,7 @@ function applyViewPreset(view, {id = null, reload = true, announce = true} = {})
   matrixState.status = activeView.status;
   matrixState.sort = activeView.sort;
   matrixState.excludeCombinationSkus = Boolean(activeView.excludeCombinationSkus);
+  matrixState.includeRelatedSkuContext = activeView.includeRelatedSkuContext !== false;
   matrixState.advancedFilter = cloneAdvancedFilter(activeView.advancedFilter);
   document.getElementById('matrix-status-filter').value = activeView.status;
   applyMatrixZoom(activeView.zoom, {syncView:false});
@@ -843,7 +875,7 @@ function buildProductIdentityMerges(products) {
     let index = 0;
     while (index < products.length) {
       const first = products[index];
-      if (first?.__codeListPlaceholder) {
+      if (first?.__codeListPlaceholder || isRelatedMatrixContext(first)) {
         index += 1;
         continue;
       }
@@ -855,7 +887,7 @@ function buildProductIdentityMerges(products) {
       let end = index + 1;
       while (productCode && end < products.length) {
         const candidate = products[end];
-        if (candidate?.__codeListPlaceholder) break;
+        if (candidate?.__codeListPlaceholder || isRelatedMatrixContext(candidate)) break;
         const candidateGroup = sellpiaProductGroupKey(candidate);
         const candidateCode = String(candidate?.[`${source}_product_code`] || '').trim();
         const candidateName = String(candidate?.[`${source}_name`] || '').trim();
@@ -890,7 +922,7 @@ function buildSellerBaseMerges(products) {
     let index = 0;
     while (index < products.length) {
       const first = products[index];
-      if (first?.__codeListPlaceholder) {
+      if (first?.__codeListPlaceholder || isRelatedMatrixContext(first)) {
         index += 1;
         continue;
       }
@@ -900,7 +932,7 @@ function buildSellerBaseMerges(products) {
       let end = index + 1;
       while (productCode && end < products.length) {
         const candidate = products[end];
-        if (candidate?.__codeListPlaceholder) break;
+        if (candidate?.__codeListPlaceholder || isRelatedMatrixContext(candidate)) break;
         if (sellpiaProductGroupKey(candidate) !== sellpiaGroup) break;
         if (String(candidate?.[`${source}_product_code`] || '').trim() !== productCode) break;
         if (sellerBaseMergeSignature(candidate, source) !== signature) break;
@@ -966,13 +998,22 @@ function renderLiveMatrixRows(products) {
   const sellerBaseMerges = buildSellerBaseMerges(products);
   const productIdentityMerges = buildProductIdentityMerges(products);
   let previousProductGroup = '';
+  let previousResultGroup = '';
   matrixBody.innerHTML = products.map((product, rowIndex) => {
     if (product.__codeListPlaceholder) return renderCodeListPlaceholderRow(product);
     matrixRowsBySku.set(product.sellpia_sku_code, product);
     const sku = escapeHtml(product.sellpia_sku_code);
     const codeRow = product.__codeList || null;
     const inputRow = codeRow ? Math.max(1, Number(codeRow.input_row) || 1) : null;
-    const skuMarkup = codeRow ? `<span class="code-list-sku-cell"><b>${sku}</b><em>엑셀 ${inputRow}행</em></span>` : sku;
+    const hasRelationshipContext = Boolean(product?.matrix_context && typeof product.matrix_context === 'object');
+    const relationContext = matrixRelationContext(product);
+    const isRelatedContext = product?.matrix_context?.kind === 'related';
+    const relationBadge = matrixRelationPathBadge(product);
+    const skuMarkup = codeRow
+      ? `<span class="code-list-sku-cell"><b>${sku}</b><em>엑셀 ${inputRow}행</em></span>`
+      : isRelatedContext
+        ? `<span class="matrix-related-sku"><b>${sku}</b><em>↳ ${escapeHtml(matrixRelationDirectionLabel(relationContext.direction))}</em></span>`
+        : sku;
     const rawOwnCode = product.sellpia_own_code || product.own_code || '';
     const ownCode = escapeHtml(rawOwnCode || '-');
     const liveImageUrl = product.sellpia_override_image_url || product.image_url || '';
@@ -992,13 +1033,21 @@ function renderLiveMatrixRows(products) {
     const profile = product.__profile || {};
     const tagSummary = [profile.shape, profile.tag_summary].filter(Boolean).join(' · ');
     const productGroup = sellpiaProductGroupKey(product);
-    const groupStart = !previousProductGroup || productGroup !== previousProductGroup;
+    const resultGroup = !hasRelationshipContext
+      ? 'normal'
+      : isRelatedContext
+        ? `related:${relationContext.rootSku}:${product.sellpia_sku_code}`
+        : `direct:${relationContext.rootSku || product.sellpia_sku_code}`;
+    const groupStart = !previousProductGroup || productGroup !== previousProductGroup || resultGroup !== previousResultGroup;
     previousProductGroup = productGroup;
-    return `<tr class="${groupStart ? 'product-group-start' : 'product-group-continuation'}" data-sku="${sku}" data-product-group="${escapeHtml(productGroup)}" data-own-code="${ownCode}" data-image="${imageUrl}" data-status="${overallState}"${inputRow ? ` data-input-row="${inputRow}"` : ''}>
+    previousResultGroup = resultGroup;
+    const rowClasses = [groupStart ? 'product-group-start' : 'product-group-continuation'];
+    if (isRelatedContext) rowClasses.push('matrix-related-context-row');
+    return `<tr class="${rowClasses.join(' ')}" data-sku="${sku}" data-product-group="${escapeHtml(productGroup)}" data-own-code="${ownCode}" data-image="${imageUrl}" data-status="${overallState}" data-matrix-context="${escapeHtml(relationContext.kind)}" data-root-sku="${escapeHtml(relationContext.rootSku)}"${inputRow ? ` data-input-row="${inputRow}"` : ''}>
       <td class="sticky-col select-col" aria-hidden="true"></td>
       <td class="sticky-col image-col image-drop-cell" data-image-drop="${sku}" title="이미지를 이 셀에 놓으면 ${sku}.jpg로 저장됩니다.">${matrixImage(product)}<span class="image-drop-hint">DROP</span></td>
       <td class="sticky-col sellpia-sku-col sellpia-code-cell"><button type="button" class="sellpia-sku-link" data-open-sku-links title="이 SKU의 판매처 연결정보 열기">${skuMarkup}</button></td>
-      <td class="sticky-col sellpia-name-col sellpia-text-cell"><span title="${displayName}">${displayName}</span></td>
+      <td class="sticky-col sellpia-name-col sellpia-text-cell"><span title="${displayName}">${displayName}</span>${relationBadge}</td>
       <td class="sticky-col sellpia-option-name-col sellpia-text-cell"><span title="${optionName}">${optionName}</span></td>
       <td class="sticky-col own-code-col">${sellpiaEditor('sellpia_own_code', '셀피아 자사코드', rawOwnCode, {className:'sellpia-text-compact'})}</td>
       <td class="sticky-col sellpia-stock-col number-cell">${systemOperationalCell(product, 'system_stock', '시스템 기준재고', sellpiaSourceStock)}</td>
@@ -1152,6 +1201,7 @@ async function loadLiveMatrix({resetPage = false, resetScroll = resetPage} = {})
       status:matrixState.status,
       sort:matrixState.sort,
       excludeCombinationSkus:matrixState.excludeCombinationSkus,
+      includeRelatedSkuContext:matrixState.includeRelatedSkuContext && Boolean(matrixState.search.trim()) && !matrixState.codeListRows.length,
       skus:matrixState.codeListSkus,
       codeListRows:matrixState.codeListRows,
       advancedFilter:matrixState.advancedFilter,
@@ -1182,12 +1232,19 @@ async function loadLiveMatrix({resetPage = false, resetScroll = resetPage} = {})
       return loadLiveMatrix({resetScroll});
     }
     matrixState.total = result.count;
+    matrixState.directCount = Number(result.directCount ?? result.count ?? 0);
+    matrixState.relatedCount = Number(result.relatedCount || 0);
     matrixState.rows = result.rows;
     renderLiveMatrixRows(result.rows);
     const first = result.count ? ((result.page - 1) * result.pageSize) + 1 : 0;
     const last = Math.min(result.page * result.pageSize, result.count);
-    document.getElementById('matrix-total-count').textContent = formatNumber(result.count);
-    document.getElementById('matrix-range').textContent = `${formatNumber(first)}–${formatNumber(last)} / ${formatNumber(result.count)}`;
+    document.getElementById('matrix-total-count').textContent = formatNumber(matrixState.directCount);
+    const matrixRelatedCount = document.getElementById('matrix-related-count');
+    if (matrixRelatedCount) {
+      matrixRelatedCount.hidden = !matrixState.relatedCount;
+      document.getElementById('matrix-related-count-value').textContent = formatNumber(matrixState.relatedCount);
+    }
+    document.getElementById('matrix-range').textContent = `${formatNumber(first)}–${formatNumber(last)} / ${formatNumber(matrixState.directCount)}${matrixState.relatedCount ? ` · 관계 SKU ${formatNumber(matrixState.relatedCount)}행 함께 표시` : ''}`;
     const matrixPageInput = document.getElementById('matrix-page');
     matrixPageInput.value = String(result.page);
     matrixPageInput.max = String(totalPages);
@@ -1200,7 +1257,7 @@ async function loadLiveMatrix({resetPage = false, resetScroll = resetPage} = {})
     matrixState.lastLoadedAt = new Date().toISOString();
     setMatrixConnection('connected', matrixState.codeListRows.length
       ? `엑셀 목록 · ${formatNumber(result.count)} 결과 행`
-      : `LIVE · ${formatNumber(result.count)} SKU`);
+      : `LIVE · ${formatNumber(matrixState.directCount)} SKU${matrixState.relatedCount ? ` · 관계 ${formatNumber(matrixState.relatedCount)}행` : ''}`);
     return true;
   } catch (error) {
     if (requestId !== matrixState.requestId || isMatrixAbortError(error)) return false;
@@ -3544,6 +3601,7 @@ function fillViewSettingsForm(view = activeView) {
   document.getElementById('preset-show-sync').checked = view.showSync;
   document.getElementById('preset-wrap-names').checked = Boolean(view.wrapNames);
   document.getElementById('preset-exclude-combination-skus').checked = Boolean(view.excludeCombinationSkus);
+  document.getElementById('preset-include-related-sku-context').checked = view.includeRelatedSkuContext !== false;
   document.getElementById('preset-status').value = view.status;
   document.getElementById('preset-sort').value = view.sort;
   document.getElementById('preset-zoom').value = String(view.zoom);
@@ -3570,6 +3628,7 @@ function readViewSettingsForm() {
     showSync:document.getElementById('preset-show-sync').checked,
     wrapNames:document.getElementById('preset-wrap-names').checked,
     excludeCombinationSkus:document.getElementById('preset-exclude-combination-skus').checked,
+    includeRelatedSkuContext:document.getElementById('preset-include-related-sku-context').checked,
     status:document.getElementById('preset-status').value,
     sort:document.getElementById('preset-sort').value,
     zoom:Number(document.getElementById('preset-zoom').value) || 100,

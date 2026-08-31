@@ -346,6 +346,19 @@ body.matrix-cell-selecting{user-select:none}
 .matrix-table .mapping-code-button.unmatched,.matrix-table .mapping-code-button.unmatched:hover,.matrix-table .mapping-code-button.unmatched:focus-visible{border-color:transparent;border-style:solid;background:transparent}
 .matrix-table .inbound-cost-cell,.matrix-table .inbound-cost-cell:hover{border-color:transparent;border-style:solid;background:transparent}
 
+/* Search-only relation context: keep the actual matching SKU primary and render
+   inherited collection/set context as a visibly secondary row. */
+.matrix-related-count{color:#6d7d92}.matrix-related-count strong{color:#607dbe}
+.matrix-table tbody tr.matrix-related-context-row td{background:#f7f9fc!important;color:#6b778b}
+.matrix-table tbody tr.matrix-related-context-row:hover td{background:#f0f5fb!important}
+.matrix-table tbody tr.matrix-related-context-row .sticky-col{background:#f7f9fc!important}
+.matrix-table tbody tr.matrix-related-context-row:hover .sticky-col{background:#f0f5fb!important}
+.matrix-table tbody tr.matrix-related-context-row td:not(.select-col){font-size:10px}
+.matrix-table tbody tr.matrix-related-context-row .sellpia-sku-link{padding-left:16px;color:#5875a8;font-size:10px}
+.matrix-related-sku{display:grid;gap:2px;text-align:left}.matrix-related-sku b{font-size:10px}.matrix-related-sku em{overflow:hidden;color:#8392a7;font-size:8px;font-style:normal;text-overflow:ellipsis;white-space:nowrap}
+.matrix-related-context-badge{display:inline-flex;max-width:100%;align-items:center;margin-top:4px;overflow:hidden;border:1px solid #cfdae9;border-radius:9px;background:#eef3fa;padding:2px 5px;color:#627da9;font-size:8px;font-style:normal;font-weight:900;line-height:1.2;text-overflow:ellipsis;white-space:nowrap}
+.matrix-table tbody tr.matrix-related-context-row .seller-identity-cell,.matrix-table tbody tr.matrix-related-context-row .option-cell{opacity:.8}
+
 /* Excel-like matrix column resizing. Widths are stored per browser and sticky offsets follow them. */
 .matrix-table{table-layout:fixed}
 .matrix-table th[data-matrix-column],.matrix-table td[data-matrix-column]{box-sizing:border-box;width:var(--matrix-cell-width)!important;min-width:var(--matrix-cell-width)!important;max-width:var(--matrix-cell-width)!important}
