@@ -6,6 +6,7 @@ const optimization = fs.readFileSync(new URL("../supabase/migrations/20260827131
 const integrity = fs.readFileSync(new URL("../supabase/migrations/20260827132000_enforce_relation_parent_integrity.sql", import.meta.url), "utf8");
 const graph = fs.readFileSync(new URL("../supabase/migrations/20260827080008_generalize_relation_node_graph.sql", import.meta.url), "utf8");
 const dragBoard = fs.readFileSync(new URL("../supabase/migrations/20260827085604_operations_hub_relation_drag_board.sql", import.meta.url), "utf8");
+const pageFirstMigration = fs.readFileSync(new URL("../supabase/migrations/20260831151000_operations_hub_matrix_page_v3.sql", import.meta.url), "utf8");
 const html = fs.readFileSync(new URL("../mockups/operations-hub/index.html", import.meta.url), "utf8");
 const app = fs.readFileSync(new URL("../mockups/operations-hub/app.js", import.meta.url), "utf8");
 const data = fs.readFileSync(new URL("../mockups/operations-hub/data-service.js", import.meta.url), "utf8");
@@ -55,7 +56,7 @@ assert.match(app, /data-remove-relation-edge[\s\S]*removeRelationEdge/, "operato
 assert.match(app, /saveListingComponentParent/, "the UI must save component dependencies");
 assert.match(data, /list_operations_hub_relation_folders[\s\S]*search_operations_hub_sellpia_product_groups[\s\S]*ensure_operations_hub_sellpia_relation_node[\s\S]*ensure_operations_hub_seller_relation_node[\s\S]*save_operations_hub_relation_edge/, "the data adapter must expose bounded relation-node and edge RPCs");
 assert.match(data, /ensure_operations_hub_sellpia_sku_relation_node[\s\S]*apply_operations_hub_relation_board/, "the data adapter must expose exact Sellpia SKU resolution and atomic board persistence");
-assert.match(data, /\.order\('sellpia_sku_prefix_number'[\s\S]*\.order\('sellpia_sku_suffix_number'/, "ordinary matrix reads must use natural numeric ordering");
+assert.match(pageFirstMigration, /sku_prefix_number asc nulls last[\s\S]*sku_has_numeric_suffix asc[\s\S]*sku_suffix_number asc nulls first/, "ordinary matrix reads must use natural numeric ordering");
 assert.match(css, /relation-workspace-head[\s\S]*relation-edge-row[\s\S]*relation-graph-columns[\s\S]*multi-link-legacy-workspace/, "scoped edges, on-demand graph columns, and collapsed legacy tools must have visible structure");
 assert.match(css, /relation-product-loader[\s\S]*relation-drag-board[\s\S]*relation-board-parent-lane[\s\S]*relation-board-drop-active/, "the product loader and left-to-right parent lanes must have visible drag feedback");
 assert.match(css, /multi-link-component\.is-dependent/, "the preserved SKU detail workspace must retain component dependency styling");

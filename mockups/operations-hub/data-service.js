@@ -543,78 +543,24 @@
         rows:await attachProductMetadata(result.rows, signal)
       };
     }
-    const from = (safePage - 1) * safePageSize;
-    const to = from + safePageSize - 1;
-    const keyword = normalizedSearch(search);
-    const intersection = splitIntersectionSearch(search);
-    const allowedSearchSources = ['sellpia','smartstore','makeshop','ably'];
-    const activeSearchSources = [...new Set((searchSources || []).map(source => cleanText(source).toLowerCase()).filter(source => allowedSearchSources.includes(source)))];
-    let query = db
-      .from(MATRIX_VIEW)
-      .select(MATRIX_SELECT, { count: 'exact' });
-
-    if (excludeCombinationSkus) query = query.eq('is_dependent_combination_sku', false);
-
-    if (intersection) {
-      const nameFields = {
-        sellpia:['sellpia_product_name','sellpia_option_name'],
-        smartstore:['smartstore_name','smartstore_option_name'],
-        makeshop:['makeshop_name','makeshop_option_name'],
-        ably:['ably_name','ably_option_name']
-      };
-      const filters = activeSearchSources.map(source => nameFields[source]).filter(Boolean).map(([productField, optionField]) =>
-        `and(${productField}.ilike.*${intersection.productTerm}*,${optionField}.ilike.*${intersection.optionTerm}*)`
-      );
-      if (filters.length) query = query.or(filters.join(','));
-      else query = query.eq('sellpia_sku_code', '__NO_SEARCH_SOURCE_SELECTED__');
-    } else if (keyword) {
-      const selectedSellers = activeSearchSources.filter(source => source !== 'sellpia');
-      let listingMatches = [];
-      if (selectedSellers.length) {
-        const result = await withAbortSignal(db.rpc('find_operations_hub_listing_skus_by_sources', {
-          p_query:keyword,
-          p_sources:selectedSellers,
-          p_limit:500
-        }), signal);
-        if (result.error) throw result.error;
-        listingMatches = result.data || [];
-      }
-      const listingSkus = [...new Set((listingMatches || []).map(item => cleanText(item.sellpia_sku_code)).filter(Boolean))];
-      const directSellpiaSku = activeSearchSources.includes('sellpia') && /^\d+-\d+$/.test(keyword) ? keyword : '';
-      const exactMatchSkus = [...new Set([...listingSkus, directSellpiaSku].filter(Boolean))];
-      if (exactMatchSkus.length) query = query.in('sellpia_sku_code', exactMatchSkus);
-      else {
-        const searchFields = {
-          sellpia:['sellpia_sku_code','own_code','display_name','sellpia_own_code','sellpia_product_name','sellpia_option_name'],
-          smartstore:['smartstore_product_code','smartstore_option_code','smartstore_name','smartstore_option_name'],
-          makeshop:['makeshop_product_code','makeshop_option_code','makeshop_name','makeshop_option_name'],
-          ably:['ably_product_code','ably_option_code','ably_name','ably_option_name']
-        };
-        const filters = activeSearchSources.flatMap(source => searchFields[source] || []).map(field => `${field}.ilike.*${keyword}*`);
-        if (filters.length) query = query.or(filters.join(','));
-        else query = query.eq('sellpia_sku_code', '__NO_SEARCH_SOURCE_SELECTED__');
-      }
-    }
-    if (status === 'connected') query = query.in('overall_status', ['connected', 'review']);
-    else if (status === 'unmatched') query = query.eq('overall_status', 'unmatched');
-
-    const sortOptions = {
-      stock_desc: ['system_stock', false],
-      price_desc: ['system_base_price', false],
-      updated_desc: ['updated_at', false]
-    };
-    const sortOption = sortOptions[sort];
-    if (sortOption) query = query.order(sortOption[0], {ascending:sortOption[1], nullsFirst:false});
-    query = query
-      .order('sellpia_sku_prefix_number', {ascending:true, nullsFirst:false})
-      .order('sellpia_sku_has_numeric_suffix', {ascending:true, nullsFirst:true})
-      .order('sellpia_sku_suffix_number', {ascending:true, nullsFirst:true})
-      .order('sellpia_sku_natural_fallback', {ascending:true, nullsFirst:false});
-    query = query.range(from, to);
-
-    const { data, error, count } = await withAbortSignal(query, signal);
+    throwIfAborted(signal);
+    const {data, error} = await withAbortSignal(db.rpc('load_operations_hub_matrix_page_v3', {
+      p_page:safePage,
+      p_page_size:safePageSize,
+      p_search:normalizedSearch(search),
+      p_search_sources:searchSources,
+      p_status:status,
+      p_sort:sort,
+      p_exclude_dependent:Boolean(excludeCombinationSkus)
+    }), signal);
     if (error) throw error;
-    return { rows: await attachProductMetadata(data || [], signal), count: count || 0, page: safePage, pageSize: safePageSize };
+    const rows = Array.isArray(data?.rows) ? data.rows : [];
+    return {
+      rows:await attachProductMetadata(rows, signal),
+      count:Number(data?.count || 0),
+      page:Number(data?.page || safePage),
+      pageSize:Number(data?.pageSize || safePageSize)
+    };
   }
 
   async function loadProductsBySkus(skus = [], {signal = null} = {}) {
