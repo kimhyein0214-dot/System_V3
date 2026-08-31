@@ -7,18 +7,21 @@
     <title>System V3 · 상품 운영 허브</title>
     <link rel="preconnect" href="https://cdnjs.cloudflare.com" crossorigin>
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/pretendard/1.3.9/static/pretendard.css">
-    <link rel="stylesheet" href="./style.css?v=20260831-relation-folder-tree-r59">
-    <link rel="stylesheet" href="./inventory.css?v=20260831-relation-folder-tree-r59">
-    <link rel="stylesheet" href="./price-rule-lab.css?v=20260831-relation-folder-tree-r59">
+    <link rel="stylesheet" href="./style.css?v=20260831-layout-sidebar-r60">
+    <link rel="stylesheet" href="./inventory.css?v=20260831-layout-sidebar-r60">
+    <link rel="stylesheet" href="./price-rule-lab.css?v=20260831-layout-sidebar-r60">
   </head>
   <body>
     <div class="app-shell">
       <header class="topbar">
-        <div class="brand">
-          <span class="brand-icon" aria-hidden="true">SV</span>
-          <div>
-            <h1>System V3</h1>
-            <p>상품 매칭 · 재고 운영 허브</p>
+        <div class="topbar-left">
+          <button id="sidebar-toggle" class="sidebar-toggle" type="button" aria-controls="primary-sidebar" aria-expanded="true" title="좌측 메뉴 접기"><span aria-hidden="true">‹</span><em>메뉴 접기</em></button>
+          <div class="brand">
+            <span class="brand-icon" aria-hidden="true">SV</span>
+            <div>
+              <h1>System V3</h1>
+              <p>상품 매칭 · 재고 운영 허브</p>
+            </div>
           </div>
         </div>
         <div class="top-actions">
@@ -29,17 +32,8 @@
         </div>
       </header>
 
-      <section class="status-strip" aria-label="오늘의 운영 현황">
-        <article class="metric"><span>전체 SKU</span><strong id="live-total-sku">불러오는 중</strong><em id="live-catalog-state">Supabase 연결 중</em></article>
-        <article class="metric good"><span>판매처 연결</span><strong id="live-connected-sku">불러오는 중</strong><em id="live-connected-rate">DB 집계 중</em></article>
-        <article class="metric danger"><span>수정안 반영 후 재고 불일치</span><strong id="live-inventory-mismatch">불러오는 중</strong><em id="live-inventory-mismatch-detail">원본 집계 확인 중</em></article>
-        <article class="metric warn"><span>미매칭 상품</span><strong id="live-unmatched-sku">불러오는 중</strong><em>매트릭스 실집계</em></article>
-        <article class="metric blue"><span>오늘 피킹</span><strong id="live-today-picked">-</strong><em id="live-shortage-drawer">주문 DB 연결 대기</em></article>
-        <article class="metric muted"><span>최근 동기화</span><strong class="time-value" id="live-latest-sync">-</strong><em id="live-latest-sync-detail">DB 확인 중</em></article>
-      </section>
-
       <main class="main-grid">
-        <aside class="sidebar">
+        <aside id="primary-sidebar" class="sidebar">
           <nav class="nav-list" aria-label="주요 메뉴">
             <button class="nav-item active" data-page="dashboard"><i>01</i><span>운영 현황</span></button>
             <button class="nav-item" data-page="upload"><i>02</i><span>원본 업로드</span><b>4</b></button>
@@ -58,6 +52,18 @@
             <div class="channel-mini"><span class="dot make"></span><b>메이크샵</b><em>연결됨</em></div>
             <div class="channel-mini"><span class="dot ably"></span><b>에이블리</b><em>연결됨</em></div>
           </div>
+
+          <section class="side-metrics" aria-label="오늘의 운영 요약">
+            <p class="side-title">운영 요약</p>
+            <div class="side-metrics-grid">
+              <article class="side-metric"><span>전체 SKU</span><strong id="live-total-sku">-</strong><em id="live-catalog-state">조회 중</em></article>
+              <article class="side-metric good"><span>판매처 연결</span><strong id="live-connected-sku">-</strong><em id="live-connected-rate">조회 중</em></article>
+              <article class="side-metric danger"><span>재고 불일치</span><strong id="live-inventory-mismatch">-</strong><em id="live-inventory-mismatch-detail">조회 중</em></article>
+              <article class="side-metric warn"><span>미매칭</span><strong id="live-unmatched-sku">-</strong><em>매트릭스 실집계</em></article>
+              <article class="side-metric blue"><span>오늘 피킹</span><strong id="live-today-picked">-</strong><em id="live-shortage-drawer">조회 중</em></article>
+              <article class="side-metric muted"><span>최근 동기화</span><strong id="live-latest-sync">-</strong><em id="live-latest-sync-detail">조회 중</em></article>
+            </div>
+          </section>
 
           <div class="side-foot">
             <span>운영 프로토타입</span>
@@ -623,6 +629,7 @@
             <label>기본 즉시할인 <span><input id="discount-editor-amount" type="number" min="0" step="1" inputmode="numeric" value="0"><b>원</b></span></label>
             <p>스마트스토어 기본할인은 금액으로만 수정합니다. 0원을 저장하면 기본할인을 해제합니다.</p>
           </div>
+
           <div id="discount-editor-makeshop" class="discount-editor-control" hidden>
             <label>기간 할인코드<select id="discount-editor-rule-code"><option value="NONE">NONE · 기간할인 없음</option><option value="M10">M10 · 10% / 십원 절사</option><option value="M15">M15 · 15% / 십원 절사</option><option value="M20">M20 · 20% / 백원 절사</option></select></label>
             <p>코드를 고르면 메이크샵 기간할인 값과 절사 단위가 함께 고정됩니다.</p>
@@ -745,14 +752,14 @@
     <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.112.3/dist/umd/supabase.js"></script>
-    <script src="./seller-source-parsers.js?v=20260831-relation-folder-tree-r59"></script>
-    <script src="./seller-export-adapter.js?v=20260831-relation-folder-tree-r59"></script>
-    <script src="./matrix-csv-export.js?v=20260831-relation-folder-tree-r59"></script>
-    <script src="./discount-price-math.js?v=20260831-relation-folder-tree-r59"></script>
-    <script src="./source-refresh-verifier.js?v=20260831-relation-folder-tree-r59"></script>
-    <script src="./relation-import-parser.js?v=20260831-relation-folder-tree-r59"></script>
-    <script src="./data-service.js?v=20260831-relation-folder-tree-r59"></script>
-    <script src="./app.js?v=20260831-relation-folder-tree-r59"></script>
-    <script src="./price-rule-lab.js?v=20260831-relation-folder-tree-r59"></script>
+    <script src="./seller-source-parsers.js?v=20260831-layout-sidebar-r60"></script>
+    <script src="./seller-export-adapter.js?v=20260831-layout-sidebar-r60"></script>
+    <script src="./matrix-csv-export.js?v=20260831-layout-sidebar-r60"></script>
+    <script src="./discount-price-math.js?v=20260831-layout-sidebar-r60"></script>
+    <script src="./source-refresh-verifier.js?v=20260831-layout-sidebar-r60"></script>
+    <script src="./relation-import-parser.js?v=20260831-layout-sidebar-r60"></script>
+    <script src="./data-service.js?v=20260831-layout-sidebar-r60"></script>
+    <script src="./app.js?v=20260831-layout-sidebar-r60"></script>
+    <script src="./price-rule-lab.js?v=20260831-layout-sidebar-r60"></script>
   </body>
 </html>

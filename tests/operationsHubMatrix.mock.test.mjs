@@ -63,10 +63,10 @@ assert.match(binaryConnectionMigration, /v_status in \('connected','review'\)[\s
 assert.match(dataSource, /MATRIX_VIEW = 'operations_hub_matrix_managed_live'[\s\S]*?\.from\(MATRIX_VIEW\)/, "the UI must read the managed wrapper over the non-blocking system-owned matrix");
 assert.match(migration, /with \(security_invoker = true\)/, "the live matrix view must honor underlying RLS");
 assert.match(presetMigration, /end::text as overall_status/, "the live matrix view must expose server-filterable overall status");
-assert.match(html, /id="live-connected-sku"[\s\S]*?id="live-inventory-mismatch"[\s\S]*?id="live-today-picked"/, "dashboard header metrics must have live-data targets");
+assert.match(html, /class="side-metrics"[\s\S]*?id="live-connected-sku"[\s\S]*?id="live-inventory-mismatch"[\s\S]*?id="live-today-picked"/, "compact sidebar metrics must keep the live-data targets");
 assert.match(dataSource, /\.from\('operations_hub_dashboard_metrics'\)/, "dashboard metrics must load from the database");
 assert.match(dataSource, /projected_inventory_mismatch_sku[\s\S]*?inventory_draft_cells/, "dashboard metrics must distinguish projected mismatches from raw snapshots");
-assert.match(source, /live-inventory-mismatch-detail[\s\S]*?원본 \$\{formatNumber\(mismatched\)\}/, "the header must explain raw and draft-projected inventory counts");
+assert.match(source, /live-inventory-mismatch-detail[\s\S]*?원본 \$\{formatNumber\(mismatched\)\}/, "the metric loader must retain raw and draft-projected inventory counts");
 assert.match(dataSource, /\.from\('operations_hub_active_seller_drafts'\)/, "matrix draft colors must load from the de-duplicated active draft view");
 assert.doesNotMatch(dataSource, /operations_hub_active_seller_drafts'[\s\S]{0,500}?\.limit\(1000\)/, "active seller drafts must not be truncated at 1,000 history rows");
 assert.match(searchDraftMigration, /distinct on \(queue\.sellpia_sku_code, queue\.source_channel, queue\.field_key\)[\s\S]*?projected_inventory_mismatch_sku/, "the database must expose one latest draft per seller cell and projected mismatch totals");
@@ -77,7 +77,7 @@ assert.match(dataSource, /`sellpia\/\$\{safeSku\}\.jpg`[\s\S]*?upsert:true/, "dr
 assert.match(editMigration, /operations_hub_sellpia_overrides[\s\S]*?operations_hub_change_queue[\s\S]*?operations_hub_dashboard_metrics/, "Sellpia edits, seller outbox, and live dashboard metrics must persist in Supabase");
 assert.match(css, /--thumb-width:84px;--thumb-height:63px[\s\S]*?object-fit:contain/, "matrix thumbnails must be larger and show the complete image without cropping");
 assert.match(html, /스마트스토어[\s\S]*?상품코드[\s\S]*?상품명[\s\S]*?옵션코드 \/ 옵션명[\s\S]*?메이크샵[\s\S]*?에이블리/, "every seller group must expose independently copyable product codes and names plus option identities");
-assert.match(html, /style\.css\?v=20260831-relation-folder-tree-r59[\s\S]*?data-service\.js\?v=20260831-relation-folder-tree-r59[\s\S]*?app\.js\?v=20260831-relation-folder-tree-r59/, "the deployed page must invalidate cached assets when nested relation folders ship");
+assert.match(html, /style\.css\?v=20260831-layout-sidebar-r60[\s\S]*?data-service\.js\?v=20260831-layout-sidebar-r60[\s\S]*?app\.js\?v=20260831-layout-sidebar-r60/, "the deployed page must invalidate cached assets when the collapsible shell ships");
 assert.match(source, /function applyMatrixGroupBoundaries\(visible\)[\s\S]*?smartstore[\s\S]*?makeshop[\s\S]*?ably[\s\S]*?operations[\s\S]*?firstVisible[\s\S]*?data-matrix-column/, "seller group dividers must follow the first visible column of every channel instead of fixed column positions");
 assert.match(css, /matrix-group-start-smartstore[\s\S]*?inset 5px[\s\S]*?matrix-group-start-makeshop[\s\S]*?matrix-group-start-ably[\s\S]*?matrix-group-start-operations/, "every visible seller and operations group must have a strong color-coded vertical divider");
 assert.match(source, /seller-product-code-cell[\s\S]*?mappingCodeButton[\s\S]*?seller-product-name-cell[\s\S]*?seller-option-identity/, "seller product codes and product names must render in separate matrix cells");
