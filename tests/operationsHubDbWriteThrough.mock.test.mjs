@@ -5,8 +5,8 @@ import {readFileSync} from 'node:fs';
 const app = readFileSync(new URL('../mockups/operations-hub/app.js', import.meta.url), 'utf8');
 const migration = readFileSync(new URL('../supabase/migrations/20260825023000_live_sellpia_override_matrix.sql', import.meta.url), 'utf8');
 
-test('matrix retries transient database timeouts without erasing rendered rows', () => {
-  assert.match(app, /MATRIX_TRANSIENT_RETRY_DELAYS_MS = \[1500, 5000, 12000\]/);
+test('matrix performs one bounded retry without erasing rendered rows', () => {
+  assert.match(app, /MATRIX_TRANSIENT_RETRY_DELAYS_MS = \[700\]/);
   assert.match(app, /const keepRenderedRows = matrixState\.rows\.length > 0/);
   assert.match(app, /DB 조회 지연 · 기존 화면 유지/);
   assert.match(app, /저장된 수정값은 사라지지 않습니다/);

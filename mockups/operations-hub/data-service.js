@@ -61,16 +61,29 @@
     return productTerm && optionTerm ? {productTerm, optionTerm} : null;
   }
 
-  async function attachSellerDrafts(rows) {
+  function throwIfAborted(signal) {
+    if (!signal?.aborted) return;
+    if (typeof signal.throwIfAborted === 'function') signal.throwIfAborted();
+    const error = new Error('요청이 취소되었습니다.');
+    error.name = 'AbortError';
+    throw error;
+  }
+
+  function withAbortSignal(query, signal) {
+    throwIfAborted(signal);
+    return signal && typeof query?.abortSignal === 'function' ? query.abortSignal(signal) : query;
+  }
+
+  async function attachSellerDrafts(rows, signal) {
     const products = Array.isArray(rows) ? rows : [];
     const skus = [...new Set(products.map(row => cleanText(row?.sellpia_sku_code)).filter(Boolean))];
     if (!skus.length) return products;
-    const {data, error} = await db
+    const {data, error} = await withAbortSignal(db
       .from('operations_hub_active_seller_drafts')
       .select('change_id,sellpia_sku_code,source_channel,field_key,before_value,after_value,status,updated_at,price_base_before,price_base_after,price_discounted_base_before,price_discounted_base_after,price_option_before,price_option_after,price_final_before,price_final_after,price_discount_terms_before,price_discount_terms_after,option_price_source,price_rule_set_id')
       .in('sellpia_sku_code', skus)
       .order('updated_at', {ascending:false})
-      .order('change_id', {ascending:false});
+      .order('change_id', {ascending:false}), signal);
     if (error) throw error;
     const draftByKey = new Map();
     for (const draft of data || []) {
@@ -91,14 +104,14 @@
     });
   }
 
-  async function attachProductProfiles(rows) {
+  async function attachProductProfiles(rows, signal) {
     const products = Array.isArray(rows) ? rows : [];
     const skus = [...new Set(products.map(row => cleanText(row?.sellpia_sku_code)).filter(Boolean))];
     if (!skus.length) return products;
-    const {data, error} = await db
+    const {data, error} = await withAbortSignal(db
       .from('operations_hub_product_profiles')
       .select('sellpia_sku_code,sellpia_product_code,material,product_group,shape,material_source,product_group_source,shape_source,classifier_version,classified_at,updated_by,updated_at,product_tags,sku_tags,tag_summary')
-      .in('sellpia_sku_code', skus);
+      .in('sellpia_sku_code', skus), signal);
     if (error) throw error;
     const profiles = new Map((data || []).map(profile => [cleanText(profile.sellpia_sku_code), profile]));
     return products.map(product => {
@@ -107,11 +120,11 @@
     });
   }
 
-  async function attachLinkBadges(rows) {
+  async function attachLinkBadges(rows, signal) {
     const products = Array.isArray(rows) ? rows : [];
     const skus = [...new Set(products.map(row => cleanText(row?.sellpia_sku_code)).filter(Boolean))];
     if (!skus.length) return products;
-    const {data, error} = await db.rpc('get_operations_hub_sku_link_badges', {p_skus:skus});
+    const {data, error} = await withAbortSignal(db.rpc('get_operations_hub_sku_link_badges', {p_skus:skus}), signal);
     if (error) throw error;
     const badgesBySku = new Map();
     for (const badge of data || []) {
@@ -125,16 +138,16 @@
     }));
   }
 
-  async function attachLinkSuppressions(rows) {
+  async function attachLinkSuppressions(rows, signal) {
     const products = Array.isArray(rows) ? rows : [];
     const skus = [...new Set(products.map(row => cleanText(row?.sellpia_sku_code)).filter(Boolean))];
     if (!skus.length) return products;
     const suppressionRows = [];
     for (let offset = 0; offset < skus.length; offset += 500) {
-      const {data, error} = await db
+      const {data, error} = await withAbortSignal(db
         .from('operations_hub_link_suppressions')
         .select('source_channel,sellpia_sku_code,product_code,option_code,reason,suppressed_at')
-        .in('sellpia_sku_code', skus.slice(offset, offset + 500));
+        .in('sellpia_sku_code', skus.slice(offset, offset + 500)), signal);
       if (error) throw error;
       suppressionRows.push(...(data || []));
     }
@@ -178,11 +191,11 @@
     });
   }
 
-  async function attachSellerPriceComponents(rows) {
+  async function attachSellerPriceComponents(rows, signal) {
     const products = Array.isArray(rows) ? rows : [];
     const skus = [...new Set(products.map(row => cleanText(row?.sellpia_sku_code)).filter(Boolean))];
     if (!skus.length) return products;
-    const {data, error} = await db.rpc('load_operations_hub_seller_price_components', {p_skus:skus});
+    const {data, error} = await withAbortSignal(db.rpc('load_operations_hub_seller_price_components', {p_skus:skus}), signal);
     if (error) throw error;
     const bySku = new Map();
     for (const component of data || []) {
@@ -211,25 +224,25 @@
     });
   }
 
-  async function attachPriceRuleAssignments(rows) {
+  async function attachPriceRuleAssignments(rows, signal) {
     const products = Array.isArray(rows) ? rows : [];
     const skus = [...new Set(products.map(row => cleanText(row?.sellpia_sku_code)).filter(Boolean))];
     if (!skus.length) return products;
-    const {data:assignments, error} = await db
+    const {data:assignments, error} = await withAbortSignal(db
       .from('operations_hub_price_rule_assignments')
       .select('source_channel,sellpia_sku_code,price_rule_set_id,updated_at')
       .eq('target_type', 'sellpia_sku')
       .eq('is_active', true)
-      .in('sellpia_sku_code', skus);
+      .in('sellpia_sku_code', skus), signal);
     if (error) throw error;
     const ruleSetIds = [...new Set((assignments || []).map(row => Number(row.price_rule_set_id)).filter(Number.isFinite))];
     let ruleSets = [];
     if (ruleSetIds.length) {
-      const result = await db
+      const result = await withAbortSignal(db
         .from('operations_hub_price_rule_sets')
         .select('price_rule_set_id,set_name,color,is_active')
         .eq('is_active', true)
-        .in('price_rule_set_id', ruleSetIds);
+        .in('price_rule_set_id', ruleSetIds), signal);
       if (result.error) throw result.error;
       ruleSets = result.data || [];
     }
@@ -253,16 +266,16 @@
     }));
   }
 
-  async function attachInboundCostDetails(rows) {
+  async function attachInboundCostDetails(rows, signal) {
     const products = Array.isArray(rows) ? rows : [];
     const skus = [...new Set(products.map(row => cleanText(row?.sellpia_sku_code)).filter(Boolean))];
     if (!skus.length) return products;
     const details = [];
     for (let offset = 0; offset < skus.length; offset += 500) {
-      const {data, error} = await db
+      const {data, error} = await withAbortSignal(db
         .from('operations_hub_inbound_cost_live')
         .select('sellpia_sku_code,sellpia_purchase_price,sellpia_order_unit,sellpia_minimum_order_unit,actual_inbound_manual_cost,inbound_cost_formula_tag_id,inbound_cost_formula_tag_name,inbound_cost_formula_tag_color,actual_inbound_cost,actual_inbound_cost_mode,actual_inbound_cost_updated_at')
-        .in('sellpia_sku_code', skus.slice(offset, offset + 500));
+        .in('sellpia_sku_code', skus.slice(offset, offset + 500)), signal);
       if (error) throw error;
       details.push(...(data || []));
     }
@@ -270,16 +283,16 @@
     return products.map(product => ({...product, ...(bySku.get(cleanText(product?.sellpia_sku_code)) || {})}));
   }
 
-  async function attachSystemOperationalDetails(rows) {
+  async function attachSystemOperationalDetails(rows, signal) {
     const products = Array.isArray(rows) ? rows : [];
     const skus = [...new Set(products.map(row => cleanText(row?.sellpia_sku_code)).filter(Boolean))];
     if (!skus.length) return products;
     const details = [];
     for (let offset = 0; offset < skus.length; offset += 500) {
-      const {data, error} = await db
+      const {data, error} = await withAbortSignal(db
         .from('operations_hub_sku_operational_live')
         .select('sellpia_sku_code,system_base_price,system_stock,system_price_version,system_stock_version,system_price_updated_at,system_stock_updated_at,system_updated_at')
-        .in('sellpia_sku_code', skus.slice(offset, offset + 500));
+        .in('sellpia_sku_code', skus.slice(offset, offset + 500)), signal);
       if (error) throw error;
       details.push(...(data || []));
     }
@@ -300,16 +313,16 @@
     }));
   }
 
-  async function attachProductLinkDrafts(rows) {
+  async function attachProductLinkDrafts(rows, signal) {
     const products = Array.isArray(rows) ? rows : [];
     const skus = [...new Set(products.map(row => cleanText(row?.sellpia_sku_code)).filter(Boolean))];
     if (!skus.length) return products;
     const drafts = [];
     for (let offset = 0; offset < skus.length; offset += 500) {
-      const {data, error} = await db
+      const {data, error} = await withAbortSignal(db
         .from('operations_hub_product_link_drafts')
         .select('source_channel,sellpia_sku_code,product_code,product_name,updated_at')
-        .in('sellpia_sku_code', skus.slice(offset, offset + 500));
+        .in('sellpia_sku_code', skus.slice(offset, offset + 500)), signal);
       if (error) throw error;
       drafts.push(...(data || []));
     }
@@ -336,16 +349,16 @@
     });
   }
 
-  async function attachManualLinks(rows) {
+  async function attachManualLinks(rows, signal) {
     const products = Array.isArray(rows) ? rows : [];
     const skus = [...new Set(products.map(row => cleanText(row?.sellpia_sku_code)).filter(Boolean))];
     if (!skus.length) return products;
     const links = [];
     for (let offset = 0; offset < skus.length; offset += 500) {
-      const {data, error} = await db
+      const {data, error} = await withAbortSignal(db
         .from('operations_hub_manual_links')
         .select('source_channel,sellpia_sku_code,product_code,option_code,product_name,option_name,mapping_origin,match_tier,match_score,updated_at')
-        .in('sellpia_sku_code', skus.slice(offset, offset + 500));
+        .in('sellpia_sku_code', skus.slice(offset, offset + 500)), signal);
       if (error) throw error;
       links.push(...(data || []));
     }
@@ -386,8 +399,24 @@
     });
   }
 
-  async function attachProductMetadata(rows) {
-    return attachLinkSuppressions(await attachPriceRuleAssignments(await attachSellerDrafts(await attachSellerPriceComponents(await attachLinkBadges(await attachProductProfiles(await attachManualLinks(await attachProductLinkDrafts(await attachSystemOperationalDetails(await attachInboundCostDetails(rows))))))))));
+  async function attachProductMetadata(rows, signal) {
+    let products = rows;
+    for (const attach of [
+      attachInboundCostDetails,
+      attachSystemOperationalDetails,
+      attachProductLinkDrafts,
+      attachManualLinks,
+      attachProductProfiles,
+      attachLinkBadges,
+      attachSellerPriceComponents,
+      attachSellerDrafts,
+      attachPriceRuleAssignments,
+      attachLinkSuppressions
+    ]) {
+      throwIfAborted(signal);
+      products = await attach(products, signal);
+    }
+    return products;
   }
 
   async function loadListingGraph({source = 'all', relationType = 'complex', search = '', page = 1, pageSize = 50, folderId = null, organizationScope = 'all'} = {}) {
@@ -441,7 +470,7 @@
     return Array.isArray(data) ? data[0] : data;
   }
 
-  async function loadProducts({ page = 1, pageSize = PAGE_SIZE, search = '', searchSources = ['sellpia','smartstore','makeshop','ably'], status = 'all', sort = 'sku_asc', skus = [], codeListRows = [], advancedFilter = null, excludeCombinationSkus = false } = {}) {
+  async function loadProducts({ page = 1, pageSize = PAGE_SIZE, search = '', searchSources = ['sellpia','smartstore','makeshop','ably'], status = 'all', sort = 'sku_asc', skus = [], codeListRows = [], advancedFilter = null, excludeCombinationSkus = false, signal = null } = {}) {
     status = normalizeConnectionStatus(status);
     const safePage = Math.max(1, Number(page) || 1);
     const safePageSize = MATRIX_PAGE_SIZES.has(Number(pageSize)) ? Number(pageSize) : PAGE_SIZE;
@@ -452,7 +481,8 @@
       const rows = [];
       let count = 0;
       for (let offset = 0; offset < requestsPerPage; offset += 1) {
-        const {data, error} = await db.rpc(rpcName, {...args, p_page:firstServerPage + offset, p_page_size:serverPageSize});
+        throwIfAborted(signal);
+        const {data, error} = await withAbortSignal(db.rpc(rpcName, {...args, p_page:firstServerPage + offset, p_page_size:serverPageSize}), signal);
         if (error) throw error;
         const pageRows = Array.isArray(data?.rows) ? data.rows : [];
         rows.push(...pageRows);
@@ -468,10 +498,10 @@
       const pageSkus = [...new Set(pageRows.map(item => cleanText(item.sellpia_sku_code)).filter(Boolean))];
       let products = [];
       if (pageSkus.length) {
-        const {data, error} = await db
+        const {data, error} = await withAbortSignal(db
           .from(MATRIX_VIEW)
           .select(MATRIX_SELECT)
-          .in('sellpia_sku_code', pageSkus);
+          .in('sellpia_sku_code', pageSkus), signal);
         if (error) throw error;
         products = data || [];
       }
@@ -483,7 +513,7 @@
             : {sellpia_sku_code:'', __codeList:codeRow, __codeListPlaceholder:true};
         });
       return {
-        rows:await attachProductMetadata(orderedRows),
+        rows:await attachProductMetadata(orderedRows, signal),
         count:orderedCodeRows.length,
         page:safePage,
         pageSize:safePageSize
@@ -494,7 +524,7 @@
       const result = await loadPagedRpc('load_operations_hub_code_list', {p_skus:codeListSkus, p_status:status, p_sort:'input_order'});
       return {
         ...result,
-        rows:await attachProductMetadata(result.rows)
+        rows:await attachProductMetadata(result.rows, signal)
       };
     }
     const filterPayload = normalizeConnectionConditions(advancedFilter);
@@ -510,7 +540,7 @@
       });
       return {
         ...result,
-        rows:await attachProductMetadata(result.rows)
+        rows:await attachProductMetadata(result.rows, signal)
       };
     }
     const from = (safePage - 1) * safePageSize;
@@ -541,11 +571,11 @@
       const selectedSellers = activeSearchSources.filter(source => source !== 'sellpia');
       let listingMatches = [];
       if (selectedSellers.length) {
-        const result = await db.rpc('find_operations_hub_listing_skus_by_sources', {
+        const result = await withAbortSignal(db.rpc('find_operations_hub_listing_skus_by_sources', {
           p_query:keyword,
           p_sources:selectedSellers,
           p_limit:500
-        });
+        }), signal);
         if (result.error) throw result.error;
         listingMatches = result.data || [];
       }
@@ -582,24 +612,24 @@
       .order('sellpia_sku_natural_fallback', {ascending:true, nullsFirst:false});
     query = query.range(from, to);
 
-    const { data, error, count } = await query;
+    const { data, error, count } = await withAbortSignal(query, signal);
     if (error) throw error;
-    return { rows: await attachProductMetadata(data || []), count: count || 0, page: safePage, pageSize: safePageSize };
+    return { rows: await attachProductMetadata(data || [], signal), count: count || 0, page: safePage, pageSize: safePageSize };
   }
 
-  async function loadProductsBySkus(skus = []) {
+  async function loadProductsBySkus(skus = [], {signal = null} = {}) {
     const normalizedSkus = [...new Set((Array.isArray(skus) ? skus : []).map(cleanText).filter(Boolean))];
     if (!normalizedSkus.length) return [];
     const rows = [];
     for (let offset = 0; offset < normalizedSkus.length; offset += 500) {
-      const {data, error} = await db
+      const {data, error} = await withAbortSignal(db
         .from(MATRIX_VIEW)
         .select(MATRIX_SELECT)
-        .in('sellpia_sku_code', normalizedSkus.slice(offset, offset + 500));
+        .in('sellpia_sku_code', normalizedSkus.slice(offset, offset + 500)), signal);
       if (error) throw error;
       rows.push(...(data || []));
     }
-    return attachProductMetadata(rows);
+    return attachProductMetadata(rows, signal);
   }
 
   async function loadMatrixExportChunk({
