@@ -1380,7 +1380,7 @@
   }
 
   async function loadRelationFolders() {
-    const {data, error} = await db.rpc('list_operations_hub_relation_folders');
+    const {data, error} = await db.rpc('list_operations_hub_relation_folders_v2');
     if (error) throw error;
     return {
       folders:Array.isArray(data?.folders) ? data.folders : [],
@@ -1389,21 +1389,22 @@
     };
   }
 
-  async function saveRelationFolder({folderId = null, name, kind = 'custom', sortOrder = 100} = {}) {
-    const {data, error} = await db.rpc('save_operations_hub_relation_folder', {
+  async function saveRelationFolder({folderId = null, name, kind = 'custom', sortOrder = 100, parentFolderId = null} = {}) {
+    const {data, error} = await db.rpc('save_operations_hub_relation_folder_v2', {
       p_folder_id:folderId === null || folderId === '' ? null : Number(folderId),
       p_folder_name:cleanText(name),
       p_folder_kind:cleanText(kind) || 'custom',
-      p_sort_order:Math.max(0, Math.min(Math.trunc(Number(sortOrder) || 100), 10000))
+      p_sort_order:Math.max(0, Math.min(Math.trunc(Number(sortOrder) || 100), 10000)),
+      p_parent_folder_id:parentFolderId === null || parentFolderId === '' ? null : Number(parentFolderId)
     });
     if (error) throw error;
     return Array.isArray(data) ? data[0] : data;
   }
 
   async function archiveRelationFolder(folderId) {
-    const {data, error} = await db.rpc('archive_operations_hub_relation_folder', {p_folder_id:Number(folderId)});
+    const {data, error} = await db.rpc('archive_operations_hub_relation_folder_v2', {p_folder_id:Number(folderId)});
     if (error) throw error;
-    return Number(data || 0);
+    return data || {unassignedListings:0, unassignedNodes:0};
   }
 
   async function searchSellpiaRelationProducts(search = '', limit = 20) {
@@ -1484,6 +1485,14 @@
   async function removeRelationEdge(edgeId) {
     const {data, error} = await db.rpc('remove_operations_hub_relation_edge', {
       p_edge_id:Number(edgeId)
+    });
+    if (error) throw error;
+    return data;
+  }
+
+  async function archiveRelationNode(nodeId) {
+    const {data, error} = await db.rpc('archive_operations_hub_relation_node', {
+      p_node_id:Number(nodeId)
     });
     if (error) throw error;
     return data;
@@ -2385,6 +2394,7 @@
     loadRelationNodes,
     saveRelationEdge,
     removeRelationEdge,
+    archiveRelationNode,
     applyRelationBoard,
     saveListingOrganization,
     saveListingComponentParent,
