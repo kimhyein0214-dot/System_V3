@@ -8178,6 +8178,25 @@ document.getElementById('inbound-cost-modal-save').addEventListener('click', asy
   finally { event.currentTarget.disabled = false; }
 });
 
+const SIDEBAR_COLLAPSED_KEY = 'system-v3-primary-sidebar-collapsed';
+const appShell = document.querySelector('.app-shell');
+const sidebarToggle = document.getElementById('sidebar-toggle');
+
+function setSidebarCollapsed(collapsed, {persist = true} = {}) {
+  const nextCollapsed = Boolean(collapsed);
+  appShell.classList.toggle('sidebar-collapsed', nextCollapsed);
+  sidebarToggle.setAttribute('aria-expanded', String(!nextCollapsed));
+  sidebarToggle.title = nextCollapsed ? '좌측 메뉴 펼치기' : '좌측 메뉴 접기';
+  sidebarToggle.querySelector('span').textContent = nextCollapsed ? '›' : '‹';
+  sidebarToggle.querySelector('em').textContent = nextCollapsed ? '메뉴 펼치기' : '메뉴 접기';
+  if (persist) localStorage.setItem(SIDEBAR_COLLAPSED_KEY, nextCollapsed ? 'true' : 'false');
+}
+
+sidebarToggle.addEventListener('click', () => {
+  setSidebarCollapsed(!appShell.classList.contains('sidebar-collapsed'));
+});
+setSidebarCollapsed(localStorage.getItem(SIDEBAR_COLLAPSED_KEY) === 'true', {persist:false});
+
 function showPage(pageId) {
   document.querySelectorAll('.page').forEach(page => page.classList.remove('active-page'));
   document.querySelectorAll('.nav-item').forEach(item => item.classList.toggle('active', item.dataset.page === pageId));
