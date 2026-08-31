@@ -84,6 +84,7 @@ const liveData = window.SystemV3Data;
 const matrixCsv = window.SystemV3MatrixCsv;
 const discountPriceMath = window.SystemV3DiscountPriceMath;
 const sourceRefreshVerifier = window.SystemV3SourceRefreshVerifier;
+const relationImportParser = window.RelationImportParser;
 const MATRIX_PAGE_SIZE_KEY = 'system-v3-matrix-page-size';
 const storedMatrixPageSize = Number(localStorage.getItem(MATRIX_PAGE_SIZE_KEY));
 const initialMatrixPageSize = [50, 100, 200].includes(storedMatrixPageSize) ? storedMatrixPageSize : 50;
@@ -92,6 +93,7 @@ const matrixState = {page:1, pageSize:initialMatrixPageSize, search:'', searchSo
 const multiLinkState = {page:1, pageSize:50, search:'', source:'all', relationType:'all', folderId:null, organizationScope:'all', folders:[], foldersLoaded:false, total:0, allTotal:0, loading:false, requestId:0, rows:[], selected:null, loaded:false};
 const relationGraphState = {nodes:[], edges:[], selectedProduct:null, loading:false, requestId:0, searchTimer:null, viewMode:'list', search:'', focusNodeId:null};
 const relationBoardState = {nodes:new Map(), loadedProducts:new Map(), initialEdges:new Map(), levelCount:3, draggingKey:null, pointerDrag:null, nativeDragging:false, saving:false};
+const relationImportState = {fileName:'', parsed:null, items:new Map(), choices:new Map(), resolving:false, saving:false};
 const mappingSyncState = {displayedVersion:'', checking:false, autoRefreshing:false, latest:null};
 const matrixRowsBySku = new Map();
 const drawerState = {
@@ -6859,6 +6861,183 @@ async function saveRelationBoard() {
   }
 }
 
+function relationImportCandidateKey(candidate) {
+  return candidate?.nodeType === 'sellpia_sku'
+    ? `sellpia-sku|${candidate.sellpiaSkuCode || candidate.optionCode || ''}`
+    : `seller|${candidate?.source || ''}|${candidate?.productCode || ''}|${candidate?.optionCode || ''}`;
+}
+
+function relationImportCandidateLabel(candidate) {
+  const source = candidate?.source === 'sellpia' ? '셀피아' : multiLinkChannelLabel(candidate?.source);
+  const identity = candidate?.nodeType === 'sellpia_sku'
+    ? candidate.sellpiaSkuCode
+    : `${candidate?.productCode || '-'}-${candidate?.optionCode || ''}`;
+  return `${source} · ${identity} · ${candidate?.displayName || '상품명 없음'}`;
+}
+
+function selectedRelationImportCandidate(item) {
+  const candidates = Array.isArray(item?.candidates) ? item.candidates : [];
+  if (item?.status === 'matched' && candidates.length === 1 && candidates[0].relationReady) return candidates[0];
+  const choice = relationImportState.choices.get(item?.inputCode);
+  return candidates.find(candidate => relationImportCandidateKey(candidate) === choice && candidate.relationReady) || null;
+}
+
+function buildRelationImportPlan() {
+  const parsed = relationImportState.parsed;
+  const errors = [];
+  if (!parsed?.valid) return {valid:false, nodes:[], edges:[], errors:parsed?.errors || ['엑셀 검토가 끝나지 않았습니다.']};
+  const candidatesByCode = new Map();
+  parsed.codes.forEach(code => {
+    const item = relationImportState.items.get(code);
+    const candidate = selectedRelationImportCandidate(item);
+    if (!candidate) errors.push(`${code}: 정확한 관계 노드를 선택할 수 없습니다.`);
+    else candidatesByCode.set(code, candidate);
+  });
+  if (errors.length) return {valid:false, nodes:[], edges:[], errors};
+
+  const folder = multiLinkState.folders.find(item => String(item.folderId) === String(multiLinkState.folderId));
+  const folderId = multiLinkState.folderId;
+  const nodeMap = new Map();
+  candidatesByCode.forEach(candidate => {
+    const key = relationImportCandidateKey(candidate);
+    if (nodeMap.has(key)) return;
+    const relationKind = folder?.kind || (candidate.nodeType === 'sellpia_sku' ? 'individual' : 'custom');
+    nodeMap.set(key, candidate.nodeId ? {clientKey:key, nodeId:Number(candidate.nodeId)} : candidate.nodeType === 'sellpia_sku' ? {
+      clientKey:key, nodeType:'sellpia_sku', sellpiaSkuCode:candidate.sellpiaSkuCode, folderId, relationKind
+    } : {
+      clientKey:key, nodeType:'seller_listing', source:candidate.source, productCode:candidate.productCode,
+      optionCode:candidate.optionCode || '', folderId, relationKind
+    });
+  });
+  const edgeMap = new Map();
+  parsed.edges.forEach((edge, index) => {
+    const parentKey = relationImportCandidateKey(candidatesByCode.get(edge.parentCode));
+    const childKey = relationImportCandidateKey(candidatesByCode.get(edge.childCode));
+    if (parentKey === childKey) {
+      errors.push(`${edge.rowNo}행: ${edge.parentCode}와 ${edge.childCode}가 같은 관계 노드로 확인됩니다.`);
+      return;
+    }
+    const key = `${parentKey}\u0000${childKey}`;
+    if (!edgeMap.has(key)) edgeMap.set(key, {parentKey, childKey, sortOrder:((index % 100) + 1) * 100});
+  });
+  const cycle = relationImportParser.findCycle([...edgeMap.values()].map(edge => ({parentCode:edge.parentKey, childCode:edge.childKey})));
+  if (cycle) errors.push('선택한 실제 상품·옵션 기준으로 순환 관계가 생깁니다.');
+  return {valid:errors.length === 0, nodes:[...nodeMap.values()], edges:[...edgeMap.values()], errors};
+}
+
+function renderRelationImport() {
+  const result = document.getElementById('relation-import-result');
+  const reset = document.getElementById('relation-import-reset');
+  const save = document.getElementById('relation-import-save');
+  reset.disabled = !relationImportState.parsed && !relationImportState.fileName;
+  if (relationImportState.resolving) {
+    result.innerHTML = '<span>상품코드-옵션코드를 원본과 정확히 대조하는 중입니다…</span>';
+    save.disabled = true;
+    return;
+  }
+  const parsed = relationImportState.parsed;
+  if (!parsed) {
+    result.innerHTML = '<span>파일을 선택하면 행·코드·관계와 오류를 먼저 검토합니다.</span>';
+    save.disabled = true;
+    return;
+  }
+  const items = parsed.codes.map(code => relationImportState.items.get(code) || {inputCode:code, status:'not_found', candidates:[]});
+  const selectedCount = items.filter(item => selectedRelationImportCandidate(item)).length;
+  const ambiguousCount = items.filter(item => item.status === 'ambiguous' && !selectedRelationImportCandidate(item)).length;
+  const blockedCount = items.filter(item => ['not_found', 'unlinked'].includes(item.status)).length;
+  const plan = buildRelationImportPlan();
+  const errors = [...parsed.errors, ...plan.errors.filter(error => !parsed.errors.includes(error))];
+  const rows = items.map(item => {
+    const candidate = selectedRelationImportCandidate(item);
+    let control = '';
+    let status = '';
+    if (item.status === 'ambiguous') {
+      control = `<select data-relation-import-choice="${escapeHtml(item.inputCode)}"><option value="">판매처·상품을 선택…</option>${(item.candidates || []).map(option => `<option value="${escapeHtml(relationImportCandidateKey(option))}" ${relationImportState.choices.get(item.inputCode) === relationImportCandidateKey(option) ? 'selected' : ''} ${option.relationReady ? '' : 'disabled'}>${escapeHtml(relationImportCandidateLabel(option))}${option.relationReady ? '' : ' · 먼저 매칭 필요'}</option>`).join('')}</select>`;
+      status = candidate ? '<span class="relation-import-status ok">선택 완료</span>' : '<span class="relation-import-status warn">출처 선택 필요</span>';
+    } else if (item.status === 'matched') {
+      control = escapeHtml(relationImportCandidateLabel(candidate));
+      status = '<span class="relation-import-status ok">확인 완료</span>';
+    } else if (item.status === 'unlinked') {
+      control = escapeHtml(relationImportCandidateLabel(item.candidates?.[0]));
+      status = '<span class="relation-import-status error">먼저 SKU 매칭 필요</span>';
+    } else {
+      control = '최신 원본에서 찾지 못함';
+      status = '<span class="relation-import-status error">코드 없음</span>';
+    }
+    return `<tr><td>${escapeHtml(item.inputCode)}</td><td>${control}</td><td>${status}</td></tr>`;
+  }).join('');
+  result.innerHTML = `<div class="relation-import-stats"><span>파일<b>${escapeHtml(relationImportState.fileName || '-')}</b></span><span>유효 행<b>${formatNumber(parsed.rows.length)}</b></span><span>고유 코드<b>${formatNumber(parsed.codes.length)}</b></span><span>관계<b>${formatNumber(parsed.edges.length)}</b></span><span>중복 합침<b>${formatNumber(parsed.duplicateEdgeCount)}</b></span></div>
+    ${errors.length ? `<ul class="relation-import-errors">${errors.slice(0, 30).map(error => `<li>${escapeHtml(error)}</li>`).join('')}</ul>` : ''}
+    ${items.length ? `<table class="relation-import-table"><thead><tr><th>입력 코드</th><th>정확히 확인된 상품·옵션</th><th>상태</th></tr></thead><tbody>${rows}</tbody></table>` : ''}`;
+  save.textContent = relationImportState.saving ? '관계 저장 중…' : `검토한 관계 ${formatNumber(parsed.edges.length)}건 저장`;
+  save.disabled = relationImportState.saving || !plan.valid || selectedCount !== parsed.codes.length || ambiguousCount > 0 || blockedCount > 0;
+}
+
+function resetRelationImport() {
+  relationImportState.fileName = '';
+  relationImportState.parsed = null;
+  relationImportState.items.clear();
+  relationImportState.choices.clear();
+  relationImportState.resolving = false;
+  relationImportState.saving = false;
+  document.getElementById('relation-import-file').value = '';
+  renderRelationImport();
+}
+
+async function loadRelationImportFile(file) {
+  if (!file || !relationImportParser || !window.XLSX) return;
+  relationImportState.fileName = file.name;
+  relationImportState.items.clear();
+  relationImportState.choices.clear();
+  try {
+    const isCsv = /\.csv$/i.test(file.name);
+    const workbook = XLSX.read(isCsv ? await file.text() : await file.arrayBuffer(), {type:isCsv ? 'string' : 'array', cellDates:false});
+    const worksheet = workbook.Sheets[workbook.SheetNames[0]];
+    const rows = XLSX.utils.sheet_to_json(worksheet, {header:1, raw:false, defval:'', blankrows:false});
+    relationImportState.parsed = relationImportParser.parseRelationHierarchyRows(rows, {maxCodes:500, maxEdges:1000});
+    renderRelationImport();
+    if (!relationImportState.parsed.valid) return;
+    relationImportState.resolving = true;
+    renderRelationImport();
+    const items = await liveData.resolveRelationImportCodes(relationImportState.parsed.codes);
+    relationImportState.items = new Map(items.map(item => [item.inputCode, item]));
+  } catch (error) {
+    relationImportState.parsed = {valid:false, headers:[], rows:[], codes:[], edges:[], duplicateEdgeCount:0, errors:[error?.message || String(error)]};
+  } finally {
+    relationImportState.resolving = false;
+    renderRelationImport();
+  }
+}
+
+async function saveRelationImport() {
+  const boardChanges = relationBoardChanges();
+  if (boardChanges.additions.length || boardChanges.removals.length) {
+    showToast('작업판의 관계 변경을 먼저 저장하거나 취소해주세요.');
+    return;
+  }
+  const plan = buildRelationImportPlan();
+  if (!plan.valid) {
+    renderRelationImport();
+    showToast('코드 확인과 관계 오류를 먼저 해결해주세요.');
+    return;
+  }
+  if (!window.confirm(`엑셀의 상위·하위 관계 ${plan.edges.length}건을 추가할까요?\n기존 관계는 해제하지 않으며 상품 원본·가격·재고도 변경하지 않습니다.`)) return;
+  relationImportState.saving = true;
+  renderRelationImport();
+  try {
+    await liveData.applyRelationBoard({nodes:plan.nodes, edges:plan.edges, removeEdgeIds:[]});
+    await loadRelationGraph();
+    resetRelationImport();
+    document.getElementById('relation-import-panel').open = false;
+    showToast(`엑셀 관계 ${formatNumber(plan.edges.length)}건을 저장했습니다.`);
+  } catch (error) {
+    showToast(`엑셀 관계 저장 실패: ${error?.message || error}`);
+  } finally {
+    relationImportState.saving = false;
+    renderRelationImport();
+  }
+}
+
 function openRelationFolderForm(folder = null) {
   const form = document.getElementById('relation-folder-form');
   document.getElementById('relation-folder-id').value = folder?.folderId || '';
@@ -7370,6 +7549,29 @@ document.getElementById('relation-product-loader').addEventListener('submit', as
     button.textContent = original;
   }
 });
+
+const relationImportFile = document.getElementById('relation-import-file');
+const relationImportDropzone = document.getElementById('relation-import-dropzone');
+relationImportDropzone.addEventListener('click', () => relationImportFile.click());
+relationImportFile.addEventListener('change', () => loadRelationImportFile(relationImportFile.files?.[0]));
+['dragenter', 'dragover'].forEach(type => relationImportDropzone.addEventListener(type, event => {
+  event.preventDefault();
+  relationImportDropzone.classList.add('dragover');
+}));
+['dragleave', 'drop'].forEach(type => relationImportDropzone.addEventListener(type, event => {
+  event.preventDefault();
+  relationImportDropzone.classList.remove('dragover');
+}));
+relationImportDropzone.addEventListener('drop', event => loadRelationImportFile(event.dataTransfer?.files?.[0]));
+document.getElementById('relation-import-result').addEventListener('change', event => {
+  const select = event.target.closest('[data-relation-import-choice]');
+  if (!select) return;
+  if (select.value) relationImportState.choices.set(select.dataset.relationImportChoice, select.value);
+  else relationImportState.choices.delete(select.dataset.relationImportChoice);
+  renderRelationImport();
+});
+document.getElementById('relation-import-reset').addEventListener('click', resetRelationImport);
+document.getElementById('relation-import-save').addEventListener('click', saveRelationImport);
 
 document.getElementById('relation-board-add-level').addEventListener('click', () => {
   if (relationBoardState.levelCount >= 6) {
