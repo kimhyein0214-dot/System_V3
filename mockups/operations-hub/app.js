@@ -6293,6 +6293,61 @@ function multiLinkRelationLabel(type, componentCount = 0, listingCount = 0) {
 
 const RELATION_KIND_LABELS = Object.freeze({individual:'개별상품', collection:'모음전·기획전', one_plus_one:'1+1', set:'세트', custom:'직접 분류'});
 
+function relationFolderRows() {
+  const folders = multiLinkState.folders;
+  const children = new Map();
+  folders.forEach(folder => {
+    const parentKey = folder.parentFolderId === null || folder.parentFolderId === undefined ? '' : String(folder.parentFolderId);
+    if (!children.has(parentKey)) children.set(parentKey, []);
+    children.get(parentKey).push(folder);
+  });
+  const sortFolders = items => items.sort((a, b) => Number(a.sortOrder || 100) - Number(b.sortOrder || 100) || String(a.name || '').localeCompare(String(b.name || ''), 'ko') || Number(a.folderId) - Number(b.folderId));
+  children.forEach(sortFolders);
+  const rows = [];
+  const visited = new Set();
+  const visit = (folder, depth) => {
+    const key = String(folder.folderId);
+    if (visited.has(key)) return;
+    visited.add(key);
+    rows.push({...folder, __depth:depth});
+    (children.get(key) || []).forEach(child => visit(child, depth + 1));
+  };
+  (children.get('') || []).forEach(folder => visit(folder, 0));
+  folders.forEach(folder => visit(folder, 0));
+  return rows;
+}
+
+function relationFolderDescendantIds(folderId, {includeSelf = true} = {}) {
+  const wanted = String(folderId ?? '');
+  const descendants = new Set(includeSelf && wanted ? [wanted] : []);
+  let changed = true;
+  while (changed) {
+    changed = false;
+    multiLinkState.folders.forEach(folder => {
+      const parentKey = folder.parentFolderId === null || folder.parentFolderId === undefined ? '' : String(folder.parentFolderId);
+      const key = String(folder.folderId);
+      if (descendants.has(parentKey) && !descendants.has(key)) {
+        descendants.add(key);
+        changed = true;
+      }
+    });
+  }
+  return descendants;
+}
+
+function relationFolderPath(folderId) {
+  const byId = new Map(multiLinkState.folders.map(folder => [String(folder.folderId), folder]));
+  const names = [];
+  const visited = new Set();
+  let folder = byId.get(String(folderId));
+  while (folder && !visited.has(String(folder.folderId))) {
+    visited.add(String(folder.folderId));
+    names.unshift(folder.name);
+    folder = folder.parentFolderId === null || folder.parentFolderId === undefined ? null : byId.get(String(folder.parentFolderId));
+  }
+  return names.join(' / ');
+}
+
 function renderRelationFolders() {
   const list = document.getElementById('relation-folder-list');
   const activeKey = multiLinkState.organizationScope === 'unorganized' ? 'unorganized' : (multiLinkState.folderId === null ? 'all' : String(multiLinkState.folderId));
@@ -6302,19 +6357,26 @@ function renderRelationFolders() {
     `<button class="${activeKey === 'all' ? 'active' : ''}" data-relation-folder="all"><span>전체 연결</span><b>${formatNumber(graphLoaded ? relationGraphState.nodes.length : multiLinkState.allTotal)}</b></button>`,
     `<button class="${activeKey === 'unorganized' ? 'active' : ''}" data-relation-folder="unorganized"><span>미분류</span><b>${formatNumber(unorganizedCount)}</b></button>`
   ];
-  const folders = multiLinkState.folders.map(folder => `<div class="relation-folder-item${activeKey === String(folder.folderId) ? ' active' : ''}" data-folder-id="${Number(folder.folderId)}">
-    <button type="button" data-relation-folder="${Number(folder.folderId)}"><span>${escapeHtml(folder.name)}</span><b>${formatNumber(graphLoaded ? relationGraphState.nodes.filter(node => String(node.folderId || '') === String(folder.folderId)).length : (folder.listingCount || 0))}</b></button>
-    <span class="relation-folder-actions"><button type="button" data-folder-edit title="폴더 수정">✎</button><button type="button" data-folder-archive title="폴더 보관">×</button></span>
-  </div>`);
+  const folderRows = relationFolderRows();
+  const folders = folderRows.map(folder => {
+    const descendantIds = relationFolderDescendantIds(folder.folderId);
+    const count = graphLoaded
+      ? relationGraphState.nodes.filter(node => descendantIds.has(String(node.folderId || ''))).length
+      : Number(folder.descendantNodeCount || folder.directNodeCount || 0);
+    return `<div class="relation-folder-item${activeKey === String(folder.folderId) ? ' active' : ''}" data-folder-id="${Number(folder.folderId)}" style="--folder-depth:${Number(folder.__depth || 0)}">
+      <button type="button" data-relation-folder="${Number(folder.folderId)}" title="${escapeHtml(relationFolderPath(folder.folderId))}"><span><i>▾</i>${escapeHtml(folder.name)}</span><b>${formatNumber(count)}</b></button>
+      <span class="relation-folder-actions"><button type="button" data-folder-child title="하위 폴더 추가">＋</button><button type="button" data-folder-edit title="폴더 수정·이동">✎</button><button type="button" data-folder-archive title="폴더 보관">×</button></span>
+    </div>`;
+  });
   list.innerHTML = [...fixed, ...folders].join('');
   const select = document.getElementById('multi-link-folder');
   const selected = select.value;
-  select.innerHTML = '<option value="">미분류</option>' + multiLinkState.folders.map(folder => `<option value="${Number(folder.folderId)}">${escapeHtml(folder.name)} · ${escapeHtml(RELATION_KIND_LABELS[folder.kind] || '직접 분류')}</option>`).join('');
+  select.innerHTML = '<option value="">미분류</option>' + folderRows.map(folder => `<option value="${Number(folder.folderId)}">${'— '.repeat(Number(folder.__depth || 0))}${escapeHtml(folder.name)} · ${escapeHtml(RELATION_KIND_LABELS[folder.kind] || '직접 분류')}</option>`).join('');
   select.value = multiLinkState.folders.some(folder => String(folder.folderId) === selected) ? selected : '';
   const scope = document.getElementById('relation-workspace-scope');
   if (scope) {
     const folder = multiLinkState.folders.find(item => String(item.folderId) === String(multiLinkState.folderId));
-    scope.textContent = multiLinkState.organizationScope === 'unorganized' ? '미분류' : (folder?.name || '전체 연결');
+    scope.textContent = multiLinkState.organizationScope === 'unorganized' ? '미분류' : (folder ? relationFolderPath(folder.folderId) : '전체 연결');
   }
 }
 
@@ -6340,7 +6402,10 @@ function relationNodeLabel(node) {
 
 function relationScopeNodes() {
   if (multiLinkState.organizationScope === 'unorganized') return relationGraphState.nodes.filter(node => !node.folderId);
-  if (multiLinkState.folderId !== null) return relationGraphState.nodes.filter(node => String(node.folderId || '') === String(multiLinkState.folderId));
+  if (multiLinkState.folderId !== null) {
+    const folderIds = relationFolderDescendantIds(multiLinkState.folderId);
+    return relationGraphState.nodes.filter(node => folderIds.has(String(node.folderId || '')));
+  }
   return relationGraphState.nodes;
 }
 
@@ -6363,6 +6428,7 @@ function relationNodeCard(node, currentEdgeId = null) {
     <div><span>${escapeHtml(identity)}</span><b title="${escapeHtml(node.displayName || '')}">${escapeHtml(node.displayName || '이름 없음')}</b></div>
     <em>${escapeHtml(RELATION_KIND_LABELS[node.relationKind] || '직접 분류')}</em>
     ${otherCount > 0 ? `<button type="button" data-explore-relation-node="${Number(node.nodeId)}">다른 관계 ${formatNumber(otherCount)}개</button>` : ''}
+    ${incidentCount === 0 ? `<button type="button" data-archive-relation-node="${Number(node.nodeId)}" class="relation-node-delete">삭제</button>` : ''}
   </article>`;
 }
 
@@ -7038,11 +7104,22 @@ async function saveRelationImport() {
   }
 }
 
-function openRelationFolderForm(folder = null) {
+function renderRelationFolderParentOptions(folder = null, preferredParentFolderId = null) {
+  const select = document.getElementById('relation-folder-parent');
+  const excluded = folder ? relationFolderDescendantIds(folder.folderId) : new Set();
+  const rows = relationFolderRows().filter(candidate => !excluded.has(String(candidate.folderId)));
+  select.innerHTML = '<option value="">최상위 폴더</option>' + rows.map(candidate => `<option value="${Number(candidate.folderId)}">${'— '.repeat(Number(candidate.__depth || 0))}${escapeHtml(candidate.name)}</option>`).join('');
+  const wanted = preferredParentFolderId === null || preferredParentFolderId === undefined ? '' : String(preferredParentFolderId);
+  select.value = rows.some(candidate => String(candidate.folderId) === wanted) ? wanted : '';
+}
+
+function openRelationFolderForm(folder = null, preferredParentFolderId = null) {
   const form = document.getElementById('relation-folder-form');
   document.getElementById('relation-folder-id').value = folder?.folderId || '';
   document.getElementById('relation-folder-name').value = folder?.name || '';
   document.getElementById('relation-folder-kind').value = folder?.kind || 'custom';
+  document.getElementById('relation-folder-form-title').textContent = folder ? '폴더 수정·이동' : (preferredParentFolderId ? '하위 폴더 추가' : '새 최상위 폴더');
+  renderRelationFolderParentOptions(folder, folder?.parentFolderId ?? preferredParentFolderId);
   form.hidden = false;
   document.getElementById('relation-folder-name').focus();
 }
@@ -7322,7 +7399,7 @@ document.getElementById('multi-link-components').addEventListener('click', async
   }
 });
 
-document.getElementById('relation-folder-new').addEventListener('click', () => openRelationFolderForm());
+document.getElementById('relation-folder-new').addEventListener('click', () => openRelationFolderForm(null, null));
 document.getElementById('relation-folder-cancel').addEventListener('click', closeRelationFolderForm);
 document.getElementById('relation-folder-form').addEventListener('submit', async event => {
   event.preventDefault();
@@ -7332,7 +7409,8 @@ document.getElementById('relation-folder-form').addEventListener('submit', async
     await liveData.saveRelationFolder({
       folderId:document.getElementById('relation-folder-id').value || null,
       name:document.getElementById('relation-folder-name').value,
-      kind:document.getElementById('relation-folder-kind').value
+      kind:document.getElementById('relation-folder-kind').value,
+      parentFolderId:document.getElementById('relation-folder-parent').value || null
     });
     closeRelationFolderForm();
     await loadRelationFolders({force:true});
@@ -7344,22 +7422,26 @@ document.getElementById('relation-folder-form').addEventListener('submit', async
 document.getElementById('relation-folder-list').addEventListener('click', async event => {
   const item = event.target.closest('.relation-folder-item');
   const folder = item ? multiLinkState.folders.find(candidate => String(candidate.folderId) === String(item.dataset.folderId)) : null;
+  if (event.target.closest('[data-folder-child]') && folder) {
+    openRelationFolderForm(null, folder.folderId);
+    return;
+  }
   if (event.target.closest('[data-folder-edit]') && folder) {
     openRelationFolderForm(folder);
     return;
   }
   if (event.target.closest('[data-folder-archive]') && folder) {
-    if (!window.confirm(`‘${folder.name}’ 폴더를 보관할까요?\n연결은 삭제되지 않고 미분류로 이동합니다.`)) return;
+    if (!window.confirm(`‘${relationFolderPath(folder.folderId)}’ 폴더를 보관할까요?\n폴더 안 상품 관계는 삭제되지 않고 미분류로 이동합니다.`)) return;
     event.target.disabled = true;
     try {
-      const unassigned = await liveData.archiveRelationFolder(folder.folderId);
+      const result = await liveData.archiveRelationFolder(folder.folderId);
       if (String(multiLinkState.folderId) === String(folder.folderId)) {
         multiLinkState.folderId = null;
         multiLinkState.organizationScope = 'unorganized';
       }
       await loadRelationFolders({force:true});
       await loadMultiLinks({resetPage:true});
-      showToast(`폴더를 보관하고 ${formatNumber(unassigned)}개 구성을 미분류로 옮겼습니다.`);
+      showToast(`폴더를 보관하고 상품 노드 ${formatNumber(result?.unassignedNodes || 0)}개를 미분류로 옮겼습니다.`);
     } catch (error) { showToast(`폴더 보관 실패: ${error?.message || error}`); }
     finally { event.target.disabled = false; }
     return;
@@ -7486,6 +7568,19 @@ async function handleRelationWorkspaceClick(event) {
     relationGraphState.search = '';
     document.getElementById('relation-workspace-search').value = '';
     setRelationViewMode('graph');
+    return;
+  }
+  const archiveNodeButton = event.target.closest('[data-archive-relation-node]');
+  if (archiveNodeButton) {
+    const node = relationGraphState.nodes.find(candidate => String(candidate.nodeId) === String(archiveNodeButton.dataset.archiveRelationNode));
+    if (!node || !window.confirm(`‘${relationNodeLabel(node)}’ 노드를 삭제할까요?\n화면의 관계 노드만 보관 처리되며 셀피아·판매처 원본은 바뀌지 않습니다.`)) return;
+    archiveNodeButton.disabled = true;
+    try {
+      await liveData.archiveRelationNode(node.nodeId);
+      await Promise.all([loadRelationFolders({force:true}), loadRelationGraph()]);
+      showToast('잘못 만든 관계 노드를 삭제했습니다. 원본 상품 데이터는 유지됩니다.');
+    } catch (error) { showToast(`노드 삭제 실패: ${error?.message || error}`); }
+    finally { archiveNodeButton.disabled = false; }
     return;
   }
   const button = event.target.closest('[data-remove-relation-edge]');
