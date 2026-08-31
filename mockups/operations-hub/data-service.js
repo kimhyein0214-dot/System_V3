@@ -511,7 +511,34 @@
     return Array.isArray(data) ? data[0] : data;
   }
 
-  async function loadProducts({ page = 1, pageSize = PAGE_SIZE, search = '', searchSources = ['sellpia','smartstore','makeshop','ably'], status = 'all', sort = 'sku_asc', skus = [], codeListRows = [], advancedFilter = null, excludeCombinationSkus = false, signal = null } = {}) {
+  function isMissingMatrixRpc(error, rpcName) {
+    const message = `${error?.code || ''} ${error?.message || ''} ${error?.details || ''}`.toLowerCase();
+    const requestedName = String(rpcName || '').toLowerCase();
+    const mentionsRequestedRpc = requestedName && message.includes(requestedName);
+    return (error?.code === 'PGRST202' || error?.code === '42883') && mentionsRequestedRpc
+      || ((message.includes('could not find the function') || message.includes('does not exist')) && mentionsRequestedRpc);
+  }
+
+  function normalizeMatrixContext(row) {
+    const context = row?.matrix_context && typeof row.matrix_context === 'object' ? row.matrix_context : {};
+    const kind = cleanText(context.kind || context.matchKind || context.match_kind).toLowerCase() === 'related' ? 'related' : 'direct';
+    const rootSku = cleanText(context.rootSku || context.rootSkuCode || context.root_sku_code) || cleanText(row?.sellpia_sku_code);
+    const direction = cleanText(context.direction || context.relationDirection || context.relation_direction) || (kind === 'related' ? 'related' : 'self');
+    const depth = Math.max(0, Number(context.depth ?? context.hopCount ?? context.hop_count) || 0);
+    const rawPath = Array.isArray(context.pathSkus) ? context.pathSkus : (Array.isArray(context.pathSkuCodes) ? context.pathSkuCodes : context.path_sku_codes);
+    const pathSkuCodes = (Array.isArray(rawPath) ? rawPath : []).map(cleanText).filter(Boolean);
+    return {kind, rootSku, direction, depth, pathSkus:pathSkuCodes};
+  }
+
+  async function attachMatrixResultMetadata(rows, signal) {
+    const products = await attachProductMetadata(rows, signal);
+    return products.map(product => ({
+      ...product,
+      matrix_context:normalizeMatrixContext(product)
+    }));
+  }
+
+  async function loadProducts({ page = 1, pageSize = PAGE_SIZE, search = '', searchSources = ['sellpia','smartstore','makeshop','ably'], status = 'all', sort = 'sku_asc', skus = [], codeListRows = [], advancedFilter = null, excludeCombinationSkus = false, includeRelatedSkuContext = false, signal = null } = {}) {
     status = normalizeConnectionStatus(status);
     const safePage = Math.max(1, Number(page) || 1);
     const safePageSize = MATRIX_PAGE_SIZES.has(Number(pageSize)) ? Number(pageSize) : PAGE_SIZE;
@@ -569,6 +596,43 @@
       };
     }
     const filterPayload = normalizeConnectionConditions(advancedFilter);
+    const normalizedMatrixSearch = normalizedSearch(search);
+    const includeRelatedContext = Boolean(includeRelatedSkuContext) && Boolean(normalizedMatrixSearch);
+    if (includeRelatedContext) {
+      throwIfAborted(signal);
+      const v5Args = {
+        p_page:safePage,
+        p_page_size:safePageSize,
+        p_search:normalizedMatrixSearch,
+        p_search_sources:searchSources,
+        p_status:status,
+        p_sort:sort,
+        p_filter:filterPayload,
+        p_skus:[],
+        p_exclude_dependent:Boolean(excludeCombinationSkus),
+        p_include_related_sku_context:true
+      };
+      const {data, error} = await withAbortSignal(db.rpc('load_operations_hub_matrix_filtered_v5', v5Args), signal);
+      if (!error) {
+        const rows = Array.isArray(data?.rows) ? data.rows : [];
+        const directCount = Number(data?.directCount ?? data?.direct_count ?? data?.count ?? 0);
+        const relatedCount = Number(data?.relatedCount ?? data?.related_count ?? rows.filter(row => normalizeMatrixContext(row).kind === 'related').length);
+        return {
+          rows:await attachMatrixResultMetadata(rows, signal),
+          count:directCount,
+          directCount,
+          relatedCount,
+          directPageSkuCodes:Array.isArray(data?.directPageSkuCodes) ? data.directPageSkuCodes : (Array.isArray(data?.direct_page_sku_codes) ? data.direct_page_sku_codes : []),
+          page:Number(data?.page || safePage),
+          pageSize:Number(data?.pageSize || data?.page_size || safePageSize),
+          relationContextEnabled:true
+        };
+      }
+      // The UI can ship before the database migration. Keep ordinary search usable
+      // until v5 is present, but never hide a real v5 query failure behind fallback.
+      if (!isMissingMatrixRpc(error, 'load_operations_hub_matrix_filtered_v5')) throw error;
+      console.info('matrix related context RPC unavailable; using existing matrix query until v5 is deployed');
+    }
     if (filterPayload.conditions.length) {
       throwIfAborted(signal);
       const {data, error} = await withAbortSignal(db.rpc('load_operations_hub_matrix_filtered_v4', {
@@ -587,6 +651,9 @@
       return {
         rows:await attachProductMetadata(rows, signal),
         count:Number(data?.count || 0),
+        directCount:Number(data?.count || 0),
+        relatedCount:0,
+        relationContextEnabled:false,
         page:Number(data?.page || safePage),
         pageSize:Number(data?.pageSize || safePageSize)
       };
@@ -606,6 +673,9 @@
     return {
       rows:await attachProductMetadata(rows, signal),
       count:Number(data?.count || 0),
+      directCount:Number(data?.count || 0),
+      relatedCount:0,
+      relationContextEnabled:false,
       page:Number(data?.page || safePage),
       pageSize:Number(data?.pageSize || safePageSize)
     };
