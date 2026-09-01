@@ -892,6 +892,165 @@
     return Array.isArray(data?.items) ? data.items : [];
   }
 
+  async function listBundleGraph(query = '') {
+    const {data, error} = await db.rpc('list_operations_hub_bundle_graph_v1', {
+      p_query:cleanText(query)
+    });
+    if (error) throw error;
+    return data || {bundles:[]};
+  }
+
+  async function resolveBundleImportCodes(codes) {
+    const normalized = [...new Set((codes || []).map(cleanText).filter(Boolean))];
+    if (!normalized.length) return [];
+    if (normalized.length > 500) throw new Error('세트 구성 일괄 등록 코드는 한 번에 최대 500개입니다.');
+    const {data, error} = await db.rpc('resolve_operations_hub_bundle_import_codes_v1', {
+      p_codes:normalized
+    });
+    if (error) throw error;
+    return Array.isArray(data?.items) ? data.items : (Array.isArray(data) ? data : []);
+  }
+
+  async function applyBundleImport(rows) {
+    const inputRows = Array.isArray(rows) ? rows : [];
+    if (!inputRows.length) throw new Error('저장할 세트 구성 행이 없습니다.');
+    if (inputRows.length > 1000) throw new Error('세트 구성은 한 번에 최대 1,000행까지 저장할 수 있습니다.');
+    const normalized = inputRows.map((row, index) => ({
+      bundle_sku_code:cleanText(row?.bundle_sku_code || row?.bundleSkuCode || row?.bundleCode),
+      component_sku_code:cleanText(row?.component_sku_code || row?.componentSkuCode || row?.componentCode),
+      component_qty:Number(row?.component_qty ?? row?.componentQty ?? row?.quantity),
+      component_role:cleanText(row?.component_role || row?.componentRole || row?.role) || 'component',
+      sort_order:Math.max(0, Math.trunc(Number(row?.sort_order ?? row?.sortOrder ?? ((index + 1) * 100)) || 0))
+    }));
+    normalized.forEach((row, index) => {
+      if (!row.bundle_sku_code || !row.component_sku_code) throw new Error(`${index + 1}번째 세트 구성의 SKU를 확인해주세요.`);
+      if (row.bundle_sku_code === row.component_sku_code) throw new Error(`${index + 1}번째 세트와 구성품 SKU가 같습니다.`);
+      if (!Number.isSafeInteger(row.component_qty) || row.component_qty <= 0 || row.component_qty > 2147483647) throw new Error(`${index + 1}번째 구성수량은 1 이상 2,147,483,647 이하의 정수여야 합니다.`);
+      if (!['component','packaging'].includes(row.component_role)) throw new Error(`${index + 1}번째 역할은 구성품 또는 포장재만 사용할 수 있습니다.`);
+    });
+    const {data, error} = await db.rpc('apply_operations_hub_bundle_import_v1', {
+      p_rows:normalized
+    });
+    if (error) throw error;
+    if (data?.applied === false) {
+      const details = (Array.isArray(data.errors) ? data.errors : [])
+        .map(item => cleanText(item?.message || item?.detail || item?.code || item))
+        .filter(Boolean);
+      throw new Error(details.join(' / ') || '세트 구성 검증에 실패해 저장하지 않았습니다.');
+    }
+    return data || null;
+  }
+
+  async function saveBundleComponent({bundleSkuCode, componentSkuCode, qty = 1, role = 'component', sortOrder = 100} = {}) {
+    const bundleSku = cleanText(bundleSkuCode);
+    const componentSku = cleanText(componentSkuCode);
+    const componentQty = Number(qty);
+    if (!bundleSku || !componentSku) throw new Error('세트 SKU와 구성품 SKU를 확인해주세요.');
+    if (bundleSku === componentSku) throw new Error('세트 SKU를 자기 자신의 구성품으로 저장할 수 없습니다.');
+    if (!Number.isSafeInteger(componentQty) || componentQty <= 0 || componentQty > 2147483647) throw new Error('구성수량은 1 이상 2,147,483,647 이하의 정수여야 합니다.');
+    const {data, error} = await db.rpc('save_operations_hub_bundle_component_v1', {
+      p_bundle_sku_code:bundleSku,
+      p_component_sku_code:componentSku,
+      p_component_qty:componentQty,
+      p_component_role:['component','packaging'].includes(cleanText(role)) ? cleanText(role) : 'component',
+      p_sort_order:Math.max(0, Math.trunc(Number(sortOrder) || 100))
+    });
+    if (error) throw error;
+    return Array.isArray(data) ? (data[0] || null) : data;
+  }
+
+  async function deactivateBundleComponent(componentId) {
+    const normalizedId = Number(componentId);
+    if (!Number.isFinite(normalizedId) || normalizedId <= 0) throw new Error('해제할 구성품 연결을 확인해주세요.');
+    const {data, error} = await db.rpc('deactivate_operations_hub_bundle_component_v1', {
+      p_component_id:normalizedId
+    });
+    if (error) throw error;
+    return data || null;
+  }
+
+  function normalizeSellerBundleRows(rows) {
+    const normalized = (Array.isArray(rows) ? rows : []).map((row, index) => ({
+      source_channel:cleanText(row?.source_channel || row?.source || row?.sellerSource).toLowerCase(),
+      product_code:cleanText(row?.product_code || row?.productCode),
+      option_code:cleanText(row?.option_code || row?.optionCode),
+      component_sku_code:cleanText(row?.component_sku_code || row?.componentSkuCode || row?.componentCode || row?.sku),
+      component_qty:Number(row?.component_qty ?? row?.componentQty ?? row?.quantity ?? row?.qty),
+      bundle_type:cleanText(row?.bundle_type || row?.bundleType || row?.type).toLowerCase()
+    }));
+    normalized.forEach((row, index) => {
+      if (!['smartstore','makeshop','ably'].includes(row.source_channel)) throw new Error(`${index + 1}번째 판매처를 확인해주세요.`);
+      if (!row.product_code) throw new Error(`${index + 1}번째 판매처 상품코드를 확인해주세요.`);
+      if (!row.option_code) throw new Error(`${index + 1}번째 판매처 옵션코드를 확인해주세요.`);
+      if (!row.component_sku_code) throw new Error(`${index + 1}번째 구성품 셀피아 SKU를 확인해주세요.`);
+      if (!Number.isSafeInteger(row.component_qty) || row.component_qty < 1 || row.component_qty > 2147483647) throw new Error(`${index + 1}번째 구성수량은 1 이상의 정수여야 합니다.`);
+      if (!['one_plus_one','set'].includes(row.bundle_type)) throw new Error(`${index + 1}번째 구성유형은 1+1 또는 세트여야 합니다.`);
+    });
+    return normalized;
+  }
+
+  async function listSellerBundleGraph({source = '', query = ''} = {}) {
+    const normalizedSource = cleanText(source);
+    if (normalizedSource && !['smartstore','makeshop','ably'].includes(normalizedSource)) throw new Error('판매처를 확인해주세요.');
+    const {data, error} = await db.rpc('list_operations_hub_seller_bundle_graph_v1', {
+      p_source:normalizedSource,
+      p_query:cleanText(query)
+    });
+    if (error) throw error;
+    return data || {listings:[], components:[], counts:{}};
+  }
+
+  async function resolveSellerBundleImportRows(rows) {
+    const normalized = normalizeSellerBundleRows(rows);
+    if (!normalized.length) return {rows:[], errors:[]};
+    if (normalized.length > 1000) throw new Error('판매처 전용 구성은 한 번에 최대 1,000행까지 확인할 수 있습니다.');
+    const {data, error} = await db.rpc('resolve_operations_hub_seller_bundle_import_rows_v1', {
+      p_rows:normalized
+    });
+    if (error) throw error;
+    return data || {rows:[], errors:[]};
+  }
+
+  async function applySellerBundleImport(rows) {
+    const normalized = normalizeSellerBundleRows(rows);
+    if (!normalized.length) throw new Error('저장할 판매처 전용 구성 행이 없습니다.');
+    if (normalized.length > 1000) throw new Error('판매처 전용 구성은 한 번에 최대 1,000행까지 저장할 수 있습니다.');
+    const {data, error} = await db.rpc('apply_operations_hub_seller_bundle_import_v1', {
+      p_rows:normalized
+    });
+    if (error) throw error;
+    return data || null;
+  }
+
+  async function saveSellerBundleComponent({source, productCode, optionCode = '', componentSkuCode, qty = 1, bundleType = 'set'} = {}) {
+    const graph = await listSellerBundleGraph({source, query:productCode});
+    const listing = (graph?.listings || []).find(row => cleanText(row?.sourceChannel || row?.source_channel) === cleanText(source)
+      && cleanText(row?.productCode || row?.product_code) === cleanText(productCode)
+      && cleanText(row?.optionCode || row?.option_code) === cleanText(optionCode));
+    const listingId = cleanText(listing?.listingId || listing?.listing_id);
+    const components = (graph?.components || []).filter(row => cleanText(row?.listingId || row?.listing_id) === listingId)
+      .sort((left, right) => (cleanText(left?.componentRole || left?.component_role) === 'primary' ? -1 : 0) - (cleanText(right?.componentRole || right?.component_role) === 'primary' ? -1 : 0))
+      .map(row => ({
+        source_channel:source,
+        product_code:productCode,
+        option_code:optionCode,
+        component_sku_code:cleanText(row?.componentSkuCode || row?.component_sku_code),
+        component_qty:cleanNumber(row?.componentQty ?? row?.component_qty, 1),
+        bundle_type:bundleType
+      }));
+    const normalizedSku = cleanText(componentSkuCode);
+    const existing = components.find(row => row.component_sku_code === normalizedSku);
+    if (existing) existing.component_qty = Number(qty);
+    else components.push({source_channel:source, product_code:productCode, option_code:optionCode, component_sku_code:normalizedSku, component_qty:qty, bundle_type:bundleType});
+    const result = await applySellerBundleImport(components);
+    if (result?.applied === false) throw new Error((result.errors || []).join('\n') || '판매처 전용 구성을 저장하지 못했습니다.');
+    return result;
+  }
+
+  async function deactivateSellerBundleComponent(componentId) {
+    return deactivateListingComponent(componentId);
+  }
+
   async function resolveCodeEntries(entries) {
     const normalized = (entries || []).map(entry => ({
       row_no:Math.max(1, Number(entry.row_no) || 1),
@@ -2709,6 +2868,16 @@
     searchSellerItems,
     loadSellerProductOptions,
     resolveRelationImportCodes,
+    listBundleGraph,
+    resolveBundleImportCodes,
+    applyBundleImport,
+    saveBundleComponent,
+    deactivateBundleComponent,
+    listSellerBundleGraph,
+    resolveSellerBundleImportRows,
+    applySellerBundleImport,
+    saveSellerBundleComponent,
+    deactivateSellerBundleComponent,
     resolveCodeEntries,
     refreshListingGraphCache,
     linkSellerItem,

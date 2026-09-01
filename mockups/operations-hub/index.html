@@ -7,9 +7,9 @@
     <title>System V3 · 상품 운영 허브</title>
     <link rel="preconnect" href="https://cdnjs.cloudflare.com" crossorigin>
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/pretendard/1.3.9/static/pretendard.css">
-    <link rel="stylesheet" href="./style.css?v=20260901-sellpia-preflight-r64">
-    <link rel="stylesheet" href="./inventory.css?v=20260901-sellpia-preflight-r64">
-    <link rel="stylesheet" href="./price-rule-lab.css?v=20260901-sellpia-preflight-r64">
+    <link rel="stylesheet" href="./style.css?v=20260901-seller-bundle-v66">
+    <link rel="stylesheet" href="./inventory.css?v=20260901-seller-bundle-v66">
+    <link rel="stylesheet" href="./price-rule-lab.css?v=20260901-seller-bundle-v66">
   </head>
   <body>
     <div class="app-shell">
@@ -291,6 +291,72 @@
                   <div class="relation-tree-head"><div><b>전체 관계 보기</b><span id="relation-graph-copy">검색하거나 ‘다른 관계’ 배지를 누르면 연결된 모든 위치를 표시합니다.</span></div><button id="relation-tree-refresh" type="button">새로고침</button></div>
                   <div id="relation-tree" class="relation-tree"><span>등록된 관계 노드가 없습니다.</span></div>
                 </section>
+                <details id="bundle-management-panel" class="bundle-management-panel">
+                  <summary><span>SET</span><b>세트 구성 관리</b><em>셀피아 세트 SKU와 실제 구성수량을 관계 관리와 별도로 저장합니다.</em></summary>
+                  <div class="bundle-management-body">
+                    <div class="bundle-target-switch" role="tablist" aria-label="세트 구성 대상 유형">
+                      <button id="bundle-target-canonical" class="active" type="button" role="tab" aria-selected="true">셀피아 공통 세트</button>
+                      <button id="bundle-target-seller" type="button" role="tab" aria-selected="false">판매처 전용 구성</button>
+                    </div>
+                    <section id="bundle-canonical-workspace" class="bundle-target-workspace">
+                    <div class="bundle-management-head">
+                      <div><b>세트 SKU 검색</b><span>세트나 구성품 SKU·상품명으로 찾아 현재 구성을 확인하고 수량을 수정할 수 있습니다.</span></div>
+                      <form id="bundle-search-form" class="bundle-search-form"><input id="bundle-search" autocomplete="off" placeholder="세트 SKU / 구성품 SKU / 상품명"><button class="btn" type="submit">조회</button><button id="bundle-refresh" class="btn" type="button">새로고침</button></form>
+                    </div>
+                    <div id="bundle-graph-list" class="bundle-graph-list"><div class="bundle-empty">세트 구성 관리 패널을 펼치면 DB에서 구성을 조회합니다.</div></div>
+                    <details id="bundle-import-panel" class="relation-import-panel bundle-import-panel">
+                      <summary><span>▦</span><b>엑셀로 세트 구성 일괄 등록</b><em>관계 업로드와 달리 세트 → 구성품 및 구성수량을 저장합니다.</em></summary>
+                      <div class="relation-import-body">
+                        <div class="relation-import-guide">
+                          <div><b>필수 열</b><code>세트 · 구성품 · 구성수량</code><span>상품코드-옵션코드를 정확히 입력하고, 같은 세트 코드를 여러 행에 반복하면 됩니다.</span></div>
+                          <div><b>역할</b><code>구성품 / 포장재</code><span>역할을 비우면 구성품으로 저장합니다. 가격·재고 계산은 이 등록 단계에서 실행하지 않습니다.</span></div>
+                        </div>
+                        <div class="bundle-template-actions"><button id="bundle-import-template" class="btn" type="button">템플릿 다운로드</button><span>첫 시트 ‘세트구성’ · XLSX</span></div>
+                        <input id="bundle-import-file" type="file" accept=".xlsx,.xls,.csv" hidden>
+                        <button id="bundle-import-dropzone" class="relation-import-dropzone" type="button"><strong>세트 구성 엑셀 파일을 놓거나 선택하세요</strong><span>세트 상품코드-옵션코드 · 구성품 상품코드-옵션코드 · 구성수량 · 역할</span></button>
+                        <div id="bundle-import-result" class="relation-import-result"><span>파일을 선택하면 코드·수량·중복·오류를 먼저 검토합니다.</span></div>
+                        <div class="relation-import-actions"><button id="bundle-import-reset" class="btn" type="button" disabled>파일 비우기</button><button id="bundle-import-save" class="btn primary" type="button" disabled>검토한 세트 구성 저장</button></div>
+                      </div>
+                    </details>
+                    <details class="bundle-manual-panel">
+                      <summary>세트 구성 한 건 직접 추가</summary>
+                      <form id="bundle-component-form" class="bundle-component-form">
+                        <label>세트 SKU<input id="bundle-form-bundle-sku" required autocomplete="off" placeholder="예: 1000-1"></label>
+                        <span>→</span>
+                        <label>구성품 SKU<input id="bundle-form-component-sku" required autocomplete="off" placeholder="예: 2000-1"></label>
+                        <label>구성수량<input id="bundle-form-qty" type="number" min="1" max="2147483647" step="1" value="1" required></label>
+                        <label>역할<select id="bundle-form-role"><option value="component">구성품</option><option value="packaging">포장재</option></select></label>
+                        <button id="bundle-form-save" class="btn primary" type="submit">구성 저장</button>
+                      </form>
+                    </details>
+                    </section>
+                    <section id="seller-bundle-workspace" class="bundle-target-workspace" hidden>
+                      <div class="seller-bundle-notice"><span>판매처 전용</span><div><b>판매처 상품·옵션에만 적용되는 1+1/세트 구성입니다.</b><em>셀피아 SKU를 새로 만들지 않으며 실제 판매처·가격·재고·주문에는 자동 반영하지 않습니다.</em></div></div>
+                      <form id="seller-bundle-target-form" class="seller-bundle-target-form">
+                        <label>판매처<select id="seller-bundle-source"><option value="smartstore">스마트스토어</option><option value="makeshop">메이크샵</option><option value="ably">에이블리</option></select></label>
+                        <label>상품코드<input id="seller-bundle-product-code" required autocomplete="off"></label>
+                        <label>옵션코드<input id="seller-bundle-option-code" required autocomplete="off" placeholder="원본의 정확한 옵션코드"></label>
+                        <label>구성유형<select id="seller-bundle-type"><option value="one_plus_one">1+1</option><option value="set">세트</option></select></label>
+                        <button id="seller-bundle-load" class="btn" type="submit">대상 조회</button>
+                      </form>
+                      <div id="seller-bundle-target-result" class="seller-bundle-target-result"><div class="bundle-empty">판매처·상품코드·옵션코드를 입력해 대상을 조회해주세요.</div></div>
+                      <details id="seller-bundle-import-panel" class="relation-import-panel bundle-import-panel">
+                        <summary><span>▦</span><b>엑셀로 판매처 전용 구성 일괄 등록</b><em>판매처 상품·옵션별 1+1/세트 구성과 수량을 검토 후 저장합니다.</em></summary>
+                        <div class="relation-import-body">
+                          <div class="relation-import-guide">
+                            <div><b>대상 열</b><code>판매처 · 상품코드 · 옵션코드</code><span>세 열 모두 필수이며 판매처 원본의 정확한 상품·옵션코드를 입력합니다.</span></div>
+                            <div><b>구성 열</b><code>구성품 SKU · 수량 · 유형</code><span>구성품은 셀피아 SKU이며 수량은 1 이상의 정수, 유형은 1+1 또는 세트입니다.</span></div>
+                          </div>
+                          <div class="bundle-template-actions"><button id="seller-bundle-import-template" class="btn" type="button">판매처 전용 템플릿 다운로드</button><span>첫 시트 ‘판매처전용구성’ · XLSX</span></div>
+                          <input id="seller-bundle-import-file" type="file" accept=".xlsx,.xls,.csv" hidden>
+                          <button id="seller-bundle-import-dropzone" class="relation-import-dropzone" type="button"><strong>판매처 전용 구성 엑셀 파일을 놓거나 선택하세요</strong><span>판매처 · 상품코드 · 옵션코드 · 구성품 상품코드-옵션코드 · 구성수량 · 구성유형</span></button>
+                          <div id="seller-bundle-import-result" class="relation-import-result"><span>파일을 선택하면 판매처 대상·구성품·수량·중복·오류를 먼저 검토합니다.</span></div>
+                          <div class="relation-import-actions"><button id="seller-bundle-import-reset" class="btn" type="button" disabled>파일 비우기</button><button id="seller-bundle-import-save" class="btn primary" type="button" disabled>검토한 판매처 구성 저장</button></div>
+                        </div>
+                      </details>
+                    </section>
+                  </div>
+                </details>
                 <section id="multi-link-organization-form" class="multi-link-organization-form relation-compose-panel" hidden>
                    <div class="multi-link-form-guide"><b>상품 옵션 관계 작업판</b><span>카드를 원하는 단계로 옮긴 뒤, 부모 카드 오른쪽 점에서 자식 카드 왼쪽 점까지 선을 연결하세요. 드래그 중에는 카드가 커서를 따라갑니다.</span></div>
                    <form id="relation-product-loader" class="relation-product-loader">
@@ -759,15 +825,17 @@
     <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.112.3/dist/umd/supabase.js"></script>
-    <script src="./seller-source-parsers.js?v=20260901-sellpia-preflight-r64"></script>
-    <script src="./seller-export-adapter.js?v=20260901-sellpia-preflight-r64"></script>
-    <script src="./matrix-csv-export.js?v=20260901-sellpia-preflight-r64"></script>
-    <script src="./discount-price-math.js?v=20260901-sellpia-preflight-r64"></script>
-    <script src="./source-refresh-verifier.js?v=20260901-sellpia-preflight-r64"></script>
-    <script src="./relation-import-parser.js?v=20260901-sellpia-preflight-r64"></script>
-    <script src="./sellpia-source-parser.js?v=20260901-sellpia-preflight-r64"></script>
-    <script src="./data-service.js?v=20260901-sellpia-preflight-r64"></script>
-    <script src="./app.js?v=20260901-sellpia-preflight-r64"></script>
-    <script src="./price-rule-lab.js?v=20260901-sellpia-preflight-r64"></script>
+    <script src="./seller-source-parsers.js?v=20260901-seller-bundle-v66"></script>
+    <script src="./seller-export-adapter.js?v=20260901-seller-bundle-v66"></script>
+    <script src="./matrix-csv-export.js?v=20260901-seller-bundle-v66"></script>
+    <script src="./discount-price-math.js?v=20260901-seller-bundle-v66"></script>
+    <script src="./source-refresh-verifier.js?v=20260901-seller-bundle-v66"></script>
+    <script src="./relation-import-parser.js?v=20260901-seller-bundle-v66"></script>
+    <script src="./bundle-import-parser.js?v=20260901-seller-bundle-v66"></script>
+    <script src="./seller-bundle-import-parser.js?v=20260901-seller-bundle-v66"></script>
+    <script src="./sellpia-source-parser.js?v=20260901-seller-bundle-v66"></script>
+    <script src="./data-service.js?v=20260901-seller-bundle-v66"></script>
+    <script src="./app.js?v=20260901-seller-bundle-v66"></script>
+    <script src="./price-rule-lab.js?v=20260901-seller-bundle-v66"></script>
   </body>
 </html>

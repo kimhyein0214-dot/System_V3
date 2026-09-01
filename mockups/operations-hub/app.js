@@ -85,6 +85,8 @@ const matrixCsv = window.SystemV3MatrixCsv;
 const discountPriceMath = window.SystemV3DiscountPriceMath;
 const sourceRefreshVerifier = window.SystemV3SourceRefreshVerifier;
 const relationImportParser = window.RelationImportParser;
+const bundleImportParser = window.BundleImportParser;
+const sellerBundleImportParser = window.SellerBundleImportParser;
 const MATRIX_PAGE_SIZE_KEY = 'system-v3-matrix-page-size';
 const storedMatrixPageSize = Number(localStorage.getItem(MATRIX_PAGE_SIZE_KEY));
 const initialMatrixPageSize = [50, 100, 200].includes(storedMatrixPageSize) ? storedMatrixPageSize : 50;
@@ -96,6 +98,10 @@ const multiLinkState = {page:1, pageSize:50, search:'', source:'all', relationTy
 const relationGraphState = {nodes:[], edges:[], selectedProduct:null, loading:false, requestId:0, searchTimer:null, viewMode:'list', search:'', focusNodeId:null};
 const relationBoardState = {nodes:new Map(), loadedProducts:new Map(), initialEdges:new Map(), levelCount:3, draggingKey:null, pointerDrag:null, connectorDrag:null, dragGhost:null, saving:false};
 const relationImportState = {fileName:'', parsed:null, items:new Map(), choices:new Map(), resolving:false, saving:false};
+const bundleGraphState = {query:'', bundles:[], loading:false, loaded:false, requestId:0};
+const bundleImportState = {fileName:'', parsed:null, items:new Map(), choices:new Map(), resolving:false, saving:false};
+const sellerBundleState = {source:'smartstore', productCode:'', optionCode:'', bundleType:'one_plus_one', target:null, loading:false, requestId:0};
+const sellerBundleImportState = {fileName:'', parsed:null, resolved:null, resolving:false, saving:false};
 const mappingSyncState = {displayedVersion:'', checking:false, autoRefreshing:false, latest:null};
 const matrixRowsBySku = new Map();
 const drawerState = {
@@ -7324,6 +7330,655 @@ async function saveRelationImport() {
   }
 }
 
+function bundleValue(row, ...keys) {
+  for (const key of keys) {
+    const value = row?.[key];
+    if (value !== undefined && value !== null && value !== '') return value;
+  }
+  return '';
+}
+
+function normalizeBundleRole(role) {
+  const value = String(role || '').trim().toLowerCase();
+  return ['packaging', '포장재'].includes(value) ? 'packaging' : 'component';
+}
+
+function normalizeBundleCandidate(raw = {}, fallbackCode = '') {
+  return {
+    skuCode:String(bundleValue(raw, 'sellpiaSkuCode', 'sellpia_sku_code', 'skuCode', 'sku', 'code') || fallbackCode).trim(),
+    productName:String(bundleValue(raw, 'productName', 'product_name', 'sellpiaProductName', 'sellpia_product_name')).trim(),
+    optionName:String(bundleValue(raw, 'optionName', 'option_name', 'sellpiaOptionName', 'sellpia_option_name')).trim(),
+    imageUrl:String(bundleValue(raw, 'imageUrl', 'image_url', 'sellpiaOverrideImageUrl', 'sellpia_override_image_url')).trim()
+  };
+}
+
+function normalizeBundleResolveItem(raw = {}, fallbackCode = '') {
+  const inputCode = String(bundleValue(raw, 'inputCode', 'input_code', 'code') || fallbackCode).trim();
+  let candidates = Array.isArray(raw.candidates) ? raw.candidates.map(candidate => normalizeBundleCandidate(candidate, inputCode)) : [];
+  const direct = normalizeBundleCandidate(raw, inputCode);
+  if (!candidates.length && direct.skuCode && bundleValue(raw, 'sellpiaSkuCode', 'sellpia_sku_code', 'skuCode', 'sku')) candidates = [direct];
+  let status = String(raw.status || '').trim().toLowerCase();
+  if (['ok', 'exact', 'resolved', 'success'].includes(status)) status = 'matched';
+  if (['missing', 'notfound'].includes(status)) status = 'not_found';
+  if (!status) status = candidates.length === 1 ? 'matched' : (candidates.length > 1 ? 'ambiguous' : 'not_found');
+  return {inputCode, status, candidates};
+}
+
+function bundleCandidateLabel(candidate) {
+  return `${candidate?.skuCode || '-'} · ${candidate?.productName || '상품명 없음'}${candidate?.optionName ? ` / ${candidate.optionName}` : ''}`;
+}
+
+function selectedBundleCandidate(item) {
+  const candidates = Array.isArray(item?.candidates) ? item.candidates : [];
+  if (item?.status === 'matched' && candidates.length === 1) return candidates[0];
+  const choice = bundleImportState.choices.get(item?.inputCode);
+  return candidates.find(candidate => candidate.skuCode === choice) || null;
+}
+
+function buildBundleImportPlan() {
+  const parsed = bundleImportState.parsed;
+  const errors = [];
+  if (!parsed?.valid) return {valid:false, rows:[], errors:parsed?.errors || ['엑셀 검토가 끝나지 않았습니다.']};
+  const resolved = new Map();
+  parsed.codes.forEach(code => {
+    const candidate = selectedBundleCandidate(bundleImportState.items.get(code));
+    if (!candidate?.skuCode) errors.push(`${code}: 최신 셀피아 원본에서 정확한 SKU를 확인할 수 없습니다.`);
+    else resolved.set(code, candidate);
+  });
+  if (errors.length) return {valid:false, rows:[], errors};
+  const seen = new Set();
+  const rows = [];
+  parsed.rows.forEach((row, index) => {
+    const bundleSkuCode = resolved.get(row.bundleCode)?.skuCode || '';
+    const componentSkuCode = resolved.get(row.componentCode)?.skuCode || '';
+    const qty = Number(row.quantity);
+    if (bundleSkuCode === componentSkuCode) {
+      errors.push(`${row.rowNo || index + 2}행: 세트 SKU와 구성품 SKU가 같습니다.`);
+      return;
+    }
+    if (!Number.isSafeInteger(qty) || qty <= 0 || qty > 2147483647) {
+      errors.push(`${row.rowNo || index + 2}행: 구성수량은 1 이상 2,147,483,647 이하의 정수여야 합니다.`);
+      return;
+    }
+    const key = `${bundleSkuCode}\u0000${componentSkuCode}`;
+    if (seen.has(key)) return;
+    seen.add(key);
+    rows.push({
+      bundle_sku_code:bundleSkuCode,
+      component_sku_code:componentSkuCode,
+      component_qty:qty,
+      component_role:normalizeBundleRole(row.role),
+      sort_order:(rows.length + 1) * 100
+    });
+  });
+  return {valid:errors.length === 0, rows, errors};
+}
+
+function renderBundleImport() {
+  const result = document.getElementById('bundle-import-result');
+  const reset = document.getElementById('bundle-import-reset');
+  const save = document.getElementById('bundle-import-save');
+  reset.disabled = !bundleImportState.parsed && !bundleImportState.fileName;
+  if (bundleImportState.resolving) {
+    result.innerHTML = '<span>세트와 구성품 코드를 최신 셀피아 원본에서 확인하는 중입니다…</span>';
+    save.disabled = true;
+    return;
+  }
+  const parsed = bundleImportState.parsed;
+  if (!parsed) {
+    result.innerHTML = '<span>파일을 선택하면 코드·수량·중복·오류를 먼저 검토합니다.</span>';
+    save.disabled = true;
+    return;
+  }
+  const plan = buildBundleImportPlan();
+  const errors = [...(parsed.errors || []), ...plan.errors.filter(error => !(parsed.errors || []).includes(error))];
+  const items = (parsed.codes || []).map(code => bundleImportState.items.get(code) || {inputCode:code, status:'not_found', candidates:[]});
+  const unresolvedCount = items.filter(item => !selectedBundleCandidate(item)).length;
+  const resolutionRows = items.map(item => {
+    const selected = selectedBundleCandidate(item);
+    let control;
+    let status;
+    if (item.status === 'ambiguous') {
+      control = `<select data-bundle-import-choice="${escapeHtml(item.inputCode)}"><option value="">셀피아 SKU 선택…</option>${item.candidates.map(candidate => `<option value="${escapeHtml(candidate.skuCode)}"${selected?.skuCode === candidate.skuCode ? ' selected' : ''}>${escapeHtml(bundleCandidateLabel(candidate))}</option>`).join('')}</select>`;
+      status = selected ? '<span class="relation-import-status ok">선택 완료</span>' : '<span class="relation-import-status warn">선택 필요</span>';
+    } else if (selected) {
+      control = escapeHtml(bundleCandidateLabel(selected));
+      status = '<span class="relation-import-status ok">확인 완료</span>';
+    } else {
+      control = '최신 셀피아 원본에서 찾지 못함';
+      status = '<span class="relation-import-status error">코드 없음</span>';
+    }
+    return `<tr><td>${escapeHtml(item.inputCode)}</td><td>${control}</td><td>${status}</td></tr>`;
+  }).join('');
+  const compositionRows = (parsed.rows || []).map(row => {
+    const bundle = selectedBundleCandidate(bundleImportState.items.get(row.bundleCode));
+    const component = selectedBundleCandidate(bundleImportState.items.get(row.componentCode));
+    const ready = Boolean(bundle && component);
+    return `<tr><td>${escapeHtml(row.rowNo || '-')}</td><td>${escapeHtml(row.bundleCode)}</td><td>→ ${escapeHtml(row.componentCode)}</td><td>${formatNumber(row.quantity)}</td><td>${normalizeBundleRole(row.role) === 'packaging' ? '포장재' : '구성품'}</td><td><span class="relation-import-status ${ready ? 'ok' : 'error'}">${ready ? '저장 준비' : '코드 확인 필요'}</span></td></tr>`;
+  }).join('');
+  result.innerHTML = `<div class="relation-import-stats"><span>파일<b>${escapeHtml(bundleImportState.fileName || '-')}</b></span><span>유효 행<b>${formatNumber(parsed.rows?.length || 0)}</b></span><span>고유 코드<b>${formatNumber(parsed.codes?.length || 0)}</b></span><span>저장 예정<b>${formatNumber(plan.rows.length)}</b></span><span>중복 합침<b>${formatNumber(parsed.duplicateCount || parsed.duplicateRowCount || 0)}</b></span><span>오류<b>${formatNumber(errors.length)}</b></span></div>
+    ${errors.length ? `<ul class="relation-import-errors">${errors.slice(0, 30).map(error => `<li>${escapeHtml(error)}</li>`).join('')}</ul>` : ''}
+    ${compositionRows ? `<table class="relation-import-table bundle-import-preview"><thead><tr><th>행</th><th>세트</th><th>구성품</th><th>수량</th><th>역할</th><th>상태</th></tr></thead><tbody>${compositionRows}</tbody></table>` : ''}
+    ${resolutionRows ? `<table class="relation-import-table"><thead><tr><th>입력 코드</th><th>확인된 셀피아 상품 / 옵션</th><th>상태</th></tr></thead><tbody>${resolutionRows}</tbody></table>` : ''}`;
+  save.textContent = bundleImportState.saving ? '세트 구성 저장 중…' : `검토한 세트 구성 ${formatNumber(plan.rows.length)}건 저장`;
+  save.disabled = bundleImportState.saving || !plan.valid || unresolvedCount > 0 || !plan.rows.length;
+}
+
+function resetBundleImport() {
+  bundleImportState.fileName = '';
+  bundleImportState.parsed = null;
+  bundleImportState.items.clear();
+  bundleImportState.choices.clear();
+  bundleImportState.resolving = false;
+  bundleImportState.saving = false;
+  document.getElementById('bundle-import-file').value = '';
+  renderBundleImport();
+}
+
+async function loadBundleImportFile(file) {
+  if (!file) return;
+  bundleImportState.fileName = file.name;
+  bundleImportState.items.clear();
+  bundleImportState.choices.clear();
+  if (!bundleImportParser?.parseBundleCompositionRows) {
+    bundleImportState.parsed = {valid:false, rows:[], codes:[], errors:['세트 구성 엑셀 검사 모듈을 불러오지 못했습니다. 페이지를 새로고침해주세요.']};
+    renderBundleImport();
+    return;
+  }
+  if (!window.XLSX) {
+    bundleImportState.parsed = {valid:false, rows:[], codes:[], errors:['엑셀 파일 모듈을 불러오지 못했습니다. 네트워크 상태를 확인해주세요.']};
+    renderBundleImport();
+    return;
+  }
+  try {
+    const isCsv = /\.csv$/i.test(file.name);
+    const workbook = XLSX.read(isCsv ? await file.text() : await file.arrayBuffer(), {type:isCsv ? 'string' : 'array', cellDates:false});
+    const preferredSheet = workbook.SheetNames.find(name => name.trim() === '세트구성') || workbook.SheetNames[0];
+    const worksheet = workbook.Sheets[preferredSheet];
+    const rows = XLSX.utils.sheet_to_json(worksheet, {header:1, raw:false, defval:'', blankrows:false});
+    bundleImportState.parsed = bundleImportParser.parseBundleCompositionRows(rows, {maxCodes:500, maxRows:1000});
+    renderBundleImport();
+    if (!bundleImportState.parsed.valid) return;
+    bundleImportState.resolving = true;
+    renderBundleImport();
+    if (!liveData?.resolveBundleImportCodes) throw new Error('현재 배포에는 세트 코드 확인 기능이 없습니다. DB 기능 배포 후 다시 시도해주세요.');
+    const resolved = await liveData.resolveBundleImportCodes(bundleImportState.parsed.codes);
+    bundleImportState.items = new Map(bundleImportState.parsed.codes.map(code => {
+      const raw = resolved.find(item => String(bundleValue(item, 'inputCode', 'input_code', 'code')).trim() === code) || {};
+      const item = normalizeBundleResolveItem(raw, code);
+      return [code, item];
+    }));
+  } catch (error) {
+    bundleImportState.parsed = {valid:false, rows:[], codes:[], duplicateCount:0, errors:[error?.message || String(error)]};
+  } finally {
+    bundleImportState.resolving = false;
+    renderBundleImport();
+  }
+}
+
+async function saveBundleImport() {
+  const plan = buildBundleImportPlan();
+  if (!plan.valid || !plan.rows.length) {
+    renderBundleImport();
+    showToast('세트 코드와 구성수량 오류를 먼저 해결해주세요.');
+    return;
+  }
+  if (!window.confirm(`검토한 세트 구성 ${plan.rows.length}건을 저장할까요?\n관계 그래프·판매처 연결·가격·재고는 변경하지 않습니다.`)) return;
+  bundleImportState.saving = true;
+  renderBundleImport();
+  try {
+    if (!liveData?.applyBundleImport) throw new Error('현재 배포에는 세트 구성 저장 기능이 없습니다. DB 기능 배포 후 다시 시도해주세요.');
+    const result = await liveData.applyBundleImport(plan.rows);
+    if (result?.applied === false || (Array.isArray(result?.errors) && result.errors.length)) {
+      throw new Error((result.errors || []).join('\n') || '세트 구성 검증에 실패해 저장하지 않았습니다.');
+    }
+    resetBundleImport();
+    await loadBundleGraph({query:bundleGraphState.query});
+    showToast(`세트 구성 ${formatNumber(plan.rows.length)}건을 저장했습니다.`);
+  } catch (error) {
+    showToast(`세트 구성 저장 실패: ${error?.message || error}`);
+  } finally {
+    bundleImportState.saving = false;
+    renderBundleImport();
+  }
+}
+
+function normalizeBundleComponent(raw = {}, fallbackBundleSku = '') {
+  return {
+    componentId:Number(bundleValue(raw, 'componentId', 'component_id', 'bundleComponentId', 'bundle_component_id')) || null,
+    bundleSkuCode:String(bundleValue(raw, 'bundleSkuCode', 'bundle_sku_code') || fallbackBundleSku).trim(),
+    componentSkuCode:String(bundleValue(raw, 'componentSkuCode', 'component_sku_code', 'sellpiaSkuCode', 'sellpia_sku_code')).trim(),
+    qty:Number(bundleValue(raw, 'componentQty', 'component_qty', 'quantity', 'qty')) || 1,
+    role:normalizeBundleRole(bundleValue(raw, 'componentRole', 'component_role', 'role')),
+    sortOrder:Number(bundleValue(raw, 'sortOrder', 'sort_order')) || 100,
+    nestedBundleId:Number(bundleValue(raw, 'nestedBundleId', 'nested_bundle_id')) || null,
+    productName:String(bundleValue(raw, 'componentProductName', 'component_product_name', 'productName', 'product_name', 'sellpiaProductName', 'sellpia_product_name')).trim(),
+    optionName:String(bundleValue(raw, 'componentOptionName', 'component_option_name', 'optionName', 'option_name', 'sellpiaOptionName', 'sellpia_option_name')).trim(),
+    imageUrl:String(bundleValue(raw, 'componentImageUrl', 'component_image_url', 'imageUrl', 'image_url')).trim()
+  };
+}
+
+function normalizeBundleGraph(payload) {
+  const definitions = Array.isArray(payload?.definitions) ? payload.definitions : [];
+  const detachedComponents = Array.isArray(payload?.components) ? payload.components : [];
+  const rawRows = definitions.length ? definitions.map(definition => {
+    const bundleId = String(bundleValue(definition, 'bundleId', 'bundle_id'));
+    const bundleSkuCode = String(bundleValue(definition, 'bundleSkuCode', 'bundle_sku_code'));
+    return {
+      ...definition,
+      components:detachedComponents.filter(component => {
+        const componentBundleId = String(bundleValue(component, 'bundleId', 'bundle_id'));
+        const componentBundleSku = String(bundleValue(component, 'bundleSkuCode', 'bundle_sku_code'));
+        return (bundleId && componentBundleId === bundleId) || (bundleSkuCode && componentBundleSku === bundleSkuCode);
+      })
+    };
+  }) : (Array.isArray(payload) ? payload : (payload?.bundles || payload?.items || payload?.rows || payload?.graph || []));
+  const bySku = new Map();
+  rawRows.forEach(raw => {
+    const bundleSkuCode = String(bundleValue(raw, 'bundleSkuCode', 'bundle_sku_code', 'sellpiaSkuCode', 'sellpia_sku_code')).trim();
+    if (!bundleSkuCode) return;
+    let bundle = bySku.get(bundleSkuCode);
+    if (!bundle) {
+      bundle = {
+        bundleSkuCode,
+        productName:String(bundleValue(raw, 'bundleProductName', 'bundle_product_name', 'productName', 'product_name')).trim(),
+        optionName:String(bundleValue(raw, 'bundleOptionName', 'bundle_option_name', 'optionName', 'option_name')).trim(),
+        imageUrl:String(bundleValue(raw, 'bundleImageUrl', 'bundle_image_url', 'imageUrl', 'image_url')).trim(),
+        components:[]
+      };
+      bySku.set(bundleSkuCode, bundle);
+    }
+    const nested = Array.isArray(raw.components) ? raw.components : (Array.isArray(raw.children) ? raw.children : null);
+    if (nested) bundle.components.push(...nested.map(component => normalizeBundleComponent(component, bundleSkuCode)).filter(component => component.componentSkuCode));
+    else {
+      const component = normalizeBundleComponent(raw, bundleSkuCode);
+      if (component.componentSkuCode) bundle.components.push(component);
+    }
+  });
+  return [...bySku.values()].map(bundle => ({...bundle, components:[...new Map(bundle.components.map(component => [`${component.componentId || ''}|${component.componentSkuCode}`, component])).values()].sort((a, b) => a.sortOrder - b.sortOrder)}));
+}
+
+function renderBundleThumb(imageUrl, productName, optionName) {
+  if (!imageUrl) return '<span class="relation-board-node-image empty" aria-hidden="true">NO</span>';
+  return `<button class="relation-board-node-image" type="button" data-relation-image="${escapeHtml(imageUrl)}" data-relation-image-title="${escapeHtml(productName || '상품명 없음')}" data-relation-image-option="${escapeHtml(optionName || '옵션명 없음')}" aria-label="${escapeHtml(productName || '상품')} 이미지 확대"><img src="${escapeHtml(imageUrl)}" alt="" loading="lazy" referrerpolicy="no-referrer" onerror="this.parentNode.classList.add('empty');this.parentNode.removeAttribute('data-relation-image');this.remove()"></button>`;
+}
+
+function renderBundleGraph() {
+  const list = document.getElementById('bundle-graph-list');
+  if (bundleGraphState.loading) {
+    list.innerHTML = '<div class="bundle-empty">세트 구성과 상품 정보를 불러오는 중입니다…</div>';
+    return;
+  }
+  if (!bundleGraphState.bundles.length) {
+    list.innerHTML = `<div class="bundle-empty">${bundleGraphState.loaded ? '검색 조건에 맞는 세트 구성이 없습니다.' : '세트 구성 관리 패널을 펼치면 DB에서 구성을 조회합니다.'}</div>`;
+    return;
+  }
+  list.innerHTML = bundleGraphState.bundles.map(bundle => `<article class="bundle-card" data-bundle-sku="${escapeHtml(bundle.bundleSkuCode)}">
+    <header>${renderBundleThumb(bundle.imageUrl, bundle.productName, bundle.optionName)}<div class="bundle-card-copy"><span>세트 SKU ${escapeHtml(bundle.bundleSkuCode)}</span><b title="${escapeHtml(bundle.productName || '상품명 없음')}">${escapeHtml(bundle.productName || '상품명 없음')}</b><strong>${escapeHtml(bundle.optionName || '옵션명 없음')}</strong></div><em>구성 ${formatNumber(bundle.components.length)}개</em></header>
+    <div class="bundle-component-list">${bundle.components.map(component => `<div class="bundle-component-row" data-bundle-component-id="${component.componentId || ''}" data-bundle-sku="${escapeHtml(bundle.bundleSkuCode)}" data-component-sku="${escapeHtml(component.componentSkuCode)}" data-sort-order="${component.sortOrder}">
+      ${renderBundleThumb(component.imageUrl, component.productName, component.optionName)}
+      <div class="bundle-component-copy"><span>→ ${component.nestedBundleId ? '하위 세트' : '구성품'} SKU ${escapeHtml(component.componentSkuCode)}</span><b title="${escapeHtml(component.productName || '상품명 없음')}">${escapeHtml(component.productName || '상품명 없음')}</b><strong>${escapeHtml(component.optionName || '옵션명 없음')}</strong></div>
+      <label>구성수량<input data-bundle-component-qty type="number" min="0.001" step="0.001" value="${escapeHtml(component.qty)}"></label>
+      <label>역할<select data-bundle-component-role><option value="component"${component.role === 'component' ? ' selected' : ''}>구성품</option><option value="packaging"${component.role === 'packaging' ? ' selected' : ''}>포장재</option></select></label>
+      <div class="bundle-component-actions"><button class="btn" type="button" data-bundle-component-save>수정 저장</button><button class="btn danger" type="button" data-bundle-component-remove${component.componentId ? '' : ' disabled title="연결 ID를 확인할 수 없어 해제할 수 없습니다."'}>연결 해제</button></div>
+    </div>`).join('') || '<div class="bundle-empty">활성 구성품이 없습니다.</div>'}</div>
+  </article>`).join('');
+}
+
+async function loadBundleGraph({query = bundleGraphState.query} = {}) {
+  const requestId = ++bundleGraphState.requestId;
+  bundleGraphState.query = String(query || '').trim();
+  bundleGraphState.loading = true;
+  renderBundleGraph();
+  try {
+    if (!liveData?.listBundleGraph) throw new Error('현재 배포에는 세트 구성 조회 기능이 없습니다. DB 기능 배포 후 다시 시도해주세요.');
+    const payload = await liveData.listBundleGraph(bundleGraphState.query);
+    if (requestId !== bundleGraphState.requestId) return;
+    const bundles = normalizeBundleGraph(payload);
+    if (liveData?.loadSellpiaRelationVisuals && bundles.length) {
+      const skus = [...new Set(bundles.flatMap(bundle => [bundle.bundleSkuCode, ...bundle.components.map(component => component.componentSkuCode)]))];
+      try {
+        const visuals = await liveData.loadSellpiaRelationVisuals(skus);
+        if (requestId !== bundleGraphState.requestId) return;
+        const visualBySku = new Map((visuals || []).map(visual => [String(visual.sellpia_sku_code || ''), visual]));
+        bundles.forEach(bundle => {
+          const bundleVisual = visualBySku.get(bundle.bundleSkuCode);
+          if (bundleVisual) {
+            bundle.productName ||= bundleVisual.sellpia_product_name || '';
+            bundle.optionName ||= bundleVisual.sellpia_option_name || '';
+            bundle.imageUrl ||= bundleVisual.sellpia_override_image_url || bundleVisual.image_url || '';
+          }
+          bundle.components.forEach(component => {
+            const componentVisual = visualBySku.get(component.componentSkuCode);
+            if (!componentVisual) return;
+            component.productName ||= componentVisual.sellpia_product_name || '';
+            component.optionName ||= componentVisual.sellpia_option_name || '';
+            component.imageUrl ||= componentVisual.sellpia_override_image_url || componentVisual.image_url || '';
+          });
+        });
+      } catch (visualError) {
+        console.warn('bundle visual enrichment failed', visualError);
+      }
+    }
+    bundleGraphState.bundles = bundles;
+    bundleGraphState.loaded = true;
+  } catch (error) {
+    if (requestId !== bundleGraphState.requestId) return;
+    bundleGraphState.bundles = [];
+    bundleGraphState.loaded = true;
+    document.getElementById('bundle-graph-list').innerHTML = `<div class="bundle-empty">세트 구성을 불러오지 못했습니다. ${escapeHtml(error?.message || error)}</div>`;
+    return;
+  } finally {
+    if (requestId === bundleGraphState.requestId) bundleGraphState.loading = false;
+  }
+  renderBundleGraph();
+}
+
+function downloadBundleTemplate() {
+  if (!window.XLSX) {
+    showToast('엑셀 템플릿 모듈을 불러오지 못했습니다. 네트워크 상태를 확인해주세요.');
+    return;
+  }
+  const worksheet = XLSX.utils.aoa_to_sheet([
+    ['세트 상품코드-옵션코드', '구성품 상품코드-옵션코드', '구성수량', '역할'],
+    ['1000-1', '2000-1', 1, '구성품']
+  ]);
+  worksheet['!cols'] = [{wch:28}, {wch:32}, {wch:12}, {wch:14}];
+  const workbook = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(workbook, worksheet, '세트구성');
+  XLSX.writeFile(workbook, 'system_v3_bundle_components_template.xlsx');
+}
+
+function sellerBundleChannelLabel(source) {
+  return CHANNEL_LABELS[source] || multiLinkChannelLabel(source) || source;
+}
+
+function sellerBundleErrorMessage(error, fallback = '알 수 없는 오류') {
+  if (typeof error === 'string') return error;
+  return String(error?.message || error?.error || error?.code || fallback);
+}
+
+function normalizeSellerBundleComponent(raw = {}) {
+  return {
+    componentId:Number(bundleValue(raw, 'componentId', 'component_id', 'listingComponentId', 'listing_component_id')) || null,
+    sku:String(bundleValue(raw, 'componentSkuCode', 'component_sku_code', 'sellpiaSkuCode', 'sellpia_sku_code', 'sku')).trim(),
+    qty:Math.max(1, Math.trunc(Number(bundleValue(raw, 'componentQty', 'component_qty', 'qty', 'quantity')) || 1)),
+    role:String(bundleValue(raw, 'componentRole', 'component_role', 'role') || 'additional').trim(),
+    productName:String(bundleValue(raw, 'componentProductName', 'component_product_name', 'productName', 'product_name')).trim(),
+    optionName:String(bundleValue(raw, 'componentOptionName', 'component_option_name', 'optionName', 'option_name')).trim(),
+    imageUrl:String(bundleValue(raw, 'componentImageUrl', 'component_image_url', 'imageUrl', 'image_url')).trim()
+  };
+}
+
+function normalizeSellerBundleTargets(payload, fallback = {}) {
+  if (payload && !Array.isArray(payload) && Array.isArray(payload.components) && !payload.listings && !payload.rows) {
+    return [{
+      source:String(bundleValue(payload, 'sourceChannel', 'source_channel', 'source') || fallback.source || '').trim(),
+      productCode:String(bundleValue(payload, 'productCode', 'product_code') || fallback.productCode || '').trim(),
+      optionCode:String(bundleValue(payload, 'optionCode', 'option_code') || fallback.optionCode || '').trim(),
+      productName:String(bundleValue(payload, 'productName', 'product_name')).trim(),
+      optionName:String(bundleValue(payload, 'optionName', 'option_name')).trim(),
+      bundleType:String(bundleValue(payload, 'relationKind', 'relation_kind', 'bundleType', 'bundle_type') || fallback.bundleType || 'set').trim(),
+      components:payload.components.map(normalizeSellerBundleComponent).filter(component => component.sku)
+    }];
+  }
+  const listings = Array.isArray(payload) ? payload : (payload?.listings || payload?.rows || payload?.items || []);
+  const detachedComponents = Array.isArray(payload?.components) ? payload.components : [];
+  return listings.map(listing => {
+    const listingId = String(bundleValue(listing, 'listingId', 'listing_id'));
+    const source = String(bundleValue(listing, 'sourceChannel', 'source_channel', 'source')).trim();
+    const productCode = String(bundleValue(listing, 'productCode', 'product_code')).trim();
+    const optionCode = String(bundleValue(listing, 'optionCode', 'option_code')).trim();
+    const nested = Array.isArray(listing.components) ? listing.components : detachedComponents.filter(component => {
+      const componentListingId = String(bundleValue(component, 'listingId', 'listing_id'));
+      if (listingId && componentListingId) return componentListingId === listingId;
+      return String(bundleValue(component, 'sourceChannel', 'source_channel', 'source')).trim() === source
+        && String(bundleValue(component, 'productCode', 'product_code')).trim() === productCode
+        && String(bundleValue(component, 'optionCode', 'option_code')).trim() === optionCode;
+    });
+    return {
+      source,
+      productCode,
+      optionCode,
+      productName:String(bundleValue(listing, 'productName', 'product_name')).trim(),
+      optionName:String(bundleValue(listing, 'optionName', 'option_name')).trim(),
+      bundleType:String(bundleValue(listing, 'relationKind', 'relation_kind', 'bundleType', 'bundle_type') || 'set').trim(),
+      components:nested.map(normalizeSellerBundleComponent).filter(component => component.sku)
+    };
+  });
+}
+
+function renderSellerBundleTarget() {
+  const host = document.getElementById('seller-bundle-target-result');
+  if (sellerBundleState.loading) {
+    host.innerHTML = '<div class="bundle-empty">판매처 상품·옵션과 현재 구성을 확인하는 중입니다…</div>';
+    return;
+  }
+  const target = sellerBundleState.target;
+  if (!target) {
+    host.innerHTML = '<div class="bundle-empty">판매처·상품코드·옵션코드를 입력해 대상을 조회해주세요.</div>';
+    return;
+  }
+  const typeLabel = sellerBundleState.bundleType === 'one_plus_one' ? '1+1' : '세트';
+  host.innerHTML = `<article class="seller-bundle-card" data-seller-bundle-source="${escapeHtml(target.source)}" data-seller-bundle-product="${escapeHtml(target.productCode)}" data-seller-bundle-option="${escapeHtml(target.optionCode)}">
+    <header><span class="multi-link-channel ${escapeHtml(target.source)}"><i></i>${escapeHtml(sellerBundleChannelLabel(target.source))}</span><div><b>${escapeHtml(target.productName || '상품명 없음')}</b><strong>${escapeHtml(target.optionName || '옵션명 없음')}</strong><em>${escapeHtml(target.productCode)}${target.optionCode ? ` / ${escapeHtml(target.optionCode)}` : ''}</em></div><mark>${typeLabel}</mark></header>
+    <div class="seller-bundle-components">${target.components.map(component => `<div class="seller-bundle-component" data-seller-component-id="${component.componentId || ''}" data-seller-component-sku="${escapeHtml(component.sku)}">
+      ${renderBundleThumb(component.imageUrl, component.productName, component.optionName)}
+      <div><span>셀피아 SKU ${escapeHtml(component.sku)}</span><b>${escapeHtml(component.productName || '상품명 없음')}</b><strong>${escapeHtml(component.optionName || '옵션명 없음')}</strong></div>
+      <label>구성수량<input data-seller-component-qty type="number" min="1" step="1" value="${component.qty}"></label>
+      <div class="bundle-component-actions"><button class="btn" type="button" data-seller-component-save>수량 저장</button><button class="btn danger" type="button" data-seller-component-remove${component.componentId ? '' : ' disabled'}>연결 해제</button></div>
+    </div>`).join('') || '<div class="bundle-empty">명시적으로 저장된 구성품이 없습니다.</div>'}</div>
+    <form id="seller-bundle-component-form" class="seller-bundle-component-form"><label>추가할 셀피아 SKU<input name="componentSku" required autocomplete="off" placeholder="상품코드-옵션코드"></label><label>구성수량<input name="qty" type="number" min="1" step="1" value="1" required></label><button class="btn primary" type="submit">구성 추가</button></form>
+    <p class="seller-bundle-boundary">이 화면은 시스템 내부 구성표만 저장합니다. 셀피아 SKU 생성 및 판매처 쓰기는 실행하지 않습니다.</p>
+  </article>`;
+}
+
+function sellerBundleRowsWithChange(componentSkuCode, quantity) {
+  const target = sellerBundleState.target;
+  if (!target) throw new Error('판매처 구성 대상을 먼저 조회해주세요.');
+  const sku = String(componentSkuCode || '').trim();
+  const qty = Number(quantity);
+  if (!sku) throw new Error('구성품 셀피아 SKU를 입력해주세요.');
+  if (!Number.isSafeInteger(qty) || qty < 1) throw new Error('구성수량은 1 이상의 정수여야 합니다.');
+  const components = target.components
+    .slice()
+    .sort((left, right) => (left.role === 'primary' ? -1 : 0) - (right.role === 'primary' ? -1 : 0))
+    .map(component => ({sku:component.sku, qty:component.sku === sku ? qty : component.qty}));
+  if (!components.some(component => component.sku === sku)) components.push({sku, qty});
+  return components.map(component => ({
+    source_channel:target.source,
+    product_code:target.productCode,
+    option_code:target.optionCode,
+    component_sku_code:component.sku,
+    component_qty:component.qty,
+    bundle_type:sellerBundleState.bundleType
+  }));
+}
+
+async function saveSellerBundleRows(rows) {
+  if (!liveData?.applySellerBundleImport) throw new Error('현재 배포에는 판매처 구성 저장 기능이 없습니다. DB 기능 배포 후 다시 시도해주세요.');
+  const result = await liveData.applySellerBundleImport(rows);
+  if (result?.applied === false || (Array.isArray(result?.errors) && result.errors.length)) {
+    throw new Error((result?.errors || []).map(error => sellerBundleErrorMessage(error)).join('\n') || '판매처 전용 구성을 저장하지 못했습니다.');
+  }
+  return result;
+}
+
+async function loadSellerBundleTarget() {
+  const requestId = ++sellerBundleState.requestId;
+  sellerBundleState.loading = true;
+  sellerBundleState.target = null;
+  renderSellerBundleTarget();
+  try {
+    let targets = [];
+    if (liveData?.listSellerBundleGraph) {
+      const payload = await liveData.listSellerBundleGraph({source:sellerBundleState.source, query:sellerBundleState.productCode});
+      targets = normalizeSellerBundleTargets(payload, sellerBundleState);
+    } else if (liveData?.loadListingConnection) {
+      const payload = await liveData.loadListingConnection({source:sellerBundleState.source, productCode:sellerBundleState.productCode, optionCode:sellerBundleState.optionCode});
+      targets = normalizeSellerBundleTargets(payload, sellerBundleState);
+    } else throw new Error('현재 배포에는 판매처 전용 구성 조회 기능이 없습니다.');
+    if (requestId !== sellerBundleState.requestId) return;
+    let target = targets.find(item => item.source === sellerBundleState.source && item.productCode === sellerBundleState.productCode && item.optionCode === sellerBundleState.optionCode) || null;
+    if (!target && liveData?.loadListingConnection) {
+      const payload = await liveData.loadListingConnection({source:sellerBundleState.source, productCode:sellerBundleState.productCode, optionCode:sellerBundleState.optionCode});
+      target = normalizeSellerBundleTargets(payload, sellerBundleState).find(item => item.source === sellerBundleState.source && item.productCode === sellerBundleState.productCode && item.optionCode === sellerBundleState.optionCode) || null;
+    }
+    if (!target) throw new Error(`${sellerBundleChannelLabel(sellerBundleState.source)} ${sellerBundleState.productCode}${sellerBundleState.optionCode ? ` / ${sellerBundleState.optionCode}` : ''} 상품·옵션을 찾을 수 없습니다.`);
+    if (['one_plus_one','set'].includes(target.bundleType)) {
+      sellerBundleState.bundleType = target.bundleType;
+      document.getElementById('seller-bundle-type').value = target.bundleType;
+    }
+    if (liveData?.loadSellpiaRelationVisuals && target.components.length) {
+      try {
+        const visuals = await liveData.loadSellpiaRelationVisuals(target.components.map(component => component.sku));
+        const bySku = new Map((visuals || []).map(visual => [String(visual.sellpia_sku_code || ''), visual]));
+        target.components.forEach(component => {
+          const visual = bySku.get(component.sku);
+          if (!visual) return;
+          component.productName ||= visual.sellpia_product_name || '';
+          component.optionName ||= visual.sellpia_option_name || '';
+          component.imageUrl ||= visual.sellpia_override_image_url || visual.image_url || '';
+        });
+      } catch (visualError) { console.warn('seller bundle visual enrichment failed', visualError); }
+    }
+    sellerBundleState.target = target;
+  } catch (error) {
+    if (requestId === sellerBundleState.requestId) {
+      document.getElementById('seller-bundle-target-result').innerHTML = `<div class="bundle-empty">판매처 전용 구성을 불러오지 못했습니다. ${escapeHtml(error?.message || error)}</div>`;
+    }
+    return;
+  } finally {
+    if (requestId === sellerBundleState.requestId) sellerBundleState.loading = false;
+  }
+  renderSellerBundleTarget();
+}
+
+function sellerBundleImportPlan() {
+  const parsed = sellerBundleImportState.parsed;
+  if (!parsed?.valid) return {valid:false, rows:[], errors:parsed?.errors || ['엑셀 검토가 끝나지 않았습니다.']};
+  const rows = parsed.rows.map(row => ({
+    source_channel:row.seller,
+    product_code:row.sellerProductCode,
+    option_code:row.sellerOptionCode || '',
+    component_sku_code:row.componentCode,
+    component_qty:Number(row.quantity),
+    bundle_type:row.compositionType
+  }));
+  const result = sellerBundleImportState.resolved;
+  const errors = [...(parsed.errors || []), ...(Array.isArray(result?.errors) ? result.errors.map(error => sellerBundleErrorMessage(error)) : [])];
+  const resolvedRows = Array.isArray(result?.rows) ? result.rows : [];
+  resolvedRows.forEach((row, index) => {
+    const status = String(bundleValue(row, 'status', 'resultStatus', 'result_status')).toLowerCase();
+    if (status && !['ok','ready','matched','valid','unchanged'].includes(status)) errors.push(`${row.rowNo || row.row_no || index + 2}행: ${row.message || row.error || '판매처 대상 또는 구성품을 확인해주세요.'}`);
+  });
+  return {valid:Boolean(result) && errors.length === 0, rows, errors, resolvedRows};
+}
+
+function renderSellerBundleImport() {
+  const result = document.getElementById('seller-bundle-import-result');
+  const reset = document.getElementById('seller-bundle-import-reset');
+  const save = document.getElementById('seller-bundle-import-save');
+  reset.disabled = !sellerBundleImportState.parsed && !sellerBundleImportState.fileName;
+  if (sellerBundleImportState.resolving) {
+    result.innerHTML = '<span>판매처 실제 상품·옵션과 구성품 셀피아 SKU를 확인하는 중입니다…</span>';
+    save.disabled = true;
+    return;
+  }
+  const parsed = sellerBundleImportState.parsed;
+  if (!parsed) {
+    result.innerHTML = '<span>파일을 선택하면 판매처 대상·구성품·수량·중복·오류를 먼저 검토합니다.</span>';
+    save.disabled = true;
+    return;
+  }
+  const plan = sellerBundleImportPlan();
+  const errors = [...new Set([...(parsed.errors || []), ...plan.errors])];
+  const resolvedByRow = new Map((plan.resolvedRows || []).map(row => [Number(bundleValue(row, 'rowNo', 'row_no')), row]));
+  const rows = (parsed.rows || []).map(row => {
+    const resolved = resolvedByRow.get(Number(row.rowNo));
+    const status = String(bundleValue(resolved, 'status', 'resultStatus', 'result_status')).toLowerCase();
+    const ready = Boolean(sellerBundleImportState.resolved) && (!status || ['ok','ready','matched','valid','unchanged'].includes(status));
+    return `<tr><td>${row.rowNo}</td><td><span class="multi-link-channel ${escapeHtml(row.seller)}"><i></i>${escapeHtml(sellerBundleChannelLabel(row.seller))}</span></td><td>${escapeHtml(row.sellerProductCode)}${row.sellerOptionCode ? ` / ${escapeHtml(row.sellerOptionCode)}` : ''}</td><td>${escapeHtml(row.componentCode)}</td><td>${formatNumber(row.quantity)}</td><td>${row.compositionType === 'one_plus_one' ? '1+1' : '세트'}</td><td><span class="relation-import-status ${ready ? 'ok' : 'error'}">${ready ? '저장 준비' : '확인 필요'}</span></td></tr>`;
+  }).join('');
+  result.innerHTML = `<div class="relation-import-stats"><span>파일<b>${escapeHtml(sellerBundleImportState.fileName || '-')}</b></span><span>유효 행<b>${formatNumber(parsed.rows?.length || 0)}</b></span><span>판매처 대상<b>${formatNumber(parsed.targets?.length || 0)}</b></span><span>구성품 코드<b>${formatNumber(parsed.codes?.length || 0)}</b></span><span>중복 합침<b>${formatNumber(parsed.duplicateCount || 0)}</b></span><span>오류<b>${formatNumber(errors.length)}</b></span></div>
+    ${errors.length ? `<ul class="relation-import-errors">${errors.slice(0, 30).map(error => `<li>${escapeHtml(error)}</li>`).join('')}</ul>` : ''}
+    ${rows ? `<table class="relation-import-table bundle-import-preview"><thead><tr><th>행</th><th>판매처</th><th>상품 / 옵션</th><th>구성품 SKU</th><th>수량</th><th>유형</th><th>상태</th></tr></thead><tbody>${rows}</tbody></table>` : ''}`;
+  save.textContent = sellerBundleImportState.saving ? '판매처 구성 저장 중…' : `검토한 판매처 구성 ${formatNumber(plan.rows.length)}건 저장`;
+  save.disabled = sellerBundleImportState.saving || !plan.valid || !plan.rows.length;
+}
+
+function resetSellerBundleImport() {
+  sellerBundleImportState.fileName = '';
+  sellerBundleImportState.parsed = null;
+  sellerBundleImportState.resolved = null;
+  sellerBundleImportState.resolving = false;
+  sellerBundleImportState.saving = false;
+  document.getElementById('seller-bundle-import-file').value = '';
+  renderSellerBundleImport();
+}
+
+async function loadSellerBundleImportFile(file) {
+  if (!file) return;
+  sellerBundleImportState.fileName = file.name;
+  sellerBundleImportState.resolved = null;
+  if (!sellerBundleImportParser?.parseSellerBundleRows) {
+    sellerBundleImportState.parsed = {valid:false, rows:[], targets:[], codes:[], errors:['판매처 전용 구성 엑셀 검사 모듈을 불러오지 못했습니다. 페이지를 새로고침해주세요.']};
+    renderSellerBundleImport();
+    return;
+  }
+  if (!window.XLSX) {
+    sellerBundleImportState.parsed = {valid:false, rows:[], targets:[], codes:[], errors:['엑셀 파일 모듈을 불러오지 못했습니다. 페이지를 새로고침해주세요.']};
+    renderSellerBundleImport();
+    return;
+  }
+  try {
+    const isCsv = /\.csv$/i.test(file.name);
+    const workbook = XLSX.read(isCsv ? await file.text() : await file.arrayBuffer(), {type:isCsv ? 'string' : 'array', cellDates:false});
+    const preferredSheet = workbook.SheetNames.find(name => name.trim() === '판매처전용구성') || workbook.SheetNames[0];
+    const worksheet = workbook.Sheets[preferredSheet];
+    const matrix = XLSX.utils.sheet_to_json(worksheet, {header:1, raw:false, defval:'', blankrows:false});
+    sellerBundleImportState.parsed = sellerBundleImportParser.parseSellerBundleRows(matrix, {maxRows:1000, maxCodes:500});
+    renderSellerBundleImport();
+    if (!sellerBundleImportState.parsed.valid) return;
+    sellerBundleImportState.resolving = true;
+    renderSellerBundleImport();
+    if (!liveData?.resolveSellerBundleImportRows) throw new Error('현재 배포에는 판매처 구성 확인 기능이 없습니다. DB 기능 배포 후 다시 시도해주세요.');
+    sellerBundleImportState.resolved = await liveData.resolveSellerBundleImportRows(sellerBundleImportPlan().rows);
+  } catch (error) {
+    sellerBundleImportState.parsed = {valid:false, rows:[], targets:[], codes:[], duplicateCount:0, errors:[error?.message || String(error)]};
+  } finally {
+    sellerBundleImportState.resolving = false;
+    renderSellerBundleImport();
+  }
+}
+
+async function saveSellerBundleImport() {
+  const plan = sellerBundleImportPlan();
+  if (!plan.valid || !plan.rows.length) return renderSellerBundleImport();
+  if (!window.confirm(`판매처 전용 1+1/세트 구성 ${plan.rows.length}건을 저장할까요?\n셀피아 SKU 생성 및 실제 판매처 쓰기는 실행하지 않습니다.`)) return;
+  sellerBundleImportState.saving = true;
+  renderSellerBundleImport();
+  try {
+    const saved = await liveData.applySellerBundleImport(plan.rows);
+    if (saved?.applied === false || (Array.isArray(saved?.errors) && saved.errors.length)) throw new Error((saved.errors || []).map(error => sellerBundleErrorMessage(error)).join('\n') || '판매처 전용 구성을 저장하지 못했습니다.');
+    resetSellerBundleImport();
+    showToast(`판매처 전용 구성 ${formatNumber(plan.rows.length)}건을 저장했습니다. 실제 판매처에는 전송하지 않았습니다.`);
+  } catch (error) { showToast(`판매처 전용 구성 저장 실패: ${error?.message || error}`); }
+  finally { sellerBundleImportState.saving = false; renderSellerBundleImport(); }
+}
+
+function downloadSellerBundleTemplate() {
+  if (!window.XLSX) return showToast('엑셀 템플릿 모듈을 불러오지 못했습니다.');
+  const worksheet = XLSX.utils.aoa_to_sheet([
+    ['판매처', '판매처 상품코드', '판매처 옵션코드', '구성품 상품코드-옵션코드', '구성수량', '구성유형'],
+    ['스마트스토어', '123456', '01', '2000-1', 2, '1+1']
+  ]);
+  worksheet['!cols'] = [{wch:16}, {wch:20}, {wch:20}, {wch:32}, {wch:12}, {wch:14}];
+  const workbook = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(workbook, worksheet, '판매처전용구성');
+  XLSX.writeFile(workbook, 'system_v3_seller_bundle_components_template.xlsx');
+}
+
 function renderRelationFolderParentOptions(folder = null, preferredParentFolderId = null) {
   const select = document.getElementById('relation-folder-parent');
   const excluded = folder ? relationFolderDescendantIds(folder.folderId) : new Set();
@@ -7887,6 +8542,187 @@ document.getElementById('relation-import-result').addEventListener('change', eve
 });
 document.getElementById('relation-import-reset').addEventListener('click', resetRelationImport);
 document.getElementById('relation-import-save').addEventListener('click', saveRelationImport);
+
+const bundleManagementPanel = document.getElementById('bundle-management-panel');
+const bundleImportFile = document.getElementById('bundle-import-file');
+const bundleImportDropzone = document.getElementById('bundle-import-dropzone');
+bundleManagementPanel.addEventListener('toggle', () => {
+  if (bundleManagementPanel.open && !bundleGraphState.loaded && !bundleGraphState.loading) loadBundleGraph();
+});
+document.getElementById('bundle-search-form').addEventListener('submit', event => {
+  event.preventDefault();
+  loadBundleGraph({query:document.getElementById('bundle-search').value});
+});
+document.getElementById('bundle-refresh').addEventListener('click', () => loadBundleGraph({query:document.getElementById('bundle-search').value}));
+document.getElementById('bundle-import-template').addEventListener('click', downloadBundleTemplate);
+bundleImportDropzone.addEventListener('click', () => bundleImportFile.click());
+bundleImportFile.addEventListener('change', () => loadBundleImportFile(bundleImportFile.files?.[0]));
+['dragenter', 'dragover'].forEach(type => bundleImportDropzone.addEventListener(type, event => {
+  event.preventDefault();
+  bundleImportDropzone.classList.add('dragover');
+}));
+['dragleave', 'drop'].forEach(type => bundleImportDropzone.addEventListener(type, event => {
+  event.preventDefault();
+  bundleImportDropzone.classList.remove('dragover');
+}));
+bundleImportDropzone.addEventListener('drop', event => loadBundleImportFile(event.dataTransfer?.files?.[0]));
+document.getElementById('bundle-import-result').addEventListener('change', event => {
+  const select = event.target.closest('[data-bundle-import-choice]');
+  if (!select) return;
+  if (select.value) bundleImportState.choices.set(select.dataset.bundleImportChoice, select.value);
+  else bundleImportState.choices.delete(select.dataset.bundleImportChoice);
+  renderBundleImport();
+});
+document.getElementById('bundle-import-reset').addEventListener('click', resetBundleImport);
+document.getElementById('bundle-import-save').addEventListener('click', saveBundleImport);
+
+document.getElementById('bundle-component-form').addEventListener('submit', async event => {
+  event.preventDefault();
+  const button = document.getElementById('bundle-form-save');
+  const payload = {
+    bundleSkuCode:document.getElementById('bundle-form-bundle-sku').value,
+    componentSkuCode:document.getElementById('bundle-form-component-sku').value,
+    qty:document.getElementById('bundle-form-qty').value,
+    role:document.getElementById('bundle-form-role').value
+  };
+  button.disabled = true;
+  button.textContent = '저장 중…';
+  try {
+    if (!liveData?.saveBundleComponent) throw new Error('현재 배포에는 세트 구성 저장 기능이 없습니다. DB 기능 배포 후 다시 시도해주세요.');
+    await liveData.saveBundleComponent(payload);
+    bundleGraphState.query = String(payload.bundleSkuCode || '').trim();
+    document.getElementById('bundle-search').value = bundleGraphState.query;
+    await loadBundleGraph({query:bundleGraphState.query});
+    document.getElementById('bundle-form-component-sku').value = '';
+    document.getElementById('bundle-form-qty').value = '1';
+    showToast('세트 구성 한 건을 저장했습니다. 가격·재고는 변경하지 않았습니다.');
+  } catch (error) {
+    showToast(`세트 구성 저장 실패: ${error?.message || error}`);
+  } finally {
+    button.disabled = false;
+    button.textContent = '구성 저장';
+  }
+});
+
+document.getElementById('bundle-graph-list').addEventListener('click', async event => {
+  const image = event.target.closest('[data-relation-image]');
+  if (image) { openRelationImageModal(image); return; }
+  const row = event.target.closest('[data-bundle-component-id]');
+  if (!row) return;
+  const save = event.target.closest('[data-bundle-component-save]');
+  const remove = event.target.closest('[data-bundle-component-remove]');
+  if (!save && !remove) return;
+  const button = save || remove;
+  button.disabled = true;
+  try {
+    if (save) {
+      if (!liveData?.saveBundleComponent) throw new Error('현재 배포에는 세트 구성 수정 기능이 없습니다.');
+      await liveData.saveBundleComponent({
+        bundleSkuCode:row.dataset.bundleSku,
+        componentSkuCode:row.dataset.componentSku,
+        qty:row.querySelector('[data-bundle-component-qty]').value,
+        role:row.querySelector('[data-bundle-component-role]').value,
+        sortOrder:row.dataset.sortOrder
+      });
+      showToast('구성수량과 역할을 저장했습니다.');
+    } else {
+      if (!row.dataset.bundleComponentId) throw new Error('연결 ID를 확인할 수 없어 해제할 수 없습니다.');
+      if (!window.confirm(`${row.dataset.componentSku} 구성 연결을 해제할까요?\n원본 SKU와 과거 기록은 삭제하지 않습니다.`)) return;
+      if (!liveData?.deactivateBundleComponent) throw new Error('현재 배포에는 세트 구성 해제 기능이 없습니다.');
+      await liveData.deactivateBundleComponent(row.dataset.bundleComponentId);
+      showToast('세트 구성 연결을 해제했습니다.');
+    }
+    await loadBundleGraph({query:bundleGraphState.query});
+  } catch (error) {
+    showToast(`세트 구성 작업 실패: ${error?.message || error}`);
+  } finally {
+    button.disabled = false;
+  }
+});
+
+function setBundleTargetMode(mode) {
+  const seller = mode === 'seller';
+  document.getElementById('bundle-target-canonical').classList.toggle('active', !seller);
+  document.getElementById('bundle-target-canonical').setAttribute('aria-selected', String(!seller));
+  document.getElementById('bundle-target-seller').classList.toggle('active', seller);
+  document.getElementById('bundle-target-seller').setAttribute('aria-selected', String(seller));
+  document.getElementById('bundle-canonical-workspace').hidden = seller;
+  document.getElementById('seller-bundle-workspace').hidden = !seller;
+}
+
+document.getElementById('bundle-target-canonical').addEventListener('click', () => setBundleTargetMode('canonical'));
+document.getElementById('bundle-target-seller').addEventListener('click', () => setBundleTargetMode('seller'));
+
+document.getElementById('seller-bundle-target-form').addEventListener('submit', event => {
+  event.preventDefault();
+  sellerBundleState.source = document.getElementById('seller-bundle-source').value;
+  sellerBundleState.productCode = document.getElementById('seller-bundle-product-code').value.trim();
+  sellerBundleState.optionCode = document.getElementById('seller-bundle-option-code').value.trim();
+  sellerBundleState.bundleType = document.getElementById('seller-bundle-type').value;
+  if (!sellerBundleState.productCode || !sellerBundleState.optionCode) return showToast('판매처 원본의 상품코드와 옵션코드를 모두 입력해주세요.');
+  loadSellerBundleTarget();
+});
+
+document.getElementById('seller-bundle-type').addEventListener('change', event => {
+  sellerBundleState.bundleType = event.target.value;
+  renderSellerBundleTarget();
+});
+
+document.getElementById('seller-bundle-target-result').addEventListener('submit', async event => {
+  const form = event.target.closest('#seller-bundle-component-form');
+  if (!form || !sellerBundleState.target) return;
+  event.preventDefault();
+  const button = form.querySelector('button[type="submit"]');
+  button.disabled = true;
+  try {
+    await saveSellerBundleRows(sellerBundleRowsWithChange(form.elements.componentSku.value, form.elements.qty.value));
+    await loadSellerBundleTarget();
+    showToast('판매처 전용 구성을 저장했습니다. 실제 판매처에는 전송하지 않았습니다.');
+  } catch (error) { showToast(`판매처 전용 구성 저장 실패: ${error?.message || error}`); }
+  finally { button.disabled = false; }
+});
+
+document.getElementById('seller-bundle-target-result').addEventListener('click', async event => {
+  const image = event.target.closest('[data-relation-image]');
+  if (image) { openRelationImageModal(image); return; }
+  const row = event.target.closest('[data-seller-component-id]');
+  if (!row || !sellerBundleState.target) return;
+  const save = event.target.closest('[data-seller-component-save]');
+  const remove = event.target.closest('[data-seller-component-remove]');
+  if (!save && !remove) return;
+  const button = save || remove;
+  button.disabled = true;
+  try {
+    if (save) {
+      await saveSellerBundleRows(sellerBundleRowsWithChange(row.dataset.sellerComponentSku, row.querySelector('[data-seller-component-qty]').value));
+      showToast('판매처 전용 구성수량을 저장했습니다.');
+    } else {
+      if (!row.dataset.sellerComponentId) throw new Error('해제할 구성 연결 ID를 확인할 수 없습니다.');
+      if (!window.confirm(`${row.dataset.sellerComponentSku} 구성 연결을 해제할까요?\n실제 판매처에는 아무 작업도 하지 않습니다.`)) return;
+      await liveData.deactivateSellerBundleComponent(row.dataset.sellerComponentId);
+      showToast('판매처 전용 구성 연결을 해제했습니다.');
+    }
+    await loadSellerBundleTarget();
+  } catch (error) { showToast(`판매처 전용 구성 작업 실패: ${error?.message || error}`); }
+  finally { button.disabled = false; }
+});
+
+const sellerBundleImportFile = document.getElementById('seller-bundle-import-file');
+const sellerBundleImportDropzone = document.getElementById('seller-bundle-import-dropzone');
+document.getElementById('seller-bundle-import-template').addEventListener('click', downloadSellerBundleTemplate);
+sellerBundleImportDropzone.addEventListener('click', () => sellerBundleImportFile.click());
+sellerBundleImportFile.addEventListener('change', () => loadSellerBundleImportFile(sellerBundleImportFile.files?.[0]));
+['dragenter','dragover'].forEach(type => sellerBundleImportDropzone.addEventListener(type, event => {
+  event.preventDefault();
+  sellerBundleImportDropzone.classList.add('dragover');
+}));
+['dragleave','drop'].forEach(type => sellerBundleImportDropzone.addEventListener(type, event => {
+  event.preventDefault();
+  sellerBundleImportDropzone.classList.remove('dragover');
+}));
+sellerBundleImportDropzone.addEventListener('drop', event => loadSellerBundleImportFile(event.dataTransfer?.files?.[0]));
+document.getElementById('seller-bundle-import-reset').addEventListener('click', resetSellerBundleImport);
+document.getElementById('seller-bundle-import-save').addEventListener('click', saveSellerBundleImport);
 
 document.getElementById('relation-board-add-level').addEventListener('click', () => {
   if (relationBoardState.levelCount >= 6) {
