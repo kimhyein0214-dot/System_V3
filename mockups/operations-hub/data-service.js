@@ -1521,6 +1521,21 @@
     return data || null;
   }
 
+  async function loadSellpiaRelationVisuals(skus = []) {
+    const normalizedSkus = [...new Set((Array.isArray(skus) ? skus : []).map(cleanText).filter(Boolean))];
+    if (!normalizedSkus.length) return [];
+    const rows = [];
+    for (let offset = 0; offset < normalizedSkus.length; offset += 500) {
+      const {data, error} = await db
+        .from(MATRIX_VIEW)
+        .select('sellpia_sku_code,sellpia_product_name,sellpia_option_name,image_url,sellpia_override_image_url')
+        .in('sellpia_sku_code', normalizedSkus.slice(offset, offset + 500));
+      if (error) throw error;
+      rows.push(...(data || []));
+    }
+    return rows;
+  }
+
   async function ensureSellpiaRelationNode({productCode, folderId = null, relationKind = 'individual'} = {}) {
     const {data, error} = await db.rpc('ensure_operations_hub_sellpia_relation_node', {
       p_sellpia_product_code:cleanText(productCode),
@@ -2482,6 +2497,7 @@
     archiveRelationFolder,
     searchSellpiaRelationProducts,
     loadSellpiaRelationProduct,
+    loadSellpiaRelationVisuals,
     ensureSellpiaRelationNode,
     ensureSellpiaSkuRelationNode,
     ensureSellerRelationNode,

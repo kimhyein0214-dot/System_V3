@@ -6741,6 +6741,10 @@ function relationBoardNodeFromGraph(node) {
     optionCode:node.sellerOptionCode || '',
     sku:node.sellpiaSkuCode || '',
     displayName:node.displayName || '이름 없음',
+    productName:'',
+    optionName:'',
+    imageUrl:'',
+    linkedSkus:[],
     folderId:node.folderId ?? null,
     relationKind:node.relationKind || 'custom',
     parentKeys:[],
@@ -6756,6 +6760,68 @@ function relationBoardDisplayIdentity(node) {
   if (node.nodeType === 'sellpia_product') return `셀피아 상품 ${node.productCode || '-'}`;
   if (node.nodeType === 'seller_listing') return `${multiLinkChannelLabel(node.source)} ${node.productCode || '-'}${node.optionCode ? ` / ${node.optionCode}` : ''}`;
   return '기존 관계 노드';
+}
+
+function relationBoardCardLabels(node) {
+  const displayName = String(node.displayName || '').trim();
+  const parts = displayName.split(' · ').map(value => value.trim()).filter(Boolean);
+  const productName = String(node.productName || parts.shift() || displayName || '상품명 없음').trim();
+  const optionName = String(node.optionName || parts.join(' · ') || '').trim();
+  return {productName, optionName};
+}
+
+function relationBoardCardImage(node) {
+  const imageUrl = String(node.imageUrl || '').trim();
+  const labels = relationBoardCardLabels(node);
+  if (!imageUrl) return '<span class="relation-board-node-image empty" aria-hidden="true">NO</span>';
+  return `<button class="relation-board-node-image" type="button" data-relation-image="${escapeHtml(imageUrl)}" data-relation-image-title="${escapeHtml(labels.productName)}" data-relation-image-option="${escapeHtml(labels.optionName)}" aria-label="${escapeHtml(labels.productName)} 상품 이미지 확대"><img src="${escapeHtml(imageUrl)}" alt="" loading="lazy" referrerpolicy="no-referrer" onerror="this.parentNode.classList.add('empty');this.parentNode.removeAttribute('data-relation-image');this.remove()"></button>`;
+}
+
+function openRelationImageModal(trigger) {
+  const url = String(trigger?.dataset?.relationImage || '').trim();
+  if (!url) return;
+  const productName = String(trigger.dataset.relationImageTitle || '상품명 없음').trim();
+  const optionName = String(trigger.dataset.relationImageOption || '옵션명 없음').trim() || '옵션명 없음';
+  const modal = document.getElementById('relation-image-modal');
+  const image = document.getElementById('relation-image-preview');
+  image.src = url;
+  image.alt = `${productName} ${optionName} 상품 이미지`;
+  document.getElementById('relation-image-product-name').textContent = productName;
+  document.getElementById('relation-image-option-name').textContent = optionName;
+  modal.hidden = false;
+}
+
+function closeRelationImageModal() {
+  const modal = document.getElementById('relation-image-modal');
+  modal.hidden = true;
+  document.getElementById('relation-image-preview').removeAttribute('src');
+}
+
+async function hydrateRelationBoardVisuals() {
+  const skus = [];
+  relationBoardState.nodes.forEach(node => {
+    if (node.nodeType === 'sellpia_sku' && node.sku) skus.push(node.sku);
+    (node.linkedSkus || []).forEach(sku => skus.push(sku));
+  });
+  if (!skus.length) return;
+  let rows = [];
+  try {
+    rows = await liveData.loadSellpiaRelationVisuals(skus);
+  } catch (error) {
+    console.warn('relation board visuals unavailable', error);
+    return;
+  }
+  const bySku = new Map(rows.map(row => [String(row.sellpia_sku_code || '').trim(), row]));
+  relationBoardState.nodes.forEach(node => {
+    const visual = bySku.get(String(node.sku || '').trim())
+      || (node.linkedSkus || []).map(sku => bySku.get(String(sku || '').trim())).find(Boolean);
+    if (!visual) return;
+    if (node.nodeType === 'sellpia_sku') {
+      node.productName = node.productName || visual.sellpia_product_name || '';
+      node.optionName = node.optionName || visual.sellpia_option_name || '';
+    }
+    node.imageUrl = visual.sellpia_override_image_url || visual.image_url || node.imageUrl || '';
+  });
 }
 
 function relationBoardDescendantKeys(rootKey) {
@@ -6904,9 +6970,11 @@ function renderRelationBoardProducts() {
 
 function renderRelationBoardCard(node) {
   const parentCount = node.parentKeys.length;
+  const labels = relationBoardCardLabels(node);
   return `<article class="relation-board-node${node.loaded ? ' loaded' : ' context'}${node.level !== null && node.level > 0 && !parentCount ? ' unlinked' : ''}" data-board-node-key="${escapeHtml(node.key)}">
     <button class="relation-board-port input" type="button" data-board-link-in="${escapeHtml(node.key)}" aria-label="이 상품을 자식으로 연결" title="부모의 연결선을 여기에 놓으세요"></button>
-    <div><span>${escapeHtml(relationBoardDisplayIdentity(node))}</span><b title="${escapeHtml(node.displayName)}">${escapeHtml(node.displayName)}</b><em>${parentCount ? `연결 ${formatNumber(parentCount)}개` : node.existing ? '저장된 노드' : '저장 전'}</em></div>
+    ${relationBoardCardImage(node)}
+    <div class="relation-board-node-copy"><span>${escapeHtml(relationBoardDisplayIdentity(node))}</span><b title="${escapeHtml(labels.productName)}">${escapeHtml(labels.productName)}</b><strong title="${escapeHtml(labels.optionName || '옵션명 없음')}">${escapeHtml(labels.optionName || '옵션명 없음')}</strong><em>${parentCount ? `연결 ${formatNumber(parentCount)}개` : node.existing ? '저장된 노드' : '저장 전'}</em></div>
     <div class="relation-board-node-actions"><button type="button" data-board-root="${escapeHtml(node.key)}">최상위</button><button type="button" data-board-unassign="${escapeHtml(node.key)}">미배치</button></div>
     <button class="relation-board-port output" type="button" data-board-link-out="${escapeHtml(node.key)}" aria-label="이 상품에서 자식 연결 시작" title="${node.level === null ? '카드를 단계에 먼저 배치하세요' : '여기서 자식 카드까지 선을 끌어 연결하세요'}"${node.level === null ? ' disabled' : ''}></button>
   </article>`;
@@ -7007,6 +7075,7 @@ async function loadRelationBoardProduct(source, productCode) {
     options = (product.options || []).map(option => ({
       key:`sellpia-sku|${option.sku}`,
       nodeType:'sellpia_sku', source:'sellpia', productCode:product.productCode, optionCode:'', sku:option.sku,
+      productName:product.productName || '', optionName:option.optionName || '', imageUrl:'', linkedSkus:[option.sku],
       displayName:[product.productName, option.optionName].filter(Boolean).join(' · ') || option.sku,
       folderId, relationKind, loaded:true
     }));
@@ -7017,6 +7086,7 @@ async function loadRelationBoardProduct(source, productCode) {
     options = rows.map(row => ({
       key:`seller|${source}|${row.product_code}|${row.option_code || ''}`,
       nodeType:'seller_listing', source, productCode:row.product_code, optionCode:row.option_code || '', sku:'',
+      productName:row.product_name || '', optionName:row.option_name || '', imageUrl:'', linkedSkus:Array.isArray(row.linked_skus) ? row.linked_skus : [],
       displayName:[row.product_name, row.option_name].filter(Boolean).join(' · ') || `${row.product_code} / ${row.option_code || '-'}`,
       folderId, relationKind, loaded:true
     }));
@@ -7038,6 +7108,7 @@ async function loadRelationBoardProduct(source, productCode) {
   });
   relationBoardState.loadedProducts.set(`${source}|${productCode}`, {source, productCode, productName, optionCount:options.length});
   hydrateRelationBoardGraphContext(options.map(option => option.key));
+  await hydrateRelationBoardVisuals();
   renderRelationBoard();
   return options.length;
 }
@@ -7830,10 +7901,19 @@ document.getElementById('relation-board-reset').addEventListener('click', () => 
 document.getElementById('relation-board-save').addEventListener('click', saveRelationBoard);
 
 document.getElementById('relation-drag-board').addEventListener('click', event => {
+  const image = event.target.closest('[data-relation-image]');
+  if (image) { openRelationImageModal(image); return; }
   const root = event.target.closest('[data-board-root]');
   if (root) { moveRelationBoardNode(root.dataset.boardRoot, 0); return; }
   const unassign = event.target.closest('[data-board-unassign]');
   if (unassign) moveRelationBoardNode(unassign.dataset.boardUnassign, null);
+});
+document.getElementById('relation-image-close').addEventListener('click', closeRelationImageModal);
+document.getElementById('relation-image-modal').addEventListener('click', event => {
+  if (event.target === event.currentTarget) closeRelationImageModal();
+});
+document.addEventListener('keydown', event => {
+  if (event.key === 'Escape' && !document.getElementById('relation-image-modal').hidden) closeRelationImageModal();
 });
 
 function applyRelationBoardDropTarget(key, target) {
@@ -7878,7 +7958,8 @@ function createRelationBoardDragGhost(card, event) {
   const ghost = card.cloneNode(true);
   ghost.className = 'relation-board-node relation-board-drag-ghost';
   ghost.removeAttribute('data-board-node-key');
-  ghost.querySelectorAll('button').forEach(button => button.remove());
+  ghost.querySelectorAll('.relation-board-port,.relation-board-node-actions').forEach(item => item.remove());
+  ghost.querySelector('.relation-board-node-image')?.removeAttribute('data-relation-image');
   ghost.style.width = `${card.getBoundingClientRect().width}px`;
   document.body.appendChild(ghost);
   relationBoardState.dragGhost = ghost;

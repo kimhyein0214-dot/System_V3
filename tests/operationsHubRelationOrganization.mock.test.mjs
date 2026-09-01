@@ -36,6 +36,7 @@ assert.doesNotMatch(dragBoard, /component_qty\s*=|component_role\s*=|sellpia_cur
 assert.match(html, /id="relation-folder-list"[\s\S]*class="relation-workspace"[\s\S]*id="relation-edge-list"[\s\S]*id="relation-graph-board"[\s\S]*id="multi-link-organization-form"/, "the default workspace must show scoped one-edge rows before the optional graph and relationship composer");
 assert.match(html, /id="relation-workspace-search"[\s\S]*id="relation-view-list"[\s\S]*id="relation-view-graph"/, "search and an explicit view switch must control when the full relationship explorer appears");
 assert.match(html, /id="relation-product-loader"[\s\S]*id="relation-board-source"[\s\S]*id="relation-board-product-code"[\s\S]*id="relation-drag-board"[\s\S]*id="relation-board-save"/, "operators must load every option by one exact product code and arrange them on a dedicated board");
+assert.match(html, /id="relation-image-modal"[\s\S]*id="relation-image-preview"[\s\S]*id="relation-image-product-name"[\s\S]*id="relation-image-option-name"/, "relationship cards must open a dedicated product image preview");
 assert.match(html, /id="relation-sellpia-search"[\s\S]*id="relation-parent-node"[\s\S]*id="relation-child-node"/, "operators must still prepare nodes and choose upper and lower products directly");
 assert.match(html, /class="multi-link-legacy-workspace"[\s\S]*id="multi-link-body"[\s\S]*id="multi-link-components"/, "legacy SKU quantity and inventory tools must remain available in a collapsed secondary workspace");
 assert.match(html, /id="preset-exclude-combination-skus"[^>]*type="checkbox"/, "view settings must expose dependent combination SKU exclusion");
@@ -49,6 +50,8 @@ assert.match(app, /normalizeRelationBoardBranch[\s\S]*moveRelationBoardNode[\s\S
 assert.match(app, /data-board-link-in[\s\S]*data-board-link-out/, "each relationship card must expose an input and output connector port");
 assert.match(app, /relationBoardPathData[\s\S]*relation-board-link preview[\s\S]*connectRelationBoardNodes/, "parents and children must be connected with visible staged connector lines instead of repeated parent text lanes");
 assert.match(app, /createRelationBoardDragGhost[\s\S]*relation-board-drag-ghost[\s\S]*positionRelationBoardDragGhost/, "card movement must show a cursor-following drag ghost");
+assert.match(app, /relationBoardCardLabels[\s\S]*productName[\s\S]*optionName[\s\S]*relation-board-node-copy/, "relationship cards must keep product and option names on separate visible lines");
+assert.match(app, /relationBoardCardImage[\s\S]*data-relation-image[\s\S]*openRelationImageModal[\s\S]*closeRelationImageModal/, "relationship thumbnails must open and close an enlarged preview without changing relation data");
 assert.doesNotMatch(app, /<span>\$\{escapeHtml\(parent\.displayName\)\}<\/span><b>의 자식<\/b>/, "the board must not repeat the full parent product name above every child list");
 assert.doesNotMatch(app, /relation-board-node[^`]*draggable="true"/, "the relationship board must not depend on browser-native HTML5 drag behavior");
 assert.match(app, /relationBoardChanges[\s\S]*applyRelationBoard[\s\S]*removeEdgeIds/, "the board must review additions and removals before one atomic save");
@@ -60,10 +63,12 @@ assert.match(app, /data-remove-relation-edge[\s\S]*removeRelationEdge/, "operato
 assert.match(app, /saveListingComponentParent/, "the UI must save component dependencies");
 assert.match(data, /list_operations_hub_relation_folders[\s\S]*search_operations_hub_sellpia_product_groups[\s\S]*ensure_operations_hub_sellpia_relation_node[\s\S]*ensure_operations_hub_seller_relation_node[\s\S]*save_operations_hub_relation_edge/, "the data adapter must expose bounded relation-node and edge RPCs");
 assert.match(data, /ensure_operations_hub_sellpia_sku_relation_node[\s\S]*apply_operations_hub_relation_board/, "the data adapter must expose exact Sellpia SKU resolution and atomic board persistence");
+assert.match(data, /loadSellpiaRelationVisuals[\s\S]*sellpia_sku_code,sellpia_product_name,sellpia_option_name,image_url,sellpia_override_image_url/, "the board must fetch only bounded visual fields for loaded SKUs");
 assert.match(pageFirstMigration, /sku_prefix_number asc nulls last[\s\S]*sku_has_numeric_suffix asc[\s\S]*sku_suffix_number asc nulls first/, "ordinary matrix reads must use natural numeric ordering");
 assert.match(css, /relation-workspace-head[\s\S]*relation-edge-row[\s\S]*relation-graph-columns[\s\S]*multi-link-legacy-workspace/, "scoped edges, on-demand graph columns, and collapsed legacy tools must have visible structure");
 assert.match(css, /relation-product-loader[\s\S]*relation-drag-board[\s\S]*relation-board-canvas/, "the product loader and staged node canvas must have visible structure");
 assert.match(css, /relation-board-link[\s\S]*relation-board-port[\s\S]*relation-board-drag-ghost[\s\S]*relation-board-drop-active/, "connector lines, node ports, and the cursor-following card must have visible drag feedback");
+assert.match(css, /relation-board-node-image[\s\S]*relation-board-node-copy[\s\S]*relation-image-modal/, "relationship thumbnails, split labels, and enlarged image preview must have visible structure");
 assert.match(css, /multi-link-component\.is-dependent/, "the preserved SKU detail workspace must retain component dependency styling");
 
 console.log("Operations hub relation organization and natural SKU ordering contract: passed");
