@@ -94,7 +94,7 @@ const MAPPING_SYNC_POLL_INTERVAL_MS = 60000;
 const matrixState = {page:1, pageSize:initialMatrixPageSize, search:'', searchSources:['sellpia','smartstore','makeshop','ably'], status:'all', sort:'sku_asc', excludeCombinationSkus:false, includeRelatedSkuContext:true, advancedFilter:{logic:'and', conditions:[]}, total:0, directCount:0, relatedCount:0, rows:[], loading:false, requestId:0, requestController:null, codeListSkus:[], codeListRows:[], codeListName:''};
 const multiLinkState = {page:1, pageSize:50, search:'', source:'all', relationType:'all', folderId:null, organizationScope:'all', folders:[], foldersLoaded:false, total:0, allTotal:0, loading:false, requestId:0, rows:[], selected:null, loaded:false};
 const relationGraphState = {nodes:[], edges:[], selectedProduct:null, loading:false, requestId:0, searchTimer:null, viewMode:'list', search:'', focusNodeId:null};
-const relationBoardState = {nodes:new Map(), loadedProducts:new Map(), initialEdges:new Map(), levelCount:3, draggingKey:null, pointerDrag:null, nativeDragging:false, saving:false};
+const relationBoardState = {nodes:new Map(), loadedProducts:new Map(), initialEdges:new Map(), levelCount:3, draggingKey:null, pointerDrag:null, connectorDrag:null, dragGhost:null, saving:false};
 const relationImportState = {fileName:'', parsed:null, items:new Map(), choices:new Map(), resolving:false, saving:false};
 const mappingSyncState = {displayedVersion:'', checking:false, autoRefreshing:false, latest:null};
 const matrixRowsBySku = new Map();
@@ -6904,10 +6904,47 @@ function renderRelationBoardProducts() {
 
 function renderRelationBoardCard(node) {
   const parentCount = node.parentKeys.length;
-  return `<article class="relation-board-node${node.loaded ? ' loaded' : ' context'}" data-board-node-key="${escapeHtml(node.key)}">
-    <div><span>${escapeHtml(relationBoardDisplayIdentity(node))}</span><b title="${escapeHtml(node.displayName)}">${escapeHtml(node.displayName)}</b><em>${parentCount > 1 ? `상위 ${formatNumber(parentCount)}곳` : node.existing ? '저장된 노드' : '저장 전'}</em></div>
+  return `<article class="relation-board-node${node.loaded ? ' loaded' : ' context'}${node.level !== null && node.level > 0 && !parentCount ? ' unlinked' : ''}" data-board-node-key="${escapeHtml(node.key)}">
+    <button class="relation-board-port input" type="button" data-board-link-in="${escapeHtml(node.key)}" aria-label="이 상품을 자식으로 연결" title="부모의 연결선을 여기에 놓으세요"></button>
+    <div><span>${escapeHtml(relationBoardDisplayIdentity(node))}</span><b title="${escapeHtml(node.displayName)}">${escapeHtml(node.displayName)}</b><em>${parentCount ? `연결 ${formatNumber(parentCount)}개` : node.existing ? '저장된 노드' : '저장 전'}</em></div>
     <div class="relation-board-node-actions"><button type="button" data-board-root="${escapeHtml(node.key)}">최상위</button><button type="button" data-board-unassign="${escapeHtml(node.key)}">미배치</button></div>
+    <button class="relation-board-port output" type="button" data-board-link-out="${escapeHtml(node.key)}" aria-label="이 상품에서 자식 연결 시작" title="${node.level === null ? '카드를 단계에 먼저 배치하세요' : '여기서 자식 카드까지 선을 끌어 연결하세요'}"${node.level === null ? ' disabled' : ''}></button>
   </article>`;
+}
+
+function relationBoardPathData(startX, startY, endX, endY) {
+  const distance = Math.max(46, Math.abs(endX - startX) * .5);
+  return `M ${startX} ${startY} C ${startX + distance} ${startY}, ${endX - distance} ${endY}, ${endX} ${endY}`;
+}
+
+function renderRelationBoardConnections() {
+  const canvas = document.querySelector('#relation-drag-board .relation-board-canvas');
+  const svg = canvas?.querySelector('.relation-board-links');
+  if (!canvas || !svg) return;
+  const bounds = canvas.getBoundingClientRect();
+  const width = Math.max(canvas.scrollWidth, canvas.clientWidth);
+  const height = Math.max(canvas.scrollHeight, canvas.clientHeight);
+  svg.setAttribute('viewBox', `0 0 ${width} ${height}`);
+  svg.setAttribute('width', String(width));
+  svg.setAttribute('height', String(height));
+  const desired = relationBoardDesiredEdges();
+  svg.innerHTML = [...desired.entries()].map(([edgeKey, edge]) => {
+    const output = canvas.querySelector(`[data-board-link-out="${CSS.escape(edge.parentKey)}"]`);
+    const input = canvas.querySelector(`[data-board-link-in="${CSS.escape(edge.childKey)}"]`);
+    if (!output || !input) return '';
+    const from = output.getBoundingClientRect();
+    const to = input.getBoundingClientRect();
+    const startX = from.left - bounds.left + from.width / 2;
+    const startY = from.top - bounds.top + from.height / 2;
+    const endX = to.left - bounds.left + to.width / 2;
+    const endY = to.top - bounds.top + to.height / 2;
+    const state = relationBoardState.initialEdges.has(edgeKey) ? 'saved' : 'new';
+    return `<path class="relation-board-link ${state}" d="${relationBoardPathData(startX, startY, endX, endY)}"></path>`;
+  }).join('') + '<path class="relation-board-link preview" data-board-link-preview hidden></path>';
+}
+
+function scheduleRelationBoardConnections() {
+  window.requestAnimationFrame(renderRelationBoardConnections);
 }
 
 function renderRelationBoard() {
@@ -6924,31 +6961,22 @@ function renderRelationBoard() {
   const unassigned = nodes.filter(node => node.level === null);
   const maxLevel = Math.max(relationBoardState.levelCount - 1, ...nodes.map(node => node.level ?? 0));
   const columns = [];
-  columns.push(`<section class="relation-board-column unassigned"><header><span>대기</span><b>미배치 옵션</b><em>${formatNumber(unassigned.length)}</em></header><div class="relation-board-column-drop" data-board-drop="unassigned">이곳에 놓으면 현재 상위 관계에서 빠집니다.</div><div>${unassigned.map(renderRelationBoardCard).join('') || '<p>미배치 옵션이 없습니다.</p>'}</div></section>`);
+  columns.push(`<section class="relation-board-column unassigned"><header><span>대기</span><b>미배치 옵션</b><em>${formatNumber(unassigned.length)}</em></header><div class="relation-board-column-drop" data-board-drop="unassigned">카드를 이곳에 놓으면 관계에서 빠집니다.</div><div class="relation-board-node-list">${unassigned.map(renderRelationBoardCard).join('') || '<p>미배치 옵션이 없습니다.</p>'}</div></section>`);
   for (let level = 0; level <= maxLevel; level += 1) {
     const levelNodes = nodes.filter(node => node.level === level);
-    let body = '';
-    if (level === 0) {
-      body = `<div class="relation-board-column-drop" data-board-drop-level="0">이곳에 놓으면 최상위 부모가 됩니다.</div><div>${levelNodes.map(renderRelationBoardCard).join('') || '<p>최상위 상품을 놓아주세요.</p>'}</div>`;
-    } else {
-      const parents = nodes.filter(node => node.level === level - 1);
-      body = parents.length ? parents.map(parent => {
-        const children = levelNodes.filter(node => node.parentKeys[0] === parent.key);
-        return `<section class="relation-board-parent-lane"><header><span>${escapeHtml(parent.displayName)}</span><b>의 자식</b></header><div class="relation-board-parent-drop" data-board-parent-key="${escapeHtml(parent.key)}">여기에 옵션 놓기</div><div>${children.map(renderRelationBoardCard).join('') || '<p>연결된 자식이 없습니다.</p>'}</div></section>`;
-      }).join('') : '<p class="relation-board-level-empty">왼쪽 단계에 부모 상품을 먼저 배치해주세요.</p>';
-      const ungrouped = levelNodes.filter(node => !parents.some(parent => parent.key === node.parentKeys[0]));
-      if (ungrouped.length) body += `<section class="relation-board-parent-lane orphan"><header><span>상위 확인 필요</span></header><div>${ungrouped.map(renderRelationBoardCard).join('')}</div></section>`;
-    }
+    const emptyCopy = level === 0 ? '최상위 상품을 놓아주세요.' : '카드를 놓은 뒤 왼쪽 카드에서 연결선을 끌어주세요.';
+    const body = `<div class="relation-board-column-drop" data-board-drop-level="${level}">${level === 0 ? '최상위 카드 놓기' : `${level + 1}단계 카드 놓기`}</div><div class="relation-board-node-list">${levelNodes.map(renderRelationBoardCard).join('') || `<p class="relation-board-level-empty">${emptyCopy}</p>`}</div>`;
     const title = level === 0 ? '최상위 부모' : level === 1 ? '자식' : level === 2 ? '손자' : `${level + 1}단계 하위`;
     columns.push(`<section class="relation-board-column" data-board-level="${level}"><header><span>${level + 1}단계</span><b>${title}</b><em>${formatNumber(levelNodes.length)}</em></header>${body}</section>`);
   }
-  board.innerHTML = columns.join('');
+  board.innerHTML = `<div class="relation-board-canvas"><svg class="relation-board-links" aria-hidden="true"></svg>${columns.join('')}</div>`;
   const changes = relationBoardChanges();
   const assignedCount = nodes.filter(node => node.level !== null).length;
   document.getElementById('relation-board-summary').textContent = `${formatNumber(nodes.length)}개 옵션·노드 · 배치 ${formatNumber(assignedCount)}개 · 미배치 ${formatNumber(unassigned.length)}개`;
   document.getElementById('relation-board-change-count').textContent = changes.additions.length || changes.removals.length ? `추가 ${formatNumber(changes.additions.length)}건 · 해제 ${formatNumber(changes.removals.length)}건` : '변경 없음';
   document.getElementById('relation-board-change-copy').textContent = changes.additions.length || changes.removals.length ? '저장하면 표시된 관계 변경을 한 번에 반영합니다.' : '드래그한 관계는 저장 버튼을 누르기 전까지 DB에 반영되지 않습니다.';
   document.getElementById('relation-board-save').disabled = relationBoardState.saving || (!changes.additions.length && !changes.removals.length);
+  scheduleRelationBoardConnections();
 }
 
 function resetRelationBoard({confirmChanges = false} = {}) {
@@ -6959,6 +6987,9 @@ function resetRelationBoard({confirmChanges = false} = {}) {
   relationBoardState.initialEdges.clear();
   relationBoardState.levelCount = 3;
   relationBoardState.draggingKey = null;
+  relationBoardState.connectorDrag = null;
+  relationBoardState.dragGhost?.remove();
+  relationBoardState.dragGhost = null;
   renderRelationBoard();
   return true;
 }
@@ -7812,95 +7843,147 @@ function applyRelationBoardDropTarget(key, target) {
     moveRelationBoardNode(key, null);
     return true;
   }
-  if (target.dataset.boardParentKey) {
-    const parent = relationBoardState.nodes.get(target.dataset.boardParentKey);
-    if (parent?.level !== null) moveRelationBoardNode(key, Number(parent.level) + 1, parent.key);
-    return true;
-  }
   const level = Number(target.dataset.boardDropLevel);
-  if (level === 0) {
-    moveRelationBoardNode(key, 0);
-    return true;
-  }
-  const parents = [...relationBoardState.nodes.values()].filter(node => node.level === level - 1);
-  if (parents.length === 1) moveRelationBoardNode(key, level, parents[0].key);
-  else showToast('왼쪽에 부모가 여러 개입니다. 원하는 부모 이름 아래의 ‘여기에 옵션 놓기’ 영역에 드롭해주세요.');
+  if (Number.isFinite(level)) moveRelationBoardNode(key, level);
   return true;
+}
+
+function connectRelationBoardNodes(parentKey, childKey) {
+  const parent = relationBoardState.nodes.get(parentKey);
+  const child = relationBoardState.nodes.get(childKey);
+  if (!parent || !child || parent.level === null) return false;
+  if (parentKey === childKey || relationBoardDescendantKeys(childKey).has(parentKey)) {
+    showToast('자기 자신이나 현재 상위 상품으로 순환 연결할 수 없습니다.');
+    return false;
+  }
+  if (child.parentKeys.includes(parentKey)) {
+    showToast('이미 연결된 관계입니다.');
+    return false;
+  }
+  child.parentKeys = [...child.parentKeys, parentKey];
+  const parentLevels = child.parentKeys.map(key => relationBoardState.nodes.get(key)?.level).filter(level => level !== null && level !== undefined);
+  child.level = Math.max(...parentLevels) + 1;
+  child.touched = true;
+  normalizeRelationBoardBranch(child.key);
+  relationBoardState.levelCount = Math.max(relationBoardState.levelCount, child.level + 1);
+  renderRelationBoard();
+  return true;
+}
+
+function relationBoardTargetAt(x, y, selector) {
+  return document.elementFromPoint(x, y)?.closest(selector) || null;
+}
+
+function createRelationBoardDragGhost(card, event) {
+  const ghost = card.cloneNode(true);
+  ghost.className = 'relation-board-node relation-board-drag-ghost';
+  ghost.removeAttribute('data-board-node-key');
+  ghost.querySelectorAll('button').forEach(button => button.remove());
+  ghost.style.width = `${card.getBoundingClientRect().width}px`;
+  document.body.appendChild(ghost);
+  relationBoardState.dragGhost = ghost;
+  positionRelationBoardDragGhost(event.clientX, event.clientY);
+}
+
+function positionRelationBoardDragGhost(x, y) {
+  const ghost = relationBoardState.dragGhost;
+  if (ghost) ghost.style.transform = `translate3d(${x + 14}px, ${y + 14}px, 0)`;
+}
+
+function clearRelationBoardDropFeedback() {
+  document.querySelectorAll('.relation-board-drop-active,.relation-board-port.link-target').forEach(item => item.classList.remove('relation-board-drop-active', 'link-target'));
 }
 
 function clearRelationBoardDrag() {
   document.querySelectorAll('.relation-board-node.dragging').forEach(item => item.classList.remove('dragging'));
-  document.querySelectorAll('.relation-board-drop-active').forEach(item => item.classList.remove('relation-board-drop-active'));
+  clearRelationBoardDropFeedback();
+  relationBoardState.dragGhost?.remove();
+  relationBoardState.dragGhost = null;
   relationBoardState.draggingKey = null;
   relationBoardState.pointerDrag = null;
 }
 
-document.getElementById('relation-drag-board').addEventListener('dragstart', event => {
-  const card = event.target.closest('[data-board-node-key]');
-  if (!card) return;
-  relationBoardState.draggingKey = card.dataset.boardNodeKey;
-  relationBoardState.nativeDragging = true;
-  card.classList.add('dragging');
-  event.dataTransfer.effectAllowed = 'move';
-  event.dataTransfer.setData('text/plain', relationBoardState.draggingKey);
-});
-
-document.getElementById('relation-drag-board').addEventListener('dragend', event => {
-  event.target.closest('[data-board-node-key]')?.classList.remove('dragging');
-  relationBoardState.nativeDragging = false;
-  clearRelationBoardDrag();
-});
-
-document.getElementById('relation-drag-board').addEventListener('dragover', event => {
-  const target = event.target.closest('[data-board-parent-key],[data-board-drop-level],[data-board-drop]');
-  if (!target || !relationBoardState.draggingKey) return;
-  event.preventDefault();
-  event.dataTransfer.dropEffect = 'move';
-  target.classList.add('relation-board-drop-active');
-});
-
-document.getElementById('relation-drag-board').addEventListener('dragleave', event => {
-  const target = event.target.closest('[data-board-parent-key],[data-board-drop-level],[data-board-drop]');
-  if (target && !target.contains(event.relatedTarget)) target.classList.remove('relation-board-drop-active');
-});
-
-document.getElementById('relation-drag-board').addEventListener('drop', event => {
-  const target = event.target.closest('[data-board-parent-key],[data-board-drop-level],[data-board-drop]');
-  const key = relationBoardState.draggingKey || event.dataTransfer.getData('text/plain');
-  if (!target || !key) return;
-  event.preventDefault();
-  applyRelationBoardDropTarget(key, target);
-});
-
 document.getElementById('relation-drag-board').addEventListener('pointerdown', event => {
+  const output = event.target.closest('[data-board-link-out]');
+  if (output && event.button === 0) {
+    event.preventDefault();
+    const canvas = output.closest('.relation-board-canvas');
+    const bounds = canvas?.getBoundingClientRect();
+    const port = output.getBoundingClientRect();
+    if (!canvas || !bounds) return;
+    relationBoardState.connectorDrag = {
+      parentKey:output.dataset.boardLinkOut,
+      pointerId:event.pointerId,
+      startX:port.left - bounds.left + port.width / 2,
+      startY:port.top - bounds.top + port.height / 2
+    };
+    output.classList.add('linking');
+    event.currentTarget.setPointerCapture?.(event.pointerId);
+    return;
+  }
   if (event.pointerType === 'touch' || event.target.closest('button')) return;
   const card = event.target.closest('[data-board-node-key]');
   if (!card || event.button !== 0) return;
   relationBoardState.draggingKey = card.dataset.boardNodeKey;
-  relationBoardState.pointerDrag = {key:card.dataset.boardNodeKey, x:event.clientX, y:event.clientY, moved:false};
+  relationBoardState.pointerDrag = {key:card.dataset.boardNodeKey, pointerId:event.pointerId, x:event.clientX, y:event.clientY, moved:false, card};
   card.classList.add('dragging');
+  event.currentTarget.setPointerCapture?.(event.pointerId);
 });
 
 document.getElementById('relation-drag-board').addEventListener('pointermove', event => {
+  const connector = relationBoardState.connectorDrag;
+  if (connector) {
+    const canvas = document.querySelector('#relation-drag-board .relation-board-canvas');
+    const preview = canvas?.querySelector('[data-board-link-preview]');
+    const bounds = canvas?.getBoundingClientRect();
+    if (!canvas || !preview || !bounds) return;
+    const endX = event.clientX - bounds.left;
+    const endY = event.clientY - bounds.top;
+    preview.removeAttribute('hidden');
+    preview.setAttribute('d', relationBoardPathData(connector.startX, connector.startY, endX, endY));
+    clearRelationBoardDropFeedback();
+    const target = relationBoardTargetAt(event.clientX, event.clientY, '[data-board-link-in]');
+    if (target && target.dataset.boardLinkIn !== connector.parentKey) target.classList.add('link-target');
+    return;
+  }
   const drag = relationBoardState.pointerDrag;
   if (!drag) return;
   if (!drag.moved && Math.hypot(event.clientX - drag.x, event.clientY - drag.y) < 6) return;
-  drag.moved = true;
-  document.querySelectorAll('.relation-board-drop-active').forEach(item => item.classList.remove('relation-board-drop-active'));
-  event.target.closest('[data-board-parent-key],[data-board-drop-level],[data-board-drop]')?.classList.add('relation-board-drop-active');
+  if (!drag.moved) {
+    drag.moved = true;
+    createRelationBoardDragGhost(drag.card, event);
+  }
+  positionRelationBoardDragGhost(event.clientX, event.clientY);
+  clearRelationBoardDropFeedback();
+  relationBoardTargetAt(event.clientX, event.clientY, '[data-board-drop-level],[data-board-drop]')?.classList.add('relation-board-drop-active');
 });
 
 document.getElementById('relation-drag-board').addEventListener('pointerup', event => {
+  const connector = relationBoardState.connectorDrag;
+  if (connector) {
+    const target = relationBoardTargetAt(event.clientX, event.clientY, '[data-board-link-in]');
+    document.querySelectorAll('.relation-board-port.linking').forEach(item => item.classList.remove('linking'));
+    relationBoardState.connectorDrag = null;
+    clearRelationBoardDropFeedback();
+    if (target) connectRelationBoardNodes(connector.parentKey, target.dataset.boardLinkIn);
+    else scheduleRelationBoardConnections();
+    return;
+  }
   const drag = relationBoardState.pointerDrag;
   if (!drag) return;
-  const target = event.target.closest('[data-board-parent-key],[data-board-drop-level],[data-board-drop]');
+  const target = relationBoardTargetAt(event.clientX, event.clientY, '[data-board-drop-level],[data-board-drop]');
   if (drag.moved && target) applyRelationBoardDropTarget(drag.key, target);
   clearRelationBoardDrag();
 });
 
 document.getElementById('relation-drag-board').addEventListener('pointercancel', () => {
-  if (!relationBoardState.nativeDragging) clearRelationBoardDrag();
+  document.querySelectorAll('.relation-board-port.linking').forEach(item => item.classList.remove('linking'));
+  relationBoardState.connectorDrag = null;
+  clearRelationBoardDrag();
+  scheduleRelationBoardConnections();
 });
+
+window.addEventListener('resize', scheduleRelationBoardConnections);
 
 document.getElementById('relation-tree-refresh').addEventListener('click', () => loadRelationGraph());
 
