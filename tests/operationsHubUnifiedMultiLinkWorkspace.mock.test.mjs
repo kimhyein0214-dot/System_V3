@@ -48,6 +48,17 @@ assert.match(
   /renderMultiLinkRows[\s\S]*?<tr[\s\S]*?multi-link-row[\s\S]*?<td/i,
   '통합 작업 본문은 관계와 번들 결과를 셀 행으로 렌더링해야 한다',
 );
+assert.match(
+  app,
+  /function renderMultiLinkRows[\s\S]*?relationGraphState\.edges[\s\S]*?bundleGraphState\.bundles[\s\S]*?multiLinkState\.rows/,
+  '전체 연결 탭은 판매처 매핑만이 아니라 상품 관계와 세트 번들을 같은 매트릭스에 합쳐야 한다',
+);
+assert.match(
+  app,
+  /row\.product_name \|\| component\?\.productName[\s\S]*?row\.option_name \|\| component\?\.optionName/,
+  '판매처 원본 이름이 비어 있으면 연결된 셀피아 상품명과 옵션명으로 보완해야 한다',
+);
+assert.match(app, /셀피아 연결 정보로 보완/, '보완된 이름은 판매처 원본 이름으로 오해하지 않도록 출처를 표시해야 한다');
 
 // Photos are required in every relevant workspace, not only in the old set
 // management card. The shared renderer keeps missing-image and enlargement
@@ -69,7 +80,7 @@ for (const [family, section] of [
 ]) {
   assert.match(
     section,
-    /(?:render(?:MultiLink(?:Photo|Thumb|Image)|BundleThumb)|relationNodeThumb)\(/,
+    /(?:render(?:MultiLink(?:Photo|Thumb|Image)|BundleThumb)|relationNodeThumb|unifiedConnectionNodeCard)\(/,
     `${family} 보기의 각 상품 행에도 공통 사진이 표시되어야 한다`,
   );
 }
@@ -106,6 +117,16 @@ assert.match(
   css,
   /multi-link-workspace-tabs[\s\S]*?(?:multi-link-workspace-matrix|multi-link-cell-matrix)[\s\S]*?(?:border-collapse|border)/i,
   '통합 작업 화면은 탭·표·셀 경계를 시각적으로 구분해야 한다',
+);
+assert.match(
+  css,
+  /relation-matrix \.relation-compact-node>em[\s\S]*?width:max-content[\s\S]*?min-height:18px[\s\S]*?font-size:9px/i,
+  '관계 유형 배지는 상품명 영역을 누르지 않도록 내용 너비의 작은 배지여야 한다',
+);
+assert.match(
+  css,
+  /relation-compact-node>div b[\s\S]*?white-space:normal[\s\S]*?overflow-wrap:anywhere[\s\S]*?word-break:keep-all/i,
+  '관계 상품명은 좁은 세로 글자열이 아니라 셀 전체 폭에서 여러 줄로 보여야 한다',
 );
 assert.match(
   css,

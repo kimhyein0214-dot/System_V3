@@ -7,14 +7,14 @@
     <title>System V3 · 상품 운영 허브</title>
     <link rel="preconnect" href="https://cdnjs.cloudflare.com" crossorigin>
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/pretendard/1.3.9/static/pretendard.css">
-    <link rel="stylesheet" href="./style.css?v=20260901-phase2-v68">
-    <link rel="stylesheet" href="./inventory.css?v=20260901-phase2-v68">
-    <link rel="stylesheet" href="./price-rule-lab.css?v=20260901-phase2-v68">
-    <link rel="stylesheet" href="./ui-scale-base.css?v=20260901-phase2-v68">
-    <link rel="stylesheet" href="./ui-scale-matrix.css?v=20260901-phase2-v68">
-    <link rel="stylesheet" href="./ui-scale-workspaces.css?v=20260901-phase2-v68">
-    <link rel="stylesheet" href="./channels-page.css?v=20260901-phase2-v68">
-    <link rel="stylesheet" href="./attributes-page.css?v=20260901-phase2-v68">
+    <link rel="stylesheet" href="./style.css?v=20260901-unified-links-v70">
+    <link rel="stylesheet" href="./inventory.css?v=20260901-unified-links-v70">
+    <link rel="stylesheet" href="./price-rule-lab.css?v=20260901-unified-links-v70">
+    <link rel="stylesheet" href="./ui-scale-base.css?v=20260901-unified-links-v70">
+    <link rel="stylesheet" href="./ui-scale-matrix.css?v=20260901-unified-links-v70">
+    <link rel="stylesheet" href="./ui-scale-workspaces.css?v=20260901-unified-links-v70">
+    <link rel="stylesheet" href="./channels-page.css?v=20260901-unified-links-v70">
+    <link rel="stylesheet" href="./attributes-page.css?v=20260901-unified-links-v70">
   </head>
   <body>
     <div class="app-shell">
@@ -437,9 +437,9 @@
                   </div>
                   <div id="multi-link-workspace-body" class="multi-link-legacy-grid">
                     <section class="multi-link-table-card">
-                      <table id="multi-link-workspace-matrix" class="multi-link-table">
-                        <thead><tr><th>사진</th><th>관리 분류</th><th>유형</th><th>판매처</th><th>상품코드</th><th>옵션코드</th><th>상품명 / 옵션명</th><th>구성</th><th>판매처 / 계산재고</th></tr></thead>
-                        <tbody id="multi-link-body"><tr class="multi-link-empty"><td colspan="9">다중·조합 연결을 불러오는 중입니다.</td></tr></tbody>
+                      <table id="multi-link-workspace-matrix" class="multi-link-table unified-connection-matrix">
+                        <thead><tr><th>구분</th><th>상위·판매처 상품</th><th>연결</th><th>하위·셀피아 상품</th></tr></thead>
+                        <tbody id="multi-link-body"><tr class="multi-link-empty"><td colspan="4">전체 연결을 불러오는 중입니다.</td></tr></tbody>
                       </table>
                       <div class="multi-link-foot"><span id="multi-link-range">-</span><div><button id="multi-link-prev" disabled>‹</button><b id="multi-link-page">1</b><button id="multi-link-next" disabled>›</button></div></div>
                     </section>
@@ -849,19 +849,19 @@
     <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.112.3/dist/umd/supabase.js"></script>
-    <script src="./seller-source-parsers.js?v=20260901-phase2-v68"></script>
-    <script src="./seller-export-adapter.js?v=20260901-phase2-v68"></script>
-    <script src="./matrix-csv-export.js?v=20260901-phase2-v68"></script>
-    <script src="./discount-price-math.js?v=20260901-phase2-v68"></script>
-    <script src="./source-refresh-verifier.js?v=20260901-phase2-v68"></script>
-    <script src="./relation-import-parser.js?v=20260901-phase2-v68"></script>
-    <script src="./bundle-import-parser.js?v=20260901-phase2-v68"></script>
-    <script src="./seller-bundle-import-parser.js?v=20260901-phase2-v68"></script>
-    <script src="./sellpia-source-parser.js?v=20260901-phase2-v68"></script>
-    <script src="./data-service.js?v=20260901-phase2-v68"></script>
-    <script src="./channels-page.js?v=20260901-phase2-v68"></script>
-    <script src="./app.js?v=20260901-phase2-v68"></script>
-    <script src="./attributes-page.js?v=20260901-phase2-v68"></script>
-    <script src="./price-rule-lab.js?v=20260901-phase2-v68"></script>
+    <script src="./seller-source-parsers.js?v=20260901-unified-links-v70"></script>
+    <script src="./seller-export-adapter.js?v=20260901-unified-links-v70"></script>
+    <script src="./matrix-csv-export.js?v=20260901-unified-links-v70"></script>
+    <script src="./discount-price-math.js?v=20260901-unified-links-v70"></script>
+    <script src="./source-refresh-verifier.js?v=20260901-unified-links-v70"></script>
+    <script src="./relation-import-parser.js?v=20260901-unified-links-v70"></script>
+    <script src="./bundle-import-parser.js?v=20260901-unified-links-v70"></script>
+    <script src="./seller-bundle-import-parser.js?v=20260901-unified-links-v70"></script>
+    <script src="./sellpia-source-parser.js?v=20260901-unified-links-v70"></script>
+    <script src="./data-service.js?v=20260901-unified-links-v70"></script>
+    <script src="./channels-page.js?v=20260901-unified-links-v70"></script>
+    <script src="./app.js?v=20260901-unified-links-v70"></script>
+    <script src="./attributes-page.js?v=20260901-unified-links-v70"></script>
+    <script src="./price-rule-lab.js?v=20260901-unified-links-v70"></script>
   </body>
 </html>

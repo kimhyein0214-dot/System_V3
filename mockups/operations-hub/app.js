@@ -8217,35 +8217,88 @@ function orderedDependencyComponents(components) {
   return result;
 }
 
+function unifiedConnectionNodeCard({imageUrl = '', identity = '-', productName = '', optionName = '', badge = '', fallback = false} = {}) {
+  return `<article class="unified-connection-node">
+    ${renderBundleThumb(imageUrl, productName, optionName)}
+    <div><span>${escapeHtml(identity)}</span><b title="${escapeHtml(productName || '상품명 없음')}">${escapeHtml(productName || '상품명 없음')}</b><strong title="${escapeHtml(optionName || '옵션명 없음')}">${escapeHtml(optionName || '옵션명 없음')}</strong>${fallback ? '<small>셀피아 연결 정보로 보완</small>' : ''}</div>
+    ${badge ? `<em>${escapeHtml(badge)}</em>` : ''}
+  </article>`;
+}
+
+function unifiedRelationNodeCard(node) {
+  const identity = node?.nodeType === 'sellpia_product'
+    ? `셀피아 상품 ${node.sellpiaProductCode || '-'}`
+    : node?.nodeType === 'sellpia_sku'
+      ? `셀피아 SKU ${node.sellpiaSkuCode || '-'}`
+      : node?.nodeType === 'seller_listing'
+        ? `${multiLinkChannelLabel(node.source)} ${node.sellerProductCode || '-'}${node.sellerOptionCode ? ` / ${node.sellerOptionCode}` : ''}`
+        : '직접 관계 노드';
+  return unifiedConnectionNodeCard({
+    imageUrl:node?.imageUrl || node?.image_url || '',
+    identity,
+    productName:node?.productName || node?.displayName || '',
+    optionName:node?.optionName || '',
+    badge:RELATION_KIND_LABELS[node?.relationKind] || '직접 분류'
+  });
+}
+
+function unifiedConnectionSearchMatch(...values) {
+  const query = String(multiLinkState.search || '').trim().toLocaleLowerCase();
+  if (!query) return true;
+  return values.some(value => String(value || '').toLocaleLowerCase().includes(query));
+}
+
 function renderMultiLinkRows() {
   const body = document.getElementById('multi-link-body');
-  if (!multiLinkState.rows.length) {
-    const copy = multiLinkState.relationType === 'complex'
-      ? '현재 조회 조건에 해당하는 다중·조합 연결이 없습니다. 오른쪽에서 새 구성을 추가할 수 있습니다.'
-      : '조회 조건에 해당하는 연결이 없습니다.';
-    body.innerHTML = `<tr class="multi-link-empty"><td colspan="9">${escapeHtml(copy)}</td></tr>`;
+  const selectedKey = multiLinkKey(multiLinkState.selected);
+  const showManagedConnections = multiLinkState.source === 'all' && multiLinkState.relationType === 'all';
+  const relationById = new Map(relationGraphState.nodes.map(node => [String(node.nodeId), node]));
+  const relationRows = showManagedConnections ? relationGraphState.edges.map(edge => {
+    const parent = relationById.get(String(edge.parentNodeId));
+    const child = relationById.get(String(edge.childNodeId));
+    if (!parent || !child || !unifiedConnectionSearchMatch(relationNodeLabel(parent), relationNodeLabel(child))) return '';
+    return `<tr class="unified-connection-row relation-connection-row" data-relation-edge-id="${Number(edge.edgeId)}">
+      <td><span class="unified-connection-family relation">상·하위 관계</span></td>
+      <td>${unifiedRelationNodeCard(parent)}</td>
+      <td class="unified-link-cell"><span>상위 → 하위</span><i>→</i><small>${escapeHtml(edge.folderName || '관계 연결')}</small></td>
+      <td>${unifiedRelationNodeCard(child)}</td>
+    </tr>`;
+  }).filter(Boolean) : [];
+  const bundleRows = showManagedConnections ? bundleGraphState.bundles.flatMap(bundle => bundle.components.map(component => {
+    if (!unifiedConnectionSearchMatch(bundle.bundleSkuCode, bundle.productName, bundle.optionName, component.componentSkuCode, component.productName, component.optionName)) return '';
+    return `<tr class="unified-connection-row bundle-connection-row" data-bundle-component-id="${component.componentId || ''}">
+      <td><span class="unified-connection-family bundle">세트·번들</span></td>
+      <td>${unifiedConnectionNodeCard({imageUrl:bundle.imageUrl, identity:`세트 SKU ${bundle.bundleSkuCode || '-'}`, productName:bundle.productName, optionName:bundle.optionName, badge:'세트'})}</td>
+      <td class="unified-link-cell"><span>${escapeHtml(component.role === 'packaging' ? '포장재' : '구성품')} × ${formatNumber(component.qty)}</span><i>→</i><small>세트 구성</small></td>
+      <td>${unifiedConnectionNodeCard({imageUrl:component.imageUrl, identity:`${component.nestedBundleId ? '하위 세트' : '구성품'} SKU ${component.componentSkuCode || '-'}`, productName:component.productName, optionName:component.optionName, badge:component.nestedBundleId ? '하위 세트' : '구성품'})}</td>
+    </tr>`;
+  }).filter(Boolean)) : [];
+  const sellerRows = multiLinkState.rows.flatMap(row => {
+    const components = Array.isArray(row.components) ? row.components : [];
+    const targets = components.length ? components : [null];
+    return targets.map(component => {
+      const fallbackProduct = !row.product_name && Boolean(component?.productName);
+      const fallbackOption = !row.option_name && Boolean(component?.optionName);
+      const productName = row.product_name || component?.productName || '';
+      const optionName = row.option_name || component?.optionName || '';
+      return `<tr class="multi-link-row unified-connection-row${selectedKey === multiLinkKey(row) ? ' selected' : ''}${row.inventory_change_id ? ' has-draft' : ''}" data-multi-link-key="${escapeHtml(multiLinkKey(row))}">
+        <td><span class="unified-connection-family seller ${escapeHtml(row.source_channel)}">판매처 연결</span></td>
+        <td>${unifiedConnectionNodeCard({imageUrl:component?.imageUrl || '', identity:`${multiLinkChannelLabel(row.source_channel)} ${row.product_code || '-'}${row.option_code ? ` / ${row.option_code}` : ''}`, productName, optionName, badge:multiLinkRelationLabel(row.relation_type, row.component_count, row.max_listing_count), fallback:fallbackProduct || fallbackOption})}</td>
+        <td class="unified-link-cell"><span>SKU 매핑 × ${formatNumber(component?.qty || 1)}</span><i>→</i><small>${escapeHtml(row.folder_name || '미분류')} · ${escapeHtml(row.group_name || RELATION_KIND_LABELS[row.relation_kind] || '기존 연결')}</small></td>
+        <td>${component ? unifiedConnectionNodeCard({imageUrl:component.imageUrl, identity:`셀피아 SKU ${component.sku || '-'}`, productName:component.productName, optionName:component.optionName, badge:component.role === 'primary' ? '기준 SKU' : '연결 SKU'}) : unifiedConnectionNodeCard({identity:'셀피아 SKU 미연결', productName:'연결 정보 없음', optionName:'-'})}</td>
+      </tr>`;
+    });
+  });
+  const groups = [
+    ['상품 관계', relationRows],
+    ['세트·번들 구성', bundleRows],
+    ['판매처 ↔ 셀피아 연결', sellerRows]
+  ].filter(([, rows]) => rows.length);
+  if (!groups.length) {
+    body.innerHTML = '<tr class="multi-link-empty"><td colspan="4">조회 조건에 해당하는 전체 연결이 없습니다.</td></tr>';
     return;
   }
-  const selectedKey = multiLinkKey(multiLinkState.selected);
-  body.innerHTML = multiLinkState.rows.map(row => {
-    const components = Array.isArray(row.components) ? row.components : [];
-    const summary = components.slice(0, 3).map(item => `<span>${escapeHtml(item.sku)} × ${formatNumber(item.qty)}</span>`).join('');
-    const overflow = components.length > 3 ? `<em>+${components.length - 3}</em>` : '';
-    const stock = row.calculated_stock === null || row.calculated_stock === undefined ? '-' : formatNumber(row.calculated_stock);
-    const sellerStock = row.seller_stock === null || row.seller_stock === undefined ? '-' : formatNumber(row.seller_stock);
-    const draft = row.inventory_change_id ? `<em>수정안 ${formatNullableNumber(row.inventory_draft_stock)} · ${escapeHtml(QUEUE_STATUS_LABELS[row.inventory_draft_status] || row.inventory_draft_status)}</em>` : '';
-    const visual = components.find(component => component.imageUrl) || components[0] || {};
-    return `<tr class="multi-link-row${selectedKey === multiLinkKey(row) ? ' selected' : ''}${row.inventory_change_id ? ' has-draft' : ''}" data-multi-link-key="${escapeHtml(multiLinkKey(row))}">
-      <td class="multi-link-photo-cell">${renderBundleThumb(visual.imageUrl, visual.productName || row.product_name, visual.optionName || row.option_name)}</td>
-      <td class="multi-link-folder-cell${row.folder_id ? '' : ' unorganized'}"><span>${escapeHtml(row.folder_name || '미분류')}</span><b>${escapeHtml(row.group_name || RELATION_KIND_LABELS[row.relation_kind] || '조합 이름 없음')}</b></td>
-      <td><span class="relation-pill ${escapeHtml(row.relation_type)}">${escapeHtml(multiLinkRelationLabel(row.relation_type, row.component_count, row.max_listing_count))}</span></td>
-      <td><span class="multi-link-channel ${escapeHtml(row.source_channel)}"><i></i>${escapeHtml(multiLinkChannelLabel(row.source_channel))}</span></td>
-      <td class="code-cell">${escapeHtml(row.product_code || '-')}</td><td class="code-cell">${escapeHtml(row.option_code || '-')}</td>
-      <td class="multi-link-name"><b title="${escapeHtml(row.product_name || '')}">${escapeHtml(row.product_name || '상품명 없음')}</b><span title="${escapeHtml(row.option_name || '')}">${escapeHtml(row.option_name || '옵션명 없음')}</span></td>
-      <td><div class="multi-link-components-summary">${summary}${overflow}</div></td>
-      <td class="multi-link-stock${stock === '-' ? ' unknown' : ''}"><b>${sellerStock} → ${stock}</b><small>원본 → 계산</small>${draft}</td>
-    </tr>`;
-  }).join('');
+  body.innerHTML = groups.map(([label, rows]) => `<tr class="unified-connection-group"><td colspan="4"><b>${escapeHtml(label)}</b><span>${formatNumber(rows.length)}건</span></td></tr>${rows.join('')}`).join('');
 }
 
 async function enrichMultiLinkRowVisuals(rows, requestId) {
@@ -8382,9 +8435,13 @@ async function loadMultiLinks({resetPage = false, selectKey = '', forceLegacy = 
   const requestId = ++multiLinkState.requestId;
   multiLinkState.loading = true;
   const body = document.getElementById('multi-link-body');
-  body.innerHTML = '<tr class="multi-link-empty loading"><td colspan="9">Supabase에서 판매처 연결 구조를 불러오는 중입니다.</td></tr>';
+  body.innerHTML = '<tr class="multi-link-empty loading"><td colspan="4">Supabase에서 전체 연결 구조를 불러오는 중입니다.</td></tr>';
   try {
-    await Promise.all([loadRelationFolders(), loadRelationGraph()]);
+    await Promise.all([
+      loadRelationFolders(),
+      loadRelationGraph(),
+      bundleGraphState.loaded ? Promise.resolve() : loadBundleGraph({query:''})
+    ]);
     const result = await liveData.loadListingGraph({
       source:multiLinkState.source,
       relationType:multiLinkState.relationType,
@@ -8406,8 +8463,10 @@ async function loadMultiLinks({resetPage = false, selectKey = '', forceLegacy = 
     const last = Math.min(result.page * result.pageSize, result.count);
     const wantedKey = selectKey || multiLinkKey(multiLinkState.selected);
     multiLinkState.selected = multiLinkState.rows.find(item => multiLinkKey(item) === wantedKey) || null;
-    document.getElementById('multi-link-count').textContent = formatNumber(result.count);
-    document.getElementById('multi-link-range').textContent = `${formatNumber(first)}–${formatNumber(last)} / ${formatNumber(result.count)}`;
+    const relationCount = multiLinkState.source === 'all' && multiLinkState.relationType === 'all' ? relationGraphState.edges.length : 0;
+    const bundleCount = multiLinkState.source === 'all' && multiLinkState.relationType === 'all' ? bundleGraphState.bundles.reduce((count, bundle) => count + bundle.components.length, 0) : 0;
+    document.getElementById('multi-link-count').textContent = formatNumber(result.count + relationCount + bundleCount);
+    document.getElementById('multi-link-range').textContent = `판매처 ${formatNumber(first)}–${formatNumber(last)} / ${formatNumber(result.count)} · 관계 ${formatNumber(relationCount)} · 세트 ${formatNumber(bundleCount)}`;
     document.getElementById('multi-link-page').textContent = result.page;
     document.getElementById('multi-link-prev').disabled = result.page <= 1;
     document.getElementById('multi-link-next').disabled = last >= result.count;
