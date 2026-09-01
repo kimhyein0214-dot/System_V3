@@ -11,6 +11,6 @@ assert.doesNotMatch(html, /<section class="status-strip"/, 'the redundant full-w
 assert.match(app, /SIDEBAR_COLLAPSED_KEY = 'system-v3-primary-sidebar-collapsed'[\s\S]*?classList\.toggle\('sidebar-collapsed'[\s\S]*?setAttribute\('aria-expanded'[\s\S]*?localStorage\.setItem\(SIDEBAR_COLLAPSED_KEY/, 'sidebar state must remain accessible and persist across refreshes');
 assert.match(css, /\.app-shell\.sidebar-collapsed \.main-grid\{grid-template-columns:0 minmax\(0,1fr\)[\s\S]*?\.app-shell\.sidebar-collapsed \.sidebar\{visibility:hidden/, 'collapsing the sidebar must give its full width to the content area');
 assert.match(css, /\.side-metrics-grid\{display:grid;grid-template-columns:repeat\(2,minmax\(0,1fr\)\)[\s\S]*?\.side-metric em\{display:none\}/, 'sidebar metrics must use a compact two-column presentation');
-assert.match(html, /style\.css\?v=20260901-seller-bundle-v66[\s\S]*?app\.js\?v=20260901-seller-bundle-v66/, 'the deployed page must invalidate cached shell assets');
+assert.match(html, /style\.css\?v=20260901-ui-scale-v67[\s\S]*?app\.js\?v=20260901-ui-scale-v67/, 'the deployed page must invalidate cached shell assets');
 
 console.log('operations hub collapsible sidebar contract tests passed');

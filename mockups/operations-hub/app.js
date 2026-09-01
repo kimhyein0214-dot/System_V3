@@ -9297,8 +9297,21 @@ document.getElementById('inbound-cost-modal-save').addEventListener('click', asy
 });
 
 const SIDEBAR_COLLAPSED_KEY = 'system-v3-primary-sidebar-collapsed';
+const UI_DENSITY_KEY = 'system-v3-ui-density';
 const appShell = document.querySelector('.app-shell');
 const sidebarToggle = document.getElementById('sidebar-toggle');
+const uiDensitySelect = document.getElementById('ui-density-select');
+
+function setUiDensity(value, {persist = true} = {}) {
+  const density = value === 'compact' ? 'compact' : 'comfortable';
+  appShell.classList.toggle('ui-density-compact', density === 'compact');
+  appShell.dataset.uiDensity = density;
+  if (uiDensitySelect) uiDensitySelect.value = density;
+  if (persist) localStorage.setItem(UI_DENSITY_KEY, density);
+}
+
+uiDensitySelect?.addEventListener('change', event => setUiDensity(event.currentTarget.value));
+setUiDensity(localStorage.getItem(UI_DENSITY_KEY), {persist:false});
 
 function setSidebarCollapsed(collapsed, {persist = true} = {}) {
   const nextCollapsed = Boolean(collapsed);
