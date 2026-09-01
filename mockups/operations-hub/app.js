@@ -6,67 +6,6 @@ const sourceConfig = {
   survey: {name:'재고조사 완료 파일', initial:'#', cls:'sellpia', guide:'담당자가 조사 완료한 재고 파일 1개를 올려주세요.', detail:'파일 1개 · 셀피아 SKU 포함', files:1}
 };
 
-const tableSamples = {
-  matching: {
-    columns:['셀피아 SKU','자사코드','상품명 / 옵션','판매처','연결상태','최근 수정'],
-    rows:[
-      ['1014-1','[P] C-07-01','NEW 컬러 큐빅 별 피어싱 · 크리스탈','스마트스토어','연결 완료','오늘 12:41'],
-      ['11035-124','[P] R-18-24','베이직 링 피어싱 · 실버 8mm','메이크샵','연결 완료','오늘 11:58'],
-      ['11246-13','[P] B-04-13','큐빅 바벨 피어싱 · 골드','에이블리','미매칭','오늘 11:42'],
-      ['1280-18','[P] S-11-18','심플 미니 큐빅 피어싱 · 라이트핑크','스마트스토어','연결 완료','어제 17:31']]
-  },
-  inventory: {
-    columns:['셀피아 SKU','자사코드','조사수량','피킹완료','미송서랍','실재고','상태'],
-    rows:[
-      ['1001-1','[P] A-01-01','96','2','0','98','정상'],
-      ['10005-1','[P] E-11-01','78','0','1','79','확인 필요'],
-      ['1014-1','[P] C-07-01','100','3','0','103','정상'],
-      ['11057-4','[P] T-03-04','92','4','1','97','차이 3']]
-  },
-  channels: {
-    columns:['판매처','갱신 항목','대상 행','진행률','마지막 이벤트','DB 저장','상태'],
-    rows:[
-      ['스마트스토어','재고 · 가격','14,940','100%','오늘 12:41:38','완료','정상'],
-      ['메이크샵','재고','28,125','34%','오늘 12:43:02','진행 중','실행 중'],
-      ['에이블리','재고','6,610','100%','오늘 12:36:19','완료','정상'],
-      ['스마트스토어','가격','14,940','0%','대기','미저장','대기']]
-  },
-  attributes: {
-    columns:['상품코드','대표 상품명','소재','상품군','형태','태그','분류 상태'],
-    rows:[
-      ['1014','NEW 컬러 큐빅 별 피어싱','써지컬스틸','피어싱','바벨','큐빅, 베스트','확정'],
-      ['11035','베이직 링 피어싱','써지컬스틸','피어싱','링','기본, 데일리','확정'],
-      ['11246','큐빅 바벨 피어싱','-','피어싱','바벨','신상품','검토 필요'],
-      ['1280','심플 미니 큐빅 피어싱','써지컬스틸','피어싱','바벨','미니, 컬러','자동 분류']]
-  },
-  jobs: {
-    columns:['작업 ID','구분','작업 내용','처리량','소요시간','마지막 이벤트','상태'],
-    rows:[
-      ['JOB-0812-043','메이크샵','원본 정규화 · 재고 갱신','9,518 / 28,125','1분 32초','12:43:02','실행 중'],
-      ['JOB-0812-042','스마트스토어','재고 대조','10,096 / 14,040','3분 11초','12:42:48','실행 중'],
-      ['JOB-0812-041','셀피아','원본 업로드 · SKU 갱신','27,223 / 27,223','45초','11:39:45','완료'],
-      ['JOB-0812-040','메이크샵','가격 반영','7,204 / 28,125','2분 06초','11:31:22','오류']]
-  }
-};
-
-function statusClass(value) {
-  if (/정상|완료|확정/.test(value)) return 'green';
-  if (/오류|미매칭|차이/.test(value)) return 'red';
-  if (/필요|대기|진행|실행|자동/.test(value)) return 'amber';
-  return '';
-}
-
-function buildTablePage(id, element) {
-  const data = tableSamples[id];
-  element.innerHTML = `
-    <div class="page-head"><div><h2>${element.dataset.title}</h2><p>${element.dataset.copy}</p></div><div class="mock-badge">UI 목업</div></div>
-    <div class="placeholder-toolbar"><input class="search-box" placeholder="SKU / 자사코드 / 상품명 검색"><button class="btn">필터</button><button class="btn">엑셀 내보내기</button><button class="btn primary" data-toast="목업 화면에서는 실행되지 않습니다.">선택 작업 실행</button></div>
-    <table class="data-table"><thead><tr>${data.columns.map(col=>`<th>${col}</th>`).join('')}</tr></thead><tbody>${data.rows.map(row=>`<tr>${row.map((cell,index)=>`<td class="${index===0?'code-cell':''}">${index===row.length-1?`<span class="pill ${statusClass(cell)}">${cell}</span>`:cell}</td>`).join('')}</tr>`).join('')}</tbody></table>
-    <div class="placeholder-foot">샘플 데이터 4건 · 실제 DB 미연결</div>`;
-}
-
-document.querySelectorAll('.table-page').forEach(page => buildTablePage(page.id, page));
-
 const matrixBody = document.getElementById('matrix-body');
 const productDrawer = document.getElementById('product-drawer');
 const drawerBackdrop = document.getElementById('drawer-backdrop');
@@ -95,6 +34,7 @@ const MATRIX_TRANSIENT_RETRY_DELAYS_MS = [700];
 const MAPPING_SYNC_POLL_INTERVAL_MS = 60000;
 const matrixState = {page:1, pageSize:initialMatrixPageSize, search:'', searchSources:['sellpia','smartstore','makeshop','ably'], status:'all', sort:'sku_asc', excludeCombinationSkus:false, includeRelatedSkuContext:true, advancedFilter:{logic:'and', conditions:[]}, total:0, directCount:0, relatedCount:0, rows:[], loading:false, requestId:0, requestController:null, codeListSkus:[], codeListRows:[], codeListName:''};
 const multiLinkState = {page:1, pageSize:50, search:'', source:'all', relationType:'all', folderId:null, organizationScope:'all', folders:[], foldersLoaded:false, total:0, allTotal:0, loading:false, requestId:0, rows:[], selected:null, loaded:false};
+const multiLinkWorkspaceState = {tab:'all', contextRow:null};
 const relationGraphState = {nodes:[], edges:[], selectedProduct:null, loading:false, requestId:0, searchTimer:null, viewMode:'list', search:'', focusNodeId:null};
 const relationBoardState = {nodes:new Map(), loadedProducts:new Map(), initialEdges:new Map(), levelCount:3, draggingKey:null, pointerDrag:null, connectorDrag:null, dragGhost:null, saving:false};
 const relationImportState = {fileName:'', parsed:null, items:new Map(), choices:new Map(), resolving:false, saving:false};
@@ -103,6 +43,14 @@ const bundleImportState = {fileName:'', parsed:null, items:new Map(), choices:ne
 const sellerBundleState = {source:'smartstore', productCode:'', optionCode:'', bundleType:'one_plus_one', target:null, loading:false, requestId:0};
 const sellerBundleImportState = {fileName:'', parsed:null, resolved:null, resolving:false, saving:false};
 const mappingSyncState = {displayedVersion:'', checking:false, autoRefreshing:false, latest:null};
+const systemHealthPill = document.getElementById('system-health-pill');
+const systemHealthText = document.getElementById('system-health-text');
+const topRefreshButton = document.getElementById('top-refresh-btn');
+const systemHealthState = {
+  refreshing:false,
+  components:{matrix:'idle', source:'idle', metrics:'idle', mapping:'idle'},
+  lastCompletedAt:null
+};
 const matrixRowsBySku = new Map();
 const drawerState = {
   activeTab:'connections', historyRequestId:0, historySku:'', attributeRequestId:0, priceRequestId:0,
@@ -498,15 +446,21 @@ function formatNullableNumber(value) {
   return Number.isFinite(number) ? number.toLocaleString('ko-KR') : '-';
 }
 
+function normalizeMatrixRelationContext(raw) {
+  return raw && typeof raw === 'object' ? raw : {};
+}
+
 function matrixRelationContext(product) {
-  const raw = product?.matrix_context;
-  if (!raw || typeof raw !== 'object') return {kind:'direct', rootSku:'', direction:'self', depth:0, pathSkus:[]};
+  const raw = normalizeMatrixRelationContext(product?.matrix_context);
   const kind = String(raw.kind || '').trim().toLowerCase() === 'related' ? 'related' : 'direct';
   const rootSku = String(raw.rootSku || '').trim() || String(product?.sellpia_sku_code || '').trim();
   const direction = String(raw.direction || (kind === 'related' ? 'related' : 'self')).trim();
   const depth = Math.max(0, Number(raw.depth) || 0);
   const pathSkus = (Array.isArray(raw.pathSkus) ? raw.pathSkus : []).map(value => String(value || '').trim()).filter(Boolean);
-  return {kind, rootSku, direction, depth, pathSkus};
+  const relationshipFamily = String(raw.relationshipFamily || raw.relationFamily || (kind === 'related' ? 'relation' : 'direct')).trim().toLowerCase();
+  const relationshipType = String(raw.relationshipType || raw.relationType || relationshipFamily || 'direct').trim();
+  const relationshipDetails = raw.relationshipDetails || raw.relationDetails || null;
+  return {kind, rootSku, direction, depth, pathSkus, relationshipFamily, relationshipType, relationshipDetails};
 }
 
 function isRelatedMatrixContext(product) {
@@ -516,14 +470,21 @@ function isRelatedMatrixContext(product) {
 function matrixRelationDirectionLabel(direction) {
   if (direction === 'ancestor') return '상위 관계';
   if (direction === 'descendant') return '하위 관계';
+  if (direction === 'bundle_component') return '구성품';
+  if (direction === 'bundle_parent') return '세트 부모';
+  if (direction === 'seller_bundle_sibling') return '판매처 구성품';
   return '관계 SKU';
+}
+
+function matrixRelationshipFamilyLabel(family) {
+  return {relation:'관계', canonical_bundle:'공통 세트', seller_bundle:'판매처 번들'}[family] || '관계';
 }
 
 function matrixRelationPathBadge(product) {
   const context = matrixRelationContext(product);
   if (context.kind !== 'related') return '';
   const path = context.pathSkus.length ? context.pathSkus.join(' → ') : context.rootSku;
-  const label = `${matrixRelationDirectionLabel(context.direction)}${context.depth ? ` · ${context.depth}단계` : ''}`;
+  const label = `${matrixRelationshipFamilyLabel(context.relationshipFamily)} · ${matrixRelationDirectionLabel(context.direction)}${context.depth ? ` · ${context.depth}단계` : ''}`;
   return `<em class="matrix-related-context-badge" title="${escapeHtml(path)}">${escapeHtml(label)}</em>`;
 }
 
@@ -1018,7 +979,7 @@ function renderLiveMatrixRows(products) {
     const skuMarkup = codeRow
       ? `<span class="code-list-sku-cell"><b>${sku}</b><em>엑셀 ${inputRow}행</em></span>`
       : isRelatedContext
-        ? `<span class="matrix-related-sku"><b>${sku}</b><em>↳ ${escapeHtml(matrixRelationDirectionLabel(relationContext.direction))}</em></span>`
+        ? `<span class="matrix-related-sku"><b>${sku}</b><em>↳ ${escapeHtml(matrixRelationshipFamilyLabel(relationContext.relationshipFamily))} · ${escapeHtml(matrixRelationDirectionLabel(relationContext.direction))}</em></span>`
         : sku;
     const rawOwnCode = product.sellpia_own_code || product.own_code || '';
     const ownCode = escapeHtml(rawOwnCode || '-');
@@ -1049,7 +1010,7 @@ function renderLiveMatrixRows(products) {
     previousResultGroup = resultGroup;
     const rowClasses = [groupStart ? 'product-group-start' : 'product-group-continuation'];
     if (isRelatedContext) rowClasses.push('matrix-related-context-row');
-    return `<tr class="${rowClasses.join(' ')}" data-sku="${sku}" data-product-group="${escapeHtml(productGroup)}" data-own-code="${ownCode}" data-image="${imageUrl}" data-status="${overallState}" data-matrix-context="${escapeHtml(relationContext.kind)}" data-root-sku="${escapeHtml(relationContext.rootSku)}"${inputRow ? ` data-input-row="${inputRow}"` : ''}>
+    return `<tr class="${rowClasses.join(' ')}" data-sku="${sku}" data-product-group="${escapeHtml(productGroup)}" data-own-code="${ownCode}" data-image="${imageUrl}" data-status="${overallState}" data-matrix-context="${escapeHtml(relationContext.kind)}" data-relationship-family="${escapeHtml(relationContext.relationshipFamily)}" data-root-sku="${escapeHtml(relationContext.rootSku)}"${inputRow ? ` data-input-row="${inputRow}"` : ''}>
       <td class="sticky-col select-col" aria-hidden="true"></td>
       <td class="sticky-col image-col image-drop-cell" data-image-drop="${sku}" title="이미지를 이 셀에 놓으면 ${sku}.jpg로 저장됩니다.">${matrixImage(product)}<span class="image-drop-hint">DROP</span></td>
       <td class="sticky-col sellpia-sku-col sellpia-code-cell"><button type="button" class="sellpia-sku-link" data-open-sku-links title="이 SKU의 판매처 연결정보 열기">${skuMarkup}</button></td>
@@ -1075,6 +1036,62 @@ function setMatrixConnection(state, label) {
   const badge = document.getElementById('matrix-live-status');
   badge.className = `live-data-badge ${state}`;
   badge.textContent = label;
+}
+
+function renderSystemHealth() {
+  if (!systemHealthPill || !systemHealthText) return;
+  const states = Object.values(systemHealthState.components);
+  const checked = states.filter(state => state === 'ok' || state === 'error');
+  const failed = states.filter(state => state === 'error');
+  let state = 'loading';
+  let label = '시스템 확인 중';
+  if (systemHealthState.refreshing) {
+    label = '데이터 조회 중';
+  } else if (checked.length === states.length && failed.length === 0) {
+    state = 'healthy';
+    label = '시스템 정상';
+  } else if (checked.length === states.length && failed.length < states.length) {
+    state = 'delayed';
+    label = '일부 조회 지연';
+  } else if (failed.length === states.length) {
+    state = 'error';
+    label = 'DB 조회 실패';
+  }
+  const componentLabels = {matrix:'매트릭스', source:'판매처 상태', metrics:'운영 집계', mapping:'매핑 상태'};
+  const failedLabels = Object.entries(systemHealthState.components)
+    .filter(([, componentState]) => componentState === 'error')
+    .map(([key]) => componentLabels[key]);
+  systemHealthPill.dataset.state = state;
+  systemHealthText.textContent = label;
+  systemHealthPill.title = failedLabels.length
+    ? `조회 지연: ${failedLabels.join(', ')}`
+    : systemHealthState.lastCompletedAt
+      ? `마지막 확인 ${formatLiveTime(systemHealthState.lastCompletedAt)}`
+      : 'DB 연결 상태를 확인하고 있습니다.';
+  if (topRefreshButton) {
+    topRefreshButton.disabled = systemHealthState.refreshing;
+    topRefreshButton.setAttribute('aria-busy', String(systemHealthState.refreshing));
+    const buttonLabel = topRefreshButton.querySelector('b');
+    if (buttonLabel) buttonLabel.textContent = systemHealthState.refreshing ? '조회 중' : '새로고침';
+  }
+}
+
+function setSystemHealthComponent(component, succeeded) {
+  if (!(component in systemHealthState.components)) return;
+  systemHealthState.components[component] = succeeded ? 'ok' : 'error';
+  renderSystemHealth();
+}
+
+function beginSystemRefresh() {
+  systemHealthState.refreshing = true;
+  for (const component of Object.keys(systemHealthState.components)) systemHealthState.components[component] = 'loading';
+  renderSystemHealth();
+}
+
+function finishSystemRefresh() {
+  systemHealthState.refreshing = false;
+  systemHealthState.lastCompletedAt = new Date().toISOString();
+  renderSystemHealth();
 }
 
 function renderMappingSyncStatus(status, state = '') {
@@ -1111,10 +1128,15 @@ function renderMappingSyncStatus(status, state = '') {
 }
 
 async function loadMappingSyncStatus({markDisplayed = false, autoRefresh = false} = {}) {
-  if (!liveData?.loadMappingSyncStatus || mappingSyncState.checking) return mappingSyncState.latest;
+  if (!liveData?.loadMappingSyncStatus) {
+    setSystemHealthComponent('mapping', false);
+    return null;
+  }
+  if (mappingSyncState.checking) return mappingSyncState.latest;
   mappingSyncState.checking = true;
   try {
     const status = await liveData.loadMappingSyncStatus();
+    setSystemHealthComponent('mapping', true);
     mappingSyncState.latest = status;
     const version = String(status?.mapping_version || '');
     const changed = Boolean(mappingSyncState.displayedVersion && version && version !== mappingSyncState.displayedVersion);
@@ -1145,6 +1167,7 @@ async function loadMappingSyncStatus({markDisplayed = false, autoRefresh = false
     return status;
   } catch (error) {
     console.error('mapping sync status load failed', error);
+    setSystemHealthComponent('mapping', false);
     renderMappingSyncStatus({message:error?.message || String(error)}, 'error');
     return null;
   } finally {
@@ -1186,7 +1209,10 @@ function waitForMatrixRetry(delayMs, signal) {
 }
 
 async function loadLiveMatrix({resetPage = false, resetScroll = resetPage} = {}) {
-  if (!liveData) return false;
+  if (!liveData) {
+    setSystemHealthComponent('matrix', false);
+    return false;
+  }
   if (resetPage) matrixState.page = 1;
   matrixState.requestController?.abort();
   const requestController = new AbortController();
@@ -1264,6 +1290,7 @@ async function loadLiveMatrix({resetPage = false, resetScroll = resetPage} = {})
     setMatrixConnection('connected', matrixState.codeListRows.length
       ? `엑셀 목록 · ${formatNumber(result.count)} 결과 행`
       : `LIVE · ${formatNumber(matrixState.directCount)} SKU${matrixState.relatedCount ? ` · 관계 ${formatNumber(matrixState.relatedCount)}행` : ''}`);
+    setSystemHealthComponent('matrix', true);
     return true;
   } catch (error) {
     if (requestId !== matrixState.requestId || isMatrixAbortError(error)) return false;
@@ -1276,6 +1303,7 @@ async function loadLiveMatrix({resetPage = false, resetScroll = resetPage} = {})
       document.getElementById('live-catalog-state').textContent = '연결 오류';
       setMatrixConnection('error', 'DB 연결 오류');
     }
+    setSystemHealthComponent('matrix', false);
     return false;
   } finally {
     if (requestId === matrixState.requestId) {
@@ -1290,6 +1318,11 @@ function channelCard(source) {
   return className ? document.querySelector(`.sync-list .channel-logo.${className}`)?.closest('div') : null;
 }
 
+function sidebarChannelStatus(source) {
+  const className = {smartstore:'smart', makeshop:'make', ably:'ably'}[source];
+  return className ? document.querySelector(`.channel-mini .dot.${className}`)?.closest('.channel-mini')?.querySelector('em') : null;
+}
+
 function updateJobsErrorBadge() {
   const badge = document.getElementById('jobs-error-badge');
   const sourceErrors = Number(badge.dataset.sourceErrors || 0);
@@ -1299,18 +1332,23 @@ function updateJobsErrorBadge() {
 }
 
 async function loadLiveSourceStatus() {
-  if (!liveData) return;
+  if (!liveData) {
+    setSystemHealthComponent('source', false);
+    return false;
+  }
   try {
     const {events, latest} = await liveData.loadSourceStatus();
     for (const source of ['smartstore','makeshop','ably']) {
       const event = latest[source];
       const card = channelCard(source);
+      const sidebarStatus = sidebarChannelStatus(source);
       if (!card) continue;
       if (!event) {
         card.querySelector('p em').textContent = '실행 기록 없음';
         card.querySelector('time').textContent = '-';
         card.querySelector('.status').textContent = '대기';
         card.querySelector('.status').className = 'status wait';
+        if (sidebarStatus) sidebarStatus.textContent = '기록 없음';
         continue;
       }
       const difference = Number(event.payload?.differences || 0);
@@ -1325,6 +1363,7 @@ async function loadLiveSourceStatus() {
       time.textContent = formatLiveTime(event.event_at);
       status.textContent = event.status === 'SUCCESS' ? '완료' : event.status === 'ERROR' ? '오류' : staleRunning ? '중단 추정' : '실행 중';
       status.className = `status ${event.status === 'SUCCESS' ? 'done' : 'wait'}`;
+      if (sidebarStatus) sidebarStatus.textContent = event.status === 'SUCCESS' ? '최근 정상' : event.status === 'ERROR' ? '최근 오류' : staleRunning ? '중단 추정' : '실행 중';
     }
     const running = (events || []).filter(event => event.status === 'RUNNING' && Date.now() - new Date(event.event_at).getTime() <= 15 * 60 * 1000).slice(0, 3);
     const taskList = document.getElementById('dashboard-task-list');
@@ -1344,13 +1383,22 @@ async function loadLiveSourceStatus() {
     document.getElementById('jobs-error-badge').dataset.sourceErrors = failedCount;
     updateJobsErrorBadge();
     document.getElementById('dashboard-failed-alert').textContent = failedCount ? `최근 실패 작업 ${formatNumber(failedCount)}건` : '최근 실패 작업 없음';
+    setSystemHealthComponent('source', true);
+    return true;
   } catch (error) {
     console.error('operations hub source status load failed', error);
+    setSystemHealthComponent('source', false);
+    return false;
   }
 }
 
 async function loadLiveDashboardMetrics() {
-  if (!liveData?.loadDashboardMetrics) return;
+  if (!liveData?.loadDashboardMetrics) {
+    setSystemHealthComponent('metrics', false);
+    document.getElementById('live-today-picked').textContent = '-';
+    document.getElementById('live-shortage-drawer').textContent = '주문 DB 연결 대기';
+    return false;
+  }
   try {
     const metrics = await liveData.loadDashboardMetrics();
     const total = Number(metrics.total_sku || 0);
@@ -1380,15 +1428,33 @@ async function loadLiveDashboardMetrics() {
       ? formatLiveTime(metrics.latest_sync_at).split(' ').pop()
       : '-';
     document.getElementById('live-latest-sync-detail').textContent = metrics.latest_sync_at ? '실데이터 기준' : '동기화 기록 없음';
+    setSystemHealthComponent('metrics', true);
+    return true;
   } catch (error) {
     console.error('operations hub dashboard metrics load failed', error);
     document.getElementById('live-catalog-state').textContent = '집계 오류';
+    document.getElementById('live-today-picked').textContent = '-';
+    document.getElementById('live-shortage-drawer').textContent = '조회 실패 · 주문 DB 상태 확인';
+    setSystemHealthComponent('metrics', false);
+    return false;
   }
 }
 
-async function refreshLiveData(options) {
-  await Promise.all([loadLiveMatrix(options), loadLiveSourceStatus(), loadLiveDashboardMetrics()]);
-  await loadMappingSyncStatus({markDisplayed:true});
+async function refreshLiveData(options = {}) {
+  beginSystemRefresh();
+  let result = {matrix:false, source:false, metrics:false, mapping:false};
+  try {
+    const [matrix, source, metrics] = await Promise.all([
+      loadLiveMatrix(options),
+      loadLiveSourceStatus(),
+      loadLiveDashboardMetrics()
+    ]);
+    const mapping = await loadMappingSyncStatus({markDisplayed:true});
+    result = {matrix:matrix === true, source:source === true, metrics:metrics === true, mapping:Boolean(mapping)};
+    return result;
+  } finally {
+    finishSystemRefresh();
+  }
 }
 
 async function refreshMatrixSkus(skus = []) {
@@ -4669,6 +4735,19 @@ document.getElementById('price-rule-bulk-composer-save').addEventListener('click
   }
 });
 document.getElementById('matrix-refresh-btn').addEventListener('click', () => refreshLiveData());
+topRefreshButton?.addEventListener('click', async () => {
+  if (systemHealthState.refreshing || topRefreshButton.disabled) return;
+  try {
+    const result = await refreshLiveData();
+    const failed = Object.entries(result).filter(([, succeeded]) => !succeeded).map(([component]) => component);
+    if (!failed.length) showToast('운영 데이터를 최신 상태로 다시 조회했습니다.');
+    else if (failed.length < Object.keys(result).length) showToast(`새로고침 일부 지연 · ${formatNumber(failed.length)}개 조회를 다시 확인해주세요.`);
+    else showToast('DB 조회에 실패했습니다. 기존 화면은 유지됩니다.');
+  } catch (error) {
+    console.error('operations hub global refresh failed', error);
+    showToast('DB 조회에 실패했습니다. 기존 화면은 유지됩니다.');
+  }
+});
 document.getElementById('matrix-prev').addEventListener('click', () => {
   if (matrixState.loading || matrixState.page <= 1) return;
   matrixState.page -= 1;
@@ -6400,6 +6479,88 @@ document.getElementById('queue-confirm-applied').addEventListener('click', async
   finally { updateQueueSelection(); }
 });
 
+function initializeMultiLinkWorkspaceShell() {
+  const relationPanel = document.getElementById('multi-link-tab-relation');
+  const bundlePanel = document.getElementById('multi-link-tab-bundle');
+  const allPanel = document.getElementById('multi-link-tab-all');
+  const relationWorkspace = document.querySelector('.relation-workspace');
+  const relationNodes = [
+    relationWorkspace?.querySelector('.relation-workspace-head'),
+    relationWorkspace?.querySelector('.relation-edge-summary'),
+    document.getElementById('relation-edge-list'),
+    document.getElementById('relation-graph-board'),
+    document.getElementById('multi-link-organization-form')
+  ].filter(Boolean);
+  relationNodes.forEach(node => relationPanel?.appendChild(node));
+
+  const bundleWorkspace = document.getElementById('bundle-management-panel');
+  if (bundleWorkspace && bundlePanel) {
+    bundleWorkspace.open = true;
+    bundlePanel.appendChild(bundleWorkspace);
+  }
+
+  const allWorkspace = document.querySelector('.multi-link-all-workspace');
+  if (allWorkspace && allPanel) {
+    allWorkspace.querySelector(':scope > summary')?.remove();
+    allPanel.appendChild(allWorkspace);
+  }
+
+  const editor = document.querySelector('.multi-link-editor');
+  const modalBody = document.getElementById('multi-link-sku-action-body');
+  if (editor && modalBody) modalBody.appendChild(editor);
+}
+
+function closeMultiLinkWorkspaceContextMenu() {
+  const menu = document.getElementById('multi-link-workspace-context-menu');
+  if (menu) menu.hidden = true;
+}
+
+function closeMultiLinkSkuActionModal() {
+  const modal = document.getElementById('multi-link-sku-action-modal');
+  if (modal) modal.hidden = true;
+}
+
+function openMultiLinkSkuActionModal(row = multiLinkWorkspaceState.contextRow) {
+  if (!row) return;
+  multiLinkWorkspaceState.contextRow = row;
+  renderMultiLinkEditor(row);
+  document.getElementById('multi-link-sku-action-title').textContent = `${multiLinkChannelLabel(row.source_channel)} ${row.product_code}${row.option_code ? ` / ${row.option_code}` : ''}`;
+  document.getElementById('multi-link-sku-action-modal').hidden = false;
+  closeMultiLinkWorkspaceContextMenu();
+}
+
+function openMultiLinkWorkspaceContextMenu(x, y, row) {
+  const menu = document.getElementById('multi-link-workspace-context-menu');
+  if (!menu || !row) return;
+  multiLinkWorkspaceState.contextRow = row;
+  menu.hidden = false;
+  const width = 230;
+  const height = 82;
+  menu.style.left = `${Math.max(8, Math.min(x, window.innerWidth - width - 8))}px`;
+  menu.style.top = `${Math.max(8, Math.min(y, window.innerHeight - height - 8))}px`;
+}
+
+function setMultiLinkWorkspaceTab(tab, {load = true} = {}) {
+  const next = ['all','relation','bundle'].includes(tab) ? tab : 'all';
+  multiLinkWorkspaceState.tab = next;
+  document.querySelectorAll('[data-multi-link-tab]').forEach(button => {
+    const active = button.dataset.multiLinkTab === next;
+    button.classList.toggle('active', active);
+    button.setAttribute('aria-selected', String(active));
+  });
+  document.querySelectorAll('[data-multi-link-panel]').forEach(panel => {
+    const active = panel.dataset.multiLinkPanel === next;
+    panel.hidden = !active;
+    panel.classList.toggle('active', active);
+  });
+  if (!load) return;
+  if (next === 'all') loadMultiLinks({resetPage:!multiLinkState.loaded, forceLegacy:true});
+  if (next === 'relation') Promise.all([loadRelationFolders(), loadRelationGraph()]);
+  if (next === 'bundle' && !bundleGraphState.loading) loadBundleGraph({query:bundleGraphState.query});
+}
+
+initializeMultiLinkWorkspaceShell();
+
 function multiLinkKey(row) {
   return `${row?.source_channel || ''}|${row?.product_code || ''}|${row?.option_code || ''}`;
 }
@@ -6538,6 +6699,14 @@ function relationIncidentEdges(nodeId) {
   return relationGraphState.edges.filter(edge => String(edge.parentNodeId) === key || String(edge.childNodeId) === key);
 }
 
+function relationNodeThumb(node) {
+  return renderBundleThumb(
+    node?.imageUrl || node?.image_url || '',
+    node?.productName || node?.displayName || '상품명 없음',
+    node?.optionName || ''
+  );
+}
+
 function relationNodeCard(node, currentEdgeId = null) {
   const incidentCount = relationIncidentEdges(node.nodeId).length;
   const otherCount = Math.max(0, incidentCount - (currentEdgeId ? 1 : 0));
@@ -6549,6 +6718,7 @@ function relationNodeCard(node, currentEdgeId = null) {
       ? `${multiLinkChannelLabel(node.source)} ${node.sellerProductCode || '-'}${node.sellerOptionCode ? ` / ${node.sellerOptionCode}` : ''}`
       : '직접 노드';
   return `<article class="relation-compact-node ${escapeHtml(node.nodeType)}" data-relation-node-id="${Number(node.nodeId)}">
+    ${relationNodeThumb(node)}
     <div><span>${escapeHtml(identity)}</span><b title="${escapeHtml(node.displayName || '')}">${escapeHtml(node.displayName || '이름 없음')}</b></div>
     <em>${escapeHtml(RELATION_KIND_LABELS[node.relationKind] || '직접 분류')}</em>
     ${otherCount > 0 ? `<button type="button" data-explore-relation-node="${Number(node.nodeId)}">다른 관계 ${formatNumber(otherCount)}개</button>` : ''}
@@ -6574,14 +6744,14 @@ function renderRelationEdgeList() {
     const parent = byId.get(String(edge.parentNodeId));
     const child = byId.get(String(edge.childNodeId));
     if (!parent || !child) return '';
-    return `<div class="relation-edge-row" data-relation-edge-id="${Number(edge.edgeId)}">
-      ${relationNodeCard(parent, edge.edgeId)}
-      <div class="relation-edge-action"><span>관계 1건</span><i>→</i><button type="button" data-remove-relation-edge="${Number(edge.edgeId)}">연결 해제</button></div>
-      ${relationNodeCard(child, edge.edgeId)}
-    </div>`;
+    return `<tr class="relation-edge-row" data-relation-edge-id="${Number(edge.edgeId)}">
+      <td>${relationNodeCard(parent, edge.edgeId)}</td>
+      <td class="relation-edge-action"><span>관계 1건</span><i>→</i><button type="button" data-remove-relation-edge="${Number(edge.edgeId)}">연결 해제</button></td>
+      <td>${relationNodeCard(child, edge.edgeId)}</td>
+    </tr>`;
   }).join('');
-  const pendingRows = pending.length ? `<section class="relation-pending-nodes"><header><b>연결 대기</b><span>노드는 준비됐지만 아직 상위·하위가 지정되지 않았습니다.</span></header><div>${pending.map(node => relationNodeCard(node)).join('')}</div></section>` : '';
-  box.innerHTML = edgeRows + pendingRows;
+  const pendingRows = pending.length ? `<section class="relation-pending-nodes"><header><b>연결 대기</b><span>노드는 준비됐지만 아직 상위·하위가 지정되지 않았습니다.</span></header><div class="relation-pending-matrix">${pending.map(node => relationNodeCard(node)).join('')}</div></section>` : '';
+  box.innerHTML = `<div class="multi-link-cell-matrix-shell"><table class="multi-link-cell-matrix relation-matrix"><thead><tr><th>상위 상품</th><th>관계 작업</th><th>하위 상품</th></tr></thead><tbody>${edgeRows}</tbody></table></div>${pendingRows}`;
 }
 
 function renderRelationNodeSelectors(preferred = {}) {
@@ -6658,6 +6828,7 @@ function renderRelationTree() {
       const parentEdges = incoming.get(String(node.nodeId)) || [];
       const childEdges = outgoing.get(String(node.nodeId)) || [];
       return `<article class="relation-graph-node${String(node.nodeId) === String(relationGraphState.focusNodeId || '') ? ' focused' : ''}">
+        ${relationNodeThumb(node)}
         <span>${escapeHtml(node.nodeType === 'sellpia_product' ? `셀피아 ${node.sellpiaProductCode || '-'}` : node.nodeType === 'sellpia_sku' ? `셀피아 SKU ${node.sellpiaSkuCode || '-'}` : `${multiLinkChannelLabel(node.source)} ${node.sellerProductCode || '-'}`)}</span>
         <b>${escapeHtml(node.displayName || '이름 없음')}</b>
         <em>${escapeHtml(RELATION_KIND_LABELS[node.relationKind] || '직접 분류')} · 상위 ${parentEdges.length} · 하위 ${childEdges.length}</em>
@@ -6698,6 +6869,27 @@ async function loadRelationGraph(preferred = {}) {
     if (requestId !== relationGraphState.requestId) return;
     relationGraphState.nodes = result.nodes;
     relationGraphState.edges = result.edges;
+    const skuNodes = relationGraphState.nodes.filter(node => node.nodeType === 'sellpia_sku' && node.sellpiaSkuCode);
+    if (skuNodes.length && liveData?.loadSellpiaRelationVisuals) {
+      try {
+        const visuals = await liveData.loadSellpiaRelationVisuals(skuNodes.map(node => node.sellpiaSkuCode));
+        if (requestId !== relationGraphState.requestId) return;
+        const bySku = new Map((visuals || []).map(visual => [String(visual.sellpia_sku_code || ''), visual]));
+        skuNodes.forEach(node => {
+          const visual = bySku.get(String(node.sellpiaSkuCode));
+          if (!visual) return;
+          node.imageUrl = visual.sellpia_override_image_url || visual.image_url || '';
+          node.productName = visual.sellpia_product_name || node.displayName || '';
+          node.optionName = visual.sellpia_option_name || '';
+        });
+        relationGraphState.nodes.filter(node => node.nodeType === 'sellpia_product' && node.sellpiaProductCode).forEach(node => {
+          const representative = skuNodes.find(candidate => String(candidate.sellpiaSkuCode).replace(/-[^-]+$/, '') === String(node.sellpiaProductCode));
+          if (!representative) return;
+          node.imageUrl ||= representative.imageUrl || '';
+          node.productName ||= representative.productName || node.displayName || '';
+        });
+      } catch (visualError) { console.warn('relation workspace visual enrichment failed', visualError); }
+    }
     renderRelationWorkspace(preferred);
   } catch (error) {
     document.getElementById('relation-edge-list').innerHTML = `<div class="relation-workspace-empty error">관계 목록 조회 실패: ${escapeHtml(error?.message || error)}</div>`;
@@ -7613,16 +7805,18 @@ function renderBundleGraph() {
     list.innerHTML = `<div class="bundle-empty">${bundleGraphState.loaded ? '검색 조건에 맞는 세트 구성이 없습니다.' : '세트 구성 관리 패널을 펼치면 DB에서 구성을 조회합니다.'}</div>`;
     return;
   }
-  list.innerHTML = bundleGraphState.bundles.map(bundle => `<article class="bundle-card" data-bundle-sku="${escapeHtml(bundle.bundleSkuCode)}">
-    <header>${renderBundleThumb(bundle.imageUrl, bundle.productName, bundle.optionName)}<div class="bundle-card-copy"><span>세트 SKU ${escapeHtml(bundle.bundleSkuCode)}</span><b title="${escapeHtml(bundle.productName || '상품명 없음')}">${escapeHtml(bundle.productName || '상품명 없음')}</b><strong>${escapeHtml(bundle.optionName || '옵션명 없음')}</strong></div><em>구성 ${formatNumber(bundle.components.length)}개</em></header>
-    <div class="bundle-component-list">${bundle.components.map(component => `<div class="bundle-component-row" data-bundle-component-id="${component.componentId || ''}" data-bundle-sku="${escapeHtml(bundle.bundleSkuCode)}" data-component-sku="${escapeHtml(component.componentSkuCode)}" data-sort-order="${component.sortOrder}">
-      ${renderBundleThumb(component.imageUrl, component.productName, component.optionName)}
-      <div class="bundle-component-copy"><span>→ ${component.nestedBundleId ? '하위 세트' : '구성품'} SKU ${escapeHtml(component.componentSkuCode)}</span><b title="${escapeHtml(component.productName || '상품명 없음')}">${escapeHtml(component.productName || '상품명 없음')}</b><strong>${escapeHtml(component.optionName || '옵션명 없음')}</strong></div>
-      <label>구성수량<input data-bundle-component-qty type="number" min="0.001" step="0.001" value="${escapeHtml(component.qty)}"></label>
-      <label>역할<select data-bundle-component-role><option value="component"${component.role === 'component' ? ' selected' : ''}>구성품</option><option value="packaging"${component.role === 'packaging' ? ' selected' : ''}>포장재</option></select></label>
-      <div class="bundle-component-actions"><button class="btn" type="button" data-bundle-component-save>수정 저장</button><button class="btn danger" type="button" data-bundle-component-remove${component.componentId ? '' : ' disabled title="연결 ID를 확인할 수 없어 해제할 수 없습니다."'}>연결 해제</button></div>
-    </div>`).join('') || '<div class="bundle-empty">활성 구성품이 없습니다.</div>'}</div>
-  </article>`).join('');
+  const rows = bundleGraphState.bundles.flatMap(bundle => {
+    const components = bundle.components.length ? bundle.components : [null];
+    return components.map((component, index) => `<tr class="bundle-component-row" data-bundle-component-id="${component?.componentId || ''}" data-bundle-sku="${escapeHtml(bundle.bundleSkuCode)}" data-component-sku="${escapeHtml(component?.componentSkuCode || '')}" data-sort-order="${component?.sortOrder || 100}">
+      ${index === 0 ? `<td class="bundle-matrix-product" rowspan="${components.length}">${renderBundleThumb(bundle.imageUrl, bundle.productName, bundle.optionName)}<div class="bundle-card-copy"><span>세트 SKU ${escapeHtml(bundle.bundleSkuCode)}</span><b title="${escapeHtml(bundle.productName || '상품명 없음')}">${escapeHtml(bundle.productName || '상품명 없음')}</b><strong>${escapeHtml(bundle.optionName || '옵션명 없음')}</strong><em>구성 ${formatNumber(bundle.components.length)}개</em></div></td>` : ''}
+      <td class="bundle-matrix-arrow">→</td>
+      <td class="bundle-matrix-product">${component ? renderBundleThumb(component.imageUrl, component.productName, component.optionName) : '<span class="relation-board-node-image empty">NO</span>'}<div class="bundle-component-copy"><span>${component ? `${component.nestedBundleId ? '하위 세트' : '구성품'} SKU ${escapeHtml(component.componentSkuCode)}` : '구성품 없음'}</span><b title="${escapeHtml(component?.productName || '상품명 없음')}">${escapeHtml(component?.productName || '상품명 없음')}</b><strong>${escapeHtml(component?.optionName || '옵션명 없음')}</strong></div></td>
+      <td>${component ? `<label class="bundle-matrix-field"><span>구성수량</span><input data-bundle-component-qty type="number" min="0.001" step="0.001" value="${escapeHtml(component.qty)}"></label>` : '-'}</td>
+      <td>${component ? `<label class="bundle-matrix-field"><span>역할</span><select data-bundle-component-role><option value="component"${component.role === 'component' ? ' selected' : ''}>구성품</option><option value="packaging"${component.role === 'packaging' ? ' selected' : ''}>포장재</option></select></label>` : '-'}</td>
+      <td><div class="bundle-component-actions">${component ? `<button class="btn" type="button" data-bundle-component-save>저장</button><button class="btn danger" type="button" data-bundle-component-remove${component.componentId ? '' : ' disabled title="연결 ID를 확인할 수 없어 해제할 수 없습니다."'}>해제</button>` : ''}</div></td>
+    </tr>`);
+  }).join('');
+  list.innerHTML = `<div class="multi-link-cell-matrix-shell"><table class="multi-link-cell-matrix bundle-matrix"><thead><tr><th>세트 SKU</th><th>관계</th><th>구성품 SKU</th><th>구성수량</th><th>역할</th><th>작업</th></tr></thead><tbody>${rows}</tbody></table></div>`;
 }
 
 async function loadBundleGraph({query = bundleGraphState.query} = {}) {
@@ -7761,13 +7955,12 @@ function renderSellerBundleTarget() {
   }
   const typeLabel = sellerBundleState.bundleType === 'one_plus_one' ? '1+1' : '세트';
   host.innerHTML = `<article class="seller-bundle-card" data-seller-bundle-source="${escapeHtml(target.source)}" data-seller-bundle-product="${escapeHtml(target.productCode)}" data-seller-bundle-option="${escapeHtml(target.optionCode)}">
-    <header><span class="multi-link-channel ${escapeHtml(target.source)}"><i></i>${escapeHtml(sellerBundleChannelLabel(target.source))}</span><div><b>${escapeHtml(target.productName || '상품명 없음')}</b><strong>${escapeHtml(target.optionName || '옵션명 없음')}</strong><em>${escapeHtml(target.productCode)}${target.optionCode ? ` / ${escapeHtml(target.optionCode)}` : ''}</em></div><mark>${typeLabel}</mark></header>
-    <div class="seller-bundle-components">${target.components.map(component => `<div class="seller-bundle-component" data-seller-component-id="${component.componentId || ''}" data-seller-component-sku="${escapeHtml(component.sku)}">
-      ${renderBundleThumb(component.imageUrl, component.productName, component.optionName)}
-      <div><span>셀피아 SKU ${escapeHtml(component.sku)}</span><b>${escapeHtml(component.productName || '상품명 없음')}</b><strong>${escapeHtml(component.optionName || '옵션명 없음')}</strong></div>
-      <label>구성수량<input data-seller-component-qty type="number" min="1" step="1" value="${component.qty}"></label>
-      <div class="bundle-component-actions"><button class="btn" type="button" data-seller-component-save>수량 저장</button><button class="btn danger" type="button" data-seller-component-remove${component.componentId ? '' : ' disabled'}>연결 해제</button></div>
-    </div>`).join('') || '<div class="bundle-empty">명시적으로 저장된 구성품이 없습니다.</div>'}</div>
+    <div class="multi-link-cell-matrix-shell"><table class="multi-link-cell-matrix seller-bundle-matrix"><thead><tr><th>판매처 대상</th><th>유형</th><th>구성품 SKU</th><th>구성수량</th><th>작업</th></tr></thead><tbody>${(target.components.length ? target.components : [null]).map((component, index, components) => `<tr class="seller-bundle-component" data-seller-component-id="${component?.componentId || ''}" data-seller-component-sku="${escapeHtml(component?.sku || '')}">
+      ${index === 0 ? `<td class="bundle-matrix-product" rowspan="${components.length}">${renderBundleThumb(target.imageUrl || components.find(candidate => candidate.imageUrl)?.imageUrl || '', target.productName, target.optionName)}<div><span class="multi-link-channel ${escapeHtml(target.source)}"><i></i>${escapeHtml(sellerBundleChannelLabel(target.source))}</span><b>${escapeHtml(target.productName || '상품명 없음')}</b><strong>${escapeHtml(target.optionName || '옵션명 없음')}</strong><em>${escapeHtml(target.productCode)}${target.optionCode ? ` / ${escapeHtml(target.optionCode)}` : ''}</em></div></td><td rowspan="${components.length}"><mark>${typeLabel}</mark></td>` : ''}
+      <td class="bundle-matrix-product">${component ? renderBundleThumb(component.imageUrl, component.productName, component.optionName) : '<span class="relation-board-node-image empty">NO</span>'}<div><span>${component ? `셀피아 SKU ${escapeHtml(component.sku)}` : '구성품 없음'}</span><b>${escapeHtml(component?.productName || '상품명 없음')}</b><strong>${escapeHtml(component?.optionName || '옵션명 없음')}</strong></div></td>
+      <td>${component ? `<label class="bundle-matrix-field"><span>구성수량</span><input data-seller-component-qty type="number" min="1" step="1" value="${component.qty}"></label>` : '-'}</td>
+      <td><div class="bundle-component-actions">${component ? `<button class="btn" type="button" data-seller-component-save>저장</button><button class="btn danger" type="button" data-seller-component-remove${component.componentId ? '' : ' disabled'}>해제</button>` : ''}</div></td>
+    </tr>`).join('')}</tbody></table></div>
     <form id="seller-bundle-component-form" class="seller-bundle-component-form"><label>추가할 셀피아 SKU<input name="componentSku" required autocomplete="off" placeholder="상품코드-옵션코드"></label><label>구성수량<input name="qty" type="number" min="1" step="1" value="1" required></label><button class="btn primary" type="submit">구성 추가</button></form>
     <p class="seller-bundle-boundary">이 화면은 시스템 내부 구성표만 저장합니다. 셀피아 SKU 생성 및 판매처 쓰기는 실행하지 않습니다.</p>
   </article>`;
@@ -8030,7 +8223,7 @@ function renderMultiLinkRows() {
     const copy = multiLinkState.relationType === 'complex'
       ? '현재 조회 조건에 해당하는 다중·조합 연결이 없습니다. 오른쪽에서 새 구성을 추가할 수 있습니다.'
       : '조회 조건에 해당하는 연결이 없습니다.';
-    body.innerHTML = `<tr class="multi-link-empty"><td colspan="8">${escapeHtml(copy)}</td></tr>`;
+    body.innerHTML = `<tr class="multi-link-empty"><td colspan="9">${escapeHtml(copy)}</td></tr>`;
     return;
   }
   const selectedKey = multiLinkKey(multiLinkState.selected);
@@ -8041,7 +8234,9 @@ function renderMultiLinkRows() {
     const stock = row.calculated_stock === null || row.calculated_stock === undefined ? '-' : formatNumber(row.calculated_stock);
     const sellerStock = row.seller_stock === null || row.seller_stock === undefined ? '-' : formatNumber(row.seller_stock);
     const draft = row.inventory_change_id ? `<em>수정안 ${formatNullableNumber(row.inventory_draft_stock)} · ${escapeHtml(QUEUE_STATUS_LABELS[row.inventory_draft_status] || row.inventory_draft_status)}</em>` : '';
+    const visual = components.find(component => component.imageUrl) || components[0] || {};
     return `<tr class="multi-link-row${selectedKey === multiLinkKey(row) ? ' selected' : ''}${row.inventory_change_id ? ' has-draft' : ''}" data-multi-link-key="${escapeHtml(multiLinkKey(row))}">
+      <td class="multi-link-photo-cell">${renderBundleThumb(visual.imageUrl, visual.productName || row.product_name, visual.optionName || row.option_name)}</td>
       <td class="multi-link-folder-cell${row.folder_id ? '' : ' unorganized'}"><span>${escapeHtml(row.folder_name || '미분류')}</span><b>${escapeHtml(row.group_name || RELATION_KIND_LABELS[row.relation_kind] || '조합 이름 없음')}</b></td>
       <td><span class="relation-pill ${escapeHtml(row.relation_type)}">${escapeHtml(multiLinkRelationLabel(row.relation_type, row.component_count, row.max_listing_count))}</span></td>
       <td><span class="multi-link-channel ${escapeHtml(row.source_channel)}"><i></i>${escapeHtml(multiLinkChannelLabel(row.source_channel))}</span></td>
@@ -8053,13 +8248,32 @@ function renderMultiLinkRows() {
   }).join('');
 }
 
+async function enrichMultiLinkRowVisuals(rows, requestId) {
+  if (!liveData?.loadSellpiaRelationVisuals) return rows;
+  const skus = [...new Set((rows || []).flatMap(row => (row.components || []).map(component => String(component.sku || '').trim())).filter(Boolean))];
+  if (!skus.length) return rows;
+  try {
+    const visuals = await liveData.loadSellpiaRelationVisuals(skus);
+    if (requestId !== multiLinkState.requestId) return rows;
+    const bySku = new Map((visuals || []).map(visual => [String(visual.sellpia_sku_code || ''), visual]));
+    rows.forEach(row => (row.components || []).forEach(component => {
+      const visual = bySku.get(String(component.sku || ''));
+      if (!visual) return;
+      component.productName ||= visual.sellpia_product_name || '';
+      component.optionName ||= visual.sellpia_option_name || '';
+      component.imageUrl ||= visual.sellpia_override_image_url || visual.image_url || '';
+    }));
+  } catch (visualError) { console.warn('multi-link visual enrichment failed', visualError); }
+  return rows;
+}
+
 function renderMultiLinkInventoryAction(row) {
-  const panel = document.getElementById('multi-link-inventory-action');
+  const panel = document.getElementById('multi-link-sku-inventory-action');
   const state = document.getElementById('multi-link-inventory-state');
   const copy = document.getElementById('multi-link-inventory-copy');
   const sellerStock = document.getElementById('multi-link-seller-stock');
   const calculatedStock = document.getElementById('multi-link-calculated-stock');
-  const stageButton = document.getElementById('multi-link-stage-stock');
+  const stageButton = document.getElementById('multi-link-sku-stage-stock');
   sellerStock.textContent = formatNullableNumber(row?.seller_stock);
   calculatedStock.textContent = formatNullableNumber(row?.calculated_stock);
 
@@ -8152,8 +8366,7 @@ function renderMultiLinkEditor(row) {
 
 async function loadMultiLinks({resetPage = false, selectKey = '', forceLegacy = false} = {}) {
   if (!liveData?.loadRelationNodes) return false;
-  const legacyWorkspace = document.querySelector('.multi-link-legacy-workspace');
-  const includeLegacy = forceLegacy || Boolean(legacyWorkspace?.open);
+  const includeLegacy = forceLegacy || multiLinkWorkspaceState.tab === 'all';
   if (!includeLegacy) {
     try {
       await Promise.all([loadRelationFolders(), loadRelationGraph()]);
@@ -8169,7 +8382,7 @@ async function loadMultiLinks({resetPage = false, selectKey = '', forceLegacy = 
   const requestId = ++multiLinkState.requestId;
   multiLinkState.loading = true;
   const body = document.getElementById('multi-link-body');
-  body.innerHTML = '<tr class="multi-link-empty loading"><td colspan="8">Supabase에서 판매처 연결 구조를 불러오는 중입니다.</td></tr>';
+  body.innerHTML = '<tr class="multi-link-empty loading"><td colspan="9">Supabase에서 판매처 연결 구조를 불러오는 중입니다.</td></tr>';
   try {
     await Promise.all([loadRelationFolders(), loadRelationGraph()]);
     const result = await liveData.loadListingGraph({
@@ -8182,7 +8395,7 @@ async function loadMultiLinks({resetPage = false, selectKey = '', forceLegacy = 
       organizationScope:multiLinkState.organizationScope
     });
     if (requestId !== multiLinkState.requestId) return false;
-    multiLinkState.rows = result.rows;
+    multiLinkState.rows = await enrichMultiLinkRowVisuals(result.rows, requestId);
     multiLinkState.total = result.count;
     if (multiLinkState.organizationScope === 'all' && multiLinkState.folderId === null && multiLinkState.source === 'all' && multiLinkState.relationType === 'all' && !multiLinkState.search) {
       multiLinkState.allTotal = result.count;
@@ -8192,7 +8405,7 @@ async function loadMultiLinks({resetPage = false, selectKey = '', forceLegacy = 
     const first = result.count ? ((result.page - 1) * result.pageSize) + 1 : 0;
     const last = Math.min(result.page * result.pageSize, result.count);
     const wantedKey = selectKey || multiLinkKey(multiLinkState.selected);
-    multiLinkState.selected = result.rows.find(item => multiLinkKey(item) === wantedKey) || null;
+    multiLinkState.selected = multiLinkState.rows.find(item => multiLinkKey(item) === wantedKey) || null;
     document.getElementById('multi-link-count').textContent = formatNumber(result.count);
     document.getElementById('multi-link-range').textContent = `${formatNumber(first)}–${formatNumber(last)} / ${formatNumber(result.count)}`;
     document.getElementById('multi-link-page').textContent = result.page;
@@ -8206,7 +8419,7 @@ async function loadMultiLinks({resetPage = false, selectKey = '', forceLegacy = 
     return true;
   } catch (error) {
     console.error('multi-link graph load failed', error);
-    body.innerHTML = `<tr class="multi-link-empty error"><td colspan="8">연결 구조를 불러오지 못했습니다. ${escapeHtml(error?.message || '')}</td></tr>`;
+    body.innerHTML = `<tr class="multi-link-empty error"><td colspan="9">연결 구조를 불러오지 못했습니다. ${escapeHtml(error?.message || '')}</td></tr>`;
     return false;
   } finally {
     if (requestId === multiLinkState.requestId) multiLinkState.loading = false;
@@ -8220,16 +8433,49 @@ function openMultiLinkWorkspace(source = 'all', sku = '') {
   document.getElementById('multi-link-source').value = multiLinkState.source;
   document.getElementById('multi-link-type').value = multiLinkState.relationType;
   document.getElementById('multi-link-search').value = multiLinkState.search;
-  document.querySelector('.multi-link-legacy-workspace').open = true;
+  setMultiLinkWorkspaceTab('all', {load:false});
   showPage('multi-links');
   if (multiLinkState.loaded) loadMultiLinks({resetPage:true, forceLegacy:true});
 }
 
 document.getElementById('multi-link-body').addEventListener('click', event => {
+  const image = event.target.closest('[data-relation-image]');
+  if (image) { openRelationImageModal(image); return; }
   const rowElement = event.target.closest('.multi-link-row');
   if (!rowElement) return;
   const row = multiLinkState.rows.find(item => multiLinkKey(item) === rowElement.dataset.multiLinkKey);
   if (row) renderMultiLinkEditor(row);
+});
+
+document.getElementById('multi-link-body').addEventListener('contextmenu', event => {
+  const cell = event.target.closest('td');
+  const rowElement = cell?.closest('.multi-link-row');
+  if (!rowElement) return;
+  event.preventDefault();
+  const row = multiLinkState.rows.find(item => multiLinkKey(item) === rowElement.dataset.multiLinkKey);
+  if (!row) return;
+  renderMultiLinkEditor(row);
+  openMultiLinkWorkspaceContextMenu(event.clientX, event.clientY, row);
+});
+document.getElementById('multi-link-body').addEventListener('dblclick', event => {
+  const rowElement = event.target.closest('.multi-link-row');
+  if (!rowElement || event.target.closest('[data-relation-image]')) return;
+  const row = multiLinkState.rows.find(item => multiLinkKey(item) === rowElement.dataset.multiLinkKey);
+  if (row) openMultiLinkSkuActionModal(row);
+});
+
+document.getElementById('multi-link-context-open-sku').addEventListener('click', () => openMultiLinkSkuActionModal());
+document.getElementById('multi-link-sku-action-close').addEventListener('click', closeMultiLinkSkuActionModal);
+document.getElementById('multi-link-sku-action-modal').addEventListener('click', event => {
+  if (event.target === event.currentTarget) closeMultiLinkSkuActionModal();
+});
+document.addEventListener('click', event => {
+  if (!event.target.closest('#multi-link-workspace-context-menu')) closeMultiLinkWorkspaceContextMenu();
+});
+document.addEventListener('keydown', event => {
+  if (event.key !== 'Escape') return;
+  closeMultiLinkWorkspaceContextMenu();
+  closeMultiLinkSkuActionModal();
 });
 
 document.getElementById('multi-link-components').addEventListener('click', async event => {
@@ -8437,6 +8683,8 @@ document.getElementById('relation-edge-save').addEventListener('click', async ev
 });
 
 async function handleRelationWorkspaceClick(event) {
+  const image = event.target.closest('[data-relation-image]');
+  if (image) { openRelationImageModal(image); return; }
   const explore = event.target.closest('[data-explore-relation-node], [data-focus-relation-node]');
   if (explore) {
     relationGraphState.focusNodeId = explore.dataset.exploreRelationNode || explore.dataset.focusRelationNode;
@@ -8470,6 +8718,10 @@ async function handleRelationWorkspaceClick(event) {
 
 document.getElementById('relation-edge-list').addEventListener('click', handleRelationWorkspaceClick);
 document.getElementById('relation-tree').addEventListener('click', handleRelationWorkspaceClick);
+document.getElementById('multi-link-workspace-tabs').addEventListener('click', event => {
+  const button = event.target.closest('[data-multi-link-tab]');
+  if (button) setMultiLinkWorkspaceTab(button.dataset.multiLinkTab);
+});
 
 document.getElementById('relation-view-list').addEventListener('click', () => {
   relationGraphState.focusNodeId = null;
@@ -8904,7 +9156,7 @@ window.addEventListener('resize', scheduleRelationBoardConnections);
 
 document.getElementById('relation-tree-refresh').addEventListener('click', () => loadRelationGraph());
 
-document.getElementById('multi-link-stage-stock').addEventListener('click', async event => {
+document.getElementById('multi-link-sku-stage-stock').addEventListener('click', async event => {
   const row = multiLinkState.selected;
   if (!row || !liveData?.stageListingInventoryDraft) return;
   const button = event.currentTarget;
@@ -8969,12 +9221,6 @@ document.getElementById('multi-link-form').addEventListener('submit', async even
     showToast(`구성을 저장했습니다.${Number(saved?.promoted_component_count || 0) ? ' 기존 1:1 연결도 함께 보존했습니다.' : ''}`);
   } catch (error) { showToast(`구성 저장 실패: ${error?.message || error}`); }
   finally { saveButton.disabled = false; saveButton.textContent = '구성 저장'; }
-});
-
-document.querySelector('.multi-link-legacy-workspace').addEventListener('toggle', event => {
-  if (event.currentTarget.open && !multiLinkState.loading && !multiLinkState.loaded) {
-    loadMultiLinks({resetPage:true, forceLegacy:true});
-  }
 });
 
 let multiLinkSearchTimer;
@@ -9334,6 +9580,8 @@ function showPage(pageId) {
   const target = document.getElementById(pageId);
   if (target) target.classList.add('active-page');
   if (pageId === 'jobs') loadChangeQueue();
+  if (pageId === 'channels') window.SystemV3ChannelsPage?.show();
+  if (pageId === 'attributes') window.SystemV3AttributesPage?.show();
   if (pageId === 'multi-links' && !multiLinkState.loaded) loadMultiLinks({resetPage:true});
   if (pageId === 'inventory') loadInventorySurvey({silent:inventoryState.loaded});
   if (pageId === 'price-rules') {
@@ -9726,4 +9974,9 @@ if (liveData) {
   }, 30000);
 } else {
   setMatrixConnection('error', 'DB 모듈 없음');
+  for (const component of Object.keys(systemHealthState.components)) setSystemHealthComponent(component, false);
+  systemHealthState.lastCompletedAt = new Date().toISOString();
+  renderSystemHealth();
+  document.getElementById('live-today-picked').textContent = '-';
+  document.getElementById('live-shortage-drawer').textContent = '주문 DB 연결 대기';
 }

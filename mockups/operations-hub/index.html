@@ -7,12 +7,14 @@
     <title>System V3 · 상품 운영 허브</title>
     <link rel="preconnect" href="https://cdnjs.cloudflare.com" crossorigin>
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/pretendard/1.3.9/static/pretendard.css">
-    <link rel="stylesheet" href="./style.css?v=20260901-ui-scale-v67">
-    <link rel="stylesheet" href="./inventory.css?v=20260901-ui-scale-v67">
-    <link rel="stylesheet" href="./price-rule-lab.css?v=20260901-ui-scale-v67">
-    <link rel="stylesheet" href="./ui-scale-base.css?v=20260901-ui-scale-v67">
-    <link rel="stylesheet" href="./ui-scale-matrix.css?v=20260901-ui-scale-v67">
-    <link rel="stylesheet" href="./ui-scale-workspaces.css?v=20260901-ui-scale-v67">
+    <link rel="stylesheet" href="./style.css?v=20260901-phase2-v68">
+    <link rel="stylesheet" href="./inventory.css?v=20260901-phase2-v68">
+    <link rel="stylesheet" href="./price-rule-lab.css?v=20260901-phase2-v68">
+    <link rel="stylesheet" href="./ui-scale-base.css?v=20260901-phase2-v68">
+    <link rel="stylesheet" href="./ui-scale-matrix.css?v=20260901-phase2-v68">
+    <link rel="stylesheet" href="./ui-scale-workspaces.css?v=20260901-phase2-v68">
+    <link rel="stylesheet" href="./channels-page.css?v=20260901-phase2-v68">
+    <link rel="stylesheet" href="./attributes-page.css?v=20260901-phase2-v68">
   </head>
   <body>
     <div class="app-shell">
@@ -29,8 +31,8 @@
         </div>
         <div class="top-actions">
           <label class="ui-density-control" for="ui-density-select"><span>화면 밀도</span><select id="ui-density-select" aria-label="화면 밀도"><option value="comfortable">기본</option><option value="compact">촘촘히</option></select></label>
-          <div class="live-pill"><span></span> 시스템 정상</div>
-          <button class="btn" type="button" data-toast="새로운 데이터를 확인했습니다.">새로고침</button>
+          <div id="system-health-pill" class="live-pill" data-state="loading" role="status" aria-live="polite"><span aria-hidden="true"></span><b id="system-health-text">시스템 확인 중</b></div>
+          <button id="top-refresh-btn" class="btn top-refresh-btn" type="button" aria-label="운영 데이터 새로고침"><span aria-hidden="true">↻</span><b>새로고침</b></button>
           <button class="btn primary" type="button" data-page="upload">원본 업로드</button>
           <button class="user-chip" type="button" aria-label="사용자 메뉴">김혜인 <b>운영자</b></button>
         </div>
@@ -89,7 +91,7 @@
                   <button data-page="upload"><span class="quick-icon upload">↑</span><b>원본 파일 업로드</b><em>판매처를 선택해 새 원본 등록</em></button>
                   <button data-page="matching"><span class="quick-icon match">↔</span><b>통합 매트릭스</b><em>상품 연결·재고·가격 통합 관리</em></button>
                   <button data-page="inventory"><span class="quick-icon count">#</span><b>재고조사 시작</b><em>조사수량과 피킹수량 대조</em></button>
-                  <button data-page="channels"><span class="quick-icon sync">↻</span><b>판매처 재고 갱신</b><em>재고·가격 선택 동기화</em></button>
+                  <button data-page="channels"><span class="quick-icon sync">↻</span><b>판매처 상태 확인</b><em>원본·내보내기 준비 현황 조회</em></button>
                 </div>
               </section>
 
@@ -281,6 +283,14 @@
                 <p class="relation-folder-note">폴더와 하위 폴더는 원하는 단계까지 직접 만들고 이동할 수 있습니다. 상품 상위·하위 관계와는 별도로 관리됩니다.</p>
               </aside>
               <section class="relation-workspace" aria-label="상품 관계 관리">
+                <nav id="multi-link-workspace-tabs" class="multi-link-workspace-tabs" role="tablist" aria-label="다중·조합 관리 보기">
+                  <button class="active" type="button" role="tab" aria-selected="true" data-multi-link-tab="all">전체 연결</button>
+                  <button type="button" role="tab" aria-selected="false" data-multi-link-tab="relation">관계</button>
+                  <button type="button" role="tab" aria-selected="false" data-multi-link-tab="bundle">세트·번들</button>
+                </nav>
+                <section id="multi-link-tab-all" class="multi-link-tab-panel active" data-multi-link-panel="all" aria-label="전체 연결 매트릭스"></section>
+                <section id="multi-link-tab-relation" class="multi-link-tab-panel" data-multi-link-panel="relation" aria-label="상품 관계 매트릭스" hidden></section>
+                <section id="multi-link-tab-bundle" class="multi-link-tab-panel" data-multi-link-panel="bundle" aria-label="세트·번들 매트릭스" hidden></section>
                 <header class="relation-workspace-head">
                   <div><span>선택한 보기</span><h3 id="relation-workspace-scope">전체 연결</h3><p>기본 화면은 상위와 하위의 한 관계씩만 간단히 보여줍니다.</p></div>
                   <div class="relation-workspace-actions">
@@ -416,7 +426,7 @@
                      </div>
                    </details>
                 </section>
-                <details class="multi-link-legacy-workspace">
+                <section class="multi-link-all-workspace">
                   <summary><span>기존 SKU 구성·재고 상세 작업</span><em>판매처 옵션별 구성수량과 계산재고가 필요할 때만 펼치세요.</em></summary>
                   <div class="multi-link-toolbar">
                     <div class="multi-link-search"><span>⌕</span><input id="multi-link-search" placeholder="판매처 코드 / 상품명 / 셀피아 SKU 검색"></div>
@@ -425,22 +435,22 @@
                     <button id="multi-link-refresh" class="btn">새로고침</button>
                     <span class="multi-link-result">결과 <b id="multi-link-count">-</b>개</span>
                   </div>
-                  <div class="multi-link-legacy-grid">
+                  <div id="multi-link-workspace-body" class="multi-link-legacy-grid">
                     <section class="multi-link-table-card">
-                      <table class="multi-link-table">
-                        <thead><tr><th>관리 분류</th><th>유형</th><th>판매처</th><th>상품코드</th><th>옵션코드</th><th>상품명 / 옵션명</th><th>구성</th><th>판매처 / 계산재고</th></tr></thead>
-                        <tbody id="multi-link-body"><tr class="multi-link-empty"><td colspan="8">다중·조합 연결을 불러오는 중입니다.</td></tr></tbody>
+                      <table id="multi-link-workspace-matrix" class="multi-link-table">
+                        <thead><tr><th>사진</th><th>관리 분류</th><th>유형</th><th>판매처</th><th>상품코드</th><th>옵션코드</th><th>상품명 / 옵션명</th><th>구성</th><th>판매처 / 계산재고</th></tr></thead>
+                        <tbody id="multi-link-body"><tr class="multi-link-empty"><td colspan="9">다중·조합 연결을 불러오는 중입니다.</td></tr></tbody>
                       </table>
                       <div class="multi-link-foot"><span id="multi-link-range">-</span><div><button id="multi-link-prev" disabled>‹</button><b id="multi-link-page">1</b><button id="multi-link-next" disabled>›</button></div></div>
                     </section>
                     <aside class="multi-link-editor" aria-label="구성품 편집">
                       <div class="multi-link-editor-head"><span>판매처 옵션 구성</span><h3 id="multi-link-editor-title">연결을 선택해주세요</h3><p id="multi-link-editor-copy">목록의 판매처 옵션을 누르면 현재 구성과 계산 재고를 표시합니다.</p></div>
                       <div id="multi-link-components" class="multi-link-components"><div class="multi-link-editor-empty">선택된 판매처 옵션이 없습니다.</div></div>
-                      <section id="multi-link-inventory-action" class="multi-link-inventory-action disabled">
+                      <section id="multi-link-sku-inventory-action" class="multi-link-inventory-action disabled">
                         <div class="multi-link-inventory-head"><div><span>판매처 재고 수정안</span><b id="multi-link-inventory-state">연결을 선택해주세요</b></div><button id="multi-link-open-queue" class="btn" type="button">내보내기 준비 열기</button></div>
                         <div class="multi-link-inventory-values"><p><span>판매처 원본</span><b id="multi-link-seller-stock">-</b></p><i>→</i><p><span>조합 계산</span><b id="multi-link-calculated-stock">-</b></p></div>
                         <p id="multi-link-inventory-copy">명시적으로 저장한 구성만 재고 수정안으로 만들 수 있습니다.</p>
-                        <button id="multi-link-stage-stock" class="btn primary" type="button" disabled>계산재고를 내보내기 준비에 등록</button>
+                        <button id="multi-link-sku-stage-stock" class="btn primary" type="button" disabled>계산재고를 내보내기 준비에 등록</button>
                       </section>
                       <form id="multi-link-form" class="multi-link-form">
                         <div class="multi-link-form-guide"><b>SKU 구성 추가·수정</b><span>기존 1:1 옵션에 두 번째 SKU를 추가하면 현재 SKU도 자동 보존됩니다.</span></div>
@@ -453,7 +463,7 @@
                       </form>
                     </aside>
                   </div>
-                </details>
+                </section>
               </section>
             </div>
           </div>
@@ -483,8 +493,8 @@
               <div class="inventory-foot"><span>피킹 DB는 1분마다 집계되고 이 화면은 60초마다 자동 갱신됩니다.</span><b id="inventory-last-refresh">마지막 갱신 -</b></div>
             </section>
           </div>
-          <div id="channels" class="page table-page" data-title="판매처 동기화" data-copy="판매처별 재고·가격 반영 범위와 실행 상태를 관리합니다."></div>
-          <div id="attributes" class="page table-page" data-title="상품 속성·태그" data-copy="소재·상품군·형태와 운영 태그를 상품코드 기준으로 관리합니다."></div>
+          <div id="channels" class="page channels-page"></div>
+          <div id="attributes" class="page attributes-page"></div>
           <div id="price-rules" class="page price-rule-page">
             <div class="page-head">
               <div><h2 id="price-rule-lab-title">계산 태그·가격 조합</h2><p>재사용 가능한 계산 태그를 만든 뒤 필요한 순서대로 가격 조합에 담습니다.</p></div>
@@ -806,6 +816,16 @@
         <div class="relation-image-modal-body"><img id="relation-image-preview" alt=""><div><b id="relation-image-product-name">상품명</b><span id="relation-image-option-name">옵션명</span></div></div>
       </section>
     </div>
+    <div id="multi-link-sku-action-modal" class="modal-backdrop" hidden>
+      <section class="multi-link-sku-action-modal" role="dialog" aria-modal="true" aria-labelledby="multi-link-sku-action-title">
+        <div class="modal-head"><div><span>선택 행 작업</span><h3 id="multi-link-sku-action-title">SKU 구성·재고</h3></div><button id="multi-link-sku-action-close" type="button" aria-label="SKU 구성·재고 닫기">×</button></div>
+        <div id="multi-link-sku-action-body" class="multi-link-sku-action-body"></div>
+      </section>
+    </div>
+    <div id="multi-link-workspace-context-menu" class="matrix-context-menu multi-link-workspace-context-menu" role="menu" aria-label="연결 행 작업" hidden>
+      <span>선택 행 작업</span>
+      <button id="multi-link-context-open-sku" type="button" role="menuitem"><b>SKU 구성·재고</b><em>구성수량·종속·계산재고</em></button>
+    </div>
     <div id="matrix-context-menu" class="matrix-context-menu" role="menu" aria-label="선택 셀 작업" hidden>
       <span>선택 셀 작업</span>
       <button id="matrix-context-source-refresh" class="source-refresh" type="button" role="menuitem">
@@ -829,17 +849,19 @@
     <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.112.3/dist/umd/supabase.js"></script>
-    <script src="./seller-source-parsers.js?v=20260901-ui-scale-v67"></script>
-    <script src="./seller-export-adapter.js?v=20260901-ui-scale-v67"></script>
-    <script src="./matrix-csv-export.js?v=20260901-ui-scale-v67"></script>
-    <script src="./discount-price-math.js?v=20260901-ui-scale-v67"></script>
-    <script src="./source-refresh-verifier.js?v=20260901-ui-scale-v67"></script>
-    <script src="./relation-import-parser.js?v=20260901-ui-scale-v67"></script>
-    <script src="./bundle-import-parser.js?v=20260901-ui-scale-v67"></script>
-    <script src="./seller-bundle-import-parser.js?v=20260901-ui-scale-v67"></script>
-    <script src="./sellpia-source-parser.js?v=20260901-ui-scale-v67"></script>
-    <script src="./data-service.js?v=20260901-ui-scale-v67"></script>
-    <script src="./app.js?v=20260901-ui-scale-v67"></script>
-    <script src="./price-rule-lab.js?v=20260901-ui-scale-v67"></script>
+    <script src="./seller-source-parsers.js?v=20260901-phase2-v68"></script>
+    <script src="./seller-export-adapter.js?v=20260901-phase2-v68"></script>
+    <script src="./matrix-csv-export.js?v=20260901-phase2-v68"></script>
+    <script src="./discount-price-math.js?v=20260901-phase2-v68"></script>
+    <script src="./source-refresh-verifier.js?v=20260901-phase2-v68"></script>
+    <script src="./relation-import-parser.js?v=20260901-phase2-v68"></script>
+    <script src="./bundle-import-parser.js?v=20260901-phase2-v68"></script>
+    <script src="./seller-bundle-import-parser.js?v=20260901-phase2-v68"></script>
+    <script src="./sellpia-source-parser.js?v=20260901-phase2-v68"></script>
+    <script src="./data-service.js?v=20260901-phase2-v68"></script>
+    <script src="./channels-page.js?v=20260901-phase2-v68"></script>
+    <script src="./app.js?v=20260901-phase2-v68"></script>
+    <script src="./attributes-page.js?v=20260901-phase2-v68"></script>
+    <script src="./price-rule-lab.js?v=20260901-phase2-v68"></script>
   </body>
 </html>

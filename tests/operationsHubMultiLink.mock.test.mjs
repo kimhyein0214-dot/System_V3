@@ -35,9 +35,11 @@ assert.match(inventoryDraftMigration, /stage_operations_hub_listing_inventory_dr
 assert.match(inventoryDraftMigration, /v_listing_id is null[\s\S]*먼저 판매처 옵션의 구성을 저장/, "inferred legacy relationships must not create inventory drafts until explicitly confirmed");
 assert.match(inventoryDraftMigration, /seller_product_code = v_product_code[\s\S]*seller_option_code[\s\S]*조합 계산재고/, "bundle drafts must target the exact seller listing and enter the existing review queue");
 assert.doesNotMatch(inventoryDraftMigration, /security definer/i, "bundle inventory staging must not bypass RLS");
-assert.match(html, /multi-link-inventory-action[\s\S]*multi-link-open-queue[\s\S]*multi-link-stage-stock/, "the listing editor must show a reviewable inventory-draft action and queue entry point");
+assert.match(html, /multi-link-sku-action-modal/, "the listing editor must open in a row-level SKU action modal");
+assert.match(html, /multi-link-sku-inventory-action[\s\S]*multi-link-open-queue[\s\S]*multi-link-sku-stage-stock/, "the row-level SKU tools must retain a reviewable inventory-draft action and queue entry point");
+assert.match(app, /initializeMultiLinkWorkspaceShell[\s\S]*multi-link-sku-action-body[\s\S]*appendChild\(editor\)/, "the inventory editor must be moved into the modal instead of remaining a persistent side panel");
 assert.match(data, /stageListingInventoryDraft[\s\S]*stage_operations_hub_listing_inventory_draft/, "the data adapter must expose bundle inventory draft staging");
-assert.match(app, /renderMultiLinkInventoryAction[\s\S]*stageListingInventoryDraft[\s\S]*loadChangeQueue/, "staging bundle stock must refresh the listing, queue, dashboard, and matrix review surfaces");
+assert.match(app, /renderMultiLinkInventoryAction[\s\S]*multi-link-sku-stage-stock[\s\S]*stageListingInventoryDraft[\s\S]*loadChangeQueue/, "staging bundle stock from the row-level modal must refresh the listing, queue, dashboard, and matrix review surfaces");
 assert.match(html, /drawer-link-manager[\s\S]*drawer-open-multi-links/, "the product drawer must expose integrated component management without removing the full workspace");
 assert.match(app, /loadDrawerListingLinks[\s\S]*data-drawer-component-save[\s\S]*data-drawer-component-remove[\s\S]*data-drawer-stage-stock/, "the integrated drawer must add, edit, remove, and stage listing components");
 assert.match(disconnectMigration, /disconnect_operations_hub_legacy_listing_component[\s\S]*upsert_operations_hub_listing_component[\s\S]*deactivate_operations_hub_listing_component/, "legacy disconnect must promote and soft-deactivate the inferred edge atomically");

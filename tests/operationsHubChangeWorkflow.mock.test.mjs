@@ -27,8 +27,10 @@ assert.match(migration, /status_message = '더 최신 변경으로 대체됨'/, 
 for (const id of ["queue-status-filter", "queue-source-filter", "queue-refresh", "queue-retry", "queue-cancel", "queue-validate", "queue-body", "queue-event-panel"]) {
   assert.match(html, new RegExp(`id="${id}"`), `queue UI must include ${id}`);
 }
-const localAssetVersions = [...html.matchAll(/(?:href|src)="\.\/[^\"]+\?v=([^\"]+)"/g)].map(match => match[1]);
-assert.equal(localAssetVersions.length, 18, "all deployed local assets must be versioned");
+const localAssets = [...html.matchAll(/(?:href|src)="(\.\/[^\"]+)"/g)].map(match => match[1]);
+assert.ok(localAssets.length >= 18, "the operations hub must retain its local asset bundle");
+assert.ok(localAssets.every(asset => /\?v=[^&\"]+$/.test(asset)), "all deployed local assets must be versioned");
+const localAssetVersions = localAssets.map(asset => asset.match(/\?v=([^&\"]+)$/)?.[1]).filter(Boolean);
 assert.equal(new Set(localAssetVersions).size, 1, "all deployed assets must share one current operations hub version");
 assert.match(data, /loadChangeQueue[\s\S]*?loadChangeQueueStats[\s\S]*?loadChangeEvents[\s\S]*?validateChangeQueue[\s\S]*?cancelChangeQueue[\s\S]*?retryChangeQueue/, "the frontend data adapter must expose the complete queue workflow");
 assert.match(data, /p_batch_id:batchId/, "writes must send their stable request batch ID to the database");

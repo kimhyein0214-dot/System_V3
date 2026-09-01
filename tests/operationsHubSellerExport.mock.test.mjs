@@ -39,8 +39,10 @@ for (const id of ['matrix-match-stock-btn','matrix-export-btn','queue-export','q
   assert.match(html, new RegExp(`id="${id}"`), `export UI must include ${id}`);
 }
 assert.match(html, /seller-source-parsers\.js[\s\S]*?seller-export-adapter\.js[\s\S]*?data-service\.js/, 'the export adapter must load before application startup');
-const localAssetVersions = [...html.matchAll(/(?:href|src)="\.\/[^\"]+\?v=([^\"]+)"/g)].map(match => match[1]);
-assert.equal(localAssetVersions.length, 18, 'all local export assets must be versioned');
+const localAssets = [...html.matchAll(/(?:href|src)="(\.\/[^\"]+)"/g)].map(match => match[1]);
+assert.ok(localAssets.length >= 18, 'the export page must retain its local asset bundle');
+assert.ok(localAssets.every(asset => /\?v=[^&\"]+$/.test(asset)), 'all local export assets must be versioned');
+const localAssetVersions = localAssets.map(asset => asset.match(/\?v=([^&\"]+)$/)?.[1]).filter(Boolean);
 assert.equal(new Set(localAssetVersions).size, 1, 'all local assets must share the export deployment version');
 assert.doesNotMatch(html, /class="seller-export-files"/, 'export must reuse the latest stored originals instead of asking for files again');
 for (const scope of ['filtered','selected','all']) assert.match(html, new RegExp(`name="seller-export-scope" value="${scope}"`), `export scope must include ${scope}`);

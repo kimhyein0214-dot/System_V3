@@ -527,7 +527,35 @@
     const depth = Math.max(0, Number(context.depth ?? context.hopCount ?? context.hop_count) || 0);
     const rawPath = Array.isArray(context.pathSkus) ? context.pathSkus : (Array.isArray(context.pathSkuCodes) ? context.pathSkuCodes : context.path_sku_codes);
     const pathSkuCodes = (Array.isArray(rawPath) ? rawPath : []).map(cleanText).filter(Boolean);
-    return {kind, rootSku, direction, depth, pathSkus:pathSkuCodes};
+    const relationshipFamily = cleanText(
+      context.relationshipFamily
+      || context.relationFamily
+      || context.relationship_family
+      || context.relation_family
+    ).toLowerCase() || (kind === 'related' ? 'relation' : 'direct');
+    const relationshipType = cleanText(
+      context.relationshipType
+      || context.relationType
+      || context.relationship_type
+      || context.relation_type
+    ).toLowerCase() || (kind === 'related' ? 'custom' : 'direct');
+    const relationshipDetails = context.relationshipDetails && typeof context.relationshipDetails === 'object'
+      ? context.relationshipDetails
+      : (context.relationship_details && typeof context.relationship_details === 'object' ? context.relationship_details : {});
+    return {
+      kind,
+      rootSku,
+      direction,
+      depth,
+      pathSkus:pathSkuCodes,
+      relationshipFamily,
+      relationshipType,
+      relationshipDetails,
+      // Temporary aliases keep existing and in-flight UI modules compatible
+      // while `relationshipFamily` remains the stable public JSON key.
+      relationFamily:relationshipFamily,
+      relationType:relationshipType
+    };
   }
 
   async function attachMatrixResultMetadata(rows, signal) {
@@ -612,8 +640,7 @@
         p_exclude_dependent:Boolean(excludeCombinationSkus),
         p_include_related_sku_context:true
       };
-      const {data, error} = await withAbortSignal(db.rpc('load_operations_hub_matrix_filtered_v5', v5Args), signal);
-      if (!error) {
+      const buildRelatedMatrixResult = async data => {
         const rows = Array.isArray(data?.rows) ? data.rows : [];
         const directCount = Number(data?.directCount ?? data?.direct_count ?? data?.count ?? 0);
         const relatedCount = Number(data?.relatedCount ?? data?.related_count ?? rows.filter(row => normalizeMatrixContext(row).kind === 'related').length);
@@ -627,11 +654,21 @@
           pageSize:Number(data?.pageSize || data?.page_size || safePageSize),
           relationContextEnabled:true
         };
+      };
+      const {data:v6Data, error:v6Error} = await withAbortSignal(db.rpc('load_operations_hub_matrix_filtered_v6', v5Args), signal);
+      if (!v6Error) {
+        return buildRelatedMatrixResult(v6Data);
       }
-      // The UI can ship before the database migration. Keep ordinary search usable
-      // until v5 is present, but never hide a real v5 query failure behind fallback.
-      if (!isMissingMatrixRpc(error, 'load_operations_hub_matrix_filtered_v5')) throw error;
-      console.info('matrix related context RPC unavailable; using existing matrix query until v5 is deployed');
+      // The frontend may ship before the additive V6 migration. A missing V6
+      // falls back to the already deployed relation-only V5, while every real
+      // V6 query failure remains visible instead of being hidden by fallback.
+      if (!isMissingMatrixRpc(v6Error, 'load_operations_hub_matrix_filtered_v6')) throw v6Error;
+      const {data:v5Data, error:v5Error} = await withAbortSignal(db.rpc('load_operations_hub_matrix_filtered_v5', v5Args), signal);
+      if (!v5Error) {
+        return buildRelatedMatrixResult(v5Data);
+      }
+      if (!isMissingMatrixRpc(v5Error, 'load_operations_hub_matrix_filtered_v5')) throw v5Error;
+      console.info('matrix related context RPC unavailable; using existing matrix query until V6 is deployed');
     }
     if (filterPayload.conditions.length) {
       throwIfAborted(signal);
