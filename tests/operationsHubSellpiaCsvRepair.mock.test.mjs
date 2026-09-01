@@ -10,15 +10,10 @@ const indexedSearchMigration = fs.readFileSync(new URL('../supabase/migrations/2
 const staleRefreshMigration = fs.readFileSync(new URL('../supabase/migrations/20260820193000_skip_unchanged_operations_hub_cache_refresh.sql', import.meta.url), 'utf8');
 const pageFirstMigration = fs.readFileSync(new URL('../supabase/migrations/20260831151000_operations_hub_matrix_page_v3.sql', import.meta.url), 'utf8');
 
-const sellpiaParser = dataService.slice(
-  dataService.indexOf('async function parseSellpiaFile'),
-  dataService.indexOf('async function uploadSellpiaSnapshot')
-);
-assert.match(sellpiaParser, /csv\|tsv\|txt/, 'the Sellpia parser must recognize plain-text exports');
-assert.match(sellpiaParser, /readOptions\.raw = true/, 'plain-text Sellpia exports must disable SheetJS date coercion');
-assert.match(sellpiaParser, /XLSX\.read\(await file\.arrayBuffer\(\), readOptions\)/, 'the guarded read options must be passed to SheetJS');
-assert.match(dataService, /!\/\^\\d\+-\\d\+\$\/\.test\(sku\)/, 'Sellpia uploads must reject malformed SKU values before DB insert');
-assert.match(dataService, /operations-hub-sellpia-2026\.08\.25-v4/, 'the guarded Sellpia parser must publish the procurement-aware parser version');
+// Upload parsing moved into sellpia-source-parser.js. Its encoding, schema,
+// row-number, and preflight contract is covered by
+// operationsHubSellpiaUploadParser.mock.test.mjs; this file stays focused on
+// the independent snapshot-repair and matrix-cache regression boundary.
 assert.doesNotMatch(dataService, /\.from\('operations_hub_matrix_live'\)/, 'interactive matrix reads must not hit the expensive live view');
 assert.match(dataService, /\.from\('operations_hub_matrix_cached'\)/, 'interactive matrix reads must use the non-blocking cache');
 assert.match(pageFirstMigration, /operations_hub_matrix_export_cache cache[\s\S]*?cache\.sellpia_sku_code[\s\S]*?ilike '%' \|\| v_search \|\| '%'/, 'Sellpia searches must stay on the compact page-key cache instead of the wide managed view');

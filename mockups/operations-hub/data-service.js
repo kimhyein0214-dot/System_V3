@@ -1943,22 +1943,139 @@
     return Number.isFinite(number) ? number : fallback;
   }
 
-  async function parseSellpiaFile(file, fileIndex, fileCount, onProgress) {
+  const SELLPIA_REQUIRED_HEADERS = Object.freeze({
+    rowNo:['#'],
+    sku:['상품코드'],
+    ownSku:['자사코드'],
+    productName:['상품명'],
+    optionName:['옵션명'],
+    stock:['재고', '현재고'],
+    availableStock:['가용재고'],
+    soldOut:['품절', '품절여부'],
+    discontinued:['단종', '단종여부'],
+    salePrice:['판매가'],
+    safetyStock:['안전재고'],
+    supplierCode:['매입처코드'],
+    supplierName:['매입처'],
+    supplierGroup:['매입처그룹'],
+    supplierAddress:['매입처주소'],
+    supplierMarketName:['상가명'],
+    supplierPhone:['매입처전화'],
+    purchaseProductName:['매입상품명'],
+    purchaseOptionName:['매입옵션명'],
+    purchasePrice:['매입가'],
+    commission:['수수료', '판매수수료'],
+    purchaseVat:['매입처부가세', '매입부가세'],
+    orderUnit:['발주단위'],
+    minimumOrderUnit:['최소발주수량', '최소발주단위']
+  });
+
+  const SELLPIA_OPTIONAL_HEADERS = Object.freeze({
+    integratedAvailableStock:['통합가용재고', '통합판매가능재고', '통합가용수량'],
+  });
+
+  function normalizeSellpiaHeader(value) {
+    return cleanText(value)
+      .replace(/^\uFEFF/, '')
+      .normalize('NFKC')
+      .replace(/[\s_\-()[\]{}·./\\]+/g, '')
+      .toLowerCase();
+  }
+
+  function sellpiaColumnName(index) {
+    let value = Number(index) + 1;
+    let result = '';
+    while (value > 0) {
+      value -= 1;
+      result = String.fromCharCode(65 + (value % 26)) + result;
+      value = Math.floor(value / 26);
+    }
+    return result;
+  }
+
+  function createSellpiaColumnMap(headerRow, fileName) {
+    const headers = Array.isArray(headerRow) ? headerRow : [];
+    const normalizedHeaders = headers.map(normalizeSellpiaHeader);
+    const columnMap = {};
+    const fields = {...SELLPIA_REQUIRED_HEADERS, ...SELLPIA_OPTIONAL_HEADERS};
+    for (const [fieldName, aliases] of Object.entries(fields)) {
+      const normalizedAliases = aliases.map(normalizeSellpiaHeader);
+      const indexes = normalizedHeaders.reduce((found, header, index) => {
+        if (normalizedAliases.includes(header)) found.push(index);
+        return found;
+      }, []);
+      const isRequired = Object.prototype.hasOwnProperty.call(SELLPIA_REQUIRED_HEADERS, fieldName);
+      if (isRequired && indexes.length !== 1) {
+        const expected = aliases.join(' 또는 ');
+        if (!indexes.length) throw new Error(`${fileName}: 필수 셀피아 헤더 '${expected}'가 없습니다.`);
+        throw new Error(`${fileName}: 필수 셀피아 헤더 '${expected}'가 ${indexes.map(index => `${sellpiaColumnName(index)}1`).join(', ')}에 중복되어 있습니다.`);
+      }
+      if (indexes.length > 1) {
+        throw new Error(`${fileName}: 셀피아 헤더 '${aliases.join(' 또는 ')}'가 ${indexes.map(index => `${sellpiaColumnName(index)}1`).join(', ')}에 중복되어 있습니다.`);
+      }
+      columnMap[fieldName] = indexes.length ? indexes[0] : -1;
+    }
+    return columnMap;
+  }
+
+  function sellpiaCell(row, columnMap, fieldName) {
+    const index = columnMap[fieldName];
+    return index === undefined || index < 0 ? null : row[index];
+  }
+
+  function sellpiaArrayBufferToBinaryString(buffer) {
+    const bytes = new Uint8Array(buffer);
+    const chunkSize = 32768;
+    const chunks = [];
+    for (let offset = 0; offset < bytes.length; offset += chunkSize) {
+      const chunk = bytes.subarray(offset, Math.min(offset + chunkSize, bytes.length));
+      let text = '';
+      for (let index = 0; index < chunk.length; index += 1) text += String.fromCharCode(chunk[index]);
+      chunks.push(text);
+    }
+    return chunks.join('');
+  }
+
+  function decodeSellpiaBytes(buffer, fileName) {
+    const bytes = new Uint8Array(buffer);
+    const Decoder = global.TextDecoder || (typeof TextDecoder === 'function' ? TextDecoder : null);
+    if (!Decoder) throw new Error(`${fileName}: 브라우저 TextDecoder를 사용할 수 없습니다.`);
+    const hasUtf8Bom = bytes.length >= 3 && bytes[0] === 0xef && bytes[1] === 0xbb && bytes[2] === 0xbf;
+    const strictDecode = (encoding) => new Decoder(encoding, {fatal:true}).decode(bytes);
+    try {
+      return {text:strictDecode('utf-8'), encoding:hasUtf8Bom ? 'utf-8-bom' : 'utf-8', inputType:'string'};
+    } catch (utf8Error) {
+      // SheetJS 0.18.5 only restores CP949 headers reliably through a binary
+      // string with codepage 949. TextDecoder('euc-kr') can replace CP949 bytes.
+      return {text:sellpiaArrayBufferToBinaryString(buffer), encoding:'cp949', inputType:'binary'};
+    }
+  }
+
+  async function readSellpiaSheetRows(file) {
     if (!global.XLSX) throw new Error('XLSX 파일 해석 모듈을 불러오지 못했습니다.');
-    onProgress?.({
-      percent: Math.max(2, Math.round((fileIndex / fileCount) * 20)),
-      title: `${file.name} 읽는 중`,
-      detail: `${fileIndex + 1}/${fileCount} 파일의 셀피아 헤더와 SKU를 확인합니다.`
-    });
-    const readOptions = {type:'array', cellDates:false};
-    if (/\.(csv|tsv|txt)$/i.test(cleanText(file.name))) readOptions.raw = true;
-    const workbook = global.XLSX.read(await file.arrayBuffer(), readOptions);
+    const name = cleanText(file?.name) || '선택한 파일';
+    const buffer = await file.arrayBuffer();
+    const isDelimited = /\.(csv|tsv|txt)$/i.test(name);
+    let workbook;
+    let encoding = 'binary';
+    if (isDelimited) {
+      const decoded = decodeSellpiaBytes(buffer, name);
+      encoding = decoded.encoding;
+      workbook = global.XLSX.read(decoded.text, {
+        type:decoded.inputType,
+        raw:true,
+        cellDates:false,
+        ...(decoded.inputType === 'binary' ? {codepage:949} : {})
+      });
+    } else {
+      // Keep the original ArrayBuffer path for XLSX/XLS; never route binary files through TextDecoder.
+      workbook = global.XLSX.read(buffer, {type:'array', cellDates:false});
+    }
     const worksheet = workbook.Sheets[workbook.SheetNames[0]];
-    if (!worksheet?.['!ref']) throw new Error(`${file.name}: 첫 시트에 데이터가 없습니다.`);
+    if (!worksheet?.['!ref']) throw new Error(`${name}: 첫 시트에 데이터가 없습니다.`);
     const range = global.XLSX.utils.decode_range(worksheet['!ref']);
     range.s.r = 0;
     range.s.c = 0;
-    range.e.c = Math.min(range.e.c, 61);
     const rows = global.XLSX.utils.sheet_to_json(worksheet, {
       header:1,
       raw:true,
@@ -1966,93 +2083,134 @@
       blankrows:false,
       range
     });
-    const header = rows[0] || [];
-    const expectedHeaders = new Map([
-      [0, '#'],
-      [2, '상품코드'],
-      [5, '상품명'],
-      [26, '매입처코드'],
-      [27, '매입처'],
-      [28, '매입처그룹'],
-      [29, '매입처주소'],
-      [30, '상가명'],
-      [31, '매입처전화'],
-      [32, '매입상품명'],
-      [33, '매입옵션명'],
-      [35, '매입가'],
-      [60, '발주단위'],
-      [61, ['최소발주수량', '최소발주단위']]
-    ]);
-    const invalidHeader = [...expectedHeaders].find(([index, label]) => {
-      const allowed = Array.isArray(label) ? label : [label];
-      return !allowed.includes(cleanText(header[index]));
+    return {rows, encoding};
+  }
+
+  async function parseSellpiaFile(file, fileIndex, fileCount, onProgress) {
+    const fileName = cleanText(file?.name) || '선택한 파일';
+    onProgress?.({
+      percent: Math.max(2, Math.round((fileIndex / Math.max(1, fileCount)) * 20)),
+      title: `${fileName} 읽는 중`,
+      detail: `${fileIndex + 1}/${fileCount} 파일의 셀피아 헤더와 SKU를 확인합니다.`
     });
-    if (invalidHeader) {
-      const [index, label] = invalidHeader;
-      const expected = Array.isArray(label) ? label.join(' 또는 ') : label;
-      throw new Error(`${file.name}: 셀피아 원본 ${global.XLSX.utils.encode_col(index)}1 헤더가 '${expected}'이 아닙니다.`);
-    }
-    return rows.slice(1).flatMap(row => {
-      const sourceRowNo = cleanNumber(row[0]);
-      const sku = cleanText(row[2]);
-      if (!sourceRowNo && !sku) return [];
-      if (sourceRowNo && sku && !/^\d+-\d+$/.test(sku)) {
-        throw new Error(`${file.name}: ${sourceRowNo}행 SKU '${sku}' 형식이 올바르지 않습니다. CSV 날짜 자동변환 여부를 확인해 주세요.`);
+    const {rows, encoding} = await readSellpiaSheetRows(file);
+    const columnMap = createSellpiaColumnMap(rows[0], fileName);
+    const normalizedRows = [];
+    for (const row of rows.slice(1)) {
+      const sourceRowNo = cleanNumber(sellpiaCell(row, columnMap, 'rowNo'));
+      const sku = cleanText(sellpiaCell(row, columnMap, 'sku'));
+      if (!sourceRowNo && !sku) continue;
+      if (!Number.isInteger(sourceRowNo) || sourceRowNo < 1) {
+        throw new Error(`${fileName}: 행번호가 1 이상의 정수가 아닌 행이 있습니다.`);
       }
-      if (!sourceRowNo || !sku) throw new Error(`${file.name}: 행번호 또는 상품코드가 비어 있는 행이 있습니다.`);
+      if (!sku) throw new Error(`${fileName}: ${sourceRowNo}행 상품코드가 비어 있습니다.`);
+      if (!/^\d+-\d+$/.test(sku)) {
+        throw new Error(`${fileName}: ${sourceRowNo}행 SKU '${sku}' 형식이 올바르지 않습니다. CSV 날짜 자동변환 여부를 확인해 주세요.`);
+      }
       const productCode = sku.replace(/-\d+$/, '');
-      const soldOut = cleanText(row[21]);
-      const discontinued = cleanText(row[23]);
+      const soldOut = cleanText(sellpiaCell(row, columnMap, 'soldOut'));
+      const discontinued = cleanText(sellpiaCell(row, columnMap, 'discontinued'));
       const saleStatus = discontinued ? '단종' : soldOut ? '품절' : '정상';
-      const available = cleanNumber(row[20], cleanNumber(row[19], 0));
-      const salePrice = cleanNumber(row[34], 0);
-      return [{
+      const available = cleanNumber(
+        sellpiaCell(row, columnMap, 'integratedAvailableStock'),
+        cleanNumber(sellpiaCell(row, columnMap, 'availableStock'), 0)
+      );
+      const salePrice = cleanNumber(sellpiaCell(row, columnMap, 'salePrice'), 0);
+      normalizedRows.push({
         sellpia_sku_code: sku,
         sellpia_product_code: productCode,
-        sellpia_product_name: cleanText(row[5]) || null,
-        sellpia_option_name: cleanText(row[6]) || null,
-        own_sku: cleanText(row[3]) || null,
-        stock: cleanNumber(row[13], 0),
+        sellpia_product_name: cleanText(sellpiaCell(row, columnMap, 'productName')) || null,
+        sellpia_option_name: cleanText(sellpiaCell(row, columnMap, 'optionName')) || null,
+        own_sku: cleanText(sellpiaCell(row, columnMap, 'ownSku')) || null,
+        stock: cleanNumber(sellpiaCell(row, columnMap, 'stock'), 0),
         available_stock: available,
         integrated_available_stock: available,
-        safety_stock: cleanNumber(row[38], 0),
+        safety_stock: cleanNumber(sellpiaCell(row, columnMap, 'safetyStock'), 0),
         source_row_no: sourceRowNo,
-        supplier_code: cleanText(row[26]) || null,
-        supplier_name: cleanText(row[27]) || null,
-        supplier_group: cleanText(row[28]) || null,
-        supplier_address: cleanText(row[29]) || null,
-        supplier_market_name: cleanText(row[30]) || null,
-        supplier_phone: cleanText(row[31]) || null,
-        purchase_product_name: cleanText(row[32]) || null,
-        purchase_option_name: cleanText(row[33]) || null,
-        purchase_price: cleanNumber(row[35]),
-        order_unit: cleanNumber(row[60]),
-        minimum_order_unit: cleanNumber(row[61]),
+        supplier_code: cleanText(sellpiaCell(row, columnMap, 'supplierCode')) || null,
+        supplier_name: cleanText(sellpiaCell(row, columnMap, 'supplierName')) || null,
+        supplier_group: cleanText(sellpiaCell(row, columnMap, 'supplierGroup')) || null,
+        supplier_address: cleanText(sellpiaCell(row, columnMap, 'supplierAddress')) || null,
+        supplier_market_name: cleanText(sellpiaCell(row, columnMap, 'supplierMarketName')) || null,
+        supplier_phone: cleanText(sellpiaCell(row, columnMap, 'supplierPhone')) || null,
+        purchase_product_name: cleanText(sellpiaCell(row, columnMap, 'purchaseProductName')) || null,
+        purchase_option_name: cleanText(sellpiaCell(row, columnMap, 'purchaseOptionName')) || null,
+        purchase_price: cleanNumber(sellpiaCell(row, columnMap, 'purchasePrice')),
+        order_unit: cleanNumber(sellpiaCell(row, columnMap, 'orderUnit')),
+        minimum_order_unit: cleanNumber(sellpiaCell(row, columnMap, 'minimumOrderUnit')),
         raw_payload: {
           base_price: salePrice,
           sell_price: salePrice,
-          purchase_price: cleanNumber(row[35]),
-          order_unit: cleanNumber(row[60]),
-          minimum_order_unit: cleanNumber(row[61]),
-          commission: cleanText(row[36]),
-          purchase_vat: cleanText(row[37]),
+          purchase_price: cleanNumber(sellpiaCell(row, columnMap, 'purchasePrice')),
+          order_unit: cleanNumber(sellpiaCell(row, columnMap, 'orderUnit')),
+          minimum_order_unit: cleanNumber(sellpiaCell(row, columnMap, 'minimumOrderUnit')),
+          commission: cleanText(sellpiaCell(row, columnMap, 'commission')),
+          purchase_vat: cleanText(sellpiaCell(row, columnMap, 'purchaseVat')),
           sale_status: saleStatus,
-          source_file_name: file.name
+          source_file_name: fileName
         }
-      }];
-    });
+      });
+    }
+    if (!normalizedRows.length) throw new Error(`${fileName}: 저장할 셀피아 상품 행이 없습니다.`);
+    const rowNumbers = normalizedRows.map(row => row.source_row_no);
+    return {
+      normalizedRows,
+      fileInfo:{
+        name:fileName,
+        encoding,
+        columnCount:(rows[0] || []).length,
+        rowCount:normalizedRows.length,
+        minRowNo:Math.min(...rowNumbers),
+        maxRowNo:Math.max(...rowNumbers),
+        schemaStatus:'ok'
+      }
+    };
   }
 
-  async function uploadSellpiaSnapshot(files, fields = {}, onProgress) {
+  async function parseSellpiaUploadFiles(files, options = {}, onProgress) {
     const selectedFiles = Array.from(files || []);
-    const uploadMode = fields.mode === 'patch' ? 'patch' : 'full';
+    const uploadMode = options.mode === 'patch' ? 'patch' : 'full';
+    const sharedParser = global.SystemV3SellpiaSourceParser;
+    if (sharedParser?.parseSellpiaFiles) {
+      const parsed = await sharedParser.parseSellpiaFiles(selectedFiles, {mode:uploadMode, XLSX:global.XLSX}, onProgress);
+      if (!parsed?.valid) throw new Error((parsed?.errors || ['셀피아 원본을 확인하지 못했습니다.']).join(' '));
+      const rows = Array.isArray(parsed.rows) ? parsed.rows : [];
+      const filesMeta = (parsed.files || []).map(file => ({
+        name:file.name,
+        encoding:file.encoding,
+        columnCount:file.columnCount,
+        rowCount:file.rowCount,
+        minRowNo:file.minRowNo,
+        maxRowNo:file.maxRowNo,
+        schemaStatus:'ok'
+      }));
+      if (!rows.length) throw new Error('저장할 셀피아 상품 행이 없습니다.');
+      return {
+        normalizedRows:rows,
+        preflight:{
+          valid:true,
+          errors:[],
+          mode:uploadMode,
+          uploadMode,
+          rows,
+          rowCount:rows.length,
+          firstRowNo:rows[0].source_row_no,
+          lastRowNo:rows[rows.length - 1].source_row_no,
+          duplicateSkuCount:0,
+          files:filesMeta
+        }
+      };
+    }
     if (uploadMode === 'full' && selectedFiles.length !== 3) throw new Error('셀피아 전체 교체는 분할 원본 3개가 모두 필요합니다.');
     if (uploadMode === 'patch' && (selectedFiles.length < 1 || selectedFiles.length > 3)) throw new Error('셀피아 부분 갱신 파일을 1개 이상 선택해주세요.');
     const normalizedRows = [];
+    const fileInfos = [];
     for (let index = 0; index < selectedFiles.length; index += 1) {
-      normalizedRows.push(...await parseSellpiaFile(selectedFiles[index], index, selectedFiles.length, onProgress));
+      const parsed = await parseSellpiaFile(selectedFiles[index], index, selectedFiles.length, onProgress);
+      normalizedRows.push(...parsed.normalizedRows);
+      fileInfos.push(parsed.fileInfo);
     }
-    normalizedRows.sort((a, b) => a.source_row_no - b.source_row_no);
+    normalizedRows.sort((a, b) => a.source_row_no - b.source_row_no || a.sellpia_sku_code.localeCompare(b.sellpia_sku_code));
     const seenSku = new Set();
     for (let index = 0; index < normalizedRows.length; index += 1) {
       const row = normalizedRows[index];
@@ -2064,6 +2222,33 @@
       seenSku.add(row.sellpia_sku_code);
     }
     if (!normalizedRows.length) throw new Error('저장할 셀피아 상품 행이 없습니다.');
+    return {
+      normalizedRows,
+      preflight:{
+        valid:true,
+        errors:[],
+        mode:uploadMode,
+        uploadMode,
+        rows:normalizedRows,
+        rowCount:normalizedRows.length,
+        firstRowNo:normalizedRows[0].source_row_no,
+        lastRowNo:normalizedRows[normalizedRows.length - 1].source_row_no,
+        duplicateSkuCount:0,
+        files:fileInfos
+      }
+    };
+  }
+
+  async function preflightSellpiaFiles(files, options = {}, onProgress) {
+    const parsed = await parseSellpiaUploadFiles(files, options, onProgress);
+    return parsed.preflight;
+  }
+
+  async function uploadSellpiaSnapshot(files, fields = {}, onProgress) {
+    const selectedFiles = Array.from(files || []);
+    const parsed = await parseSellpiaUploadFiles(selectedFiles, {mode:fields.mode}, onProgress);
+    const {normalizedRows, preflight} = parsed;
+    const uploadMode = preflight.uploadMode;
 
     onProgress?.({
       percent:22,
@@ -2087,13 +2272,13 @@
           upload_status: 'uploading',
           uploaded_by: 'system_v1_frontend',
           metadata: {
-            parser_version: 'operations-hub-sellpia-2026.08.25-v4',
-            source_files: selectedFiles.map(file => ({name:file.name, size:file.size})),
+            parser_version: 'operations-hub-sellpia-2026.09.01-v5',
+            source_files: selectedFiles.map((file, index) => ({name:file.name, size:file.size, ...preflight.files[index]})),
             selected_fields: fields,
             upload_mode: uploadMode,
             uploaded_row_count: normalizedRows.length,
-            row_number_min: normalizedRows[0].source_row_no,
-            row_number_max: normalizedRows[normalizedRows.length - 1].source_row_no
+            row_number_min: preflight.firstRowNo,
+            row_number_max: preflight.lastRowNo
           }
         })
         .select('snapshot_id')
@@ -2571,6 +2756,7 @@
     completeSellerExport,
     confirmChangesApplied,
     uploadSellpiaImage,
+    preflightSellpiaFiles,
     uploadSellpiaSnapshot,
     loadSellpiaMatrixSyncStatus,
     waitForSellpiaMatrixRebuild,

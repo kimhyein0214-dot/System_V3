@@ -7,6 +7,7 @@ const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const read = file => fs.readFileSync(path.join(root, file), 'utf8');
 const migration = read('supabase/migrations/20260825052000_sellpia_procurement_and_actual_inbound_cost.sql');
 const dataService = read('mockups/operations-hub/data-service.js');
+const sellpiaParser = read('mockups/operations-hub/sellpia-source-parser.js');
 const app = read('mockups/operations-hub/app.js');
 const html = read('mockups/operations-hub/index.html');
 const csv = read('mockups/operations-hub/matrix-csv-export.js');
@@ -21,13 +22,11 @@ assert.match(migration, /create or replace view public\.operations_hub_inbound_c
 assert.match(migration, /p_purchase_price \* coalesce\(p_multiply_value, 1\)/);
 assert.match(migration, /nullif\(coalesce\(p_divide_value, 1\), 0\)/);
 
-assert.match(dataService, /range\.e\.c = Math\.min\(range\.e\.c, 61\)/);
-assert.match(dataService, /\[35, '매입가'\]/);
-assert.match(dataService, /\[60, '발주단위'\]/);
-assert.match(dataService, /\[61, \['최소발주수량', '최소발주단위'\]\]/);
-assert.match(dataService, /purchase_price: cleanNumber\(row\[35\]\)/);
-assert.match(dataService, /order_unit: cleanNumber\(row\[60\]\)/);
-assert.match(dataService, /minimum_order_unit: cleanNumber\(row\[61\]\)/);
+assert.match(sellpiaParser, /REQUIRED_HEADERS[\s\S]*?purchasePrice:\['매입가'\][\s\S]*?orderUnit:\['발주단위'\][\s\S]*?minimumOrderUnit:\['최소발주수량', '최소발주단위'\]/);
+assert.match(sellpiaParser, /buildSellpiaColumnMap[\s\S]*?normalizeHeader/, 'procurement fields must resolve by normalized header name instead of fixed positions');
+assert.match(sellpiaParser, /purchase_price:number\(cell\(source, columns, 'purchasePrice'\)\)/);
+assert.match(sellpiaParser, /order_unit:number\(cell\(source, columns, 'orderUnit'\)\)/);
+assert.match(sellpiaParser, /minimum_order_unit:number\(cell\(source, columns, 'minimumOrderUnit'\)\)/);
 assert.match(dataService, /attachInboundCostDetails/);
 assert.match(dataService, /saveInboundCostFormulaTag/);
 assert.match(dataService, /saveInboundCost/);

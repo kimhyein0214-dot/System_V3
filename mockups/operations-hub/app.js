@@ -8510,6 +8510,16 @@ const uploadButton = document.getElementById('mock-upload-btn');
 const uploadCapabilityBadge = document.getElementById('upload-capability-badge');
 const sellerUploadMode = document.getElementById('seller-upload-mode');
 let selectedFiles = [];
+const sellpiaPreflightPanel = document.getElementById('sellpia-preflight-panel');
+const sellpiaPreflightState = {
+  requestId:0,
+  status:'idle',
+  signature:'',
+  mode:'',
+  result:null,
+  error:'',
+  detail:''
+};
 
 function isPatchableUploadSource(source = sourceSelect.value) {
   return ['sellpia','smartstore','makeshop','ably'].includes(source);
@@ -8524,16 +8534,137 @@ function requiredUploadFileCount() {
   return isPatchableUploadSource() && currentUploadMode() === 'patch' ? 1 : config.files;
 }
 
+function sellpiaPreflightSignature(files = selectedFiles, mode = currentUploadMode()) {
+  return `${mode}|${Array.from(files || []).map(file => [file.name, file.size, file.lastModified, file.type].join(':')).join('|')}`;
+}
+
+function hasCurrentSellpiaPreflight() {
+  if (sourceSelect.value !== 'sellpia' || sellpiaPreflightState.status !== 'success') return false;
+  if (selectedFiles.length < requiredUploadFileCount()) return false;
+  return sellpiaPreflightState.mode === currentUploadMode()
+    && sellpiaPreflightState.signature === sellpiaPreflightSignature();
+}
+
+function sellpiaPreflightFileDetail(file, index) {
+  const resultFile = sellpiaPreflightState.result?.files?.find(candidate => candidate.name === file.name) || sellpiaPreflightState.result?.files?.[index];
+  if (sourceSelect.value !== 'sellpia') return '';
+  if (sellpiaPreflightState.status === 'checking') return '사전검사 중…';
+  if (sellpiaPreflightState.status === 'error') return '사전검사 실패';
+  if (sellpiaPreflightState.status !== 'success' || !resultFile) return '사전검사 대기';
+  const range = Number.isFinite(Number(resultFile.minRowNo)) && Number.isFinite(Number(resultFile.maxRowNo))
+    ? `${formatNumber(resultFile.minRowNo)}~${formatNumber(resultFile.maxRowNo)}`
+    : '행번호 확인';
+  return `${resultFile.encoding || '인코딩 확인'} · ${formatNumber(resultFile.rowCount || 0)}행 · ${range} · ${resultFile.schemaStatus === 'ok' ? '템플릿 정상' : '템플릿 확인'}`;
+}
+
+function renderSellpiaPreflight() {
+  if (!sellpiaPreflightPanel) return;
+  const active = sourceSelect.value === 'sellpia';
+  sellpiaPreflightPanel.hidden = !active;
+  if (!active) {
+    sellpiaPreflightPanel.innerHTML = '';
+    return;
+  }
+  const state = sellpiaPreflightState;
+  sellpiaPreflightPanel.dataset.status = state.status;
+  if (!selectedFiles.length) {
+    sellpiaPreflightPanel.innerHTML = '<div><b>셀피아 파일 사전검사</b><span>파일을 선택하면 인코딩, 행번호, 템플릿, SKU 중복을 먼저 확인합니다.</span></div><em>대기</em>';
+    return;
+  }
+  if (state.status === 'checking') {
+    sellpiaPreflightPanel.innerHTML = `<div><b>셀피아 파일 사전검사 중</b><span>${escapeHtml(state.detail || '인코딩, 행번호, 템플릿을 확인하고 있습니다.')}</span></div><em>검사 중</em>`;
+    return;
+  }
+  if (state.status === 'error') {
+    sellpiaPreflightPanel.innerHTML = `<div><b>셀피아 파일 사전검사 실패</b><span>${escapeHtml(state.error || '파일 형식과 행번호를 다시 확인해주세요.')}</span></div><em>업로드 차단</em>`;
+    return;
+  }
+  if (state.status === 'success') {
+    const result = state.result || {};
+    const range = Number.isFinite(Number(result.firstRowNo)) && Number.isFinite(Number(result.lastRowNo))
+      ? `${formatNumber(result.firstRowNo)}~${formatNumber(result.lastRowNo)}`
+      : '행번호 확인';
+    const duplicate = Number(result.duplicateSkuCount || 0);
+    sellpiaPreflightPanel.innerHTML = `<div><b>셀피아 파일 사전검사 완료</b><span>합계 ${formatNumber(result.rowCount || 0)}행 · ${range} · 행번호 연속 · ${duplicate === 0 ? 'SKU 중복 없음' : `SKU 중복 ${formatNumber(duplicate)}건`}</span></div><em>업로드 가능</em>`;
+    return;
+  }
+  sellpiaPreflightPanel.innerHTML = '<div><b>셀피아 파일 사전검사 대기</b><span>파일 구성이 바뀌면 다시 검사합니다.</span></div><em>대기</em>';
+}
+
+function invalidateSellpiaPreflight() {
+  sellpiaPreflightState.requestId += 1;
+  sellpiaPreflightState.status = 'idle';
+  sellpiaPreflightState.signature = '';
+  sellpiaPreflightState.mode = '';
+  sellpiaPreflightState.result = null;
+  sellpiaPreflightState.error = '';
+  sellpiaPreflightState.detail = '';
+}
+
+async function runSellpiaPreflight() {
+  if (sourceSelect.value !== 'sellpia') return;
+  const files = [...selectedFiles];
+  const mode = currentUploadMode();
+  const signature = sellpiaPreflightSignature(files, mode);
+  const requestId = ++sellpiaPreflightState.requestId;
+  sellpiaPreflightState.status = files.length ? 'checking' : 'idle';
+  sellpiaPreflightState.signature = signature;
+  sellpiaPreflightState.mode = mode;
+  sellpiaPreflightState.result = null;
+  sellpiaPreflightState.error = '';
+  sellpiaPreflightState.detail = files.length ? '파일을 읽는 중입니다.' : '';
+  renderSellpiaPreflight();
+  renderFiles(selectedFiles, {skipPreflight:true});
+  setUploadCapability();
+  if (!files.length) return;
+  if (typeof liveData?.preflightSellpiaFiles !== 'function') {
+    if (requestId !== sellpiaPreflightState.requestId) return;
+    sellpiaPreflightState.status = 'error';
+    sellpiaPreflightState.error = '셀피아 사전검사 모듈을 불러오지 못했습니다. 새로고침 후 다시 시도해주세요.';
+    renderSellpiaPreflight();
+    renderFiles(selectedFiles, {skipPreflight:true});
+    setUploadCapability();
+    return;
+  }
+  try {
+    const result = await liveData.preflightSellpiaFiles(files, {mode}, progress => {
+      if (requestId !== sellpiaPreflightState.requestId || signature !== sellpiaPreflightSignature()) return;
+      sellpiaPreflightState.detail = typeof progress === 'string' ? progress : progress?.detail || progress?.message || '파일을 검사하고 있습니다.';
+      renderSellpiaPreflight();
+    });
+    if (requestId !== sellpiaPreflightState.requestId || sourceSelect.value !== 'sellpia' || signature !== sellpiaPreflightSignature()) return;
+    if (!result?.valid) {
+      sellpiaPreflightState.status = 'error';
+      sellpiaPreflightState.result = result || null;
+      sellpiaPreflightState.error = result?.errors?.[0] || '셀피아 파일 사전검사에 실패했습니다.';
+    } else {
+      sellpiaPreflightState.status = 'success';
+      sellpiaPreflightState.result = result;
+      sellpiaPreflightState.error = '';
+    }
+  } catch (error) {
+    if (requestId !== sellpiaPreflightState.requestId || sourceSelect.value !== 'sellpia' || signature !== sellpiaPreflightSignature()) return;
+    sellpiaPreflightState.status = 'error';
+    sellpiaPreflightState.error = error?.message || '셀피아 파일 사전검사에 실패했습니다.';
+    sellpiaPreflightState.result = null;
+  }
+  renderSellpiaPreflight();
+  renderFiles(selectedFiles, {skipPreflight:true});
+  setUploadCapability();
+}
+
 function setUploadCapability() {
   const supported = ['sellpia','smartstore','makeshop','ably'].includes(sourceSelect.value) || sourceSelect.value === 'survey';
   const label = sourceConfig[sourceSelect.value]?.name || '원본';
-  uploadButton.disabled = !supported;
-  uploadButton.textContent = supported ? 'DB 업로드 시작' : '업로드 연결 예정';
+  const sellpiaBlocked = sourceSelect.value === 'sellpia' && !hasCurrentSellpiaPreflight();
+  uploadButton.disabled = !supported || sellpiaBlocked;
+  uploadButton.textContent = !supported ? '업로드 연결 예정' : sellpiaBlocked ? (sellpiaPreflightState.status === 'checking' ? '사전검사 중…' : '사전검사 필요') : 'DB 업로드 시작';
   uploadCapabilityBadge.textContent = supported ? `${label} 실데이터 업로드 연결` : '업로드 연결 예정';
 }
 
 function updateSource() {
   const config = sourceConfig[sourceSelect.value];
+  invalidateSellpiaPreflight();
   selectedFiles = [];
   document.getElementById('mock-file').value = '';
   sourceInfo.innerHTML = `<span class="channel-logo ${config.cls}">${config.initial}</span><div><b>${config.name}</b><p>${config.detail}</p></div><em>필수</em>`;
@@ -8567,15 +8698,23 @@ fileSlots.addEventListener('click', event => { if (event.target.closest('.slot-b
 ['dragenter','dragover'].forEach(type => dropZone.addEventListener(type, event => {event.preventDefault();dropZone.classList.add('drag');}));
 ['dragleave','drop'].forEach(type => dropZone.addEventListener(type, event => {event.preventDefault();dropZone.classList.remove('drag');if(type==='drop') renderFiles(event.dataTransfer.files);}));
 fileInput.addEventListener('change', () => renderFiles(fileInput.files));
-function renderFiles(files) {
+function renderFiles(files, {skipPreflight = false} = {}) {
   const config = sourceConfig[sourceSelect.value];
   selectedFiles = Array.from(files || []).slice(0, config.files);
   const required = requiredUploadFileCount();
   fileSlots.innerHTML = Array.from({length:config.files},(_,i)=>{
     const file = selectedFiles[i];
     const optional = i >= required;
-    return `<div><i>${file?'✓':i+1}</i><span><b>${file?file.name:`파일 ${i+1}${optional ? ' · 선택' : ' · 필수'}`}</b><em>${file?`${(file.size/1024/1024).toFixed(1)}MB · 업로드 준비됨`:optional?'부분 갱신에서는 생략 가능':'선택된 파일 없음'}</em></span><button type="button" class="slot-button">${file?'교체':'파일 선택'}</button></div>`;
+    const detail = file
+      ? sourceSelect.value === 'sellpia'
+        ? `${(file.size/1024/1024).toFixed(1)}MB · ${sellpiaPreflightFileDetail(file, i)}`
+        : `${(file.size/1024/1024).toFixed(1)}MB · 업로드 준비됨`
+      : optional ? '부분 갱신에서는 생략 가능' : '선택된 파일 없음';
+    return `<div class="${sourceSelect.value === 'sellpia' ? `sellpia-preflight-slot ${sellpiaPreflightState.status}` : ''}"><i>${file?'✓':i+1}</i><span><b>${file?file.name:`파일 ${i+1}${optional ? ' · 선택' : ' · 필수'}`}</b><em>${detail}</em></span><button type="button" class="slot-button">${file?'교체':'파일 선택'}</button></div>`;
   }).join('');
+  renderSellpiaPreflight();
+  if (sourceSelect.value === 'sellpia' && !skipPreflight) void runSellpiaPreflight();
+  else setUploadCapability();
 }
 
 function showUploadProgress({percent = 0, title = '처리 중', detail = ''} = {}) {
@@ -8600,6 +8739,11 @@ uploadButton.addEventListener('click', async () => {
     showToast(isPatchableUploadSource() && currentUploadMode() === 'patch'
       ? `${config.name} 부분 갱신 파일을 1개 이상 선택해주세요.`
       : `${config.name} 전체 파일 ${config.files}개를 모두 선택해주세요.`);
+    return;
+  }
+  if (sourceSelect.value === 'sellpia' && !hasCurrentSellpiaPreflight()) {
+    showToast(sellpiaPreflightState.status === 'checking' ? '셀피아 파일 사전검사가 끝난 뒤 업로드할 수 있습니다.' : '현재 파일 구성의 셀피아 사전검사가 필요합니다.');
+    if (sellpiaPreflightState.status !== 'checking') void runSellpiaPreflight();
     return;
   }
   const uploadMethod = sourceSelect.value === 'sellpia'
