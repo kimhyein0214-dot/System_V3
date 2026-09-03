@@ -20,7 +20,7 @@ assert.match(migration, /operations_hub_pricing_reset_archives[\s\S]*?price_rule
 assert.match(migration, /enforce_operations_hub_price_assignment_system_base[\s\S]*?base_price is not null[\s\S]*?시스템 기준가격을 먼저 저장/, 'a price combination cannot be assigned before its system base exists');
 
 assert.match(data, /MATRIX_VIEW = 'operations_hub_matrix_managed_live'/, 'interactive reads must use the managed wrapper over the canonical system overlay');
-assert.match(data, /saveSellpiaChanges[\s\S]*?system_base_price','system_stock[\s\S]*?save_operations_hub_sku_operational_value/, 'system stock and price edits must route to the immediate canonical-save RPC');
+assert.match(data, /saveSellpiaChanges[\s\S]*?system_base_price[\s\S]*?system_stock[\s\S]*?sellpia_purchase_price[\s\S]*?sellpia_order_unit[\s\S]*?sellpia_minimum_order_unit[\s\S]*?save_operations_hub_sku_operational_value/, 'system stock, price, and procurement edits must route to the immediate canonical-save RPC');
 assert.match(data, /systemChangeSource[\s\S]*?p_change_source:systemChangeSource[\s\S]*?p_metadata:systemMetadata/, 'explicit source acceptance must be preserved in the canonical audit event');
 assert.match(data, /previewPriceRuleSet[\s\S]*?시스템 기준가격을 먼저 저장해주세요/, 'price calculations must reject missing canonical base prices instead of treating them as zero');
 

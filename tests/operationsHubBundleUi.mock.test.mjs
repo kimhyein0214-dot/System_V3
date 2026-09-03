@@ -37,6 +37,8 @@ assert.match(html, /엑셀로 종속관계 일괄 등록/, '기존 종속관계 
 assert.match(html, /엑셀로 세트 구성 일괄 등록/, '세트 구성은 별도 업로드 패널이어야 한다');
 assert.match(html, /세트 상품코드-옵션코드/, '세트 템플릿 헤더를 안내해야 한다');
 assert.match(html, /구성품 상품코드-옵션코드/, '구성품 템플릿 헤더를 안내해야 한다');
+assert.doesNotMatch(html, /id="bundle-form-role"/, '세트 수동 등록에서 역할을 선택하게 하면 안 된다');
+assert.doesNotMatch(html, /구성수량 · 역할/, '세트 업로드 안내에 폐기된 역할 열을 노출하면 안 된다');
 assert.match(html, /엑셀로 판매처 전용 구성 일괄 등록/, '판매처 전용 구성은 canonical 세트와 별도 업로드 패널이어야 한다');
 assert.match(html, /셀피아 SKU를 새로 만들지 않으며/, '판매처 전용 구성은 가짜 셀피아 SKU를 만들지 않는다고 안내해야 한다');
 assert.match(html, /id="seller-bundle-option-code"[^>]*required/, '판매처 전용 구성은 정확한 옵션코드를 필수로 받아야 한다');
@@ -69,8 +71,13 @@ assert.match(app, /parseBundleCompositionRows/, '세트 구성 전용 파서를 
 assert.doesNotMatch(app, /errors\.length \+ unresolvedCount/, '미해결 코드 오류 건수를 두 번 더하면 안 된다');
 assert.match(app, /관계 그래프·판매처 연결·가격·재고는 변경하지 않습니다/, '세트 저장 범위의 안전 경계를 사용자에게 알려야 한다');
 assert.match(app, /XLSX\.utils\.book_append_sheet\(workbook, worksheet, '세트구성'\)/, '세트구성 시트 템플릿을 브라우저에서 생성해야 한다');
+assert.match(app, /\['세트 상품코드-옵션코드', '구성품 상품코드-옵션코드', '구성수량'\]/, '새 세트 템플릿은 역할 열 없이 세 개의 열만 제공해야 한다');
+assert.doesNotMatch(app, /\['세트 상품코드-옵션코드', '구성품 상품코드-옵션코드', '구성수량', '역할'\]/, '폐기된 역할 열을 새 템플릿에 다시 넣으면 안 된다');
 assert.match(app, /data-bundle-component-remove/, '활성 세트 구성 연결 해제를 제공해야 한다');
 assert.match(app, /data-bundle-component-qty/, '구성수량 수정 입력을 제공해야 한다');
+assert.doesNotMatch(app, /data-bundle-component-role/, '세트 구성표에서 역할을 다시 편집하게 하면 안 된다');
+assert.match(app, /component_role:'component'/, '엑셀 저장 행은 항상 component 기본값을 사용해야 한다');
+assert.match(app, /role:'component'/, '직접 추가와 수량 수정도 항상 component 기본값을 사용해야 한다');
 assert.match(app, /parseSellerBundleRows/, '판매처 전용 구성 파서를 사용해야 한다');
 assert.match(app, /sellerBundleRowsWithChange/, '수량 수정 시 대상의 전체 구성표를 보존해야 한다');
 assert.match(app, /셀피아 SKU 생성 및 판매처 쓰기는 실행하지 않습니다/, '판매처 전용 구성의 외부 쓰기 금지를 사용자에게 알려야 한다');

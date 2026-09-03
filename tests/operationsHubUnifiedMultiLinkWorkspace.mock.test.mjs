@@ -67,6 +67,8 @@ const allRows = sourceSection(app, 'function renderMultiLinkRows(');
 const relationRows = sourceSection(app, 'function relationNodeCard(');
 const canonicalBundleRows = sourceSection(app, 'function renderBundleGraph(');
 const sellerBundleRows = sourceSection(app, 'function renderSellerBundleTarget(');
+assert.doesNotMatch(allRows, /<article class="unified-connection-node"/, '전체 연결 기본 목록은 카드가 아니라 표 셀 내용이어야 한다');
+assert.doesNotMatch(relationRows, /<article class="relation-compact-node"/, '관계 기본 목록은 카드가 아니라 표 셀 내용이어야 한다');
 assert.doesNotMatch(allRows, /multiLinkState\.rows|판매처 연결|판매처 ↔ 셀피아 연결/, '일반 판매처-셀피아 매핑은 통합 매트릭스에서만 관리하고 다중·조합 전체 연결에는 섞지 않아야 한다');
 for (const [family, section] of [
   ['전체 연결', allRows],

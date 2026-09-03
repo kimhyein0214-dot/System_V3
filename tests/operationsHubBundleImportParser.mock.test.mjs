@@ -63,20 +63,21 @@ assert.equal(conflictingDuplicate.valid, false);
 assert.equal(conflictingDuplicate.duplicateCount, 0);
 assert.match(conflictingDuplicate.errors.join('\n'), /3행.*2행/);
 
-const roles = parser.parseBundleCompositionRows([
+const legacyRoles = parser.parseBundleCompositionRows([
   ['세트 상품코드-옵션코드', '구성품 상품코드-옵션코드', '구성수량', '역할'],
   ['100-1', '200-1', 1, '구성품'],
   ['100-1', '300-1', 1, 'packaging']
 ]);
-assert.equal(roles.valid, true);
-assert.deepEqual(roles.rows.map(row => row.role), ['component', 'packaging']);
+assert.equal(legacyRoles.valid, true, '예전 역할 열이 있는 파일도 계속 읽어야 한다');
+assert.deepEqual(legacyRoles.rows.map(row => row.role), ['component', 'component'], '예전 역할 값도 새 저장에서는 모두 구성품으로 정규화한다');
 
-const invalidRole = parser.parseBundleCompositionRows([
+const arbitraryLegacyRole = parser.parseBundleCompositionRows([
   ['세트 상품코드-옵션코드', '구성품 상품코드-옵션코드', '구성수량', '역할'],
   ['100-1', '200-1', 1, '사은품']
 ]);
-assert.equal(invalidRole.valid, false);
-assert.match(invalidRole.errors.join('\n'), /2행 역할/);
+assert.equal(arbitraryLegacyRole.valid, true, '폐기된 역할 값은 검증 실패 원인이 아니어야 한다');
+assert.equal(arbitraryLegacyRole.rows[0].role, 'component');
+assert.deepEqual(parser.LEGACY_HEADERS, ['역할']);
 
 const nested = parser.parseBundleCompositionRows([
   parser.REQUIRED_HEADERS,

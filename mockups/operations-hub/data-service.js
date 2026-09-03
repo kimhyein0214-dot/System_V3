@@ -47,6 +47,81 @@
     auth: { persistSession: false, autoRefreshToken: false, detectSessionInUrl: false }
   });
   const sellerParsers = global.SystemV3SellerParsers;
+  let operationsHubSessionToken = '';
+
+  function authPayload(data) {
+    return Array.isArray(data) ? (data[0] || {}) : (data || {});
+  }
+
+  function notifyOperationsHubAuthRequired(reason = 'invalid_session') {
+    if (typeof global.dispatchEvent !== 'function' || typeof global.CustomEvent !== 'function') return;
+    global.dispatchEvent(new global.CustomEvent('operations-hub-auth-required', {detail:{reason}}));
+  }
+
+  function operationsHubAuthError(message, reason = 'invalid_session') {
+    const error = new Error(message);
+    error.code = 'OPERATIONS_AUTH_REQUIRED';
+    error.operationsHubAuthRequired = true;
+    error.authReason = reason;
+    notifyOperationsHubAuthRequired(reason);
+    return error;
+  }
+
+  function requireOperationsHubSessionToken() {
+    if (!operationsHubSessionToken) throw operationsHubAuthError('운영 로그인이 필요합니다.', 'missing_session');
+    return operationsHubSessionToken;
+  }
+
+  function throwOperationsHubRpcError(error) {
+    if (!error) return;
+    if (String(error.code || '') === '42501') {
+      throw operationsHubAuthError('운영 세션이 만료되었거나 저장 권한이 없습니다.', 'permission_denied');
+    }
+    throw error;
+  }
+
+  function setOperationsHubSessionToken(sessionToken) {
+    operationsHubSessionToken = cleanText(sessionToken);
+    return Boolean(operationsHubSessionToken);
+  }
+
+  async function loginOperationsHub({username, password} = {}) {
+    const safeUsername = cleanText(username);
+    const safePassword = String(password || '');
+    if (!safeUsername || !safePassword) return {authenticated:false, error_code:'invalid_credentials'};
+    const {data, error} = await db.rpc('operations_hub_login_v1', {
+      p_username:safeUsername,
+      p_password:safePassword
+    });
+    if (error) throw error;
+    const result = authPayload(data);
+    if (result.authenticated && result.session_token) setOperationsHubSessionToken(result.session_token);
+    else setOperationsHubSessionToken('');
+    return result;
+  }
+
+  async function checkOperationsHubSession(sessionToken) {
+    const safeToken = cleanText(sessionToken || operationsHubSessionToken);
+    if (!safeToken) return {authenticated:false, error_code:'invalid_session'};
+    const {data, error} = await db.rpc('operations_hub_check_session_v1', {p_session_token:safeToken});
+    if (error) throw error;
+    const result = authPayload(data);
+    if (result.authenticated) setOperationsHubSessionToken(safeToken);
+    else setOperationsHubSessionToken('');
+    return result;
+  }
+
+  async function logoutOperationsHub(sessionToken) {
+    const safeToken = cleanText(sessionToken || operationsHubSessionToken);
+    try {
+      if (!safeToken) return {logged_out:true};
+      const {data, error} = await db.rpc('operations_hub_logout_v1', {p_session_token:safeToken});
+      if (error) throw error;
+      return authPayload(data);
+    } finally {
+      setOperationsHubSessionToken('');
+    }
+  }
 
   function normalizedSearch(value) {
     return String(value || '').trim().replace(/[^0-9A-Za-z가-힣ㄱ-ㅎㅏ-ㅣ_\-\[\]\/\s]/g, '');
@@ -298,7 +373,7 @@
       for (let offset = 0; offset < skus.length; offset += 500) {
         const {data, error} = await withAbortSignal(db
           .from('operations_hub_inbound_cost_live')
-          .select('sellpia_sku_code,sellpia_purchase_price,sellpia_order_unit,sellpia_minimum_order_unit,actual_inbound_manual_cost,inbound_cost_formula_tag_id,inbound_cost_formula_tag_name,inbound_cost_formula_tag_color,actual_inbound_cost,actual_inbound_cost_mode,actual_inbound_cost_updated_at')
+          .select('sellpia_sku_code,sellpia_source_purchase_price,sellpia_source_order_unit,sellpia_source_minimum_order_unit,sellpia_purchase_price,sellpia_order_unit,sellpia_minimum_order_unit,sellpia_purchase_price_is_overridden,sellpia_order_unit_is_overridden,sellpia_minimum_order_unit_is_overridden,sellpia_purchase_price_version,sellpia_order_unit_version,sellpia_minimum_order_unit_version,sellpia_purchase_price_updated_at,sellpia_order_unit_updated_at,sellpia_minimum_order_unit_updated_at,actual_inbound_manual_cost,inbound_cost_formula_tag_id,inbound_cost_formula_tag_name,inbound_cost_formula_tag_color,actual_inbound_cost,actual_inbound_cost_mode,actual_inbound_cost_updated_at')
           .in('sellpia_sku_code', skus.slice(offset, offset + 500)), signal);
         if (error) throw error;
         details.push(...(data || []));
@@ -317,7 +392,7 @@
       for (let offset = 0; offset < skus.length; offset += 500) {
         const {data, error} = await withAbortSignal(db
           .from('operations_hub_sku_operational_live')
-          .select('sellpia_sku_code,system_base_price,system_stock,system_price_version,system_stock_version,system_price_updated_at,system_stock_updated_at,system_updated_at')
+          .select('sellpia_sku_code,system_base_price,system_stock,system_price_version,system_stock_version,system_price_updated_at,system_stock_updated_at,system_updated_at,sellpia_source_purchase_price,sellpia_source_order_unit,sellpia_source_minimum_order_unit,sellpia_purchase_price,sellpia_order_unit,sellpia_minimum_order_unit,sellpia_purchase_price_override,sellpia_order_unit_override,sellpia_minimum_order_unit_override,sellpia_purchase_price_version,sellpia_order_unit_version,sellpia_minimum_order_unit_version,sellpia_purchase_price_updated_at,sellpia_order_unit_updated_at,sellpia_minimum_order_unit_updated_at,sellpia_purchase_price_is_overridden,sellpia_order_unit_is_overridden,sellpia_minimum_order_unit_is_overridden')
           .in('sellpia_sku_code', skus.slice(offset, offset + 500)), signal);
         if (error) throw error;
         details.push(...(data || []));
@@ -814,12 +889,20 @@
     let queuedCount = 0;
     const priceChanged = [...grouped.values()].some(items => items.some(item => item.field_key === 'sellpia_sale_price'));
     const systemRows = [];
+    const systemFieldKeys = new Set([
+      'system_base_price',
+      'system_stock',
+      'sellpia_purchase_price',
+      'sellpia_order_unit',
+      'sellpia_minimum_order_unit'
+    ]);
     for (const [sku, items] of grouped) {
-      const systemItems = items.filter(item => ['system_base_price','system_stock'].includes(item.field_key));
-      const sourceItems = items.filter(item => !['system_base_price','system_stock'].includes(item.field_key));
+      const systemItems = items.filter(item => systemFieldKeys.has(item.field_key));
+      const sourceItems = items.filter(item => !systemFieldKeys.has(item.field_key));
       for (const item of systemItems) {
         const rawValue = cleanText(item.after);
         const {data, error} = await db.rpc('save_operations_hub_sku_operational_value', {
+          p_session_token:requireOperationsHubSessionToken(),
           p_sellpia_sku_code:sku,
           p_field_key:item.field_key,
           p_value:rawValue === '' ? null : Number(rawValue),
@@ -827,7 +910,7 @@
           p_actor:'operations-hub',
           p_metadata:systemMetadata
         });
-        if (error) throw error;
+        if (error) throwOperationsHubRpcError(error);
         const savedRow = Array.isArray(data) ? data[0] : data;
         if (savedRow) systemRows.push(savedRow);
         savedCount += 1;
@@ -869,6 +952,29 @@
       }
     }
     return {savedCount, queuedCount, productCount:grouped.size, batchId, repricedRows, systemRows, repriceRefreshError};
+  }
+
+  async function refreshMasterColumnFromSource({fieldKey, actor = 'operations-hub', requestId = null, dryRun = true} = {}) {
+    const allowedFields = new Set([
+      'system_base_price',
+      'system_stock',
+      'sellpia_purchase_price',
+      'sellpia_order_unit',
+      'sellpia_minimum_order_unit'
+    ]);
+    const safeField = cleanText(fieldKey);
+    if (!allowedFields.has(safeField)) throw new Error(`원본값 전체 갱신을 지원하지 않는 필드입니다: ${safeField || '-'}`);
+    const params = {
+      p_session_token:requireOperationsHubSessionToken(),
+      p_field_key:safeField,
+      p_actor:cleanText(actor) || 'operations-hub',
+      p_dry_run:dryRun !== false
+    };
+    const safeRequestId = cleanText(requestId);
+    if (safeRequestId) params.p_request_id = safeRequestId;
+    const {data, error} = await db.rpc('refresh_operations_hub_master_column_from_source_v1', params);
+    if (error) throwOperationsHubRpcError(error);
+    return data || {};
   }
 
   async function loadListingConnection({source, productCode, optionCode = ''} = {}) {
@@ -2869,6 +2975,10 @@
 
   global.SystemV3Data = Object.freeze({
     pageSize: PAGE_SIZE,
+    loginOperationsHub,
+    checkOperationsHubSession,
+    logoutOperationsHub,
+    setOperationsHubSessionToken,
     loadProducts,
     loadProductsBySkus,
     loadMatrixExportChunk,
@@ -2902,6 +3012,7 @@
     saveProductProfile,
     createProductTag,
     saveSellpiaChanges,
+    refreshMasterColumnFromSource,
     searchSellerItems,
     loadSellerProductOptions,
     resolveRelationImportCodes,

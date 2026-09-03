@@ -1027,3 +1027,99 @@
 .app-shell:not(.ui-density-compact) .multi-link-legacy-workspace > summary em {
   font-size: var(--ui-workspace-caption);
 }
+
+/* Relation and bundle lists share one spreadsheet-like reading rhythm. */
+.multi-link-page .multi-link-product-cell {
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+}
+
+.multi-link-page .multi-link-tab-panel .multi-link-cell-matrix th,
+.multi-link-page .multi-link-tab-panel .multi-link-cell-matrix td {
+  border-right: 1px solid #d7e1ee;
+  border-bottom: 1px solid #d7e1ee;
+}
+
+.multi-link-page .bundle-matrix th:nth-child(1) { width: 33%; }
+.multi-link-page .bundle-matrix th:nth-child(2) { width: 58px; }
+.multi-link-page .bundle-matrix th:nth-child(3) { width: 33%; }
+.multi-link-page .bundle-matrix th:nth-child(4) { width: 130px; }
+.multi-link-page .bundle-matrix th:nth-child(5) { width: 150px; }
+
+.multi-link-page .bundle-component-form {
+  grid-template-columns: minmax(190px, 1fr) auto minmax(190px, 1fr) 130px auto;
+}
+
+/* Inventory survey remains a review-only reference until its calculation is approved. */
+.nav-item span small {
+  display: block;
+  margin-top: 2px;
+  color: #a16207;
+  font-size: 11px;
+  font-weight: 900;
+}
+
+#dashboard .quick-grid button.review-only {
+  border-color: #f2cf7a;
+  background: #fffaf0;
+}
+
+#dashboard .quick-grid button.review-only em {
+  color: #9a6700;
+}
+
+.inventory-review-label {
+  display: inline-flex;
+  margin-left: 7px;
+  border-radius: 999px;
+  background: #fff1c7;
+  padding: 3px 7px;
+  color: #8a5a00;
+  font-size: 11px;
+  font-weight: 900;
+  vertical-align: middle;
+}
+
+.inventory-review-notice {
+  display: grid;
+  grid-template-columns: max-content minmax(0, 1fr);
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 12px;
+  border: 1px solid #efcc75;
+  border-radius: 9px;
+  background: #fffaf0;
+  padding: 12px 14px;
+}
+
+.inventory-review-notice b {
+  color: #8a5a00;
+  font-size: 12px;
+}
+
+.inventory-review-notice span {
+  color: #785b25;
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 1.5;
+}
+
+#inventory .mock-badge.review,
+#inventory .inventory-metrics article.accent.review {
+  border-color: #efcc75;
+  background: #fff8e6;
+  color: #8a5a00;
+}
+
+#inventory button:disabled {
+  cursor: not-allowed;
+  opacity: .62;
+}
+
+@media (max-width: 900px) {
+  .inventory-review-notice {
+    grid-template-columns: 1fr;
+  }
+}

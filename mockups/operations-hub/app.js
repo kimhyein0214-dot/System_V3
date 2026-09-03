@@ -20,6 +20,17 @@ let sellpiaSavingCount = 0;
 let sellpiaSaveError = '';
 const SELLPIA_AUTOSAVE_DELAY_MS = 450;
 const liveData = window.SystemV3Data;
+const OPERATIONS_AUTH_STORAGE_KEY = 'system-v3-operations-session-v1';
+const operationsAuthGate = document.getElementById('operations-auth-gate');
+const operationsAppShell = document.getElementById('operations-app-shell');
+const operationsAuthForm = document.getElementById('operations-auth-form');
+const operationsAuthUsername = document.getElementById('operations-auth-username');
+const operationsAuthPassword = document.getElementById('operations-auth-password');
+const operationsAuthSubmit = document.getElementById('operations-auth-submit');
+const operationsAuthError = document.getElementById('operations-auth-error');
+const operationsAuthStatus = document.getElementById('operations-auth-status');
+const operationsAuthLogout = document.getElementById('operations-auth-logout');
+const operationsAuthState = {authenticated:false, expiresAt:'', sessionId:'', expiryTimer:null, intervals:[]};
 const matrixCsv = window.SystemV3MatrixCsv;
 const discountPriceMath = window.SystemV3DiscountPriceMath;
 const sourceRefreshVerifier = window.SystemV3SourceRefreshVerifier;
@@ -78,6 +89,14 @@ const matrixContextOptionAdd = document.getElementById('matrix-context-option-ad
 const matrixContextOptionAddDetail = document.getElementById('matrix-context-option-add-detail');
 const matrixContextDisconnect = document.getElementById('matrix-context-disconnect');
 const matrixContextDisconnectCount = document.getElementById('matrix-context-disconnect-count');
+const BULK_SOURCE_REFRESH_FIELDS = Object.freeze({
+  system_stock:{label:'기준재고', sourceLabel:'셀피아 원본 재고'},
+  system_base_price:{label:'기준가격', sourceLabel:'셀피아 원본 판매가'},
+  sellpia_purchase_price:{label:'매입가', sourceLabel:'셀피아 원본 매입가'},
+  sellpia_order_unit:{label:'발주단위', sourceLabel:'셀피아 원본 발주단위'},
+  sellpia_minimum_order_unit:{label:'최소발주단위', sourceLabel:'셀피아 원본 최소발주단위'}
+});
+const bulkSourceRefreshState = {previewed:false, running:false, fields:[], results:[]};
 let matrixContextTargets = [];
 let matrixContextProductCopyTargets = [];
 let matrixContextProductCopySkipped = 0;
@@ -169,6 +188,199 @@ const BUILTIN_PRESETS = Object.freeze({
   inventory:{id:'inventory', name:'재고 작업', ...DEFAULT_VIEW_OPTIONS, showCodes:false, showSellerNames:false, showPrice:false, showDiscount:false, showAttributes:false, zoom:110},
   price:{id:'price', name:'가격 작업', ...DEFAULT_VIEW_OPTIONS, showCodes:false, showSellerNames:false, showInventory:false, showAttributes:false, zoom:110},
   attributes:{id:'attributes', name:'속성·태그', ...DEFAULT_VIEW_OPTIONS, channels:{smartstore:false, makeshop:false, ably:false}, showStatus:false, showCodes:false, showSellerNames:false, showInventory:false, showPrice:false, showDiscount:false, status:'all'}
+});
+
+function readOperationsAuthSession() {
+  try {
+    const record = JSON.parse(sessionStorage.getItem(OPERATIONS_AUTH_STORAGE_KEY) || 'null');
+    const token = String(record?.token || '').trim();
+    const expiresAt = String(record?.expiresAt || '').trim();
+    if (!/^[0-9a-f]{64}$/i.test(token) || !expiresAt) return null;
+    return {token, expiresAt, sessionId:String(record?.sessionId || '')};
+  } catch {
+    return null;
+  }
+}
+
+function storeOperationsAuthSession({token, expiresAt, sessionId = ''}) {
+  const safeToken = String(token || '').trim();
+  if (!/^[0-9a-f]{64}$/i.test(safeToken) || !expiresAt) return false;
+  try {
+    sessionStorage.setItem(OPERATIONS_AUTH_STORAGE_KEY, JSON.stringify({token:safeToken, expiresAt:String(expiresAt), sessionId:String(sessionId || '')}));
+    liveData?.setOperationsHubSessionToken?.(safeToken);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function clearOperationsAuthSession() {
+  try { sessionStorage.removeItem(OPERATIONS_AUTH_STORAGE_KEY); } catch {}
+  liveData?.setOperationsHubSessionToken?.('');
+  operationsAuthState.authenticated = false;
+  operationsAuthState.expiresAt = '';
+  operationsAuthState.sessionId = '';
+}
+
+function operationsAuthMessage(reason, retryAfterSeconds = 0) {
+  const seconds = Math.max(1, Math.ceil(Number(retryAfterSeconds) || 0));
+  if (reason === 'rate_limited') return `로그인 시도가 잠시 잠겼습니다. 약 ${seconds}초 후 다시 시도해주세요.`;
+  if (reason === 'expired_session') return '운영 세션이 만료되었습니다. 다시 로그인해주세요.';
+  if (reason === 'revoked_session') return '운영 세션이 회수되었습니다. 다시 로그인해주세요.';
+  if (reason === 'permission_denied') return '저장 권한을 확인할 수 없습니다. 다시 로그인해주세요.';
+  if (reason === 'invalid_session') return '저장된 운영 세션이 유효하지 않습니다. 다시 로그인해주세요.';
+  if (reason === 'invalid_credentials') return '아이디 또는 비밀번호가 올바르지 않습니다.';
+  return '';
+}
+
+function stopAuthenticatedOperationsHubData() {
+  for (const intervalId of operationsAuthState.intervals) window.clearInterval(intervalId);
+  operationsAuthState.intervals = [];
+  if (operationsAuthState.expiryTimer) window.clearTimeout(operationsAuthState.expiryTimer);
+  operationsAuthState.expiryTimer = null;
+  matrixState.requestController?.abort();
+}
+
+function showOperationsAuthGate(reason = '', {message = '', clearSession = true} = {}) {
+  stopAuthenticatedOperationsHubData();
+  if (clearSession) clearOperationsAuthSession();
+  operationsAuthGate.hidden = false;
+  operationsAppShell.inert = true;
+  operationsAppShell.setAttribute('aria-hidden', 'true');
+  document.body.classList.add('operations-auth-locked');
+  operationsAuthLogout.disabled = true;
+  operationsAuthError.textContent = message || operationsAuthMessage(reason);
+  operationsAuthError.hidden = !operationsAuthError.textContent;
+  operationsAuthStatus.textContent = reason === 'rate_limited' ? '로그인 잠금 해제를 기다리는 중입니다.' : '로그인이 필요합니다.';
+  operationsAuthPassword.value = '';
+  window.requestAnimationFrame(() => operationsAuthUsername.focus());
+}
+
+function scheduleOperationsAuthExpiry() {
+  if (operationsAuthState.expiryTimer) window.clearTimeout(operationsAuthState.expiryTimer);
+  const expiresAtMs = new Date(operationsAuthState.expiresAt).getTime();
+  const remainingMs = expiresAtMs - Date.now();
+  if (!Number.isFinite(remainingMs) || remainingMs <= 0) {
+    showOperationsAuthGate('expired_session');
+    return;
+  }
+  operationsAuthState.expiryTimer = window.setTimeout(
+    () => showOperationsAuthGate('expired_session'),
+    Math.min(remainingMs + 250, 2147483647)
+  );
+}
+
+function startAuthenticatedOperationsHubData() {
+  if (!operationsAuthState.authenticated || operationsAuthState.intervals.length) return;
+  refreshLiveData({resetPage:true});
+  operationsAuthState.intervals.push(window.setInterval(() => Promise.all([loadLiveSourceStatus(), loadLiveDashboardMetrics()]), 60000));
+  operationsAuthState.intervals.push(window.setInterval(() => {
+    const dashboardVisible = document.getElementById('dashboard')?.classList.contains('active-page');
+    if (document.hidden || !dashboardVisible || matrixState.loading || sellpiaSaveInFlight || pendingChanges.length) return;
+    loadMappingSyncStatus({autoRefresh:true});
+  }, MAPPING_SYNC_POLL_INTERVAL_MS));
+  operationsAuthState.intervals.push(window.setInterval(() => {
+    if (document.getElementById('jobs').classList.contains('active-page')) loadChangeQueue({silent:true});
+  }, 30000));
+}
+
+function openAuthenticatedOperationsHub(session) {
+  operationsAuthState.authenticated = true;
+  operationsAuthState.expiresAt = String(session?.expiresAt || session?.expires_at || '');
+  operationsAuthState.sessionId = String(session?.sessionId || session?.session_id || '');
+  operationsAuthGate.hidden = true;
+  operationsAppShell.inert = false;
+  operationsAppShell.setAttribute('aria-hidden', 'false');
+  document.body.classList.remove('operations-auth-locked');
+  operationsAuthLogout.disabled = false;
+  operationsAuthError.hidden = true;
+  operationsAuthStatus.textContent = '로그인되었습니다.';
+  scheduleOperationsAuthExpiry();
+  startAuthenticatedOperationsHubData();
+}
+
+async function initializeOperationsHubAuth() {
+  if (!liveData?.checkOperationsHubSession || !liveData?.loginOperationsHub || !liveData?.logoutOperationsHub) {
+    showOperationsAuthGate('', {message:'운영 로그인 모듈을 불러오지 못했습니다. 배포 상태를 확인해주세요.'});
+    return;
+  }
+  const stored = readOperationsAuthSession();
+  if (!stored) {
+    showOperationsAuthGate();
+    return;
+  }
+  liveData.setOperationsHubSessionToken(stored.token);
+  operationsAuthStatus.textContent = '저장된 운영 세션을 확인하는 중입니다.';
+  try {
+    const result = await liveData.checkOperationsHubSession(stored.token);
+    if (!result?.authenticated) {
+      showOperationsAuthGate(result?.error_code || 'invalid_session');
+      return;
+    }
+    const verified = {token:stored.token, expiresAt:result.expires_at || stored.expiresAt, sessionId:result.session_id || stored.sessionId};
+    if (!storeOperationsAuthSession(verified)) {
+      showOperationsAuthGate('', {message:'브라우저 세션 저장소를 사용할 수 없어 로그인을 유지할 수 없습니다.'});
+      return;
+    }
+    openAuthenticatedOperationsHub(verified);
+  } catch {
+    showOperationsAuthGate('', {message:'운영 세션을 확인하지 못했습니다. 네트워크 상태를 확인한 뒤 다시 로그인해주세요.'});
+  }
+}
+
+operationsAuthForm.addEventListener('submit', async event => {
+  event.preventDefault();
+  const username = operationsAuthUsername.value.trim();
+  const password = operationsAuthPassword.value;
+  if (!username || !password) {
+    operationsAuthError.textContent = '아이디와 비밀번호를 모두 입력해주세요.';
+    operationsAuthError.hidden = false;
+    return;
+  }
+  operationsAuthSubmit.disabled = true;
+  operationsAuthSubmit.textContent = '로그인 확인 중…';
+  operationsAuthError.hidden = true;
+  operationsAuthStatus.textContent = '운영 계정을 확인하는 중입니다.';
+  try {
+    const result = await liveData.loginOperationsHub({username, password});
+    operationsAuthPassword.value = '';
+    if (!result?.authenticated) {
+      const reason = result?.error_code || 'invalid_credentials';
+      operationsAuthError.textContent = operationsAuthMessage(reason, result?.retry_after_seconds);
+      operationsAuthError.hidden = false;
+      operationsAuthStatus.textContent = reason === 'rate_limited' ? '로그인 잠금 상태입니다.' : '로그인 정보를 다시 확인해주세요.';
+      return;
+    }
+    const session = {token:result.session_token, expiresAt:result.expires_at, sessionId:result.session_id};
+    if (!storeOperationsAuthSession(session)) throw new Error('session_storage_unavailable');
+    operationsAuthForm.reset();
+    openAuthenticatedOperationsHub(session);
+  } catch {
+    clearOperationsAuthSession();
+    operationsAuthPassword.value = '';
+    operationsAuthError.textContent = '로그인 요청을 완료하지 못했습니다. 잠시 후 다시 시도해주세요.';
+    operationsAuthError.hidden = false;
+    operationsAuthStatus.textContent = '로그인 서버 연결을 확인해주세요.';
+  } finally {
+    operationsAuthSubmit.disabled = false;
+    operationsAuthSubmit.textContent = '로그인';
+  }
+});
+
+operationsAuthLogout.addEventListener('click', async () => {
+  const session = readOperationsAuthSession();
+  operationsAuthLogout.disabled = true;
+  try {
+    await liveData?.logoutOperationsHub?.(session?.token || '');
+  } catch {
+    // 서버 로그아웃 확인에 실패해도 현재 브라우저의 운영 토큰은 즉시 폐기합니다.
+  } finally {
+    showOperationsAuthGate('', {message:'로그아웃되었습니다. 다시 사용하려면 로그인해주세요.'});
+  }
+});
+
+window.addEventListener('operations-hub-auth-required', event => {
+  showOperationsAuthGate(event.detail?.reason || 'permission_denied');
 });
 
 function normalizeConnectionStatus(value) {
@@ -498,7 +710,7 @@ function inboundCostCell(product) {
     : mode === 'manual'
       ? '<em class="inbound-cost-badge manual">직접입력</em>'
       : '<em class="inbound-cost-badge empty">설정</em>';
-  return `<button type="button" class="inbound-cost-cell${mode ? ' configured' : ''}" data-inbound-cost-edit data-sku="${escapeHtml(product.sellpia_sku_code)}" title="실입고가 직접 입력 또는 수식태그 설정"><b>${cost}</b>${badge}</button>`;
+  return `<button type="button" class="inbound-cost-cell${mode ? ' configured' : ''}" data-inbound-cost-edit data-sku="${escapeHtml(product.sellpia_sku_code)}" title="클릭하여 실입고가 직접 입력 또는 수식태그 설정"><b>${cost}</b>${badge}</button>`;
 }
 
 function formatLiveTime(value) {
@@ -724,7 +936,13 @@ function systemOperationalCell(product, fieldKey, label, sourceValue) {
   const hasValue = value !== null && value !== undefined && value !== '';
   const hasSource = sourceValue !== null && sourceValue !== undefined && sourceValue !== '';
   const differs = hasValue && hasSource && Number(value) !== Number(sourceValue);
-  const updatedAt = fieldKey === 'system_base_price' ? product?.system_price_updated_at : product?.system_stock_updated_at;
+  const updatedAt = {
+    system_base_price:product?.system_price_updated_at,
+    system_stock:product?.system_stock_updated_at,
+    sellpia_purchase_price:product?.sellpia_purchase_price_updated_at,
+    sellpia_order_unit:product?.sellpia_order_unit_updated_at,
+    sellpia_minimum_order_unit:product?.sellpia_minimum_order_unit_updated_at
+  }[fieldKey] || product?.system_updated_at;
   const sourceUpdatedAt = product?.sellpia_source_updated_at;
   const sourceIsNewer = Boolean(sourceUpdatedAt) && (!updatedAt || new Date(sourceUpdatedAt).getTime() > new Date(updatedAt).getTime());
   const sourceState = !hasSource
@@ -737,7 +955,7 @@ function systemOperationalCell(product, fieldKey, label, sourceValue) {
           ? '원본과 다름'
           : '원본과 일치';
   const sourceClass = hasSource && (!hasValue || differs) ? ' source-pending' : '';
-  return `<button class="editable-cell sellpia-edit system-master-cell${!hasValue ? ' unset' : ''}${differs ? ' diff' : ''}${sourceClass}" data-source="system" data-field-key="${fieldKey}" data-field="${label}" data-value="${escapeHtml(hasValue ? value : '')}" data-value-type="nullable-number" title="시스템 기준값을 즉시 저장합니다. 원본 숫자는 자동 반영되지 않으며, 선택 셀 원본값 갱신 작업을 실행할 때만 복사됩니다.">
+  return `<button class="editable-cell sellpia-edit system-master-cell${!hasValue ? ' unset' : ''}${differs ? ' diff' : ''}${sourceClass}" data-source="system" data-field-key="${fieldKey}" data-field="${label}" data-value="${escapeHtml(hasValue ? value : '')}" data-value-type="nullable-number" title="시스템 기준값을 즉시 저장합니다. 원본 숫자는 자동 반영되지 않으며, 선택 셀 원본값 갱신 또는 컬럼 전체 원본값 갱신 작업을 실행할 때만 복사됩니다.">
     <b>${hasValue ? formatNullableNumber(value) : '미설정'}</b>
     <em>${sourceState}${updatedAt ? ` · 저장 ${formatLiveTime(updatedAt)}` : ''}</em>
   </button>`;
@@ -999,6 +1217,13 @@ function renderLiveMatrixRows(products) {
       : '<span class="tag">미매칭</span>';
     const profile = product.__profile || {};
     const tagSummary = [profile.shape, profile.tag_summary].filter(Boolean).join(' · ');
+    const priceDisplaySources = ['smartstore','makeshop','ably'].filter(source => {
+      const merge = sellerBaseMerges.get(`${rowIndex}|${source}`);
+      return !merge?.hidden && Number(merge?.rowspan || 0) > 1;
+    });
+    const priceDisplayReference = priceDisplaySources.length
+      ? `<em class="matrix-price-display-reference" title="같은 판매처 상품코드 그룹의 대표 표시행입니다. 실제 가격 출처 SKU를 의미하지 않습니다.">그룹 대표 표시행 · ${escapeHtml(priceDisplaySources.map(source => CHANNEL_LABELS[source]).join('·'))}</em>`
+      : '';
     const productGroup = sellpiaProductGroupKey(product);
     const resultGroup = !hasRelationshipContext
       ? 'normal'
@@ -1013,15 +1238,15 @@ function renderLiveMatrixRows(products) {
     return `<tr class="${rowClasses.join(' ')}" data-sku="${sku}" data-product-group="${escapeHtml(productGroup)}" data-own-code="${ownCode}" data-image="${imageUrl}" data-status="${overallState}" data-matrix-context="${escapeHtml(relationContext.kind)}" data-relationship-family="${escapeHtml(relationContext.relationshipFamily)}" data-root-sku="${escapeHtml(relationContext.rootSku)}"${inputRow ? ` data-input-row="${inputRow}"` : ''}>
       <td class="sticky-col select-col" aria-hidden="true"></td>
       <td class="sticky-col image-col image-drop-cell" data-image-drop="${sku}" title="이미지를 이 셀에 놓으면 ${sku}.jpg로 저장됩니다.">${matrixImage(product)}<span class="image-drop-hint">DROP</span></td>
-      <td class="sticky-col sellpia-sku-col sellpia-code-cell"><button type="button" class="sellpia-sku-link" data-open-sku-links title="이 SKU의 판매처 연결정보 열기">${skuMarkup}</button></td>
+      <td class="sticky-col sellpia-sku-col sellpia-code-cell${priceDisplaySources.length ? ' price-display-reference-cell' : ''}"><button type="button" class="sellpia-sku-link" data-open-sku-links title="이 SKU의 판매처 연결정보 열기">${skuMarkup}${priceDisplayReference}</button></td>
       <td class="sticky-col sellpia-name-col sellpia-text-cell"><span title="${displayName}">${displayName}</span>${relationBadge}</td>
       <td class="sticky-col sellpia-option-name-col sellpia-text-cell"><span title="${optionName}">${optionName}</span></td>
       <td class="sticky-col own-code-col">${sellpiaEditor('sellpia_own_code', '셀피아 자사코드', rawOwnCode, {className:'sellpia-text-compact'})}</td>
       <td class="sticky-col sellpia-stock-col number-cell">${systemOperationalCell(product, 'system_stock', '시스템 기준재고', sellpiaSourceStock)}</td>
       <td class="sticky-col sellpia-price-col number-cell">${systemOperationalCell(product, 'system_base_price', '시스템 기준가격', sellpiaSourcePrice)}</td>
-      <td class="number-cell${product.sellpia_purchase_price === null || product.sellpia_purchase_price === undefined ? ' data-gap' : ''}">${formatNullableNumber(product.sellpia_purchase_price)}</td>
-      <td class="number-cell${product.sellpia_order_unit === null || product.sellpia_order_unit === undefined ? ' data-gap' : ''}">${formatNullableNumber(product.sellpia_order_unit)}</td>
-      <td class="number-cell${product.sellpia_minimum_order_unit === null || product.sellpia_minimum_order_unit === undefined ? ' data-gap' : ''}">${formatNullableNumber(product.sellpia_minimum_order_unit)}</td>
+      <td class="number-cell">${systemOperationalCell(product, 'sellpia_purchase_price', '매입가', product.sellpia_source_purchase_price)}</td>
+      <td class="number-cell">${systemOperationalCell(product, 'sellpia_order_unit', '발주단위', product.sellpia_source_order_unit)}</td>
+      <td class="number-cell">${systemOperationalCell(product, 'sellpia_minimum_order_unit', '최소발주단위', product.sellpia_source_minimum_order_unit)}</td>
       <td class="number-cell inbound-cost-column">${inboundCostCell(product)}</td>
       ${channelInventoryCells(product, 'smartstore', '스마트스토어', sellerBaseMerges.get(`${rowIndex}|smartstore`), productIdentityMerges.get(`${rowIndex}|smartstore`))}
       ${channelInventoryCells(product, 'makeshop', '메이크샵', sellerBaseMerges.get(`${rowIndex}|makeshop`), productIdentityMerges.get(`${rowIndex}|makeshop`))}
@@ -1502,6 +1727,13 @@ function fillDrawerChannel(sectionKey, dataKey, label, product) {
   section.dataset.savedProductName = productName.value;
   section.dataset.savedOptionName = optionName.value;
   section.querySelectorAll('.seller-draft-save').forEach(button => { button.disabled = state.key === 'unmatched'; });
+  const disconnectButton = section.querySelector('[data-drawer-disconnect-source]');
+  if (disconnectButton) {
+    disconnectButton.disabled = state.key === 'unmatched' || !productCode;
+    disconnectButton.title = disconnectButton.disabled
+      ? `${label}에 저장된 연결이 없습니다.`
+      : `${label} ${productCode}${optionCode ? ` / ${optionCode}` : ''}와 현재 SKU의 연결만 해제합니다.`;
+  }
 }
 
 function drawerDraftState(drafts) {
@@ -1843,6 +2075,7 @@ function drawerFieldLabel(fieldKey) {
   return {
     sellpia_own_code:'셀피아 자사코드', sellpia_product_name:'셀피아 상품명', sellpia_option_name:'셀피아 옵션명',
     sellpia_current_stock:'재고', sellpia_sale_price:'판매가', sellpia_image:'셀피아 이미지',
+    sellpia_purchase_price:'매입가', sellpia_order_unit:'발주단위', sellpia_minimum_order_unit:'최소발주단위',
     seller_product_name:'판매처 상품명', seller_option_name:'판매처 옵션명'
   }[fieldKey] || fieldKey || '변경사항';
 }
@@ -1988,7 +2221,7 @@ function renderDrawerListingLinks(rows, sku) {
       <div><b>${escapeHtml(component.sku)}</b><span>${escapeHtml([component.productName, component.optionName].filter(Boolean).join(' · ') || '셀피아 상품정보 없음')}</span></div>
       <label>수량<input data-drawer-component-qty type="number" min="1" step="1" value="${Math.max(1, Number(component.qty) || 1)}"></label>
       <label>역할<select data-drawer-component-role><option value="primary"${component.role === 'primary' ? ' selected' : ''}>기준</option><option value="additional"${component.role === 'additional' ? ' selected' : ''}>추가</option></select></label>
-      <button type="button" data-drawer-component-save>저장</button><button type="button" class="danger" data-drawer-component-remove>해제</button>
+      <button type="button" data-drawer-component-save>저장</button><button type="button" class="danger" data-drawer-component-remove>연결만 해제</button>
     </article>`).join('');
     return `<article class="drawer-link-listing" data-drawer-link-row="${rowIndex}">
       <header><div><span class="multi-link-channel ${escapeHtml(row.source_channel)}"><i></i>${escapeHtml(CHANNEL_LABELS[row.source_channel] || row.source_channel)}</span><b>${escapeHtml(row.product_code || '-')} / ${escapeHtml(row.option_code || '-')}</b></div><span class="relation-pill ${escapeHtml(row.relation_type)}">${escapeHtml(drawerRelationLabel(row))}</span></header>
@@ -2870,7 +3103,10 @@ function selectedSourceRefreshTargets() {
   const seen = new Set();
   const sourceFields = {
     system_stock:'sellpia_source_stock',
-    system_base_price:'sellpia_source_sale_price'
+    system_base_price:'sellpia_source_sale_price',
+    sellpia_purchase_price:'sellpia_source_purchase_price',
+    sellpia_order_unit:'sellpia_source_order_unit',
+    sellpia_minimum_order_unit:'sellpia_source_minimum_order_unit'
   };
   for (const cell of matrixBody.querySelectorAll('td.matrix-cell-selected')) {
     const row = cell.closest('tr[data-sku]');
@@ -2889,7 +3125,7 @@ function selectedSourceRefreshTargets() {
       targets.push({
         kind:'system',
         sku,
-        field:systemEditor.dataset.field || (fieldKey === 'system_stock' ? '시스템 기준재고' : '시스템 기준가격'),
+        field:systemEditor.dataset.field || BULK_SOURCE_REFRESH_FIELDS[fieldKey]?.label || fieldKey,
         fieldKey,
         before:String(product?.[fieldKey] ?? ''),
         after:hasSource ? String(sourceValue) : '',
@@ -3326,7 +3562,7 @@ document.addEventListener('paste', event => {
   const anchorEditableCell = matrixCellSelection.anchor.querySelector('.sellpia-edit');
   const anchor = editableCellPosition(anchorEditableCell, grid);
   if (!anchor) {
-    showToast('붙여넣기는 자사코드·현재재고·판매가 셀에서 시작해주세요.');
+    showToast('붙여넣기는 자사코드·기준값·판매처 재고·가격 셀에서 시작해주세요.');
     return;
   }
   const pastedRows = normalizePastedRows(text);
@@ -3773,6 +4009,192 @@ document.getElementById('delete-preset').addEventListener('click', () => {
   showToast(`${preset.name} 프리셋을 삭제했습니다.`);
 });
 
+const bulkSourceRefreshModal = document.getElementById('bulk-source-refresh-modal');
+const bulkSourceRefreshColumns = document.getElementById('bulk-source-refresh-columns');
+const bulkSourceRefreshPreview = document.getElementById('bulk-source-refresh-preview');
+const bulkSourceRefreshPreviewButton = document.getElementById('bulk-source-refresh-preview-run');
+const bulkSourceRefreshApplyButton = document.getElementById('bulk-source-refresh-apply');
+const bulkSourceRefreshConfirm = document.getElementById('bulk-source-refresh-confirm');
+
+function selectedBulkSourceRefreshFields() {
+  return [...bulkSourceRefreshColumns.querySelectorAll('input[type="checkbox"]:checked')]
+    .map(input => input.value)
+    .filter(fieldKey => Boolean(BULK_SOURCE_REFRESH_FIELDS[fieldKey]));
+}
+
+function bulkSourceRefreshConfirmationPhrase(fields = bulkSourceRefreshState.fields) {
+  return `전체 원본값 갱신: ${fields.map(fieldKey => BULK_SOURCE_REFRESH_FIELDS[fieldKey].label).join(', ')}`;
+}
+
+function normalizeBulkSourceRefreshResult(result, fieldKey, requestId, dryRun) {
+  const row = Array.isArray(result) ? result[0] : (result || {});
+  return {
+    requestId:String(row.request_id || requestId || ''),
+    fieldKey:String(row.field_key || fieldKey || ''),
+    totalCount:Number(row.total_sku_count || 0),
+    sourceCount:Number(row.source_value_count || 0),
+    changedCount:Number(row.affected_count ?? row.changed_count ?? 0),
+    unchangedCount:Number(row.skipped_count ?? row.unchanged_count ?? 0),
+    missingCount:Number(row.source_missing_count ?? row.missing_source_count ?? 0),
+    dryRun:row.dry_run === undefined ? Boolean(dryRun) : Boolean(row.dry_run),
+    completedAt:row.completed_at || ''
+  };
+}
+
+function setBulkSourceRefreshBusy(busy, label = '') {
+  bulkSourceRefreshState.running = Boolean(busy);
+  bulkSourceRefreshColumns.querySelectorAll('input').forEach(input => { input.disabled = busy || bulkSourceRefreshState.previewed; });
+  bulkSourceRefreshPreviewButton.disabled = busy;
+  document.getElementById('bulk-source-refresh-preview-reset').disabled = busy;
+  document.getElementById('bulk-source-refresh-cancel').disabled = busy;
+  document.getElementById('bulk-source-refresh-close').disabled = busy;
+  bulkSourceRefreshApplyButton.disabled = busy || bulkSourceRefreshConfirm.value.trim() !== bulkSourceRefreshConfirmationPhrase();
+  if (label) (bulkSourceRefreshState.previewed ? bulkSourceRefreshApplyButton : bulkSourceRefreshPreviewButton).textContent = label;
+}
+
+function resetBulkSourceRefresh({clearSelection = true} = {}) {
+  bulkSourceRefreshState.previewed = false;
+  bulkSourceRefreshState.running = false;
+  bulkSourceRefreshState.fields = [];
+  bulkSourceRefreshState.results = [];
+  if (clearSelection) bulkSourceRefreshColumns.querySelectorAll('input').forEach(input => { input.checked = false; });
+  bulkSourceRefreshColumns.querySelectorAll('input').forEach(input => { input.disabled = false; });
+  bulkSourceRefreshPreview.hidden = true;
+  bulkSourceRefreshPreviewButton.hidden = false;
+  bulkSourceRefreshPreviewButton.disabled = false;
+  bulkSourceRefreshPreviewButton.textContent = '영향 미리보기';
+  bulkSourceRefreshApplyButton.hidden = true;
+  bulkSourceRefreshApplyButton.disabled = true;
+  bulkSourceRefreshApplyButton.textContent = '전체 DB 갱신 실행';
+  bulkSourceRefreshConfirm.value = '';
+  document.getElementById('bulk-source-refresh-error').hidden = true;
+}
+
+function openBulkSourceRefresh() {
+  if (!liveData?.refreshMasterColumnFromSource) {
+    showToast('컬럼 전체 원본값 갱신 기능을 불러오지 못했습니다. DB 배포 상태를 확인해주세요.');
+    return;
+  }
+  resetBulkSourceRefresh();
+  bulkSourceRefreshModal.hidden = false;
+  bulkSourceRefreshColumns.querySelector('input')?.focus();
+}
+
+function closeBulkSourceRefresh() {
+  if (bulkSourceRefreshState.running) return;
+  bulkSourceRefreshModal.hidden = true;
+  resetBulkSourceRefresh();
+}
+
+function renderBulkSourceRefreshPreview() {
+  const totals = bulkSourceRefreshState.results.reduce((sum, row) => ({
+    total:sum.total + row.totalCount,
+    source:sum.source + row.sourceCount,
+    changed:sum.changed + row.changedCount,
+    unchanged:sum.unchanged + row.unchangedCount,
+    missing:sum.missing + row.missingCount
+  }), {total:0, source:0, changed:0, unchanged:0, missing:0});
+  document.getElementById('bulk-source-refresh-preview-cards').innerHTML = bulkSourceRefreshState.results.map(row => {
+    const info = BULK_SOURCE_REFRESH_FIELDS[row.fieldKey] || {label:row.fieldKey, sourceLabel:'셀피아 원본'};
+    return `<article data-bulk-source-field="${escapeHtml(row.fieldKey)}"><header><b>${escapeHtml(info.label)}</b><span>${escapeHtml(info.sourceLabel)}</span></header><div><span>전체 SKU<b>${formatNumber(row.totalCount)}</b></span><span>변경 대상<b>${formatNumber(row.changedCount)}</b></span><span>이미 동일<b>${formatNumber(row.unchangedCount)}</b></span><span>원본 없음<b>${formatNumber(row.missingCount)}</b></span></div></article>`;
+  }).join('') + `<p class="bulk-source-refresh-total">선택 컬럼 합계 · 변경 대상 <b>${formatNumber(totals.changed)}</b>건 · 이미 동일 ${formatNumber(totals.unchanged)}건 · 원본 없음 ${formatNumber(totals.missing)}건</p>`;
+  document.getElementById('bulk-source-refresh-preview-time').textContent = 'DB 값을 변경하지 않은 dry-run 결과입니다.';
+  document.getElementById('bulk-source-refresh-confirm-phrase').textContent = bulkSourceRefreshConfirmationPhrase();
+  bulkSourceRefreshPreview.hidden = false;
+  bulkSourceRefreshPreviewButton.hidden = true;
+  bulkSourceRefreshApplyButton.hidden = false;
+  bulkSourceRefreshApplyButton.disabled = true;
+  bulkSourceRefreshConfirm.value = '';
+  bulkSourceRefreshConfirm.focus();
+}
+
+async function previewBulkSourceRefresh() {
+  const fields = selectedBulkSourceRefreshFields();
+  if (!fields.length) {
+    showToast('원본값을 적용할 컬럼을 하나 이상 선택해주세요.');
+    return;
+  }
+  const errorBox = document.getElementById('bulk-source-refresh-error');
+  errorBox.hidden = true;
+  bulkSourceRefreshState.fields = fields;
+  bulkSourceRefreshState.results = [];
+  setBulkSourceRefreshBusy(true, 'DB 미리보기 중…');
+  try {
+    for (const fieldKey of fields) {
+      const requestId = createRequestId();
+      const result = await liveData.refreshMasterColumnFromSource({fieldKey, actor:'operations-hub', requestId, dryRun:true});
+      const normalized = normalizeBulkSourceRefreshResult(result, fieldKey, requestId, true);
+      if (!normalized.dryRun) throw new Error(`${BULK_SOURCE_REFRESH_FIELDS[fieldKey].label} 미리보기가 dry-run으로 처리되지 않았습니다.`);
+      bulkSourceRefreshState.results.push(normalized);
+    }
+    bulkSourceRefreshState.previewed = true;
+    renderBulkSourceRefreshPreview();
+  } catch (error) {
+    console.error('bulk source refresh preview failed', error);
+    errorBox.textContent = `미리보기 실패: ${error?.message || error}`;
+    errorBox.hidden = false;
+  } finally {
+    setBulkSourceRefreshBusy(false);
+    bulkSourceRefreshPreviewButton.textContent = '영향 미리보기';
+  }
+}
+
+async function applyBulkSourceRefresh() {
+  const phrase = bulkSourceRefreshConfirmationPhrase();
+  if (!bulkSourceRefreshState.previewed || bulkSourceRefreshConfirm.value.trim() !== phrase) {
+    showToast('화면에 표시된 실행 확인 문구를 그대로 입력해주세요.');
+    return;
+  }
+  const errorBox = document.getElementById('bulk-source-refresh-error');
+  errorBox.hidden = true;
+  setBulkSourceRefreshBusy(true, '전체 DB 갱신 중…');
+  const completed = [];
+  try {
+    for (const preview of bulkSourceRefreshState.results) {
+      const result = await liveData.refreshMasterColumnFromSource({
+        fieldKey:preview.fieldKey,
+        actor:'operations-hub',
+        requestId:preview.requestId || createRequestId(),
+        dryRun:false
+      });
+      const normalized = normalizeBulkSourceRefreshResult(result, preview.fieldKey, preview.requestId, false);
+      if (normalized.dryRun) throw new Error(`${BULK_SOURCE_REFRESH_FIELDS[preview.fieldKey].label}이 실제 갱신으로 처리되지 않았습니다.`);
+      completed.push(normalized);
+    }
+    const changedCount = completed.reduce((sum, row) => sum + row.changedCount, 0);
+    await loadLiveMatrix();
+    void loadLiveDashboardMetrics();
+    bulkSourceRefreshState.running = false;
+    closeBulkSourceRefresh();
+    showToast(`컬럼 전체 원본값 갱신 완료 · ${completed.length}개 컬럼 · ${formatNumber(changedCount)}건 저장`);
+  } catch (error) {
+    console.error('bulk source refresh apply failed', error);
+    const completedLabels = completed.map(row => BULK_SOURCE_REFRESH_FIELDS[row.fieldKey]?.label).filter(Boolean);
+    errorBox.textContent = `전체 갱신 실패: ${error?.message || error}${completedLabels.length ? ` · 완료된 컬럼: ${completedLabels.join(', ')}` : ''} · 처리 여부가 불확실할 수 있으니 DB 새로고침 후 다시 미리보기하세요.`;
+    errorBox.hidden = false;
+  } finally {
+    if (!bulkSourceRefreshModal.hidden) {
+      setBulkSourceRefreshBusy(false);
+      bulkSourceRefreshApplyButton.textContent = '전체 DB 갱신 실행';
+    }
+  }
+}
+
+document.getElementById('matrix-bulk-source-refresh-btn').addEventListener('click', openBulkSourceRefresh);
+document.getElementById('view-settings-bulk-source-refresh').addEventListener('click', () => {
+  closeViewSettings();
+  openBulkSourceRefresh();
+});
+document.getElementById('bulk-source-refresh-close').addEventListener('click', closeBulkSourceRefresh);
+document.getElementById('bulk-source-refresh-cancel').addEventListener('click', closeBulkSourceRefresh);
+document.getElementById('bulk-source-refresh-preview-reset').addEventListener('click', () => resetBulkSourceRefresh({clearSelection:false}));
+document.getElementById('bulk-source-refresh-preview-run').addEventListener('click', previewBulkSourceRefresh);
+document.getElementById('bulk-source-refresh-apply').addEventListener('click', applyBulkSourceRefresh);
+bulkSourceRefreshConfirm.addEventListener('input', () => {
+  bulkSourceRefreshApplyButton.disabled = bulkSourceRefreshState.running || bulkSourceRefreshConfirm.value.trim() !== bulkSourceRefreshConfirmationPhrase();
+});
+bulkSourceRefreshModal.addEventListener('click', event => { if (event.target === bulkSourceRefreshModal) closeBulkSourceRefresh(); });
+
 const advancedFilterModal = document.getElementById('advanced-filter-modal');
 const advancedFilterRows = document.getElementById('advanced-filter-rows');
 let advancedFilterDraft = cloneAdvancedFilter(activeView.advancedFilter);
@@ -4045,7 +4467,7 @@ function openMatrixInlineEditor(cell) {
     const parsed = parseEditableInputValue(save ? input.value : before, valueType);
     let after = parsed.value;
     if (save && !parsed.valid) {
-      showToast(signedNumber ? '옵션가는 음수를 포함한 숫자로 입력해주세요.' : '재고와 최종구매가는 0 이상의 숫자로 입력해주세요.');
+      showToast(signedNumber ? '옵션가는 음수를 포함한 숫자로 입력해주세요.' : `${cell.dataset.field || '값'}은 0 이상의 숫자로 입력해주세요.`);
       after = before;
       save = false;
     }
@@ -5310,6 +5732,43 @@ document.getElementById('drawer-open-multi-links')?.addEventListener('click', ()
   closeProductDrawer();
   openMultiLinkWorkspace('all', sku);
 });
+document.querySelectorAll('[data-drawer-disconnect-source]').forEach(button => button.addEventListener('click', async event => {
+  const source = event.currentTarget.dataset.drawerDisconnectSource;
+  const sectionKey = CHANNEL_SECTION_KEYS[source];
+  const section = sectionKey ? document.getElementById(`drawer-${sectionKey}`) : null;
+  const sku = String(productDrawer.dataset.sku || '').trim();
+  const productCode = String(section?.dataset.productCode || '').trim();
+  const optionCode = String(section?.dataset.optionCode || '').trim();
+  const sourceLabel = CHANNEL_LABELS[source] || source;
+  if (!sku || !productCode || !liveData?.removeListingComponent) {
+    showToast(`${sourceLabel}에서 해제할 현재 연결이 없습니다.`);
+    return;
+  }
+  const connectionLabel = `${productCode}${optionCode ? ` / ${optionCode}` : ''}`;
+  if (!window.confirm(`${sourceLabel} ${connectionLabel}와 셀피아 SKU ${sku}의 연결만 해제할까요?\n\n판매처 원본 상품은 삭제하거나 수정하지 않습니다.`)) return;
+  const originalLabel = event.currentTarget.textContent;
+  event.currentTarget.disabled = true;
+  event.currentTarget.textContent = '해제 중…';
+  try {
+    await liveData.removeListingComponent({source, productCode, optionCode, sku});
+    drawerState.linkRowsSku = '';
+    await loadLiveMatrix();
+    const refreshedRow = matrixBody.querySelector(`tr[data-sku="${CSS.escape(sku)}"]`);
+    if (refreshedRow) {
+      drawerState.activeTab = 'connections';
+      openProductDrawer(refreshedRow);
+    } else {
+      closeProductDrawer();
+    }
+    showToast(`${sourceLabel} ${connectionLabel} 연결만 해제했습니다.`);
+  } catch (error) {
+    console.error('drawer seller connection remove failed', error);
+    showToast(`연결 해제 실패: ${error?.message || error}`);
+    event.currentTarget.disabled = false;
+  } finally {
+    event.currentTarget.textContent = originalLabel;
+  }
+}));
 document.getElementById('drawer-link-manager')?.addEventListener('click', async event => {
   const listing = event.target.closest('[data-drawer-link-row]');
   if (!listing) return;
@@ -6726,13 +7185,13 @@ function relationNodeCard(node, currentEdgeId = null) {
     : node.nodeType === 'seller_listing'
       ? `${multiLinkChannelLabel(node.source)} ${node.sellerProductCode || '-'}${node.sellerOptionCode ? ` / ${node.sellerOptionCode}` : ''}`
       : '직접 노드';
-  return `<article class="relation-compact-node ${escapeHtml(node.nodeType)}" data-relation-node-id="${Number(node.nodeId)}">
+  return `<div class="relation-compact-node multi-link-product-cell ${escapeHtml(node.nodeType)}" data-relation-node-id="${Number(node.nodeId)}">
     ${relationNodeThumb(node)}
     <div><span>${escapeHtml(identity)}</span><b title="${escapeHtml(node.displayName || '')}">${escapeHtml(node.displayName || '이름 없음')}</b></div>
     <em>${escapeHtml(RELATION_KIND_LABELS[node.relationKind] || '직접 분류')}</em>
     ${otherCount > 0 ? `<button type="button" data-explore-relation-node="${Number(node.nodeId)}">다른 관계 ${formatNumber(otherCount)}개</button>` : ''}
     ${incidentCount === 0 ? `<button type="button" data-archive-relation-node="${Number(node.nodeId)}" class="relation-node-delete">삭제</button>` : ''}
-  </article>`;
+  </div>`;
 }
 
 function renderRelationEdgeList() {
@@ -7539,9 +7998,8 @@ function bundleValue(row, ...keys) {
   return '';
 }
 
-function normalizeBundleRole(role) {
-  const value = String(role || '').trim().toLowerCase();
-  return ['packaging', '포장재'].includes(value) ? 'packaging' : 'component';
+function normalizeBundleRole() {
+  return 'component';
 }
 
 function normalizeBundleCandidate(raw = {}, fallbackCode = '') {
@@ -7608,7 +8066,7 @@ function buildBundleImportPlan() {
       bundle_sku_code:bundleSkuCode,
       component_sku_code:componentSkuCode,
       component_qty:qty,
-      component_role:normalizeBundleRole(row.role),
+      component_role:'component',
       sort_order:(rows.length + 1) * 100
     });
   });
@@ -7655,11 +8113,11 @@ function renderBundleImport() {
     const bundle = selectedBundleCandidate(bundleImportState.items.get(row.bundleCode));
     const component = selectedBundleCandidate(bundleImportState.items.get(row.componentCode));
     const ready = Boolean(bundle && component);
-    return `<tr><td>${escapeHtml(row.rowNo || '-')}</td><td>${escapeHtml(row.bundleCode)}</td><td>→ ${escapeHtml(row.componentCode)}</td><td>${formatNumber(row.quantity)}</td><td>${normalizeBundleRole(row.role) === 'packaging' ? '포장재' : '구성품'}</td><td><span class="relation-import-status ${ready ? 'ok' : 'error'}">${ready ? '저장 준비' : '코드 확인 필요'}</span></td></tr>`;
+    return `<tr><td>${escapeHtml(row.rowNo || '-')}</td><td>${escapeHtml(row.bundleCode)}</td><td>→ ${escapeHtml(row.componentCode)}</td><td>${formatNumber(row.quantity)}</td><td><span class="relation-import-status ${ready ? 'ok' : 'error'}">${ready ? '저장 준비' : '코드 확인 필요'}</span></td></tr>`;
   }).join('');
   result.innerHTML = `<div class="relation-import-stats"><span>파일<b>${escapeHtml(bundleImportState.fileName || '-')}</b></span><span>유효 행<b>${formatNumber(parsed.rows?.length || 0)}</b></span><span>고유 코드<b>${formatNumber(parsed.codes?.length || 0)}</b></span><span>저장 예정<b>${formatNumber(plan.rows.length)}</b></span><span>중복 합침<b>${formatNumber(parsed.duplicateCount || parsed.duplicateRowCount || 0)}</b></span><span>오류<b>${formatNumber(errors.length)}</b></span></div>
     ${errors.length ? `<ul class="relation-import-errors">${errors.slice(0, 30).map(error => `<li>${escapeHtml(error)}</li>`).join('')}</ul>` : ''}
-    ${compositionRows ? `<table class="relation-import-table bundle-import-preview"><thead><tr><th>행</th><th>세트</th><th>구성품</th><th>수량</th><th>역할</th><th>상태</th></tr></thead><tbody>${compositionRows}</tbody></table>` : ''}
+    ${compositionRows ? `<table class="relation-import-table bundle-import-preview"><thead><tr><th>행</th><th>세트</th><th>구성품</th><th>수량</th><th>상태</th></tr></thead><tbody>${compositionRows}</tbody></table>` : ''}
     ${resolutionRows ? `<table class="relation-import-table"><thead><tr><th>입력 코드</th><th>확인된 셀피아 상품 / 옵션</th><th>상태</th></tr></thead><tbody>${resolutionRows}</tbody></table>` : ''}`;
   save.textContent = bundleImportState.saving ? '세트 구성 저장 중…' : `검토한 세트 구성 ${formatNumber(plan.rows.length)}건 저장`;
   save.disabled = bundleImportState.saving || !plan.valid || unresolvedCount > 0 || !plan.rows.length;
@@ -7821,11 +8279,10 @@ function renderBundleGraph() {
       <td class="bundle-matrix-arrow">→</td>
       <td class="bundle-matrix-product">${component ? renderBundleThumb(component.imageUrl, component.productName, component.optionName) : '<span class="relation-board-node-image empty">NO</span>'}<div class="bundle-component-copy"><span>${component ? `${component.nestedBundleId ? '하위 세트' : '구성품'} SKU ${escapeHtml(component.componentSkuCode)}` : '구성품 없음'}</span><b title="${escapeHtml(component?.productName || '상품명 없음')}">${escapeHtml(component?.productName || '상품명 없음')}</b><strong>${escapeHtml(component?.optionName || '옵션명 없음')}</strong></div></td>
       <td>${component ? `<label class="bundle-matrix-field"><span>구성수량</span><input data-bundle-component-qty type="number" min="0.001" step="0.001" value="${escapeHtml(component.qty)}"></label>` : '-'}</td>
-      <td>${component ? `<label class="bundle-matrix-field"><span>역할</span><select data-bundle-component-role><option value="component"${component.role === 'component' ? ' selected' : ''}>구성품</option><option value="packaging"${component.role === 'packaging' ? ' selected' : ''}>포장재</option></select></label>` : '-'}</td>
       <td><div class="bundle-component-actions">${component ? `<button class="btn" type="button" data-bundle-component-save>저장</button><button class="btn danger" type="button" data-bundle-component-remove${component.componentId ? '' : ' disabled title="연결 ID를 확인할 수 없어 해제할 수 없습니다."'}>해제</button>` : ''}</div></td>
     </tr>`);
   }).join('');
-  list.innerHTML = `<div class="multi-link-cell-matrix-shell"><table class="multi-link-cell-matrix bundle-matrix"><thead><tr><th>세트 SKU</th><th>관계</th><th>구성품 SKU</th><th>구성수량</th><th>역할</th><th>작업</th></tr></thead><tbody>${rows}</tbody></table></div>`;
+  list.innerHTML = `<div class="multi-link-cell-matrix-shell"><table class="multi-link-cell-matrix bundle-matrix"><thead><tr><th>세트 SKU</th><th>관계</th><th>구성품 SKU</th><th>구성수량</th><th>작업</th></tr></thead><tbody>${rows}</tbody></table></div>`;
 }
 
 async function loadBundleGraph({query = bundleGraphState.query} = {}) {
@@ -7883,10 +8340,10 @@ function downloadBundleTemplate() {
     return;
   }
   const worksheet = XLSX.utils.aoa_to_sheet([
-    ['세트 상품코드-옵션코드', '구성품 상품코드-옵션코드', '구성수량', '역할'],
-    ['1000-1', '2000-1', 1, '구성품']
+    ['세트 상품코드-옵션코드', '구성품 상품코드-옵션코드', '구성수량'],
+    ['1000-1', '2000-1', 1]
   ]);
-  worksheet['!cols'] = [{wch:28}, {wch:32}, {wch:12}, {wch:14}];
+  worksheet['!cols'] = [{wch:28}, {wch:32}, {wch:12}];
   const workbook = XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(workbook, worksheet, '세트구성');
   XLSX.writeFile(workbook, 'system_v3_bundle_components_template.xlsx');
@@ -8227,11 +8684,11 @@ function orderedDependencyComponents(components) {
 }
 
 function unifiedConnectionNodeCard({imageUrl = '', identity = '-', productName = '', optionName = '', badge = '', fallback = false} = {}) {
-  return `<article class="unified-connection-node">
+  return `<div class="unified-connection-node multi-link-product-cell">
     ${renderBundleThumb(imageUrl, productName, optionName)}
     <div><span>${escapeHtml(identity)}</span><b title="${escapeHtml(productName || '상품명 없음')}">${escapeHtml(productName || '상품명 없음')}</b><strong title="${escapeHtml(optionName || '옵션명 없음')}">${escapeHtml(optionName || '옵션명 없음')}</strong>${fallback ? '<small>셀피아 연결 정보로 보완</small>' : ''}</div>
     ${badge ? `<em>${escapeHtml(badge)}</em>` : ''}
-  </article>`;
+  </div>`;
 }
 
 function unifiedRelationNodeCard(node) {
@@ -8276,7 +8733,7 @@ function renderMultiLinkRows() {
     return `<tr class="unified-connection-row bundle-connection-row" data-bundle-component-id="${component.componentId || ''}">
       <td><span class="unified-connection-family bundle">세트·번들</span></td>
       <td>${unifiedConnectionNodeCard({imageUrl:bundle.imageUrl, identity:`세트 SKU ${bundle.bundleSkuCode || '-'}`, productName:bundle.productName, optionName:bundle.optionName, badge:'세트'})}</td>
-      <td class="unified-link-cell"><span>${escapeHtml(component.role === 'packaging' ? '포장재' : '구성품')} × ${formatNumber(component.qty)}</span><i>→</i><small>세트 구성</small></td>
+      <td class="unified-link-cell"><span>구성품 × ${formatNumber(component.qty)}</span><i>→</i><small>세트 구성</small></td>
       <td>${unifiedConnectionNodeCard({imageUrl:component.imageUrl, identity:`${component.nestedBundleId ? '하위 세트' : '구성품'} SKU ${component.componentSkuCode || '-'}`, productName:component.productName, optionName:component.optionName, badge:component.nestedBundleId ? '하위 세트' : '구성품'})}</td>
     </tr>`;
   }).filter(Boolean));
@@ -8924,7 +9381,7 @@ document.getElementById('bundle-component-form').addEventListener('submit', asyn
     bundleSkuCode:document.getElementById('bundle-form-bundle-sku').value,
     componentSkuCode:document.getElementById('bundle-form-component-sku').value,
     qty:document.getElementById('bundle-form-qty').value,
-    role:document.getElementById('bundle-form-role').value
+    role:'component'
   };
   button.disabled = true;
   button.textContent = '저장 중…';
@@ -8962,10 +9419,10 @@ document.getElementById('bundle-graph-list').addEventListener('click', async eve
         bundleSkuCode:row.dataset.bundleSku,
         componentSkuCode:row.dataset.componentSku,
         qty:row.querySelector('[data-bundle-component-qty]').value,
-        role:row.querySelector('[data-bundle-component-role]').value,
+        role:'component',
         sortOrder:row.dataset.sortOrder
       });
-      showToast('구성수량과 역할을 저장했습니다.');
+      showToast('구성수량을 저장했습니다.');
     } else {
       if (!row.dataset.bundleComponentId) throw new Error('연결 ID를 확인할 수 없어 해제할 수 없습니다.');
       if (!window.confirm(`${row.dataset.componentSku} 구성 연결을 해제할까요?\n원본 SKU와 과거 기록은 삭제하지 않습니다.`)) return;
@@ -9356,9 +9813,9 @@ function renderInventorySurvey() {
   document.getElementById('inventory-metric-drawer').textContent = formatNumber(allRows.reduce((sum, row) => sum + Number(row.shortage_drawer_qty || 0), 0));
   document.getElementById('inventory-metric-actual').textContent = formatNumber(allRows.reduce((sum, row) => sum + Number(row.actual_stock || 0), 0));
   document.getElementById('inventory-row-count').textContent = `${formatNumber(rows.length)}행 / 전체 ${formatNumber(allRows.length)}행`;
-  document.getElementById('inventory-last-refresh').textContent = `마지막 갱신 ${formatLiveTime(inventoryState.activityRefreshedAt)}`;
+  document.getElementById('inventory-last-refresh').textContent = `마지막 참고 조회 ${formatLiveTime(inventoryState.activityRefreshedAt)}`;
   const liveBadge = document.getElementById('inventory-live-status');
-  liveBadge.textContent = inventoryState.activityRefreshedAt ? '피킹 DB · 1분 갱신' : '피킹 DB 데이터 대기';
+  liveBadge.textContent = inventoryState.activityRefreshedAt ? '검토용 참고 데이터 조회됨' : '검토용 참고 데이터 대기';
   document.getElementById('inventory-body').innerHTML = rows.length
     ? rows.map(row => {
       const picked = Number(row.picked_qty || 0);
@@ -9404,14 +9861,6 @@ async function loadInventorySurvey({silent = false} = {}) {
 document.getElementById('inventory-search').addEventListener('input', renderInventorySurvey);
 document.getElementById('inventory-activity-filter').addEventListener('change', renderInventorySurvey);
 document.getElementById('inventory-refresh').addEventListener('click', () => loadInventorySurvey());
-document.getElementById('inventory-upload-open').addEventListener('click', () => {
-  sourceSelect.value = 'survey';
-  updateSource();
-  showPage('upload');
-});
-window.setInterval(() => {
-  if (document.getElementById('inventory').classList.contains('active-page')) loadInventorySurvey({silent:true});
-}, 60000);
 
 function inboundCostFormulaLabel(tag) {
   const multiply = Number(tag?.multiply_value || 1);
@@ -10049,17 +10498,9 @@ applyViewPreset(startupPreset, {id:startupPreset.id, reload:false, announce:fals
 updateCodeListFilterUi();
 
 if (liveData) {
-  refreshLiveData({resetPage:true});
-  window.setInterval(() => Promise.all([loadLiveSourceStatus(), loadLiveDashboardMetrics()]), 60000);
-  window.setInterval(() => {
-    const dashboardVisible = document.getElementById('dashboard')?.classList.contains('active-page');
-    if (document.hidden || !dashboardVisible || matrixState.loading || sellpiaSaveInFlight || pendingChanges.length) return;
-    loadMappingSyncStatus({autoRefresh:true});
-  }, MAPPING_SYNC_POLL_INTERVAL_MS);
-  window.setInterval(() => {
-    if (document.getElementById('jobs').classList.contains('active-page')) loadChangeQueue({silent:true});
-  }, 30000);
+  initializeOperationsHubAuth();
 } else {
+  showOperationsAuthGate('', {message:'DB 및 운영 로그인 모듈을 불러오지 못했습니다. 새로고침 후 다시 시도해주세요.'});
   setMatrixConnection('error', 'DB 모듈 없음');
   for (const component of Object.keys(systemHealthState.components)) setSystemHealthComponent(component, false);
   systemHealthState.lastCompletedAt = new Date().toISOString();

@@ -8,11 +8,15 @@ const here = path.dirname(fileURLToPath(import.meta.url));
 const root = path.resolve(here, '..');
 const read = relative => fs.readFileSync(path.join(root, relative), 'utf8');
 
-test('inventory survey page exposes live separated quantities', () => {
+test('inventory survey page exposes separated quantities as an unapproved reference', () => {
   const html = read('mockups/operations-hub/index.html');
   assert.match(html, /id="inventory-metric-picked"/);
   assert.match(html, /id="inventory-metric-drawer"/);
-  assert.match(html, /조사수량 \+ 오늘 피킹완료 \+ 현재 미송서랍 완료수량/);
+  assert.match(html, /재고조사 방식 미확정/);
+  assert.match(html, /기존 데이터는 참고용으로만 조회/);
+  assert.match(html, /현재 화면의 계산값은 저장·내보내기·판매처 재고에 반영되지 않습니다/);
+  assert.match(html, /id="inventory-metric-actual"/);
+  assert.match(html, /참고 계산값/);
   assert.match(html, /inventory\.css\?v=[^"']+/);
 });
 
@@ -40,10 +44,14 @@ test('picking cache keeps completed picking and drawer quantities separate', () 
   assert.doesNotMatch(privateMigration, /security\s+definer/i);
 });
 
-test('inventory page refreshes while it is visible', () => {
+test('inventory page does not expose uploads or automatic operational refresh before approval', () => {
+  const html = read('mockups/operations-hub/index.html');
   const app = read('mockups/operations-hub/app.js');
-  assert.match(app, /loadInventorySurvey\(\{silent:true\}\)/);
-  assert.match(app, /}, 60000\);/);
-  assert.match(app, /sourceSelect\.value = 'survey'/);
+  assert.match(html, /<option value="survey" disabled>재고조사 완료 파일 · 방식 검토 중<\/option>/);
+  assert.match(html, /id="inventory-upload-open"[^>]*disabled/);
+  assert.match(html, /재고조사 설계 검토/);
+  assert.doesNotMatch(app, /inventory-upload-open'\)\.addEventListener/);
+  assert.doesNotMatch(app, /active-page'\)\) loadInventorySurvey\(\{silent:true\}\)/);
+  assert.match(app, /inventory-refresh'\)\.addEventListener\('click',[\s\S]*?loadInventorySurvey\(\)/);
   assert.match(app, /liveData\?\.uploadInventorySurvey/);
 });

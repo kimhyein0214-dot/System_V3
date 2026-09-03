@@ -8,7 +8,9 @@
     '구성품 상품코드-옵션코드',
     '구성수량'
   ]);
-  const OPTIONAL_HEADERS = Object.freeze(['역할']);
+  // 2026-09: 역할 선택은 폐기했습니다. 예전 템플릿의 `역할` 열은
+  // 업로드 호환을 위해 읽기만 하고, 모든 새 구성은 component로 정규화합니다.
+  const LEGACY_HEADERS = Object.freeze(['역할']);
   const MAX_QUANTITY = 2147483647;
 
   function normalizeText(value) {
@@ -26,11 +28,8 @@
     return Number.isSafeInteger(quantity) ? quantity : null;
   }
 
-  function normalizeRole(value) {
-    const normalized = normalizeText(value).toLowerCase();
-    if (!normalized || normalized === 'component' || normalized === '구성품') return 'component';
-    if (normalized === 'packaging' || normalized === '포장재') return 'packaging';
-    return null;
+  function normalizeRole() {
+    return 'component';
   }
 
   function findBundleCycle(rows) {
@@ -118,7 +117,7 @@
     const codeSet = new Set();
     let duplicateCount = 0;
     let inputRowCount = 0;
-    const knownHeaders = [...REQUIRED_HEADERS, ...OPTIONAL_HEADERS];
+    const knownHeaders = [...REQUIRED_HEADERS, ...LEGACY_HEADERS];
     const inspectedColumns = knownHeaders
       .filter(header => headerIndexes.has(header))
       .map(header => headerIndexes.get(header));
@@ -137,11 +136,7 @@
       const componentCode = normalizeText(sourceRow[headerIndexes.get(REQUIRED_HEADERS[1])]);
       const rawQuantity = sourceRow[headerIndexes.get(REQUIRED_HEADERS[2])];
       const quantityText = normalizeText(rawQuantity);
-      const rawRole = headerIndexes.has(OPTIONAL_HEADERS[0])
-        ? sourceRow[headerIndexes.get(OPTIONAL_HEADERS[0])]
-        : '';
-      const roleText = normalizeText(rawRole);
-      const role = normalizeRole(rawRole);
+      const role = 'component';
       const missing = [];
       if (!bundleCode) missing.push(REQUIRED_HEADERS[0]);
       if (!componentCode) missing.push(REQUIRED_HEADERS[1]);
@@ -156,10 +151,6 @@
         errors.push(`${rowNo}행 구성수량은 1 이상 ${MAX_QUANTITY.toLocaleString('en-US')} 이하의 정수여야 합니다: '${quantityText}'`);
         continue;
       }
-      if (role === null) {
-        errors.push(`${rowNo}행 역할은 component/구성품 또는 packaging/포장재만 사용할 수 있습니다: '${roleText}'`);
-        continue;
-      }
       if (bundleCode === componentCode) {
         errors.push(`${rowNo}행은 세트와 구성품에 같은 코드 '${bundleCode}'를 사용할 수 없습니다.`);
         continue;
@@ -170,10 +161,6 @@
       if (existing) {
         if (existing.quantity !== quantity) {
           errors.push(`${rowNo}행의 '${bundleCode} → ${componentCode}' 구성수량 ${quantity}이 ${existing.rowNo}행의 구성수량 ${existing.quantity}과 다릅니다.`);
-          continue;
-        }
-        if (existing.role !== role) {
-          errors.push(`${rowNo}행의 '${bundleCode} → ${componentCode}' 역할 ${role}이 ${existing.rowNo}행의 역할 ${existing.role}과 다릅니다.`);
           continue;
         }
         duplicateCount += 1;
@@ -216,7 +203,7 @@
 
   return {
     REQUIRED_HEADERS,
-    OPTIONAL_HEADERS,
+    LEGACY_HEADERS,
     MAX_QUANTITY,
     normalizeText,
     normalizeHeader,
