@@ -8,6 +8,10 @@ const migration = fs.readFileSync(
   new URL("../supabase/image-project-migrations/20260812032000_allow_dashboard_sellpia_photo_upsert.sql", import.meta.url),
   "utf8",
 );
+const deleteMigration = fs.readFileSync(
+  new URL("../supabase/image-project-migrations/20260903031502_allow_dashboard_sellpia_photo_delete.sql", import.meta.url),
+  "utf8",
+);
 
 assert.match(html, /dashboard-tools-grid[\s\S]*?출력 · 정렬[\s\S]*?조회 · 관리[\s\S]*?상품 사진 관리/);
 assert.match(html, /id="dashboard-photo-dropzone"[\s\S]*?여기에 상품 사진 여러 장을 드래그/);
@@ -20,6 +24,7 @@ assert.match(html, /id="dashboard-photo-search"/);
 assert.match(html, /id="dashboard-photo-filter"/);
 assert.match(html, /id="dashboard-photo-library-grid"/);
 assert.match(html, /data-dashboard-action="photo-library-more"/);
+assert.match(html, /사진 라이브러리[\s\S]*?이름 변경·삭제/);
 assert.match(css, /\.dashboard-photo-dropzone\.is-dragging/);
 assert.match(css, /\.dashboard-photo-upload-status\.success/);
 assert.match(css, /\.dashboard-photo-library-grid/);
@@ -42,6 +47,11 @@ assert.match(appSource, /storage\.from\(IMAGE_BUCKET\)\.list\(PRODUCT_PHOTO_FOLD
 assert.match(appSource, /limit: pageSize[\s\S]*?offset: library\.offset[\s\S]*?sortBy: \{ column: "name", order: "asc" \}/);
 assert.match(appSource, /button\.dataset\.dashboardAction === "photo-library-search"/);
 assert.match(appSource, /button\.dataset\.dashboardAction === "photo-library-more"/);
+assert.match(appSource, /data-photo-library-action="rename"/);
+assert.match(appSource, /data-photo-library-action="delete"/);
+assert.match(appSource, /function productPhotoRenameStorageCode\(entry, code\)/);
+assert.match(appSource, /imageDb\.storage\.from\(IMAGE_BUCKET\)\.remove\(\[sourcePath\]\)/);
+assert.match(appSource, /imageDb\.storage\.from\(IMAGE_BUCKET\)\.remove\(\[`\$\{PRODUCT_PHOTO_FOLDER\}\/\$\{entry\.name\}`\]\)/);
 
 const skuFunctionSource = appSource.slice(
   appSource.indexOf("function photoFileStem"),
@@ -101,6 +111,7 @@ assert.equal(productPhotoLibraryEntry({ name: "folder/8601.jpg" }), null);
 assert.match(migration, /for insert[\s\S]*?to anon, authenticated[\s\S]*?bucket_id = 'product-images'/);
 assert.match(migration, /for update[\s\S]*?using[\s\S]*?with check/);
 assert.match(migration, /name ~ '\^sellpia\/\[\^\/\]\+\[\.\]jpg\$'/);
-assert.doesNotMatch(migration, /for delete/i, "dashboard integration must not grant delete access");
+assert.match(deleteMigration, /for delete[\s\S]*?to anon, authenticated[\s\S]*?bucket_id = 'product-images'/);
+assert.match(deleteMigration, /name ~ '\^sellpia\/\[\^\/\]\+\[\.\]jpg\$'/);
 
-console.log("Dashboard multi-photo SKU upload, overwrite policy, and cache refresh: passed");
+console.log("Dashboard photo library upload, rename, delete policy, and cache refresh: passed");
