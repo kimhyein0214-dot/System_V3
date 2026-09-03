@@ -14,6 +14,11 @@ vm.runInContext(parserSource, context);
 const parsers = context.SystemV3SellerParsers;
 const fields = {inventory:true, price:true, basic:true, status:true};
 
+assert.equal(parsers.validateSelectedFileCount('smartstore', [{name:'part-1.xlsx'}], {mode:'patch'}).length, 1);
+assert.equal(parsers.validateSelectedFileCount('smartstore', [{name:'part-1.xlsx'}, {name:'part-2.xlsx'}], {mode:'patch'}).length, 2);
+assert.throws(() => parsers.validateSelectedFileCount('smartstore', [{name:'part-1.xlsx'}], {mode:'full'}), /2개가 모두 필요/);
+assert.throws(() => parsers.validateSelectedFileCount('smartstore', [], {mode:'patch'}), /1개 이상/);
+
 const smartHeader = Array(20).fill(null);
 smartHeader[0] = '상품번호'; smartHeader[1] = '판매자 상품코드'; smartHeader[18] = '옵션 재고수량';
 const smartRow = Array(20).fill(null);

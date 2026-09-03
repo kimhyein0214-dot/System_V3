@@ -1453,30 +1453,17 @@
   outline: 2px solid rgb(124 58 237 / 14%);
 }
 
-.matrix-table .price-display-reference-cell {
-  box-shadow: inset 4px 0 0 #2f6fd1;
-  background: #edf5ff;
+.matrix-table tr.price-basis-row > td.price-basis-cell {
+  background: #dcf7ff;
+  box-shadow: inset 4px 0 0 #0891b2;
 }
 
-.matrix-table .price-display-reference-cell .sellpia-sku-link {
-  display: grid;
-  gap: 5px;
-  justify-items: center;
+.matrix-table tr.price-basis-row > td.price-basis-cell .editable-cell {
+  background: #dcf7ff;
 }
 
-.matrix-price-display-reference {
-  display: inline-flex;
-  align-items: center;
-  min-height: 20px;
-  border-radius: 10px;
-  background: #dceaff;
-  padding: 3px 6px;
-  color: #1855a4;
-  font-size: var(--oh-matrix-font-caption);
-  font-style: normal;
-  font-weight: 900;
-  line-height: 1.2;
-  white-space: normal;
+.matrix-context-menu > button.price-basis:not(:disabled) b {
+  color: #08758c;
 }
 
 .drawer-section-actions .drawer-disconnect-btn {

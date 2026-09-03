@@ -415,6 +415,23 @@
     }));
   }
 
+  async function attachPriceBasis(rows, signal, prefetched = null) {
+    const products = Array.isArray(rows) ? rows : [];
+    const skus = [...new Set(products.map(row => cleanText(row?.sellpia_sku_code)).filter(Boolean))];
+    if (!skus.length) return products;
+    let details = Array.isArray(prefetched) ? prefetched : null;
+    if (!details) {
+      const result = await withAbortSignal(db.rpc('load_operations_hub_price_basis_v1', {p_skus:skus}), signal);
+      if (result.error) throw result.error;
+      details = Array.isArray(result.data) ? result.data : [];
+    }
+    const bySku = new Map(details.map(detail => [cleanText(detail?.sellpiaSkuCode), detail]));
+    return products.map(product => ({
+      ...product,
+      __priceBasis:bySku.get(cleanText(product?.sellpia_sku_code)) || null
+    }));
+  }
+
   async function attachProductLinkDrafts(rows, signal, prefetched = null) {
     const products = Array.isArray(rows) ? rows : [];
     const skus = [...new Set(products.map(row => cleanText(row?.sellpia_sku_code)).filter(Boolean))];
@@ -516,6 +533,7 @@
     const steps = [
       [attachInboundCostDetails, metadata.inbound_costs],
       [attachSystemOperationalDetails, metadata.operational_details],
+      [attachPriceBasis, null],
       [attachProductLinkDrafts, metadata.product_link_drafts],
       [attachManualLinks, metadata.manual_links],
       [attachProductProfiles, metadata.profiles],
@@ -1893,12 +1911,34 @@
     return data;
   }
 
+  async function updateRelationEdge({edgeId, parentNodeId, childNodeId, sortOrder = 100} = {}) {
+    const {data, error} = await db.rpc('update_operations_hub_relation_edge_v1', {
+      p_session_token:requireOperationsHubSessionToken(),
+      p_edge_id:Number(edgeId),
+      p_parent_node_id:Number(parentNodeId),
+      p_child_node_id:Number(childNodeId),
+      p_sort_order:Math.max(0, Math.min(Number(sortOrder) || 100, 10000))
+    });
+    if (error) throwOperationsHubRpcError(error);
+    return data;
+  }
+
   async function removeRelationEdge(edgeId) {
     const {data, error} = await db.rpc('remove_operations_hub_relation_edge', {
       p_edge_id:Number(edgeId)
     });
     if (error) throw error;
     return data;
+  }
+
+  async function savePriceBasisSelection({sellpiaProductCode, basisSkuCode = null} = {}) {
+    const {data, error} = await db.rpc('save_operations_hub_price_basis_v1', {
+      p_session_token:requireOperationsHubSessionToken(),
+      p_sellpia_product_code:cleanText(sellpiaProductCode),
+      p_basis_sku_code:cleanText(basisSkuCode) || null
+    });
+    if (error) throwOperationsHubRpcError(error);
+    return data || null;
   }
 
   async function archiveRelationNode(nodeId) {
@@ -2660,7 +2700,7 @@
     const {normalizedRows, sourceRowCount, duplicateRowCount, parserVersion} = await sellerParsers.parseSellerFiles(
       source,
       selectedFiles,
-      selectedFields,
+      {...selectedFields, mode:uploadMode},
       onProgress
     );
     const sourceFileSize = selectedFiles.reduce((sum, file) => sum + Number(file.size || 0), 0);
@@ -2994,7 +3034,9 @@
     ensureSellerRelationNode,
     loadRelationNodes,
     saveRelationEdge,
+    updateRelationEdge,
     removeRelationEdge,
+    savePriceBasisSelection,
     archiveRelationNode,
     applyRelationBoard,
     saveListingOrganization,

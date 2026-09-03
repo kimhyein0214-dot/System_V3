@@ -558,11 +558,22 @@
     return global.XLSX.utils.sheet_to_json(worksheet, {header:1, raw:true, defval:null, blankrows:false, range});
   }
 
-  async function parseSellerFiles(source, files, fields = {}, onProgress) {
+  function validateSelectedFileCount(source, files, fields = {}) {
     const rule = SOURCE_RULES[source];
     if (!rule) throw new Error(`지원하지 않는 판매처 원본입니다: ${source}`);
     const selectedFiles = Array.from(files || []);
-    if (selectedFiles.length !== rule.files) throw new Error(`${source} 원본 파일 ${rule.files}개가 모두 필요합니다.`);
+    const uploadMode = fields.mode === 'full' ? 'full' : 'patch';
+    if (!selectedFiles.length) throw new Error(`${source} 원본 파일을 1개 이상 선택해주세요.`);
+    if (selectedFiles.length > rule.files) throw new Error(`${source} 원본 파일은 최대 ${rule.files}개까지 선택할 수 있습니다.`);
+    if (uploadMode === 'full' && selectedFiles.length !== rule.files) {
+      throw new Error(`${source} 전체 교체에는 원본 파일 ${rule.files}개가 모두 필요합니다.`);
+    }
+    return selectedFiles;
+  }
+
+  async function parseSellerFiles(source, files, fields = {}, onProgress) {
+    const rule = SOURCE_RULES[source];
+    const selectedFiles = validateSelectedFileCount(source, files, fields);
     const normalizedRows = [];
     let sourceRowCount = 0;
     for (let index = 0; index < selectedFiles.length; index += 1) {
@@ -597,6 +608,7 @@
     parseMakeshopRows,
     parseAblyRows,
     validateNormalizedRows,
+    validateSelectedFileCount,
     parseSellerFiles
   });
 })(typeof window !== 'undefined' ? window : globalThis);

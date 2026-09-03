@@ -7,15 +7,15 @@
     <title>System V3 · 상품 운영 허브</title>
     <link rel="preconnect" href="https://cdnjs.cloudflare.com" crossorigin>
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/pretendard/1.3.9/static/pretendard.css">
-    <link rel="stylesheet" href="./style.css?v=20260903-operations-phase2-v73">
-    <link rel="stylesheet" href="./inventory.css?v=20260903-operations-phase2-v73">
-    <link rel="stylesheet" href="./price-rule-lab.css?v=20260903-operations-phase2-v73">
-    <link rel="stylesheet" href="./ui-scale-base.css?v=20260903-operations-phase2-v73">
-    <link rel="stylesheet" href="./ui-scale-matrix.css?v=20260903-operations-phase2-v73">
-    <link rel="stylesheet" href="./ui-scale-workspaces.css?v=20260903-operations-phase2-v73">
-    <link rel="stylesheet" href="./channels-page.css?v=20260903-operations-phase2-v73">
-    <link rel="stylesheet" href="./attributes-page.css?v=20260903-operations-phase2-v73">
-    <link rel="stylesheet" href="./operations-auth.css?v=20260903-operations-phase2-v73">
+    <link rel="stylesheet" href="./style.css?v=20260903-price-basis-v74">
+    <link rel="stylesheet" href="./inventory.css?v=20260903-price-basis-v74">
+    <link rel="stylesheet" href="./price-rule-lab.css?v=20260903-price-basis-v74">
+    <link rel="stylesheet" href="./ui-scale-base.css?v=20260903-price-basis-v74">
+    <link rel="stylesheet" href="./ui-scale-matrix.css?v=20260903-price-basis-v74">
+    <link rel="stylesheet" href="./ui-scale-workspaces.css?v=20260903-price-basis-v74">
+    <link rel="stylesheet" href="./channels-page.css?v=20260903-price-basis-v74">
+    <link rel="stylesheet" href="./attributes-page.css?v=20260903-price-basis-v74">
+    <link rel="stylesheet" href="./operations-auth.css?v=20260903-price-basis-v74">
   </head>
   <body class="operations-auth-locked">
     <section id="operations-auth-gate" class="operations-auth-gate" aria-labelledby="operations-auth-title">
@@ -311,14 +311,14 @@
                 <section id="multi-link-tab-relation" class="multi-link-tab-panel" data-multi-link-panel="relation" aria-label="상품 관계 매트릭스" hidden></section>
                 <section id="multi-link-tab-bundle" class="multi-link-tab-panel" data-multi-link-panel="bundle" aria-label="세트·번들 매트릭스" hidden></section>
                 <header class="relation-workspace-head">
-                  <div><span>선택한 보기</span><h3 id="relation-workspace-scope">전체 연결</h3><p>기본 화면은 상위와 하위의 한 관계씩만 간단히 보여줍니다.</p></div>
+                  <div><span>선택한 보기</span><h3 id="relation-workspace-scope">전체 연결</h3><p>셀을 클릭·드래그해 선택하고, 우클릭하면 해당 관계 수정 패널이 열립니다.</p></div>
                   <div class="relation-workspace-actions">
                     <label class="relation-workspace-search"><span>⌕</span><input id="relation-workspace-search" autocomplete="off" placeholder="여러 분류에 속한 SKU 검색"></label>
                     <div class="relation-view-switch"><button id="relation-view-list" class="active" type="button">선택 분류</button><button id="relation-view-graph" type="button">전체 관계 보기</button></div>
                     <button id="relation-add-toggle" class="btn primary" type="button">＋ 관계 편집</button>
                   </div>
                 </header>
-                <div class="relation-edge-summary"><b id="relation-edge-summary">관계를 불러오는 중입니다.</b><span>다른 분류에 중복 소속된 상품은 별도 배지로 표시됩니다.</span></div>
+                <div class="relation-edge-summary"><b id="relation-edge-summary">관계를 불러오는 중입니다.</b><span>Ctrl/Shift로 범위를 추가 선택할 수 있습니다.</span></div>
                 <div id="relation-edge-list" class="relation-edge-list"><div class="relation-workspace-empty">등록된 관계를 불러오는 중입니다.</div></div>
                 <section id="relation-graph-board" class="relation-graph-board" hidden>
                   <div class="relation-tree-head"><div><b>전체 관계 보기</b><span id="relation-graph-copy">검색하거나 ‘다른 관계’ 배지를 누르면 연결된 모든 위치를 표시합니다.</span></div><button id="relation-tree-refresh" type="button">새로고침</button></div>
@@ -886,6 +886,10 @@
         <b>남은 옵션 추가</b>
         <em id="matrix-context-option-add-detail">상품코드를 먼저 복제해주세요</em>
       </button>
+      <button id="matrix-context-price-basis" class="price-basis" type="button" role="menuitem">
+        <b id="matrix-context-price-basis-label">기준가격 SKU 선택</b>
+        <em id="matrix-context-price-basis-detail">셀피아 상품코드 그룹을 확인해주세요</em>
+      </button>
       <button id="matrix-context-disconnect" class="danger" type="button" role="menuitem">
         <b>연결 해제</b>
         <em id="matrix-context-disconnect-count">해제할 연결 없음</em>
@@ -895,19 +899,19 @@
     <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.112.3/dist/umd/supabase.js"></script>
-    <script src="./seller-source-parsers.js?v=20260903-operations-phase2-v73"></script>
-    <script src="./seller-export-adapter.js?v=20260903-operations-phase2-v73"></script>
-    <script src="./matrix-csv-export.js?v=20260903-operations-phase2-v73"></script>
-    <script src="./discount-price-math.js?v=20260903-operations-phase2-v73"></script>
-    <script src="./source-refresh-verifier.js?v=20260903-operations-phase2-v73"></script>
-    <script src="./relation-import-parser.js?v=20260903-operations-phase2-v73"></script>
-    <script src="./bundle-import-parser.js?v=20260903-operations-phase2-v73"></script>
-    <script src="./seller-bundle-import-parser.js?v=20260903-operations-phase2-v73"></script>
-    <script src="./sellpia-source-parser.js?v=20260903-operations-phase2-v73"></script>
-    <script src="./data-service.js?v=20260903-operations-phase2-v73"></script>
-    <script src="./channels-page.js?v=20260903-operations-phase2-v73"></script>
-    <script src="./app.js?v=20260903-operations-phase2-v73"></script>
-    <script src="./attributes-page.js?v=20260903-operations-phase2-v73"></script>
-    <script src="./price-rule-lab.js?v=20260903-operations-phase2-v73"></script>
+    <script src="./seller-source-parsers.js?v=20260903-price-basis-v74"></script>
+    <script src="./seller-export-adapter.js?v=20260903-price-basis-v74"></script>
+    <script src="./matrix-csv-export.js?v=20260903-price-basis-v74"></script>
+    <script src="./discount-price-math.js?v=20260903-price-basis-v74"></script>
+    <script src="./source-refresh-verifier.js?v=20260903-price-basis-v74"></script>
+    <script src="./relation-import-parser.js?v=20260903-price-basis-v74"></script>
+    <script src="./bundle-import-parser.js?v=20260903-price-basis-v74"></script>
+    <script src="./seller-bundle-import-parser.js?v=20260903-price-basis-v74"></script>
+    <script src="./sellpia-source-parser.js?v=20260903-price-basis-v74"></script>
+    <script src="./data-service.js?v=20260903-price-basis-v74"></script>
+    <script src="./channels-page.js?v=20260903-price-basis-v74"></script>
+    <script src="./app.js?v=20260903-price-basis-v74"></script>
+    <script src="./attributes-page.js?v=20260903-price-basis-v74"></script>
+    <script src="./price-rule-lab.js?v=20260903-price-basis-v74"></script>
   </body>
 </html>

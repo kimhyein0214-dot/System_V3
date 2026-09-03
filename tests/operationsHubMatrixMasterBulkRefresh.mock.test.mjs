@@ -46,10 +46,10 @@ assert.match(html, /data-drawer-disconnect-source="smartstore"[^>]*>연결만 �
 assert.match(app, /data-drawer-disconnect-source[\s\S]*removeListingComponent\(\{source, productCode, optionCode, sku\}\)/);
 assert.match(app, /data-drawer-component-remove>연결만 해제/);
 
-assert.match(app, /그룹 대표 표시행/);
-assert.match(app, /실제 가격 출처 SKU를 의미하지 않습니다/);
-assert.doesNotMatch(app, /상품 판매가 기준/);
-assert.match(css, /\.price-display-reference-cell/);
+assert.doesNotMatch(app, /그룹 대표 표시행/);
+assert.doesNotMatch(app, /실제 가격 출처 SKU를 의미하지 않습니다/);
+assert.match(app, /price-basis-row/);
+assert.match(css, /\.price-basis-cell/);
 assert.match(css, /\.bulk-source-refresh-modal/);
 assert.match(css, /\.inbound-cost-cell:focus-visible/);
 

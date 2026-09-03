@@ -47,6 +47,7 @@ const matrixState = {page:1, pageSize:initialMatrixPageSize, search:'', searchSo
 const multiLinkState = {page:1, pageSize:50, search:'', source:'all', relationType:'all', folderId:null, organizationScope:'all', folders:[], foldersLoaded:false, total:0, allTotal:0, loading:false, requestId:0, rows:[], selected:null, loaded:false};
 const multiLinkWorkspaceState = {tab:'all', contextRow:null, allLoaded:false};
 const relationGraphState = {nodes:[], edges:[], selectedProduct:null, loading:false, requestId:0, searchTimer:null, viewMode:'list', search:'', focusNodeId:null};
+const relationCellSelection = {anchor:null, focus:null, dragging:false, selected:new Set(), dragBase:new Set(), dragMode:'replace', editingEdgeId:null};
 const relationBoardState = {nodes:new Map(), loadedProducts:new Map(), initialEdges:new Map(), levelCount:3, draggingKey:null, pointerDrag:null, connectorDrag:null, dragGhost:null, saving:false};
 const relationImportState = {fileName:'', parsed:null, items:new Map(), choices:new Map(), resolving:false, saving:false};
 const bundleGraphState = {query:'', bundles:[], loading:false, loaded:false, requestId:0};
@@ -87,6 +88,9 @@ const matrixContextProductCopy = document.getElementById('matrix-context-product
 const matrixContextProductCopyDetail = document.getElementById('matrix-context-product-copy-detail');
 const matrixContextOptionAdd = document.getElementById('matrix-context-option-add');
 const matrixContextOptionAddDetail = document.getElementById('matrix-context-option-add-detail');
+const matrixContextPriceBasis = document.getElementById('matrix-context-price-basis');
+const matrixContextPriceBasisLabel = document.getElementById('matrix-context-price-basis-label');
+const matrixContextPriceBasisDetail = document.getElementById('matrix-context-price-basis-detail');
 const matrixContextDisconnect = document.getElementById('matrix-context-disconnect');
 const matrixContextDisconnectCount = document.getElementById('matrix-context-disconnect-count');
 const BULK_SOURCE_REFRESH_FIELDS = Object.freeze({
@@ -101,6 +105,7 @@ let matrixContextTargets = [];
 let matrixContextProductCopyTargets = [];
 let matrixContextProductCopySkipped = 0;
 let matrixContextOptionAddTarget = null;
+let matrixContextPriceBasisTarget = null;
 let matrixSourceRefreshInFlight = false;
 const matrixZoomOut = document.getElementById('matrix-zoom-out');
 const matrixZoomValue = document.getElementById('matrix-zoom-value');
@@ -1217,14 +1222,10 @@ function renderLiveMatrixRows(products) {
       : '<span class="tag">미매칭</span>';
     const profile = product.__profile || {};
     const tagSummary = [profile.shape, profile.tag_summary].filter(Boolean).join(' · ');
-    const priceDisplaySources = ['smartstore','makeshop','ably'].filter(source => {
-      const merge = sellerBaseMerges.get(`${rowIndex}|${source}`);
-      return !merge?.hidden && Number(merge?.rowspan || 0) > 1;
-    });
-    const priceDisplayReference = priceDisplaySources.length
-      ? `<em class="matrix-price-display-reference" title="같은 판매처 상품코드 그룹의 대표 표시행입니다. 실제 가격 출처 SKU를 의미하지 않습니다.">그룹 대표 표시행 · ${escapeHtml(priceDisplaySources.map(source => CHANNEL_LABELS[source]).join('·'))}</em>`
-      : '';
     const productGroup = sellpiaProductGroupKey(product);
+    const priceBasis = product.__priceBasis || {};
+    const isPriceBasis = Number(priceBasis.candidateCount || 0) > 1
+      && String(priceBasis.basisSkuCode || '') === String(product.sellpia_sku_code || '');
     const resultGroup = !hasRelationshipContext
       ? 'normal'
       : isRelatedContext
@@ -1235,15 +1236,16 @@ function renderLiveMatrixRows(products) {
     previousResultGroup = resultGroup;
     const rowClasses = [groupStart ? 'product-group-start' : 'product-group-continuation'];
     if (isRelatedContext) rowClasses.push('matrix-related-context-row');
+    if (isPriceBasis) rowClasses.push('price-basis-row');
     return `<tr class="${rowClasses.join(' ')}" data-sku="${sku}" data-product-group="${escapeHtml(productGroup)}" data-own-code="${ownCode}" data-image="${imageUrl}" data-status="${overallState}" data-matrix-context="${escapeHtml(relationContext.kind)}" data-relationship-family="${escapeHtml(relationContext.relationshipFamily)}" data-root-sku="${escapeHtml(relationContext.rootSku)}"${inputRow ? ` data-input-row="${inputRow}"` : ''}>
       <td class="sticky-col select-col" aria-hidden="true"></td>
       <td class="sticky-col image-col image-drop-cell" data-image-drop="${sku}" title="이미지를 이 셀에 놓으면 ${sku}.jpg로 저장됩니다.">${matrixImage(product)}<span class="image-drop-hint">DROP</span></td>
-      <td class="sticky-col sellpia-sku-col sellpia-code-cell${priceDisplaySources.length ? ' price-display-reference-cell' : ''}"><button type="button" class="sellpia-sku-link" data-open-sku-links title="이 SKU의 판매처 연결정보 열기">${skuMarkup}${priceDisplayReference}</button></td>
+      <td class="sticky-col sellpia-sku-col sellpia-code-cell${isPriceBasis ? ' price-basis-cell' : ''}"><button type="button" class="sellpia-sku-link" data-open-sku-links title="이 SKU의 판매처 연결정보 열기">${skuMarkup}</button></td>
       <td class="sticky-col sellpia-name-col sellpia-text-cell"><span title="${displayName}">${displayName}</span>${relationBadge}</td>
       <td class="sticky-col sellpia-option-name-col sellpia-text-cell"><span title="${optionName}">${optionName}</span></td>
       <td class="sticky-col own-code-col">${sellpiaEditor('sellpia_own_code', '셀피아 자사코드', rawOwnCode, {className:'sellpia-text-compact'})}</td>
       <td class="sticky-col sellpia-stock-col number-cell">${systemOperationalCell(product, 'system_stock', '시스템 기준재고', sellpiaSourceStock)}</td>
-      <td class="sticky-col sellpia-price-col number-cell">${systemOperationalCell(product, 'system_base_price', '시스템 기준가격', sellpiaSourcePrice)}</td>
+      <td class="sticky-col sellpia-price-col number-cell${isPriceBasis ? ' price-basis-cell' : ''}"${isPriceBasis ? ` title="${priceBasis.selectionMode === 'manual' ? '직접 선택' : '그룹 최저가 자동 선택'} 기준가격 SKU"` : ''}>${systemOperationalCell(product, 'system_base_price', '시스템 기준가격', sellpiaSourcePrice)}</td>
       <td class="number-cell">${systemOperationalCell(product, 'sellpia_purchase_price', '매입가', product.sellpia_source_purchase_price)}</td>
       <td class="number-cell">${systemOperationalCell(product, 'sellpia_order_unit', '발주단위', product.sellpia_source_order_unit)}</td>
       <td class="number-cell">${systemOperationalCell(product, 'sellpia_minimum_order_unit', '최소발주단위', product.sellpia_source_minimum_order_unit)}</td>
@@ -3522,6 +3524,7 @@ matrixBody.addEventListener('mouseover', event => {
 
 document.addEventListener('mouseup', () => {
   matrixCellSelection.dragging = false;
+  relationCellSelection.dragging = false;
   document.body.classList.remove('matrix-cell-selecting');
 });
 
@@ -6424,6 +6427,31 @@ function matrixOptionAddContext(anchorCell) {
   };
 }
 
+function matrixPriceBasisContext(anchorCell) {
+  const row = anchorCell?.closest?.('tr[data-sku]');
+  const sku = String(row?.dataset.sku || '').trim();
+  const product = matrixRowsBySku.get(sku);
+  const basis = product?.__priceBasis || null;
+  const sellpiaProductCode = String(basis?.sellpiaProductCode || sellpiaProductGroupKey(product)).trim();
+  const candidateCount = Number(basis?.candidateCount || 0);
+  if (!product || !basis || !sellpiaProductCode || candidateCount < 2) {
+    return {enabled:false, detail:candidateCount === 1 ? '단일 SKU 상품은 별도 선택이 필요 없습니다.' : '기준가격 상품군을 확인할 수 없습니다.'};
+  }
+  const isCurrentBasis = String(basis.basisSkuCode || '') === sku;
+  const resetToAutomatic = isCurrentBasis && basis.selectionMode === 'manual';
+  return {
+    enabled:true,
+    sku,
+    sellpiaProductCode,
+    basisSkuCode:resetToAutomatic ? null : sku,
+    resetToAutomatic,
+    label:resetToAutomatic ? '최저가 자동선택으로 되돌리기' : '이 SKU를 기준가격으로 선택',
+    detail:resetToAutomatic
+      ? `${sellpiaProductCode} · 현재 직접 선택 ${sku}`
+      : `${sellpiaProductCode} · ${sku} 선택 · 현재 ${basis.basisSkuCode || '확인 중'}`
+  };
+}
+
 function closeMatrixContextMenu() {
   if (!matrixContextMenu) return;
   matrixContextMenu.hidden = true;
@@ -6431,15 +6459,17 @@ function closeMatrixContextMenu() {
   matrixContextProductCopyTargets = [];
   matrixContextProductCopySkipped = 0;
   matrixContextOptionAddTarget = null;
+  matrixContextPriceBasisTarget = null;
 }
 
 function openMatrixContextMenu(clientX, clientY, anchorCell) {
-  if (!matrixContextMenu || !matrixContextSourceRefresh || !matrixContextSourceRefreshCount || !matrixContextProductCopy || !matrixContextProductCopyDetail || !matrixContextOptionAdd || !matrixContextOptionAddDetail || !matrixContextDisconnect || !matrixContextDisconnectCount) return;
+  if (!matrixContextMenu || !matrixContextSourceRefresh || !matrixContextSourceRefreshCount || !matrixContextProductCopy || !matrixContextProductCopyDetail || !matrixContextOptionAdd || !matrixContextOptionAddDetail || !matrixContextPriceBasis || !matrixContextPriceBasisLabel || !matrixContextPriceBasisDetail || !matrixContextDisconnect || !matrixContextDisconnectCount) return;
   matrixContextTargets = selectedMatrixDisconnectTargets();
   const productCopyContext = selectedMatrixProductCopyContexts(anchorCell);
   matrixContextProductCopyTargets = productCopyContext.targets;
   matrixContextProductCopySkipped = productCopyContext.skipped;
   matrixContextOptionAddTarget = matrixOptionAddContext(anchorCell);
+  matrixContextPriceBasisTarget = matrixPriceBasisContext(anchorCell);
   const labels = [...new Set(matrixContextTargets.map(target => CHANNEL_LABELS[target.source] || target.source))];
   matrixContextDisconnect.disabled = matrixContextTargets.length === 0;
   matrixContextDisconnectCount.textContent = matrixContextTargets.length
@@ -6449,6 +6479,9 @@ function openMatrixContextMenu(clientX, clientY, anchorCell) {
   matrixContextProductCopyDetail.textContent = productCopyContext.detail;
   matrixContextOptionAdd.disabled = !matrixContextOptionAddTarget.enabled;
   matrixContextOptionAddDetail.textContent = matrixContextOptionAddTarget.detail;
+  matrixContextPriceBasis.disabled = !matrixContextPriceBasisTarget.enabled;
+  matrixContextPriceBasisLabel.textContent = matrixContextPriceBasisTarget.label || '기준가격 SKU 선택';
+  matrixContextPriceBasisDetail.textContent = matrixContextPriceBasisTarget.detail;
   updateSourceRefreshAction();
   matrixContextMenu.hidden = false;
   const fallbackRect = anchorCell?.getBoundingClientRect?.() || {left:12, bottom:12};
@@ -6456,7 +6489,9 @@ function openMatrixContextMenu(clientX, clientY, anchorCell) {
   const wantedTop = Number(clientY) > 0 ? Number(clientY) : fallbackRect.bottom;
   matrixContextMenu.style.left = `${Math.max(8, Math.min(wantedLeft, window.innerWidth - matrixContextMenu.offsetWidth - 8))}px`;
   matrixContextMenu.style.top = `${Math.max(8, Math.min(wantedTop, window.innerHeight - matrixContextMenu.offsetHeight - 8))}px`;
-  const preferredAction = !matrixContextProductCopy.disabled
+  const preferredAction = !matrixContextPriceBasis.disabled
+    ? matrixContextPriceBasis
+    : !matrixContextProductCopy.disabled
     ? matrixContextProductCopy
     : !matrixContextOptionAdd.disabled
       ? matrixContextOptionAdd
@@ -6539,6 +6574,34 @@ matrixContextSourceRefresh?.addEventListener('click', event => {
   event.stopPropagation();
   closeMatrixContextMenu();
   void refreshSelectedSystemValuesFromSource();
+});
+
+matrixContextPriceBasis?.addEventListener('click', async event => {
+  event.stopPropagation();
+  const target = matrixContextPriceBasisTarget;
+  if (!target?.enabled || !liveData?.savePriceBasisSelection) return;
+  closeMatrixContextMenu();
+  try {
+    const saved = await liveData.savePriceBasisSelection({
+      sellpiaProductCode:target.sellpiaProductCode,
+      basisSkuCode:target.basisSkuCode
+    });
+    for (const product of matrixState.rows) {
+      if (product.__codeListPlaceholder || sellpiaProductGroupKey(product) !== target.sellpiaProductCode) continue;
+      product.__priceBasis = {
+        ...(product.__priceBasis || {}),
+        ...(saved || {}),
+        sellpiaSkuCode:product.sellpia_sku_code,
+        sellpiaProductCode:target.sellpiaProductCode
+      };
+    }
+    renderLiveMatrixRows(matrixState.rows);
+    showToast(target.resetToAutomatic
+      ? `${target.sellpiaProductCode} 기준가격 SKU를 최저가 자동선택으로 되돌렸습니다.`
+      : `${target.sellpiaProductCode} 기준가격 SKU를 ${target.sku}로 선택했습니다.`);
+  } catch (error) {
+    showToast(`기준가격 SKU 저장 실패: ${error?.message || error}`);
+  }
 });
 
 matrixContextProductCopy?.addEventListener('click', async event => {
@@ -7194,7 +7257,93 @@ function relationNodeCard(node, currentEdgeId = null) {
   </div>`;
 }
 
+function relationCellGrid() {
+  return [...document.querySelectorAll('#relation-edge-list .relation-matrix tbody tr[data-relation-edge-id]')]
+    .map(row => [...row.querySelectorAll(':scope > td')]);
+}
+
+function relationCellPosition(cell, grid = relationCellGrid()) {
+  for (let rowIndex = 0; rowIndex < grid.length; rowIndex += 1) {
+    const columnIndex = grid[rowIndex].indexOf(cell);
+    if (columnIndex >= 0) return {rowIndex, columnIndex};
+  }
+  return null;
+}
+
+function relationCellsInRectangle(grid = relationCellGrid()) {
+  const anchor = relationCellPosition(relationCellSelection.anchor, grid);
+  const focus = relationCellPosition(relationCellSelection.focus, grid);
+  const cells = new Set();
+  if (!anchor || !focus) return cells;
+  for (let rowIndex = Math.min(anchor.rowIndex, focus.rowIndex); rowIndex <= Math.max(anchor.rowIndex, focus.rowIndex); rowIndex += 1) {
+    for (let columnIndex = Math.min(anchor.columnIndex, focus.columnIndex); columnIndex <= Math.max(anchor.columnIndex, focus.columnIndex); columnIndex += 1) {
+      const cell = grid[rowIndex]?.[columnIndex];
+      if (cell) cells.add(cell);
+    }
+  }
+  return cells;
+}
+
+function paintRelationCellSelection() {
+  const list = document.getElementById('relation-edge-list');
+  list.querySelectorAll('td.relation-cell-selected,td.relation-cell-anchor').forEach(cell => {
+    cell.classList.remove('relation-cell-selected', 'relation-cell-anchor');
+    cell.setAttribute('aria-selected', 'false');
+  });
+  relationCellSelection.selected = new Set([...relationCellSelection.selected].filter(cell => cell?.isConnected));
+  relationCellSelection.selected.forEach(cell => {
+    cell.classList.add('relation-cell-selected');
+    cell.setAttribute('aria-selected', 'true');
+  });
+  if (relationCellSelection.anchor?.isConnected && relationCellSelection.selected.has(relationCellSelection.anchor)) {
+    relationCellSelection.anchor.classList.add('relation-cell-anchor');
+  }
+}
+
+function applyRelationCellSelection() {
+  const rectangle = relationCellsInRectangle();
+  if (relationCellSelection.dragMode === 'toggle') {
+    const next = new Set(relationCellSelection.dragBase);
+    rectangle.forEach(cell => next.has(cell) ? next.delete(cell) : next.add(cell));
+    relationCellSelection.selected = next;
+  } else {
+    relationCellSelection.selected = rectangle;
+  }
+  paintRelationCellSelection();
+}
+
+function selectRelationCell(cell, {extend = false, toggle = false} = {}) {
+  if (!cell?.matches('td') || !cell.closest('tr[data-relation-edge-id]')) return;
+  if (toggle) {
+    relationCellSelection.dragBase = new Set(relationCellSelection.selected);
+    relationCellSelection.dragMode = 'toggle';
+    relationCellSelection.anchor = cell;
+    relationCellSelection.focus = cell;
+    applyRelationCellSelection();
+    return;
+  }
+  if (!extend || !relationCellSelection.anchor?.isConnected) relationCellSelection.anchor = cell;
+  relationCellSelection.focus = cell;
+  relationCellSelection.dragBase = new Set();
+  relationCellSelection.dragMode = 'replace';
+  applyRelationCellSelection();
+}
+
+function clearRelationCellSelection() {
+  relationCellSelection.anchor = null;
+  relationCellSelection.focus = null;
+  relationCellSelection.dragging = false;
+  relationCellSelection.selected.clear();
+  relationCellSelection.dragBase.clear();
+  relationCellSelection.dragMode = 'replace';
+  document.querySelectorAll('#relation-edge-list td.relation-cell-selected,#relation-edge-list td.relation-cell-anchor').forEach(cell => {
+    cell.classList.remove('relation-cell-selected', 'relation-cell-anchor');
+    cell.setAttribute('aria-selected', 'false');
+  });
+}
+
 function renderRelationEdgeList() {
+  clearRelationCellSelection();
   const box = document.getElementById('relation-edge-list');
   const summary = document.getElementById('relation-edge-summary');
   const byId = new Map(relationGraphState.nodes.map(node => [String(node.nodeId), node]));
@@ -7233,6 +7382,34 @@ function renderRelationNodeSelectors(preferred = {}) {
   if (relationGraphState.nodes.some(node => String(node.nodeId) === String(previousParent))) parent.value = String(previousParent);
   if (relationGraphState.nodes.some(node => String(node.nodeId) === String(previousChild))) child.value = String(previousChild);
   document.getElementById('relation-edge-save').disabled = !parent.value || !child.value || parent.value === child.value;
+}
+
+function resetRelationEdgeEditor({clearSelectors = true} = {}) {
+  relationCellSelection.editingEdgeId = null;
+  const saveButton = document.getElementById('relation-edge-save');
+  saveButton.textContent = '상위 → 하위 연결 저장';
+  if (clearSelectors) {
+    document.getElementById('relation-parent-node').value = '';
+    document.getElementById('relation-child-node').value = '';
+    saveButton.disabled = true;
+  }
+  document.querySelectorAll('#relation-edge-list tr.relation-edge-editing').forEach(row => row.classList.remove('relation-edge-editing'));
+}
+
+function openRelationEdgeEditor(edgeId) {
+  const edge = relationGraphState.edges.find(candidate => String(candidate.edgeId) === String(edgeId));
+  if (!edge) return;
+  relationCellSelection.editingEdgeId = Number(edge.edgeId);
+  renderRelationNodeSelectors({parentNodeId:edge.parentNodeId, childNodeId:edge.childNodeId});
+  const form = document.getElementById('multi-link-organization-form');
+  const fallback = form.querySelector('.relation-single-link-fallback');
+  form.hidden = false;
+  if (fallback) fallback.open = true;
+  document.getElementById('relation-edge-save').textContent = '선택 관계 수정 저장';
+  document.getElementById('relation-add-toggle').textContent = '관계 편집 닫기';
+  document.querySelectorAll('#relation-edge-list tr.relation-edge-editing').forEach(row => row.classList.remove('relation-edge-editing'));
+  document.querySelector(`#relation-edge-list tr[data-relation-edge-id="${Number(edge.edgeId)}"]`)?.classList.add('relation-edge-editing');
+  form.scrollIntoView({behavior:'smooth', block:'nearest'});
 }
 
 function renderRelationTree() {
@@ -9213,17 +9390,25 @@ document.getElementById('relation-edge-save').addEventListener('click', async ev
   const childNodeId = document.getElementById('relation-child-node').value;
   if (!parentNodeId || !childNodeId || parentNodeId === childNodeId) return;
   const button = event.currentTarget;
+  const editingEdgeId = relationCellSelection.editingEdgeId;
   button.disabled = true;
   try {
-    await liveData.saveRelationEdge({parentNodeId, childNodeId});
+    if (editingEdgeId) {
+      await liveData.updateRelationEdge({edgeId:editingEdgeId, parentNodeId, childNodeId});
+    } else {
+      await liveData.saveRelationEdge({parentNodeId, childNodeId});
+    }
     relationGraphState.focusNodeId = null;
     relationGraphState.search = '';
     document.getElementById('relation-workspace-search').value = '';
     await loadRelationGraph();
     setRelationViewMode('list');
+    resetRelationEdgeEditor();
     document.getElementById('multi-link-organization-form').hidden = true;
     document.getElementById('relation-add-toggle').textContent = '＋ 관계 편집';
-    showToast('상위 → 하위 관계를 저장했습니다. 가격·재고 계산에는 반영하지 않았습니다.');
+    showToast(editingEdgeId
+      ? '선택한 상위·하위 관계를 수정했습니다.'
+      : '상위 → 하위 관계를 저장했습니다. 가격·재고 계산에는 반영하지 않았습니다.');
   } catch (error) { showToast(`관계 저장 실패: ${error?.message || error}`); }
   finally { button.disabled = false; }
 });
@@ -9263,6 +9448,29 @@ async function handleRelationWorkspaceClick(event) {
 }
 
 document.getElementById('relation-edge-list').addEventListener('click', handleRelationWorkspaceClick);
+document.getElementById('relation-edge-list').addEventListener('mousedown', event => {
+  if (event.button !== 0 || event.target.closest('button,input,select,textarea,a')) return;
+  const cell = event.target.closest('.relation-matrix td');
+  if (!cell) return;
+  selectRelationCell(cell, {extend:event.shiftKey, toggle:event.ctrlKey || event.metaKey});
+  relationCellSelection.dragging = true;
+  event.preventDefault();
+});
+document.getElementById('relation-edge-list').addEventListener('mouseover', event => {
+  if (!relationCellSelection.dragging) return;
+  const cell = event.target.closest('.relation-matrix td');
+  if (!cell || cell === relationCellSelection.focus) return;
+  relationCellSelection.focus = cell;
+  applyRelationCellSelection();
+});
+document.getElementById('relation-edge-list').addEventListener('contextmenu', event => {
+  const cell = event.target.closest('.relation-matrix td');
+  const row = cell?.closest('tr[data-relation-edge-id]');
+  if (!cell || !row) return;
+  event.preventDefault();
+  if (!cell.classList.contains('relation-cell-selected')) selectRelationCell(cell);
+  openRelationEdgeEditor(row.dataset.relationEdgeId);
+});
 document.getElementById('relation-tree').addEventListener('click', handleRelationWorkspaceClick);
 document.getElementById('multi-link-workspace-tabs').addEventListener('click', event => {
   const button = event.target.closest('[data-multi-link-tab]');
@@ -9291,6 +9499,8 @@ document.getElementById('relation-add-toggle').addEventListener('click', event =
   const form = document.getElementById('multi-link-organization-form');
   form.hidden = !form.hidden;
   event.currentTarget.textContent = form.hidden ? '＋ 관계 편집' : '관계 편집 닫기';
+  if (form.hidden) resetRelationEdgeEditor({clearSelectors:false});
+  else if (relationCellSelection.editingEdgeId) resetRelationEdgeEditor();
   if (!form.hidden) {
     renderRelationBoard();
     form.scrollIntoView({behavior:'smooth', block:'nearest'});
