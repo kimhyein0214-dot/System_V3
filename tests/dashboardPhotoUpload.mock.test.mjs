@@ -16,8 +16,14 @@ assert.match(html, /파일명은 셀피아 SKU/);
 assert.match(html, /8601-\[1\]\[3\]\.jpg/);
 assert.match(html, /8601-\[1-10\]\.jpg/);
 assert.match(html, /data-dashboard-action="photo-upload-select"[^>]*>사진 여러 장 선택/);
+assert.match(html, /id="dashboard-photo-search"/);
+assert.match(html, /id="dashboard-photo-filter"/);
+assert.match(html, /id="dashboard-photo-library-grid"/);
+assert.match(html, /data-dashboard-action="photo-library-more"/);
 assert.match(css, /\.dashboard-photo-dropzone\.is-dragging/);
 assert.match(css, /\.dashboard-photo-upload-status\.success/);
+assert.match(css, /\.dashboard-photo-library-grid/);
+assert.match(css, /\.dashboard-photo-library-item/);
 
 assert.match(appSource, /const IMAGE_SUPABASE_KEY = "sb_publishable_/);
 assert.doesNotMatch(appSource, /service_role|sb_secret_/i, "frontend must not expose a Supabase secret key");
@@ -32,6 +38,10 @@ assert.match(
 assert.match(appSource, /canvas\.toBlob[\s\S]*?"image\/jpeg"/);
 assert.match(appSource, /dashboardPhotoDropzone\?\.addEventListener\("drop"[\s\S]*?uploadProductPhotos\(event\.dataTransfer\?\.files\)/);
 assert.match(appSource, /markProductPhotoUpdated\(storageSku\)/);
+assert.match(appSource, /storage\.from\(IMAGE_BUCKET\)\.list\(PRODUCT_PHOTO_FOLDER/);
+assert.match(appSource, /limit: pageSize[\s\S]*?offset: library\.offset[\s\S]*?sortBy: \{ column: "name", order: "asc" \}/);
+assert.match(appSource, /button\.dataset\.dashboardAction === "photo-library-search"/);
+assert.match(appSource, /button\.dataset\.dashboardAction === "photo-library-more"/);
 
 const skuFunctionSource = appSource.slice(
   appSource.indexOf("function photoFileStem"),
@@ -72,6 +82,21 @@ assert.deepEqual(productImageFallbackUrls("8601-2"), [
 ]);
 assert.deepEqual(productImageFallbackUrls("8601"), []);
 assert.match(appSource, /data-photo-fallbacks/);
+
+const libraryFunctionSource = appSource.slice(
+  appSource.indexOf("function productPhotoLibraryEntry"),
+  appSource.indexOf("\nfunction photoTitleForItem"),
+);
+const { productPhotoLibraryEntry } = new Function(
+  "PRODUCT_PHOTO_GROUP_SUFFIX",
+  "PRODUCT_PHOTO_RANGE_SUFFIX",
+  `${libraryFunctionSource}; return { productPhotoLibraryEntry };`,
+)(".__group", ".__range");
+assert.equal(productPhotoLibraryEntry({ name: "8601-2.jpg" }).type, "direct");
+assert.equal(productPhotoLibraryEntry({ name: "8601-2.__group.jpg" }).type, "group");
+assert.equal(productPhotoLibraryEntry({ name: "8601-2.__range.jpg" }).type, "range");
+assert.equal(productPhotoLibraryEntry({ name: "8601.jpg" }).type, "common");
+assert.equal(productPhotoLibraryEntry({ name: "folder/8601.jpg" }), null);
 
 assert.match(migration, /for insert[\s\S]*?to anon, authenticated[\s\S]*?bucket_id = 'product-images'/);
 assert.match(migration, /for update[\s\S]*?using[\s\S]*?with check/);
