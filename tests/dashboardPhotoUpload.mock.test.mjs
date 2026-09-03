@@ -25,10 +25,12 @@ assert.match(html, /id="dashboard-photo-filter"/);
 assert.match(html, /id="dashboard-photo-library-grid"/);
 assert.match(html, /data-dashboard-action="photo-library-more"/);
 assert.match(html, /사진 라이브러리[\s\S]*?이름 변경·삭제/);
+assert.match(html, /dashboard-photo-library-scroll[\s\S]*?id="dashboard-photo-library-grid"[\s\S]*?data-dashboard-action="photo-library-more"/);
 assert.match(css, /\.dashboard-photo-dropzone\.is-dragging/);
 assert.match(css, /\.dashboard-photo-upload-status\.success/);
 assert.match(css, /\.dashboard-photo-library-grid/);
 assert.match(css, /\.dashboard-photo-library-item/);
+assert.match(css, /\.dashboard-photo-library-scroll[\s\S]*?height: clamp\(260px, 36vh, 390px\)[\s\S]*?overflow: auto/);
 
 assert.match(appSource, /const IMAGE_SUPABASE_KEY = "sb_publishable_/);
 assert.doesNotMatch(appSource, /service_role|sb_secret_/i, "frontend must not expose a Supabase secret key");
