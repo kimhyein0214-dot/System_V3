@@ -24,6 +24,8 @@ assert.match(data, /function normalizeConnectionConditions\([\s\S]*?field !== 'o
 assert.match(app, /readViewSettingsForm\([\s\S]*?advancedFilter:cloneAdvancedFilter\(activeView\.advancedFilter\)/, "saved view presets must retain advanced filters");
 assert.match(app, /ADVANCED_FILTER_FIELDS[\s\S]*?sellpia_product_name[\s\S]*?smartstore_stock[\s\S]*?makeshop_price[\s\S]*?ably_sale_status[\s\S]*?tag_summary/, "field choices must cover names, stock, prices, seller status, and tags");
 assert.match(app, /ADVANCED_FILTER_OPERATORS[\s\S]*?contains[\s\S]*?gte[\s\S]*?lte/, "text and numeric comparison operators must be explicit");
+assert.match(app, /escapeHtml\(`\$\{group\} · \$\{item\.label\}`\)/, "the collapsed field selector must retain its platform group");
+assert.match(app, /text:\[\['contains','포함'\],\['not_contains','제외'\],\['not_empty','있음'\],\['empty','없음'\],\['eq','같음'\],\['neq','다름'\]\]/, "text operators must use concise operator names familiar to operators");
 assert.match(app, /function validateAdvancedFilter\([\s\S]*?Number\.isFinite\(Number\(condition\.value\)\)/, "numeric values must be rejected before the server call");
 assert.match(app, /button\.disabled = matrixState\.codeListRows\.length > 0/, "ordered Excel-list mode must not silently combine with advanced filters");
 assert.match(data, /filterPayload\.conditions\.length[\s\S]*?load_operations_hub_matrix_filtered[\s\S]*?p_filter:filterPayload/, "advanced conditions must use the server-side paging RPC");

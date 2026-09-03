@@ -19,9 +19,20 @@ assert.match(matrixCss, /tr\.price-basis-row > td\.price-basis-cell[\s\S]*?#dcf7
 assert.match(app, /relationCellSelection = \{[^}]*selected:new Set\(\)[^}]*editingEdgeId:null/);
 assert.match(app, /relation-edge-list'\)\.addEventListener\('mousedown'[\s\S]*?selectRelationCell/);
 assert.match(app, /relation-edge-list'\)\.addEventListener\('contextmenu'[\s\S]*?openRelationEdgeEditor/);
-assert.match(app, /function openRelationEdgeEditor[\s\S]*?relation-single-link-fallback[\s\S]*?선택 관계 수정 저장/);
-assert.match(app, /editingEdgeId[\s\S]*?liveData\.updateRelationEdge/);
+assert.match(html, /id="relation-edge-editor-drawer"[\s\S]*?id="relation-edge-editor-parent"[\s\S]*?id="relation-edge-editor-child"[\s\S]*?선택 관계 수정 저장/);
+assert.match(app, /function openRelationEdgeEditor[\s\S]*?relation-edge-editor-drawer'[\s\S]*?updateRelationEdgeEditorSaveState/);
+assert.doesNotMatch(app.match(/function openRelationEdgeEditor[\s\S]*?\n}/)?.[0] || '', /scrollIntoView|relation-single-link-fallback/);
+assert.match(app, /relation-edge-editor-save'[\s\S]*?liveData\.updateRelationEdge[\s\S]*?loadRelationGraph/);
+assert.match(app, /multi-link-body'\)\.addEventListener\('mousedown'[\s\S]*?selectMultiLinkCell/);
+assert.match(app, /unifiedRow\.matches\('\.relation-connection-row'\)[\s\S]*?openRelationEdgeEditor/);
 assert.match(workspaceCss, /td\.relation-cell-selected[\s\S]*?td\.relation-cell-anchor/);
+assert.match(workspaceCss, /relation-edge-editor-drawer[\s\S]*?position:fixed/);
+assert.match(html, /<th>상위 사진<\/th>[\s\S]*?<th>상위·세트 상품<\/th>[\s\S]*?<th>하위 사진<\/th>/);
+assert.match(app, /class="relation-photo-cell"[\s\S]*?showThumb:false/);
+
+assert.match(app, /function selectMatrixColumn[\s\S]*?matrixColumnCells[\s\S]*?matrixCellSelection\.selected/);
+assert.match(app, /selectedColumns\.length[\s\S]*?선택한 컬럼의 현재 화면 원본값을 갱신할까요/);
+assert.match(matrixCss, /th\.matrix-column-selected[\s\S]*?#cfeeff/);
 
 assert.match(dataService, /load_operations_hub_price_basis_v1/);
 assert.match(dataService, /save_operations_hub_price_basis_v1[\s\S]*?requireOperationsHubSessionToken/);

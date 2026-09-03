@@ -294,6 +294,20 @@
 .matrix-table .column-row th {
   top: 34px;
   height: 42px;
+  cursor: cell;
+}
+
+.matrix-table .column-row th.matrix-column-selected {
+  background: #cfeeff;
+  color: #075985;
+  box-shadow: inset 0 0 0 2px #38a3db;
+}
+
+.matrix-table .column-row th.matrix-column-selected::before {
+  content: '✓';
+  margin-right: 5px;
+  color: #0878b7;
+  font-weight: 1000;
 }
 
 .matrix-table tbody td {

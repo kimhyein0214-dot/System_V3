@@ -48,6 +48,7 @@ const multiLinkState = {page:1, pageSize:50, search:'', source:'all', relationTy
 const multiLinkWorkspaceState = {tab:'all', contextRow:null, allLoaded:false};
 const relationGraphState = {nodes:[], edges:[], selectedProduct:null, loading:false, requestId:0, searchTimer:null, viewMode:'list', search:'', focusNodeId:null};
 const relationCellSelection = {anchor:null, focus:null, dragging:false, selected:new Set(), dragBase:new Set(), dragMode:'replace', editingEdgeId:null};
+const multiLinkCellSelection = {anchor:null, focus:null, dragging:false, selected:new Set(), dragBase:new Set(), dragMode:'replace'};
 const relationBoardState = {nodes:new Map(), loadedProducts:new Map(), initialEdges:new Map(), levelCount:3, draggingKey:null, pointerDrag:null, connectorDrag:null, dragGhost:null, saving:false};
 const relationImportState = {fileName:'', parsed:null, items:new Map(), choices:new Map(), resolving:false, saving:false};
 const bundleGraphState = {query:'', bundles:[], loading:false, loaded:false, requestId:0};
@@ -81,6 +82,7 @@ const ATTRIBUTE_OPTIONS = Object.freeze({
 const matrixTable = document.querySelector('.matrix-table');
 const matrixShell = document.querySelector('.matrix-shell');
 const matrixCellSelection = {anchor:null, focus:null, dragging:false, selected:new Set(), dragBase:new Set(), dragMode:'replace'};
+let matrixColumnSelectionAnchor = null;
 const matrixContextMenu = document.getElementById('matrix-context-menu');
 const matrixContextSourceRefresh = document.getElementById('matrix-context-source-refresh');
 const matrixContextSourceRefreshCount = document.getElementById('matrix-context-source-refresh-count');
@@ -183,9 +185,9 @@ const ADVANCED_FILTER_FIELDS = Object.freeze([
   {group:'속성·태그', field:'tag_summary', label:'태그', type:'text'}
 ]);
 const ADVANCED_FILTER_OPERATORS = Object.freeze({
-  text:[['contains','포함'],['not_contains','미포함'],['eq','같음'],['neq','같지 않음'],['empty','비어 있음'],['not_empty','비어 있지 않음']],
-  number:[['gte','이상'],['lte','이하'],['gt','초과'],['lt','미만'],['eq','같음'],['neq','같지 않음'],['empty','비어 있음'],['not_empty','비어 있지 않음']],
-  status:[['eq','같음'],['neq','같지 않음']]
+  text:[['contains','포함'],['not_contains','제외'],['not_empty','있음'],['empty','없음'],['eq','같음'],['neq','다름']],
+  number:[['not_empty','있음'],['empty','없음'],['eq','같음'],['neq','다름'],['gte','이상'],['lte','이하'],['gt','초과'],['lt','미만']],
+  status:[['eq','같음'],['neq','다름']]
 });
 const BUILTIN_PRESETS = Object.freeze({
   all:{id:'all', name:'전체 현황', ...DEFAULT_VIEW_OPTIONS},
@@ -482,6 +484,8 @@ function ensureMatrixColumnStructure() {
   matrixTable.querySelectorAll('.column-row th').forEach((header, offset) => {
     const index = offset + 3;
     header.dataset.matrixColumn = String(index);
+    header.tabIndex = 0;
+    header.title = `${header.textContent.trim()} 컬럼 선택 · 우클릭하면 원본값 갱신`;
     if (header.querySelector('.matrix-column-resize-handle')) return;
     const handle = document.createElement('span');
     handle.className = 'matrix-column-resize-handle';
@@ -576,6 +580,20 @@ function startMatrixColumnResize(event, handle) {
 
 function initializeMatrixColumnResizing() {
   ensureMatrixColumnStructure();
+  matrixTable.tHead.addEventListener('click', event => {
+    if (event.target.closest('.matrix-column-resize-handle')) return;
+    const header = event.target.closest('.column-row th[data-matrix-column]');
+    if (!header) return;
+    selectMatrixColumn(header, {extend:event.shiftKey, toggle:event.ctrlKey || event.metaKey});
+  });
+  matrixTable.tHead.addEventListener('contextmenu', event => {
+    if (event.target.closest('.matrix-column-resize-handle')) return;
+    const header = event.target.closest('.column-row th[data-matrix-column]');
+    if (!header) return;
+    event.preventDefault();
+    if (!header.classList.contains('matrix-column-selected')) selectMatrixColumn(header);
+    openMatrixContextMenu(event.clientX, event.clientY, header);
+  });
   matrixTable.tHead.addEventListener('pointerdown', event => {
     const handle = event.target.closest('.matrix-column-resize-handle');
     if (handle) startMatrixColumnResize(event, handle);
@@ -3100,6 +3118,47 @@ function applyMatrixDragSelection(grid = matrixCellGrid()) {
   paintMatrixCellSelection();
 }
 
+function matrixColumnCells(index, {reindex = true} = {}) {
+  if (reindex) indexMatrixBodyColumns();
+  return [...matrixBody.querySelectorAll(`tr[data-sku] > td[data-matrix-column="${Number(index)}"]:not([hidden])`)];
+}
+
+function selectedMatrixColumnLabels() {
+  return [...matrixTable.querySelectorAll('.column-row th.matrix-column-selected')]
+    .map(header => header.childNodes[0]?.textContent?.trim() || header.textContent.replace(/열 너비 조절/g, '').trim())
+    .filter(Boolean);
+}
+
+function selectMatrixColumn(header, {extend = false, toggle = false} = {}) {
+  if (!header?.matches('.column-row th[data-matrix-column]')) return;
+  const index = Number(header.dataset.matrixColumn);
+  if (!Number.isInteger(index) || index < 3) return;
+  const from = extend && Number.isInteger(matrixColumnSelectionAnchor) ? matrixColumnSelectionAnchor : index;
+  const indexes = [];
+  for (let candidate = Math.min(from, index); candidate <= Math.max(from, index); candidate += 1) {
+    const candidateHeader = matrixTable.querySelector(`.column-row th[data-matrix-column="${candidate}"]`);
+    if (candidateHeader && !candidateHeader.hidden) indexes.push(candidate);
+  }
+  indexMatrixBodyColumns();
+  const cells = indexes.flatMap(candidate => matrixColumnCells(candidate, {reindex:false}));
+  if (!cells.length) return;
+  if (toggle) {
+    const next = new Set(matrixCellSelection.selected);
+    const remove = cells.every(cell => next.has(cell));
+    cells.forEach(cell => remove ? next.delete(cell) : next.add(cell));
+    matrixCellSelection.selected = next;
+  } else {
+    matrixCellSelection.selected = new Set(cells);
+  }
+  matrixColumnSelectionAnchor = extend && Number.isInteger(matrixColumnSelectionAnchor) ? matrixColumnSelectionAnchor : index;
+  matrixCellSelection.anchor = cells[0] || null;
+  matrixCellSelection.focus = cells[cells.length - 1] || null;
+  matrixCellSelection.dragging = false;
+  matrixCellSelection.dragBase = new Set();
+  matrixCellSelection.dragMode = 'replace';
+  paintMatrixCellSelection();
+}
+
 function selectedSourceRefreshTargets() {
   const targets = [];
   const seen = new Set();
@@ -3199,11 +3258,12 @@ function updateSourceRefreshAction() {
   if (!matrixContextSourceRefresh || !matrixContextSourceRefreshCount) return;
   const targets = selectedSourceRefreshTargets();
   const available = targets.filter(target => target.hasSource).length;
+  const selectedColumns = selectedMatrixColumnLabels();
   matrixContextSourceRefresh.disabled = matrixSourceRefreshInFlight || sellpiaSaveInFlight || available === 0;
   matrixContextSourceRefreshCount.textContent = matrixSourceRefreshInFlight
     ? 'DB 저장·확인 중…'
     : available
-      ? `원본값 ${formatNumber(available)}셀`
+      ? `${selectedColumns.length ? `현재 화면 ${selectedColumns.join('·')} · ` : ''}원본값 ${formatNumber(available)}셀`
       : '갱신할 셀 없음';
   matrixContextSourceRefresh.title = targets.length === 0
     ? '원본값을 가진 기준값 또는 판매처 셀을 선택해주세요.'
@@ -3213,6 +3273,10 @@ function updateSourceRefreshAction() {
 }
 
 function paintMatrixCellSelection() {
+  matrixTable.querySelectorAll('.column-row th.matrix-column-selected').forEach(header => {
+    header.classList.remove('matrix-column-selected');
+    header.setAttribute('aria-selected', 'false');
+  });
   matrixBody.querySelectorAll('td.matrix-cell-selected,td.matrix-cell-anchor').forEach(cell => {
     cell.classList.remove('matrix-cell-selected', 'matrix-cell-anchor');
     cell.setAttribute('aria-selected', 'false');
@@ -3225,6 +3289,13 @@ function paintMatrixCellSelection() {
   if (matrixCellSelection.anchor?.isConnected && matrixCellSelection.selected.has(matrixCellSelection.anchor)) {
     matrixCellSelection.anchor.classList.add('matrix-cell-anchor');
   }
+  indexMatrixBodyColumns();
+  matrixTable.querySelectorAll('.column-row th[data-matrix-column]').forEach(header => {
+    const cells = matrixColumnCells(Number(header.dataset.matrixColumn), {reindex:false});
+    const selected = cells.length > 0 && cells.every(cell => matrixCellSelection.selected.has(cell));
+    header.classList.toggle('matrix-column-selected', selected);
+    header.setAttribute('aria-selected', String(selected));
+  });
   updateSelectedCount();
   updateSourceRefreshAction();
 }
@@ -3253,6 +3324,11 @@ function clearMatrixCellSelection() {
   matrixCellSelection.selected.clear();
   matrixCellSelection.dragBase.clear();
   matrixCellSelection.dragMode = 'replace';
+  matrixColumnSelectionAnchor = null;
+  matrixTable.querySelectorAll('.column-row th.matrix-column-selected').forEach(header => {
+    header.classList.remove('matrix-column-selected');
+    header.setAttribute('aria-selected', 'false');
+  });
   matrixBody.querySelectorAll('td.matrix-cell-selected,td.matrix-cell-anchor').forEach(cell => {
     cell.classList.remove('matrix-cell-selected', 'matrix-cell-anchor');
     cell.setAttribute('aria-selected', 'false');
@@ -3287,6 +3363,8 @@ async function refreshSelectedSystemValuesFromSource() {
     showToast(`선택한 셀은 이미 원본값과 같습니다.${suffix}`);
     return;
   }
+  const selectedColumns = selectedMatrixColumnLabels();
+  if (selectedColumns.length && !window.confirm(`선택한 컬럼의 현재 화면 원본값을 갱신할까요?\n\n컬럼: ${selectedColumns.join(', ')}\n변경 대상: ${formatNumber(changes.length)}셀${missingCount ? `\n원본값 없음: ${formatNumber(missingCount)}셀 제외` : ''}\n\n화면에 불러온 행만 처리하고 저장 후 DB 값을 다시 확인합니다.`)) return;
   matrixSourceRefreshInFlight = true;
   updateSourceRefreshAction();
   const verificationTargets = [];
@@ -3525,6 +3603,7 @@ matrixBody.addEventListener('mouseover', event => {
 document.addEventListener('mouseup', () => {
   matrixCellSelection.dragging = false;
   relationCellSelection.dragging = false;
+  multiLinkCellSelection.dragging = false;
   document.body.classList.remove('matrix-cell-selecting');
 });
 
@@ -4212,7 +4291,7 @@ function advancedFilterFieldOptions(selectedField) {
     if (!groups.has(item.group)) groups.set(item.group, []);
     groups.get(item.group).push(item);
   });
-  return [...groups.entries()].map(([group, fields]) => `<optgroup label="${escapeHtml(group)}">${fields.map(item => `<option value="${item.field}"${item.field === selectedField ? ' selected' : ''}>${escapeHtml(item.label)}</option>`).join('')}</optgroup>`).join('');
+  return [...groups.entries()].map(([group, fields]) => `<optgroup label="${escapeHtml(group)}">${fields.map(item => `<option value="${item.field}"${item.field === selectedField ? ' selected' : ''}>${escapeHtml(`${group} · ${item.label}`)}</option>`).join('')}</optgroup>`).join('');
 }
 
 function advancedFilterOperatorOptions(type, selectedOperator) {
@@ -7073,6 +7152,10 @@ function openMultiLinkWorkspaceContextMenu(x, y, row) {
 
 function setMultiLinkWorkspaceTab(tab, {load = true} = {}) {
   const next = ['all','relation','bundle'].includes(tab) ? tab : 'all';
+  if (multiLinkWorkspaceState.tab !== next) {
+    clearMultiLinkCellSelection();
+    closeRelationEdgeEditorDrawer();
+  }
   multiLinkWorkspaceState.tab = next;
   document.querySelectorAll('[data-multi-link-tab]').forEach(button => {
     const active = button.dataset.multiLinkTab === next;
@@ -7238,7 +7321,7 @@ function relationNodeThumb(node) {
   );
 }
 
-function relationNodeCard(node, currentEdgeId = null) {
+function relationNodeCard(node, currentEdgeId = null, {showThumb = true} = {}) {
   const incidentCount = relationIncidentEdges(node.nodeId).length;
   const otherCount = Math.max(0, incidentCount - (currentEdgeId ? 1 : 0));
   const identity = node.nodeType === 'sellpia_product'
@@ -7249,7 +7332,7 @@ function relationNodeCard(node, currentEdgeId = null) {
       ? `${multiLinkChannelLabel(node.source)} ${node.sellerProductCode || '-'}${node.sellerOptionCode ? ` / ${node.sellerOptionCode}` : ''}`
       : '직접 노드';
   return `<div class="relation-compact-node multi-link-product-cell ${escapeHtml(node.nodeType)}" data-relation-node-id="${Number(node.nodeId)}">
-    ${relationNodeThumb(node)}
+    ${showThumb ? relationNodeThumb(node) : ''}
     <div><span>${escapeHtml(identity)}</span><b title="${escapeHtml(node.displayName || '')}">${escapeHtml(node.displayName || '이름 없음')}</b></div>
     <em>${escapeHtml(RELATION_KIND_LABELS[node.relationKind] || '직접 분류')}</em>
     ${otherCount > 0 ? `<button type="button" data-explore-relation-node="${Number(node.nodeId)}">다른 관계 ${formatNumber(otherCount)}개</button>` : ''}
@@ -7362,13 +7445,15 @@ function renderRelationEdgeList() {
     const child = byId.get(String(edge.childNodeId));
     if (!parent || !child) return '';
     return `<tr class="relation-edge-row" data-relation-edge-id="${Number(edge.edgeId)}">
-      <td>${relationNodeCard(parent, edge.edgeId)}</td>
+      <td class="relation-photo-cell">${relationNodeThumb(parent)}</td>
+      <td>${relationNodeCard(parent, edge.edgeId, {showThumb:false})}</td>
       <td class="relation-edge-action"><span>관계 1건</span><i>→</i><button type="button" data-remove-relation-edge="${Number(edge.edgeId)}">연결 해제</button></td>
-      <td>${relationNodeCard(child, edge.edgeId)}</td>
+      <td class="relation-photo-cell">${relationNodeThumb(child)}</td>
+      <td>${relationNodeCard(child, edge.edgeId, {showThumb:false})}</td>
     </tr>`;
   }).join('');
   const pendingRows = pending.length ? `<section class="relation-pending-nodes"><header><b>연결 대기</b><span>노드는 준비됐지만 아직 상위·하위가 지정되지 않았습니다.</span></header><div class="relation-pending-matrix">${pending.map(node => relationNodeCard(node)).join('')}</div></section>` : '';
-  box.innerHTML = `<div class="multi-link-cell-matrix-shell"><table class="multi-link-cell-matrix relation-matrix"><thead><tr><th>상위 상품</th><th>관계 작업</th><th>하위 상품</th></tr></thead><tbody>${edgeRows}</tbody></table></div>${pendingRows}`;
+  box.innerHTML = `<div class="multi-link-cell-matrix-shell"><table class="multi-link-cell-matrix relation-matrix"><thead><tr><th>상위 사진</th><th>상위 상품</th><th>관계</th><th>하위 사진</th><th>하위 상품</th></tr></thead><tbody>${edgeRows}</tbody></table></div>${pendingRows}`;
 }
 
 function renderRelationNodeSelectors(preferred = {}) {
@@ -7393,23 +7478,40 @@ function resetRelationEdgeEditor({clearSelectors = true} = {}) {
     document.getElementById('relation-child-node').value = '';
     saveButton.disabled = true;
   }
-  document.querySelectorAll('#relation-edge-list tr.relation-edge-editing').forEach(row => row.classList.remove('relation-edge-editing'));
+  document.querySelectorAll('#relation-edge-list tr.relation-edge-editing,#multi-link-body tr.relation-edge-editing').forEach(row => row.classList.remove('relation-edge-editing'));
+}
+
+function relationEdgeEditorOptions(selectedNodeId) {
+  return '<option value="">상품을 선택해주세요</option>' + relationGraphState.nodes.map(node => `<option value="${Number(node.nodeId)}"${String(node.nodeId) === String(selectedNodeId) ? ' selected' : ''}>${escapeHtml(relationNodeLabel(node))}</option>`).join('');
+}
+
+function updateRelationEdgeEditorSaveState() {
+  const parent = document.getElementById('relation-edge-editor-parent').value;
+  const child = document.getElementById('relation-edge-editor-child').value;
+  document.getElementById('relation-edge-editor-save').disabled = !parent || !child || parent === child;
+}
+
+function closeRelationEdgeEditorDrawer({reset = true} = {}) {
+  const drawer = document.getElementById('relation-edge-editor-drawer');
+  if (drawer) drawer.hidden = true;
+  document.querySelectorAll('#relation-edge-list tr.relation-edge-editing,#multi-link-body tr.relation-edge-editing').forEach(row => row.classList.remove('relation-edge-editing'));
+  if (reset) relationCellSelection.editingEdgeId = null;
 }
 
 function openRelationEdgeEditor(edgeId) {
   const edge = relationGraphState.edges.find(candidate => String(candidate.edgeId) === String(edgeId));
   if (!edge) return;
+  const parent = relationGraphState.nodes.find(node => String(node.nodeId) === String(edge.parentNodeId));
+  const child = relationGraphState.nodes.find(node => String(node.nodeId) === String(edge.childNodeId));
   relationCellSelection.editingEdgeId = Number(edge.edgeId);
-  renderRelationNodeSelectors({parentNodeId:edge.parentNodeId, childNodeId:edge.childNodeId});
-  const form = document.getElementById('multi-link-organization-form');
-  const fallback = form.querySelector('.relation-single-link-fallback');
-  form.hidden = false;
-  if (fallback) fallback.open = true;
-  document.getElementById('relation-edge-save').textContent = '선택 관계 수정 저장';
-  document.getElementById('relation-add-toggle').textContent = '관계 편집 닫기';
-  document.querySelectorAll('#relation-edge-list tr.relation-edge-editing').forEach(row => row.classList.remove('relation-edge-editing'));
-  document.querySelector(`#relation-edge-list tr[data-relation-edge-id="${Number(edge.edgeId)}"]`)?.classList.add('relation-edge-editing');
-  form.scrollIntoView({behavior:'smooth', block:'nearest'});
+  document.getElementById('relation-edge-editor-parent').innerHTML = relationEdgeEditorOptions(edge.parentNodeId);
+  document.getElementById('relation-edge-editor-child').innerHTML = relationEdgeEditorOptions(edge.childNodeId);
+  document.getElementById('relation-edge-editor-title').textContent = `관계 #${Number(edge.edgeId)}`;
+  document.getElementById('relation-edge-editor-copy').textContent = `${relationNodeLabel(parent)} → ${relationNodeLabel(child)}`;
+  document.querySelectorAll('#relation-edge-list tr.relation-edge-editing,#multi-link-body tr.relation-edge-editing').forEach(row => row.classList.remove('relation-edge-editing'));
+  document.querySelectorAll(`[data-relation-edge-id="${Number(edge.edgeId)}"]`).forEach(row => row.classList.add('relation-edge-editing'));
+  document.getElementById('relation-edge-editor-drawer').hidden = false;
+  updateRelationEdgeEditorSaveState();
 }
 
 function renderRelationTree() {
@@ -8860,15 +8962,19 @@ function orderedDependencyComponents(components) {
   return result;
 }
 
-function unifiedConnectionNodeCard({imageUrl = '', identity = '-', productName = '', optionName = '', badge = '', fallback = false} = {}) {
-  return `<div class="unified-connection-node multi-link-product-cell">
-    ${renderBundleThumb(imageUrl, productName, optionName)}
+function unifiedConnectionNodeCard({imageUrl = '', identity = '-', productName = '', optionName = '', badge = '', fallback = false, showThumb = true} = {}) {
+  return `<div class="unified-connection-node multi-link-product-cell${showThumb ? '' : ' no-thumb'}">
+    ${showThumb ? renderBundleThumb(imageUrl, productName, optionName) : ''}
     <div><span>${escapeHtml(identity)}</span><b title="${escapeHtml(productName || '상품명 없음')}">${escapeHtml(productName || '상품명 없음')}</b><strong title="${escapeHtml(optionName || '옵션명 없음')}">${escapeHtml(optionName || '옵션명 없음')}</strong>${fallback ? '<small>셀피아 연결 정보로 보완</small>' : ''}</div>
     ${badge ? `<em>${escapeHtml(badge)}</em>` : ''}
   </div>`;
 }
 
-function unifiedRelationNodeCard(node) {
+function unifiedConnectionPhoto(imageUrl = '', productName = '', optionName = '') {
+  return `<td class="multi-link-photo-cell">${renderBundleThumb(imageUrl, productName, optionName)}</td>`;
+}
+
+function unifiedRelationNodeCard(node, {showThumb = true} = {}) {
   const identity = node?.nodeType === 'sellpia_product'
     ? `셀피아 상품 ${node.sellpiaProductCode || '-'}`
     : node?.nodeType === 'sellpia_sku'
@@ -8881,7 +8987,8 @@ function unifiedRelationNodeCard(node) {
     identity,
     productName:node?.productName || node?.displayName || '',
     optionName:node?.optionName || '',
-    badge:RELATION_KIND_LABELS[node?.relationKind] || '직접 분류'
+    badge:RELATION_KIND_LABELS[node?.relationKind] || '직접 분류',
+    showThumb
   });
 }
 
@@ -8891,8 +8998,94 @@ function unifiedConnectionSearchMatch(...values) {
   return values.some(value => String(value || '').toLocaleLowerCase().includes(query));
 }
 
+function multiLinkCellGrid() {
+  return [...document.querySelectorAll('#multi-link-body tr.unified-connection-row')]
+    .map(row => [...row.querySelectorAll(':scope > td')]);
+}
+
+function multiLinkCellPosition(cell, grid = multiLinkCellGrid()) {
+  for (let rowIndex = 0; rowIndex < grid.length; rowIndex += 1) {
+    const columnIndex = grid[rowIndex].indexOf(cell);
+    if (columnIndex >= 0) return {rowIndex, columnIndex};
+  }
+  return null;
+}
+
+function multiLinkCellsInRectangle(grid = multiLinkCellGrid()) {
+  const anchor = multiLinkCellPosition(multiLinkCellSelection.anchor, grid);
+  const focus = multiLinkCellPosition(multiLinkCellSelection.focus, grid);
+  const cells = new Set();
+  if (!anchor || !focus) return cells;
+  for (let rowIndex = Math.min(anchor.rowIndex, focus.rowIndex); rowIndex <= Math.max(anchor.rowIndex, focus.rowIndex); rowIndex += 1) {
+    for (let columnIndex = Math.min(anchor.columnIndex, focus.columnIndex); columnIndex <= Math.max(anchor.columnIndex, focus.columnIndex); columnIndex += 1) {
+      const cell = grid[rowIndex]?.[columnIndex];
+      if (cell) cells.add(cell);
+    }
+  }
+  return cells;
+}
+
+function paintMultiLinkCellSelection() {
+  const body = document.getElementById('multi-link-body');
+  body.querySelectorAll('td.multi-link-cell-selected,td.multi-link-cell-anchor').forEach(cell => {
+    cell.classList.remove('multi-link-cell-selected', 'multi-link-cell-anchor');
+    cell.setAttribute('aria-selected', 'false');
+  });
+  multiLinkCellSelection.selected = new Set([...multiLinkCellSelection.selected].filter(cell => cell?.isConnected));
+  multiLinkCellSelection.selected.forEach(cell => {
+    cell.classList.add('multi-link-cell-selected');
+    cell.setAttribute('aria-selected', 'true');
+  });
+  if (multiLinkCellSelection.anchor?.isConnected && multiLinkCellSelection.selected.has(multiLinkCellSelection.anchor)) {
+    multiLinkCellSelection.anchor.classList.add('multi-link-cell-anchor');
+  }
+}
+
+function applyMultiLinkCellSelection() {
+  const rectangle = multiLinkCellsInRectangle();
+  if (multiLinkCellSelection.dragMode === 'toggle') {
+    const next = new Set(multiLinkCellSelection.dragBase);
+    rectangle.forEach(cell => next.has(cell) ? next.delete(cell) : next.add(cell));
+    multiLinkCellSelection.selected = next;
+  } else {
+    multiLinkCellSelection.selected = rectangle;
+  }
+  paintMultiLinkCellSelection();
+}
+
+function selectMultiLinkCell(cell, {extend = false, toggle = false} = {}) {
+  if (!cell?.matches('td') || !cell.closest('tr.unified-connection-row')) return;
+  if (toggle) {
+    multiLinkCellSelection.dragBase = new Set(multiLinkCellSelection.selected);
+    multiLinkCellSelection.dragMode = 'toggle';
+    multiLinkCellSelection.anchor = cell;
+    multiLinkCellSelection.focus = cell;
+    applyMultiLinkCellSelection();
+    return;
+  }
+  if (!extend || !multiLinkCellSelection.anchor?.isConnected) multiLinkCellSelection.anchor = cell;
+  multiLinkCellSelection.focus = cell;
+  multiLinkCellSelection.dragBase = new Set();
+  multiLinkCellSelection.dragMode = 'replace';
+  applyMultiLinkCellSelection();
+}
+
+function clearMultiLinkCellSelection() {
+  multiLinkCellSelection.anchor = null;
+  multiLinkCellSelection.focus = null;
+  multiLinkCellSelection.dragging = false;
+  multiLinkCellSelection.selected.clear();
+  multiLinkCellSelection.dragBase.clear();
+  multiLinkCellSelection.dragMode = 'replace';
+  document.querySelectorAll('#multi-link-body td.multi-link-cell-selected,#multi-link-body td.multi-link-cell-anchor').forEach(cell => {
+    cell.classList.remove('multi-link-cell-selected', 'multi-link-cell-anchor');
+    cell.setAttribute('aria-selected', 'false');
+  });
+}
+
 function renderMultiLinkRows() {
   const body = document.getElementById('multi-link-body');
+  clearMultiLinkCellSelection();
   const relationById = new Map(relationGraphState.nodes.map(node => [String(node.nodeId), node]));
   const relationRows = relationGraphState.edges.map(edge => {
     const parent = relationById.get(String(edge.parentNodeId));
@@ -8900,18 +9093,22 @@ function renderMultiLinkRows() {
     if (!parent || !child || !unifiedConnectionSearchMatch(relationNodeLabel(parent), relationNodeLabel(child))) return '';
     return `<tr class="unified-connection-row relation-connection-row" data-relation-edge-id="${Number(edge.edgeId)}">
       <td><span class="unified-connection-family relation">상·하위 관계</span></td>
-      <td>${unifiedRelationNodeCard(parent)}</td>
+      ${unifiedConnectionPhoto(parent?.imageUrl || parent?.image_url || '', parent?.productName || parent?.displayName || '', parent?.optionName || '')}
+      <td>${unifiedRelationNodeCard(parent, {showThumb:false})}</td>
       <td class="unified-link-cell"><span>상위 → 하위</span><i>→</i><small>${escapeHtml(edge.folderName || '관계 연결')}</small></td>
-      <td>${unifiedRelationNodeCard(child)}</td>
+      ${unifiedConnectionPhoto(child?.imageUrl || child?.image_url || '', child?.productName || child?.displayName || '', child?.optionName || '')}
+      <td>${unifiedRelationNodeCard(child, {showThumb:false})}</td>
     </tr>`;
   }).filter(Boolean);
   const bundleRows = bundleGraphState.bundles.flatMap(bundle => bundle.components.map(component => {
     if (!unifiedConnectionSearchMatch(bundle.bundleSkuCode, bundle.productName, bundle.optionName, component.componentSkuCode, component.productName, component.optionName)) return '';
     return `<tr class="unified-connection-row bundle-connection-row" data-bundle-component-id="${component.componentId || ''}">
       <td><span class="unified-connection-family bundle">세트·번들</span></td>
-      <td>${unifiedConnectionNodeCard({imageUrl:bundle.imageUrl, identity:`세트 SKU ${bundle.bundleSkuCode || '-'}`, productName:bundle.productName, optionName:bundle.optionName, badge:'세트'})}</td>
+      ${unifiedConnectionPhoto(bundle.imageUrl, bundle.productName, bundle.optionName)}
+      <td>${unifiedConnectionNodeCard({imageUrl:bundle.imageUrl, identity:`세트 SKU ${bundle.bundleSkuCode || '-'}`, productName:bundle.productName, optionName:bundle.optionName, badge:'세트', showThumb:false})}</td>
       <td class="unified-link-cell"><span>구성품 × ${formatNumber(component.qty)}</span><i>→</i><small>세트 구성</small></td>
-      <td>${unifiedConnectionNodeCard({imageUrl:component.imageUrl, identity:`${component.nestedBundleId ? '하위 세트' : '구성품'} SKU ${component.componentSkuCode || '-'}`, productName:component.productName, optionName:component.optionName, badge:component.nestedBundleId ? '하위 세트' : '구성품'})}</td>
+      ${unifiedConnectionPhoto(component.imageUrl, component.productName, component.optionName)}
+      <td>${unifiedConnectionNodeCard({imageUrl:component.imageUrl, identity:`${component.nestedBundleId ? '하위 세트' : '구성품'} SKU ${component.componentSkuCode || '-'}`, productName:component.productName, optionName:component.optionName, badge:component.nestedBundleId ? '하위 세트' : '구성품', showThumb:false})}</td>
     </tr>`;
   }).filter(Boolean));
   const groups = [
@@ -8919,10 +9116,10 @@ function renderMultiLinkRows() {
     ['세트·번들 구성', bundleRows]
   ].filter(([, rows]) => rows.length);
   if (!groups.length) {
-    body.innerHTML = '<tr class="multi-link-empty"><td colspan="4">조회 조건에 해당하는 전체 연결이 없습니다.</td></tr>';
+    body.innerHTML = '<tr class="multi-link-empty"><td colspan="6">조회 조건에 해당하는 전체 연결이 없습니다.</td></tr>';
     return;
   }
-  body.innerHTML = groups.map(([label, rows]) => `<tr class="unified-connection-group"><td colspan="4"><b>${escapeHtml(label)}</b><span>${formatNumber(rows.length)}건</span></td></tr>${rows.join('')}`).join('');
+  body.innerHTML = groups.map(([label, rows]) => `<tr class="unified-connection-group"><td colspan="6"><b>${escapeHtml(label)}</b><span>${formatNumber(rows.length)}건</span></td></tr>${rows.join('')}`).join('');
 }
 
 function updateManagedConnectionSummary() {
@@ -8946,7 +9143,7 @@ function updateManagedConnectionSummary() {
 async function loadManagedConnections() {
   if (!liveData?.loadRelationNodes || !liveData?.listBundleGraph) return false;
   const body = document.getElementById('multi-link-body');
-  body.innerHTML = '<tr class="multi-link-empty loading"><td colspan="4">상품 관계와 세트·번들 구성을 불러오는 중입니다.</td></tr>';
+  body.innerHTML = '<tr class="multi-link-empty loading"><td colspan="6">상품 관계와 세트·번들 구성을 불러오는 중입니다.</td></tr>';
   try {
     await Promise.all([loadRelationFolders(), loadRelationGraph(), loadBundleGraph({query:''})]);
     multiLinkWorkspaceState.allLoaded = true;
@@ -8959,7 +9156,7 @@ async function loadManagedConnections() {
     return true;
   } catch (error) {
     console.error('managed connection matrix load failed', error);
-    body.innerHTML = `<tr class="multi-link-empty error"><td colspan="4">상품 관계·세트 구성을 불러오지 못했습니다. ${escapeHtml(error?.message || '')}</td></tr>`;
+    body.innerHTML = `<tr class="multi-link-empty error"><td colspan="6">상품 관계·세트 구성을 불러오지 못했습니다. ${escapeHtml(error?.message || '')}</td></tr>`;
     return false;
   }
 }
@@ -9170,8 +9367,36 @@ document.getElementById('multi-link-body').addEventListener('click', event => {
   if (row) renderMultiLinkEditor(row);
 });
 
+document.getElementById('multi-link-body').addEventListener('mousedown', event => {
+  if (event.button !== 0 || event.target.closest('button,input,select,textarea,a')) return;
+  const cell = event.target.closest('tr.unified-connection-row > td');
+  if (!cell) return;
+  selectMultiLinkCell(cell, {extend:event.shiftKey, toggle:event.ctrlKey || event.metaKey});
+  multiLinkCellSelection.dragging = true;
+  event.preventDefault();
+});
+
+document.getElementById('multi-link-body').addEventListener('mouseover', event => {
+  if (!multiLinkCellSelection.dragging) return;
+  const cell = event.target.closest('tr.unified-connection-row > td');
+  if (!cell || cell === multiLinkCellSelection.focus) return;
+  multiLinkCellSelection.focus = cell;
+  applyMultiLinkCellSelection();
+});
+
 document.getElementById('multi-link-body').addEventListener('contextmenu', event => {
   const cell = event.target.closest('td');
+  const unifiedRow = cell?.closest('.unified-connection-row');
+  if (unifiedRow) {
+    event.preventDefault();
+    if (!cell.classList.contains('multi-link-cell-selected')) selectMultiLinkCell(cell);
+    if (unifiedRow.matches('.relation-connection-row')) {
+      openRelationEdgeEditor(unifiedRow.dataset.relationEdgeId);
+    } else {
+      showToast('세트·번들 구성 수정은 ‘세트·번들’ 탭에서 진행해주세요.');
+    }
+    return;
+  }
   const rowElement = cell?.closest('.multi-link-row');
   if (!rowElement) return;
   event.preventDefault();
@@ -9199,6 +9424,7 @@ document.addEventListener('keydown', event => {
   if (event.key !== 'Escape') return;
   closeMultiLinkWorkspaceContextMenu();
   closeMultiLinkSkuActionModal();
+  closeRelationEdgeEditorDrawer();
 });
 
 document.getElementById('multi-link-components').addEventListener('click', async event => {
@@ -9413,6 +9639,35 @@ document.getElementById('relation-edge-save').addEventListener('click', async ev
   finally { button.disabled = false; }
 });
 
+['relation-edge-editor-parent','relation-edge-editor-child'].forEach(id => document.getElementById(id).addEventListener('change', updateRelationEdgeEditorSaveState));
+['relation-edge-editor-close','relation-edge-editor-cancel'].forEach(id => document.getElementById(id).addEventListener('click', () => closeRelationEdgeEditorDrawer()));
+document.getElementById('relation-edge-editor-save').addEventListener('click', async event => {
+  const edgeId = relationCellSelection.editingEdgeId;
+  const parentNodeId = document.getElementById('relation-edge-editor-parent').value;
+  const childNodeId = document.getElementById('relation-edge-editor-child').value;
+  if (!edgeId || !parentNodeId || !childNodeId || parentNodeId === childNodeId) return;
+  const button = event.currentTarget;
+  button.disabled = true;
+  try {
+    await liveData.updateRelationEdge({edgeId, parentNodeId, childNodeId});
+    relationGraphState.focusNodeId = null;
+    relationGraphState.search = '';
+    document.getElementById('relation-workspace-search').value = '';
+    await loadRelationGraph();
+    if (multiLinkWorkspaceState.allLoaded) {
+      renderMultiLinkRows();
+      updateManagedConnectionSummary();
+    }
+    closeRelationEdgeEditorDrawer();
+    showToast('선택한 상위·하위 관계 한 건을 수정했습니다.');
+  } catch (error) {
+    showToast(`관계 수정 실패: ${error?.message || error}`);
+    updateRelationEdgeEditorSaveState();
+  } finally {
+    if (!document.getElementById('relation-edge-editor-drawer').hidden) button.disabled = false;
+  }
+});
+
 async function handleRelationWorkspaceClick(event) {
   const image = event.target.closest('[data-relation-image]');
   if (image) { openRelationImageModal(image); return; }
@@ -9496,6 +9751,7 @@ document.getElementById('relation-workspace-search').addEventListener('input', e
 });
 
 document.getElementById('relation-add-toggle').addEventListener('click', event => {
+  closeRelationEdgeEditorDrawer();
   const form = document.getElementById('multi-link-organization-form');
   form.hidden = !form.hidden;
   event.currentTarget.textContent = form.hidden ? '＋ 관계 편집' : '관계 편집 닫기';
