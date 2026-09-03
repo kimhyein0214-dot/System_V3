@@ -48,6 +48,7 @@ const multiLinkState = {page:1, pageSize:50, search:'', source:'all', relationTy
 const multiLinkWorkspaceState = {tab:'all', contextRow:null, allLoaded:false};
 const relationGraphState = {nodes:[], edges:[], selectedProduct:null, loading:false, requestId:0, searchTimer:null, viewMode:'list', search:'', focusNodeId:null};
 const relationCellSelection = {anchor:null, focus:null, dragging:false, selected:new Set(), dragBase:new Set(), dragMode:'replace', editingEdgeId:null};
+const relationEdgeHistoryState = {edgeId:null, requestId:0, loading:false};
 const multiLinkCellSelection = {anchor:null, focus:null, dragging:false, selected:new Set(), dragBase:new Set(), dragMode:'replace'};
 const relationBoardState = {nodes:new Map(), loadedProducts:new Map(), initialEdges:new Map(), levelCount:3, draggingKey:null, pointerDrag:null, connectorDrag:null, dragGhost:null, saving:false};
 const relationImportState = {fileName:'', parsed:null, items:new Map(), choices:new Map(), resolving:false, saving:false};
@@ -86,6 +87,13 @@ let matrixColumnSelectionAnchor = null;
 const matrixContextMenu = document.getElementById('matrix-context-menu');
 const matrixContextSourceRefresh = document.getElementById('matrix-context-source-refresh');
 const matrixContextSourceRefreshCount = document.getElementById('matrix-context-source-refresh-count');
+const selectedSourceRefreshModal = document.getElementById('selected-source-refresh-modal');
+const selectedSourceRefreshScope = document.getElementById('selected-source-refresh-scope');
+const selectedSourceRefreshCounts = document.getElementById('selected-source-refresh-counts');
+const selectedSourceRefreshResults = document.getElementById('selected-source-refresh-results');
+const selectedSourceRefreshError = document.getElementById('selected-source-refresh-error');
+const selectedSourceRefreshApply = document.getElementById('selected-source-refresh-apply');
+const selectedSourceRefreshRetry = document.getElementById('selected-source-refresh-retry');
 const matrixContextProductCopy = document.getElementById('matrix-context-product-copy');
 const matrixContextProductCopyDetail = document.getElementById('matrix-context-product-copy-detail');
 const matrixContextOptionAdd = document.getElementById('matrix-context-option-add');
@@ -109,6 +117,8 @@ let matrixContextProductCopySkipped = 0;
 let matrixContextOptionAddTarget = null;
 let matrixContextPriceBasisTarget = null;
 let matrixSourceRefreshInFlight = false;
+const SELECTED_SOURCE_REFRESH_CHUNK_SIZE = 40;
+const selectedSourceRefreshState = {batch:null, targets:[], scope:null, phase:'idle', previewChunks:[], appliedChunks:[], previewRequestIds:[], applyRequestIds:[]};
 const matrixZoomOut = document.getElementById('matrix-zoom-out');
 const matrixZoomValue = document.getElementById('matrix-zoom-value');
 const matrixZoomIn = document.getElementById('matrix-zoom-in');
@@ -3201,6 +3211,7 @@ function selectedSourceRefreshTargets() {
       const fieldKey = sellerEditor.dataset.fieldKey;
       const priceComponent = sellerEditor.dataset.priceComponent || '';
       const productCode = String(sellerEditor.dataset.sellerProductCode || product?.[`${source}_product_code`] || '').trim();
+      const optionCode = String(product?.[`${source}_option_code`] || '').trim();
       const groupSize = Math.max(1, Number(sellerEditor.dataset.groupSize) || 1);
       const keyScope = priceComponent === 'base' && groupSize > 1 && productCode ? productCode : sku;
       const key = `seller\u0000${source}\u0000${fieldKey}\u0000${priceComponent}\u0000${keyScope}`;
@@ -3213,6 +3224,7 @@ function selectedSourceRefreshTargets() {
         sku,
         source,
         productCode,
+        optionCode,
         groupSize,
         priceComponent,
         field:sellerEditor.dataset.field || `${CHANNEL_LABELS[source] || source} 원본값`,
@@ -3228,6 +3240,7 @@ function selectedSourceRefreshTargets() {
     if (discountEditor) {
       const source = discountEditor.dataset.source;
       const productCode = String(discountEditor.dataset.productCode || product?.[`${source}_product_code`] || '').trim();
+      const optionCode = String(product?.[`${source}_option_code`] || '').trim();
       const groupSize = Math.max(1, Number(cell.dataset.groupSize) || 1);
       const keyScope = groupSize > 1 && productCode ? productCode : sku;
       const key = `seller\u0000${source}\u0000discount\u0000${keyScope}`;
@@ -3241,6 +3254,7 @@ function selectedSourceRefreshTargets() {
         sku,
         source,
         productCode,
+        optionCode,
         groupSize,
         field:`${CHANNEL_LABELS[source] || source} 할인정보`,
         fieldKey:'sellpia_sale_price',
@@ -3338,8 +3352,368 @@ function clearMatrixCellSelection() {
   updateSourceRefreshAction();
 }
 
+function selectedSourceRefreshBatchTargets(targets) {
+  const expanded = [];
+  const seen = new Set();
+  const add = target => {
+    const normalized = {
+      kind:String(target?.kind || '').trim(),
+      sku:String(target?.sku || '').trim(),
+      source:String(target?.source || '').trim(),
+      fieldKey:String(target?.fieldKey || '').trim(),
+      priceComponent:String(target?.priceComponent || '').trim(),
+      productCode:String(target?.productCode || '').trim(),
+      optionCode:String(target?.optionCode || '').trim()
+    };
+    const identity = normalized.kind === 'system'
+      ? normalized.sku
+      : [normalized.source, normalized.productCode, normalized.optionCode].join('\u0000');
+    const key = [normalized.kind, identity, normalized.fieldKey, normalized.priceComponent].join('\u0000');
+    if (!normalized.kind || !normalized.sku || seen.has(key)) return;
+    seen.add(key);
+    expanded.push(normalized);
+  };
+  for (const target of targets || []) {
+    const groupSelected = target?.groupSize > 1 && target?.productCode
+      && (target.kind === 'seller_discount' || (target.kind === 'seller_price' && target.priceComponent === 'base'));
+    if (!groupSelected) {
+      add(target);
+      continue;
+    }
+    const groupRows = matrixState.rows.filter(product => String(product?.[`${target.source}_product_code`] || '').trim() === target.productCode);
+    (groupRows.length ? groupRows : [{sellpia_sku_code:target.sku}]).forEach(product => add({
+      ...target,
+      sku:String(product.sellpia_sku_code || '').trim(),
+      productCode:String(product?.[`${target.source}_product_code`] || target.productCode || '').trim(),
+      optionCode:String(product?.[`${target.source}_option_code`] || '').trim()
+    }));
+  }
+  return expanded;
+}
+
+function selectedSourceRefreshScopeFor(targets, batchTargets) {
+  const selectedColumns = selectedMatrixColumnLabels();
+  const skus = new Set(batchTargets.map(target => target.sku));
+  const label = selectedColumns.length
+    ? `현재 화면 ${selectedColumns.join(' · ')} 컬럼`
+    : `현재 화면 선택 셀 ${formatNumber(targets.length)}개`;
+  return {
+    type:selectedColumns.length ? 'current_page_columns' : 'selected_cells',
+    label,
+    selectedCellCount:targets.length,
+    selectedColumnLabels:selectedColumns,
+    visibleRowCount:matrixState.rows.length,
+    selectedSkuCount:skus.size,
+    databaseTargetCount:batchTargets.length,
+    page:matrixState.page,
+    pageSize:matrixState.pageSize,
+    search:matrixState.search
+  };
+}
+
+function selectedSourceRefreshItemLabel(item) {
+  if (item.kind === 'system') return BULK_SOURCE_REFRESH_FIELDS[item.fieldKey]?.label || item.fieldKey || '시스템 기준값';
+  const channel = CHANNEL_LABELS[item.source] || item.source || '판매처';
+  if (item.kind === 'seller_stock') return `${channel} 재고`;
+  if (item.kind === 'seller_discount') return `${channel} 할인정보`;
+  return `${channel} ${{base:'판매가',option:'옵션가',final:'최종구매가'}[item.priceComponent] || '가격'}`;
+}
+
+function selectedSourceRefreshStatusLabel(status) {
+  return {ready:'갱신 예정',success:'저장·확인',skipped:'제외',failed:'실패',pending:'대기'}[status] || status || '대기';
+}
+
+function renderSelectedSourceRefreshBatch(batch, {loadingLabel = ''} = {}) {
+  selectedSourceRefreshState.batch = batch || null;
+  const scope = batch?.scope || selectedSourceRefreshState.scope || {};
+  const columns = Array.isArray(scope.selectedColumnLabels) ? scope.selectedColumnLabels : [];
+  selectedSourceRefreshScope.innerHTML = `<b>${escapeHtml(scope.label || '현재 화면 선택 셀')}</b><span>선택 셀 ${formatNumber(scope.selectedCellCount || 0)}개 · 실제 DB 대상 ${formatNumber(batch?.requestedCount ?? scope.databaseTargetCount ?? 0)}개 SKU${columns.length ? ` · ${escapeHtml(columns.join(', '))}` : ''}</span>`;
+  if (loadingLabel) {
+    selectedSourceRefreshCounts.innerHTML = `<article><span>진행 상태</span><b>${escapeHtml(loadingLabel)}</b></article>`;
+    selectedSourceRefreshResults.innerHTML = '';
+    return;
+  }
+  const applied = ['completed','completed_with_failures'].includes(batch?.status);
+  const counts = applied
+    ? [
+        ['요청 대상',batch.requestedCount || 0,''],['저장 성공',batch.successCount || 0,'success'],
+        ['DB 확인',batch.verifiedCount || 0,'success'],['제외',batch.skippedCount || 0,''],['실패',batch.failedCount || 0,'fail']
+      ]
+    : [
+        ['선택 셀',scope.selectedCellCount || 0,''],['DB 대상',batch?.requestedCount || 0,''],
+        ['갱신 예정',batch?.readyCount || 0,'success'],['이미 동일·원본 없음',batch?.skippedCount || 0,''],['차단',batch?.failedCount || 0,'fail']
+      ];
+  selectedSourceRefreshCounts.innerHTML = counts.map(([label,value,cls]) => `<article class="${cls}"><span>${escapeHtml(label)}</span><b>${formatNumber(value)}</b></article>`).join('');
+  const items = Array.isArray(batch?.items) ? batch.items : [];
+  const sorted = [...items].sort((a,b) => {
+    const statusA = applied ? a.resultStatus : a.previewStatus;
+    const statusB = applied ? b.resultStatus : b.previewStatus;
+    return Number(statusB === 'failed') - Number(statusA === 'failed') || Number(a.ordinal || 0) - Number(b.ordinal || 0);
+  });
+  const visible = sorted.slice(0, 80);
+  selectedSourceRefreshResults.innerHTML = visible.map(item => {
+    const status = applied ? item.resultStatus : item.previewStatus;
+    return `<article class="selected-source-refresh-result" data-status="${escapeHtml(status || 'pending')}">
+      <span class="status">${escapeHtml(selectedSourceRefreshStatusLabel(status))}</span>
+      <b title="${escapeHtml(item.sku || '')}">${escapeHtml(item.sku || '-')}</b>
+      <span title="${escapeHtml(selectedSourceRefreshItemLabel(item))}">${escapeHtml(selectedSourceRefreshItemLabel(item))}</span>
+      <span title="${escapeHtml(item.message || '')}">${escapeHtml(item.message || '-')}</span>
+    </article>`;
+  }).join('') + (sorted.length > visible.length ? `<p class="selected-source-refresh-more">외 ${formatNumber(sorted.length - visible.length)}개 항목 · 집계에는 모두 포함됩니다.</p>` : '');
+  selectedSourceRefreshApply.hidden = applied || Number(batch?.readyCount || 0) === 0;
+  selectedSourceRefreshApply.disabled = matrixSourceRefreshInFlight || Number(batch?.readyCount || 0) === 0;
+  selectedSourceRefreshApply.textContent = `확인된 ${formatNumber(batch?.readyCount || 0)}개 갱신 실행`;
+  selectedSourceRefreshRetry.hidden = !applied || Number(batch?.failedCount || 0) === 0;
+  selectedSourceRefreshRetry.disabled = matrixSourceRefreshInFlight;
+}
+
+function closeSelectedSourceRefreshModal() {
+  if (matrixSourceRefreshInFlight) return;
+  selectedSourceRefreshModal.hidden = true;
+  selectedSourceRefreshState.phase = 'idle';
+  selectedSourceRefreshError.hidden = true;
+}
+
+function selectedSourceRefreshVerificationTarget(item) {
+  return {
+    kind:item.kind,
+    sku:item.sku,
+    source:item.source,
+    fieldKey:item.fieldKey,
+    priceComponent:item.priceComponent,
+    after:item.sourceValue === null || typeof item.sourceValue === 'object' ? '' : String(item.sourceValue),
+    sourceTerms:item.kind === 'seller_discount' && Array.isArray(item.sourceValue) ? item.sourceValue : undefined
+  };
+}
+
+async function reloadSelectedSourceRefreshRows(batch) {
+  const items = (batch?.items || []).filter(item => item.resultStatus === 'success' && item.verified);
+  const skus = [...new Set(items.map(item => item.sku).filter(Boolean))];
+  if (!skus.length) return {verifiedCount:0, failures:[]};
+  const rows = await liveData.loadProductsBySkus(skus);
+  const refreshedBySku = new Map(rows.map(product => [String(product.sellpia_sku_code || '').trim(), product]));
+  matrixState.rows = matrixState.rows.map(product => refreshedBySku.get(String(product.sellpia_sku_code || '').trim()) || product);
+  renderLiveMatrixRows(matrixState.rows);
+  return sourceRefreshVerifier?.verifySourceRefreshTargets(items.map(selectedSourceRefreshVerificationTarget), rows) || {verifiedCount:0,failures:[]};
+}
+
+function combineSelectedSourceRefreshChunks(chunks, {applied = false} = {}) {
+  const rows = (chunks || []).filter(Boolean);
+  const sum = key => rows.reduce((total,row) => total + Number(row?.[key] || 0), 0);
+  return {
+    status:applied ? (sum('failedCount') ? 'completed_with_failures' : 'completed') : (sum('readyCount') ? 'preview_ready' : 'preview_blocked'),
+    scope:selectedSourceRefreshState.scope,
+    batchIds:rows.map(row => row.batchId).filter(Boolean),
+    requestedCount:sum('requestedCount'),
+    readyCount:sum('readyCount'),
+    skippedCount:sum('skippedCount'),
+    failedCount:sum('failedCount'),
+    successCount:sum('successCount'),
+    verifiedCount:sum('verifiedCount'),
+    items:rows.flatMap(row => Array.isArray(row.items) ? row.items : [])
+  };
+}
+
+function selectedSourceRefreshTransportFailure(preview, error, applyRequestId = null) {
+  const message = `청크 응답 확인 실패: ${error?.message || error}`;
+  const items = (preview?.items || []).map(item => item.previewStatus === 'ready'
+    ? {...item,applyStatus:'failed',resultStatus:'failed',verified:false,message,errorCode:'transport_error'}
+    : {...item,applyStatus:item.previewStatus,resultStatus:item.previewStatus});
+  return {
+    ...preview,
+    status:'transport_failed',
+    transportError:true,
+    recoveryBatchId:preview?.batchId || null,
+    recoveryRequestId:applyRequestId,
+    successCount:0,
+    verifiedCount:Number(preview?.skippedCount || 0),
+    failedCount:Number(preview?.readyCount || 0) + Number(preview?.failedCount || 0),
+    items
+  };
+}
+
+function mergeSelectedSourceRefreshRetry(previous, retry) {
+  const retained = (previous?.items || []).filter(item => item.resultStatus !== 'failed');
+  const retried = Array.isArray(retry?.items) ? retry.items : [];
+  return {
+    ...retry,
+    requestedCount:Number(previous?.requestedCount || 0),
+    readyCount:Number(previous?.readyCount || 0),
+    successCount:Number(previous?.successCount || 0) + Number(retry?.successCount || 0),
+    verifiedCount:Number(previous?.verifiedCount || 0) + Number(retry?.verifiedCount || 0),
+    skippedCount:Number(previous?.skippedCount || 0) + Number(retry?.skippedCount || 0),
+    failedCount:Number(retry?.failedCount || 0),
+    items:[...retained,...retried]
+  };
+}
+
+async function previewSelectedSourceRefreshBatch() {
+  if (!liveData?.runSelectedSourceRefreshBatch) throw new Error('선택 원본 갱신 배치 기능을 불러오지 못했습니다. DB 배포 상태를 확인해주세요.');
+  selectedSourceRefreshState.phase = 'previewing';
+  selectedSourceRefreshState.previewChunks = [];
+  selectedSourceRefreshState.appliedChunks = [];
+  selectedSourceRefreshState.previewRequestIds = [];
+  selectedSourceRefreshState.applyRequestIds = [];
+  matrixSourceRefreshInFlight = true;
+  selectedSourceRefreshApply.hidden = true;
+  selectedSourceRefreshRetry.hidden = true;
+  selectedSourceRefreshError.hidden = true;
+  renderSelectedSourceRefreshBatch(null, {loadingLabel:'영향 미리보기 중…'});
+  updateSourceRefreshAction();
+  try {
+    const chunks = [];
+    for (let offset = 0; offset < selectedSourceRefreshState.targets.length; offset += SELECTED_SOURCE_REFRESH_CHUNK_SIZE) {
+      const chunkIndex = Math.floor(offset / SELECTED_SOURCE_REFRESH_CHUNK_SIZE);
+      const requestId = createRequestId();
+      selectedSourceRefreshState.previewRequestIds[chunkIndex] = requestId;
+      const targets = selectedSourceRefreshState.targets.slice(offset, offset + SELECTED_SOURCE_REFRESH_CHUNK_SIZE);
+      const batch = await liveData.runSelectedSourceRefreshBatch({
+        requestId,
+        targets,
+        scope:{...selectedSourceRefreshState.scope,chunkIndex:chunkIndex + 1,chunkCount:Math.ceil(selectedSourceRefreshState.targets.length / SELECTED_SOURCE_REFRESH_CHUNK_SIZE)},
+        dryRun:true
+      });
+      chunks.push(batch);
+      selectedSourceRefreshState.previewChunks = [...chunks];
+      renderSelectedSourceRefreshBatch(combineSelectedSourceRefreshChunks(chunks), {loadingLabel:`영향 미리보기 ${chunks.length}/${Math.ceil(selectedSourceRefreshState.targets.length / SELECTED_SOURCE_REFRESH_CHUNK_SIZE)}`});
+    }
+    const batch = combineSelectedSourceRefreshChunks(chunks);
+    selectedSourceRefreshState.phase = 'previewed';
+    renderSelectedSourceRefreshBatch(batch);
+  } catch (error) {
+    selectedSourceRefreshState.phase = 'failed';
+    selectedSourceRefreshError.textContent = `미리보기 실패: ${error?.message || error}`;
+    selectedSourceRefreshError.hidden = false;
+    throw error;
+  } finally {
+    matrixSourceRefreshInFlight = false;
+    updateSourceRefreshAction();
+    if (selectedSourceRefreshState.batch) renderSelectedSourceRefreshBatch(selectedSourceRefreshState.batch);
+  }
+}
+
+async function applySelectedSourceRefreshBatch() {
+  const preview = selectedSourceRefreshState.batch;
+  if (matrixSourceRefreshInFlight || !selectedSourceRefreshState.previewChunks.length || Number(preview?.readyCount || 0) === 0) return;
+  matrixSourceRefreshInFlight = true;
+  selectedSourceRefreshState.phase = 'applying';
+  selectedSourceRefreshError.hidden = true;
+  selectedSourceRefreshApply.disabled = true;
+  selectedSourceRefreshRetry.disabled = true;
+  renderSelectedSourceRefreshBatch(preview, {loadingLabel:'DB 저장·항목별 재조회 확인 중…'});
+  updateSourceRefreshAction();
+  try {
+    const appliedChunks = [];
+    for (let index = 0; index < selectedSourceRefreshState.previewChunks.length; index += 1) {
+      const previewChunk = selectedSourceRefreshState.previewChunks[index];
+      if (!Number(previewChunk?.readyCount || 0)) {
+        appliedChunks.push({...previewChunk,status:previewChunk.failedCount ? 'completed_with_failures' : 'completed'});
+        continue;
+      }
+      const applyRequestId = selectedSourceRefreshState.applyRequestIds[index] || createRequestId();
+      selectedSourceRefreshState.applyRequestIds[index] = applyRequestId;
+      try {
+        appliedChunks.push(await liveData.runSelectedSourceRefreshBatch({
+          requestId:applyRequestId,
+          batchId:previewChunk.batchId,
+          targets:[],
+          scope:selectedSourceRefreshState.scope,
+          dryRun:false
+        }));
+      } catch (error) {
+        appliedChunks.push(selectedSourceRefreshTransportFailure(previewChunk,error,applyRequestId));
+      }
+      selectedSourceRefreshState.appliedChunks = [...appliedChunks];
+      renderSelectedSourceRefreshBatch(combineSelectedSourceRefreshChunks(appliedChunks,{applied:true}), {loadingLabel:`DB 저장·확인 ${index + 1}/${selectedSourceRefreshState.previewChunks.length}`});
+    }
+    const batch = combineSelectedSourceRefreshChunks(appliedChunks,{applied:true});
+    selectedSourceRefreshState.appliedChunks = appliedChunks;
+    selectedSourceRefreshState.phase = 'completed';
+    renderSelectedSourceRefreshBatch(batch);
+    const browserVerification = await reloadSelectedSourceRefreshRows(batch);
+    if (browserVerification.failures?.length) {
+      selectedSourceRefreshError.textContent = `서버 저장은 완료됐지만 화면 재조회 ${browserVerification.failures.length}건이 아직 일치하지 않습니다. 새로고침 후 다시 확인해주세요.`;
+      selectedSourceRefreshError.hidden = false;
+    }
+    showToast(`원본값 배치 완료 · 성공 ${formatNumber(batch.successCount || 0)} · DB 확인 ${formatNumber(batch.verifiedCount || 0)} · 제외 ${formatNumber(batch.skippedCount || 0)}${batch.failedCount ? ` · 실패 ${formatNumber(batch.failedCount)}` : ''}`);
+    void loadLiveDashboardMetrics();
+  } catch (error) {
+    selectedSourceRefreshState.phase = 'failed';
+    selectedSourceRefreshError.textContent = `배치 실행 실패: ${error?.message || error}`;
+    selectedSourceRefreshError.hidden = false;
+    console.error('selected source refresh batch failed', error);
+  } finally {
+    matrixSourceRefreshInFlight = false;
+    updateSourceRefreshAction();
+    if (selectedSourceRefreshState.batch) renderSelectedSourceRefreshBatch(selectedSourceRefreshState.batch);
+  }
+}
+
+async function retryFailedSelectedSourceRefreshChunks() {
+  if (matrixSourceRefreshInFlight || !selectedSourceRefreshState.appliedChunks.length) return;
+  matrixSourceRefreshInFlight = true;
+  selectedSourceRefreshState.phase = 'retrying';
+  selectedSourceRefreshError.hidden = true;
+  selectedSourceRefreshRetry.disabled = true;
+  updateSourceRefreshAction();
+  const replacements = [...selectedSourceRefreshState.appliedChunks];
+  try {
+    for (let index = 0; index < replacements.length; index += 1) {
+      const result = replacements[index];
+      if (!Number(result?.failedCount || 0)) continue;
+      if (result.transportError) {
+        try {
+          replacements[index] = await liveData.runSelectedSourceRefreshBatch({
+            requestId:result.recoveryRequestId || selectedSourceRefreshState.applyRequestIds[index],
+            batchId:result.recoveryBatchId || selectedSourceRefreshState.previewChunks[index]?.batchId,
+            targets:[],scope:selectedSourceRefreshState.scope,dryRun:false
+          });
+        } catch (error) {
+          replacements[index] = selectedSourceRefreshTransportFailure(
+            selectedSourceRefreshState.previewChunks[index],error,
+            result.recoveryRequestId || selectedSourceRefreshState.applyRequestIds[index]
+          );
+        }
+        continue;
+      }
+      try {
+        const retryPreview = await liveData.runSelectedSourceRefreshBatch({
+          requestId:createRequestId(),targets:[],scope:{...selectedSourceRefreshState.scope,retryFailedOnly:true},
+          dryRun:true,retryFailedOnlyFrom:result.batchId
+        });
+        let retryResult;
+        if (Number(retryPreview.readyCount || 0)) {
+          const retryApplyRequestId = createRequestId();
+          try {
+            retryResult = await liveData.runSelectedSourceRefreshBatch({
+              requestId:retryApplyRequestId,batchId:retryPreview.batchId,targets:[],scope:selectedSourceRefreshState.scope,dryRun:false
+            });
+          } catch (error) {
+            retryResult = selectedSourceRefreshTransportFailure(retryPreview,error,retryApplyRequestId);
+          }
+        } else {
+          retryResult = {...retryPreview,status:'completed_with_failures',successCount:0,verifiedCount:retryPreview.skippedCount || 0};
+        }
+        replacements[index] = mergeSelectedSourceRefreshRetry(result,retryResult);
+      } catch (error) {
+        replacements[index] = selectedSourceRefreshTransportFailure(selectedSourceRefreshState.previewChunks[index],error,selectedSourceRefreshState.applyRequestIds[index]);
+      }
+    }
+    selectedSourceRefreshState.appliedChunks = replacements;
+    const batch = combineSelectedSourceRefreshChunks(replacements,{applied:true});
+    selectedSourceRefreshState.phase = 'completed';
+    renderSelectedSourceRefreshBatch(batch);
+    await reloadSelectedSourceRefreshRows(batch);
+    showToast(`실패 항목 재시도 완료 · 성공 ${formatNumber(batch.successCount || 0)} · 남은 실패 ${formatNumber(batch.failedCount || 0)}`);
+  } finally {
+    matrixSourceRefreshInFlight = false;
+    updateSourceRefreshAction();
+    if (selectedSourceRefreshState.batch) renderSelectedSourceRefreshBatch(selectedSourceRefreshState.batch);
+  }
+}
+
 async function refreshSelectedSystemValuesFromSource() {
-  if (matrixSourceRefreshInFlight || sellpiaSaveInFlight || !liveData?.saveSellpiaChanges || !liveData?.loadProductsBySkus) return;
+  if (matrixSourceRefreshInFlight || sellpiaSaveInFlight || !liveData?.loadProductsBySkus) return;
   let targets = selectedSourceRefreshTargets();
   if (!targets.length) {
     showToast('원본값을 적용할 기준값 또는 판매처 셀을 선택해주세요.');
@@ -3353,152 +3727,23 @@ async function refreshSelectedSystemValuesFromSource() {
     }
     targets = selectedSourceRefreshTargets();
   }
-  const available = targets.filter(target => target.hasSource);
-  const missingCount = targets.length - available.length;
-  const changes = available.filter(target => target.kind === 'seller_discount'
-    ? target.before !== target.after
-    : target.before === '' || Number(target.before) !== Number(target.after));
-  if (!changes.length) {
-    const suffix = missingCount ? ` · 원본값 없음 ${missingCount}개` : '';
-    showToast(`선택한 셀은 이미 원본값과 같습니다.${suffix}`);
+  const batchTargets = selectedSourceRefreshBatchTargets(targets);
+  if (batchTargets.length > 500) {
+    showToast(`실제 DB 대상이 ${formatNumber(batchTargets.length)}개입니다. 한 번에 500개 이하가 되도록 선택 범위를 줄여주세요.`);
     return;
   }
-  const selectedColumns = selectedMatrixColumnLabels();
-  if (selectedColumns.length && !window.confirm(`선택한 컬럼의 현재 화면 원본값을 갱신할까요?\n\n컬럼: ${selectedColumns.join(', ')}\n변경 대상: ${formatNumber(changes.length)}셀${missingCount ? `\n원본값 없음: ${formatNumber(missingCount)}셀 제외` : ''}\n\n화면에 불러온 행만 처리하고 저장 후 DB 값을 다시 확인합니다.`)) return;
-  matrixSourceRefreshInFlight = true;
-  updateSourceRefreshAction();
-  const verificationTargets = [];
-  const attemptedSkus = new Set(changes.map(target => target.sku));
-  const requireSellerSave = (result, target) => {
-    if (!result || !['pending', 'unchanged'].includes(String(result.draft_status || ''))) {
-      throw new Error(`${target.field} 저장 결과를 확인할 수 없습니다.`);
-    }
-    return result;
-  };
-  const registerSellerItems = (items, target) => {
-    const normalized = Array.isArray(items) ? items : [];
-    if (!normalized.length) throw new Error(`${target.field} 저장 결과가 비어 있습니다.`);
-    for (const saved of normalized) {
-      const sku = String(saved?.sku || target.sku || '').trim();
-      if (!sku) throw new Error(`${target.field} 저장 SKU를 확인할 수 없습니다.`);
-      requireSellerSave(saved.result, target);
-      attemptedSkus.add(sku);
-      verificationTargets.push({...target, sku, groupSize:1});
-    }
-  };
-  const reloadAndRender = async skus => {
-    const rows = await liveData.loadProductsBySkus([...new Set(skus)].filter(Boolean));
-    const refreshedBySku = new Map(rows.map(product => [String(product.sellpia_sku_code || '').trim(), product]));
-    matrixState.rows = matrixState.rows.map(product => refreshedBySku.get(String(product.sellpia_sku_code || '').trim()) || product);
-    renderLiveMatrixRows(matrixState.rows);
-    return rows;
-  };
+  selectedSourceRefreshState.targets = batchTargets;
+  selectedSourceRefreshState.scope = selectedSourceRefreshScopeFor(targets, batchTargets);
+  selectedSourceRefreshState.batch = null;
+  selectedSourceRefreshState.previewChunks = [];
+  selectedSourceRefreshState.appliedChunks = [];
+  selectedSourceRefreshState.previewRequestIds = [];
+  selectedSourceRefreshState.applyRequestIds = [];
+  selectedSourceRefreshModal.hidden = false;
   try {
-    const systemChanges = changes.filter(target => target.kind === 'system');
-    if (systemChanges.length) {
-      const result = await liveData.saveSellpiaChanges(systemChanges, createRequestId(), {
-        systemChangeSource:'source_accept',
-        systemMetadata:{ui:'matrix-source-refresh', selected_cell_count:targets.length}
-      });
-      if (!result || Number(result.savedCount) !== systemChanges.length || (result.systemRows || []).length !== systemChanges.length) {
-        throw new Error(`시스템 기준값 저장 결과가 요청 ${systemChanges.length}건과 일치하지 않습니다.`);
-      }
-      verificationTargets.push(...systemChanges);
-    }
-
-    for (const target of changes.filter(item => item.kind !== 'system')) {
-      const product = matrixRowsBySku.get(target.sku);
-      if (!product) throw new Error(`화면 데이터에서 SKU ${target.sku}를 찾지 못했습니다.`);
-      if (target.kind === 'seller_stock') {
-        const result = await liveData.saveSellerValueDraft({
-          sku:target.sku,
-          source:target.source,
-          fieldKey:'sellpia_current_stock',
-          after:Number(target.after)
-        });
-        registerSellerItems([{sku:target.sku, result}], target);
-        continue;
-      }
-
-      if (target.kind === 'seller_discount') {
-        const result = target.productCode && target.groupSize > 1 && liveData.saveSellerProductDiscountDrafts
-          ? await liveData.saveSellerProductDiscountDrafts({
-              source:target.source,
-              productCode:target.productCode,
-              anchorSku:target.sku,
-              discountTerms:target.sourceTerms,
-              ruleCode:null
-            })
-          : {items:[{
-              sku:target.sku,
-              result:await liveData.saveSellerDiscountDraft({
-                sku:target.sku,
-                source:target.source,
-                discountTerms:target.sourceTerms,
-                inputMode:'option',
-                optionPrice:product.__sellerPriceComponents?.[target.source]?.draft_option_price
-                  ?? product.__sellerPriceComponents?.[target.source]?.source_option_price
-                  ?? 0
-              })
-            }]};
-        registerSellerItems(result.items, target);
-        continue;
-      }
-
-      const component = product.__sellerPriceComponents?.[target.source] || {};
-      const currentBase = component.draft_base_price ?? component.source_base_price ?? product[`${target.source}_base_price`] ?? product[`${target.source}_price`];
-      const currentOption = component.draft_option_price ?? component.source_option_price ?? product[`${target.source}_option_price`] ?? 0;
-      if (target.priceComponent === 'base' && target.productCode && target.groupSize > 1 && liveData.saveSellerProductBaseDrafts) {
-        const result = await liveData.saveSellerProductBaseDrafts({
-          source:target.source,
-          productCode:target.productCode,
-          targetBasePrice:Number(target.after),
-          basePriceSource:'source'
-        });
-        registerSellerItems(result.items, target);
-        continue;
-      }
-      const result = await liveData.saveSellerPriceDraft({
-        sku:target.sku,
-        source:target.source,
-        targetBasePrice:target.priceComponent === 'base' ? Number(target.after) : Number(currentBase),
-        inputMode:target.priceComponent === 'final' ? 'final' : 'option',
-        targetFinalPrice:target.priceComponent === 'final' ? Number(target.after) : null,
-        optionPrice:target.priceComponent === 'option' ? Number(target.after) : Number(currentOption),
-        optionPriceSource:target.priceComponent === 'option' ? 'original' : (component.option_price_source || 'original'),
-        basePriceSource:target.priceComponent === 'base' ? 'source' : (component.base_price_source || 'source'),
-        priceRuleSetId:component.price_rule_set_id || null
-      });
-      registerSellerItems([{sku:target.sku, result}], target);
-    }
-
-    if (!verificationTargets.length) throw new Error('DB에서 확인할 저장 대상이 없습니다.');
-    if (matrixContextSourceRefreshCount) matrixContextSourceRefreshCount.textContent = 'DB 저장 확인 중…';
-    const refreshedRows = await reloadAndRender(verificationTargets.map(target => target.sku));
-    const verification = sourceRefreshVerifier?.verifySourceRefreshTargets(verificationTargets, refreshedRows);
-    if (!verification || verification.failures.length) {
-      const failure = verification?.failures?.[0];
-      const target = failure?.target;
-      const labelText = target ? `${target.sku} ${target.field}` : '선택 원본값';
-      throw new Error(`${labelText} DB 재조회 값이 원본과 일치하지 않습니다.`);
-    }
-    const notes = [
-      missingCount ? `원본값 없음 ${missingCount}개 제외` : '',
-      available.length - changes.length ? `이미 동일 ${available.length - changes.length}개` : ''
-    ].filter(Boolean);
-    showToast(`원본값 DB 저장·확인 완료 · 선택 ${changes.length}셀 · 확인 ${verification.verifiedCount}항목${notes.length ? ` · ${notes.join(' · ')}` : ''}`);
-    void loadLiveDashboardMetrics();
+    await previewSelectedSourceRefreshBatch();
   } catch (error) {
-    console.error('selected source refresh failed', error);
-    try {
-      if (attemptedSkus.size) await reloadAndRender([...attemptedSkus]);
-    } catch (refreshError) {
-      console.error('selected source refresh recovery reload failed', refreshError);
-    }
-    showToast(`원본값 저장·확인 실패: ${error?.message || error}`);
-  } finally {
-    matrixSourceRefreshInFlight = false;
-    updateSourceRefreshAction();
+    console.error('selected source refresh preview failed', error);
   }
 }
 
@@ -4279,15 +4524,19 @@ bulkSourceRefreshModal.addEventListener('click', event => { if (event.target ===
 
 const advancedFilterModal = document.getElementById('advanced-filter-modal');
 const advancedFilterRows = document.getElementById('advanced-filter-rows');
+const advancedFilterFieldSearch = document.getElementById('advanced-filter-field-search');
 let advancedFilterDraft = cloneAdvancedFilter(activeView.advancedFilter);
 
 function advancedFilterField(field) {
   return ADVANCED_FILTER_FIELDS.find(item => item.field === field) || ADVANCED_FILTER_FIELDS[0];
 }
 
-function advancedFilterFieldOptions(selectedField) {
+function advancedFilterFieldOptions(selectedField, search = '') {
+  const searchTerms = String(search || '').trim().toLocaleLowerCase().split(/\s+/).filter(Boolean);
   const groups = new Map();
   ADVANCED_FILTER_FIELDS.forEach(item => {
+    const haystack = `${item.group} ${item.label} ${item.field}`.toLocaleLowerCase();
+    if (item.field !== selectedField && searchTerms.some(term => !haystack.includes(term))) return;
     if (!groups.has(item.group)) groups.set(item.group, []);
     groups.get(item.group).push(item);
   });
@@ -4317,7 +4566,7 @@ function renderAdvancedFilterRows() {
     const condition = {...rawCondition, field:fieldInfo.field, operator};
     advancedFilterDraft.conditions[index] = condition;
     return `<div class="advanced-filter-row" data-filter-index="${index}">
-      <select data-filter-part="field" data-filter-index="${index}" aria-label="필터 필드">${advancedFilterFieldOptions(condition.field)}</select>
+      <select data-filter-part="field" data-filter-index="${index}" aria-label="필터 필드">${advancedFilterFieldOptions(condition.field, advancedFilterFieldSearch?.value)}</select>
       <select data-filter-part="operator" data-filter-index="${index}" aria-label="필터 조건">${advancedFilterOperatorOptions(fieldInfo.type, condition.operator)}</select>
       ${advancedFilterValueControl(condition, fieldInfo, index)}
       <button class="advanced-filter-remove" type="button" data-filter-remove="${index}" aria-label="조건 삭제">×</button>
@@ -4372,6 +4621,7 @@ function openAdvancedFilter() {
   }
   advancedFilterDraft = cloneAdvancedFilter(matrixState.advancedFilter);
   if (!advancedFilterDraft.conditions.length) advancedFilterDraft.conditions.push({field:'sellpia_product_name', operator:'contains', value:''});
+  advancedFilterFieldSearch.value = '';
   document.getElementById('advanced-filter-logic').value = advancedFilterDraft.logic;
   renderAdvancedFilterRows();
   advancedFilterModal.hidden = false;
@@ -4397,6 +4647,7 @@ document.getElementById('advanced-filter-close').addEventListener('click', close
 document.getElementById('advanced-filter-cancel').addEventListener('click', closeAdvancedFilter);
 advancedFilterModal.addEventListener('click', event => { if (event.target === advancedFilterModal) closeAdvancedFilter(); });
 document.getElementById('advanced-filter-logic').addEventListener('change', event => { advancedFilterDraft.logic = event.target.value === 'or' ? 'or' : 'and'; });
+advancedFilterFieldSearch.addEventListener('input', () => renderAdvancedFilterRows());
 document.getElementById('advanced-filter-add').addEventListener('click', () => {
   if (advancedFilterDraft.conditions.length >= 12) return;
   advancedFilterDraft.conditions.push({field:'sellpia_product_name', operator:'contains', value:''});
@@ -5040,7 +5291,7 @@ async function openPriceRuleBulk() {
   selectedScope.checked = true;
   selectedScope.disabled = false;
   priceRuleBulkModal.querySelectorAll('.price-rule-bulk-sources input').forEach(input => {
-    input.checked = true;
+    input.checked = input.value !== 'makeshop';
   });
   syncPriceRuleBulkSources();
   resetPriceRuleBulkComposer();
@@ -5967,8 +6218,58 @@ const QUEUE_EVENT_LABELS = {
   created:'변경 생성', validated:'검증 완료', processing:'파일 생성 시작', exported:'원본 내보냄', applied:'반영 완료',
   failed:'실패', cancelled:'취소', retried:'재시도 등록', status_changed:'상태 변경'
 };
-const queueState = {rows:[], loading:false, selectedChangeId:null};
+const queueState = {rows:[], batches:[], targetIssues:[], loading:false, selectedChangeId:null, selectedBatchId:null};
 const queueBody = document.getElementById('queue-body');
+
+function queueScopeSources() {
+  const source = document.getElementById('queue-source-filter').value;
+  if (source === 'operational') return ['smartstore','ably'];
+  if (source === 'all') return [];
+  return [source];
+}
+
+function queueBatchStatusCount(batch, status) {
+  const counts = batch?.status_counts && typeof batch.status_counts === 'object' ? batch.status_counts : {};
+  return Number(counts[status] || 0);
+}
+
+function renderQueueBatches(batches) {
+  queueState.batches = batches;
+  const box = document.getElementById('queue-batch-list');
+  if (!batches.length) {
+    box.innerHTML = '<span class="queue-batch-empty">현재 범위에 작업 배치가 없습니다.</span>';
+    return;
+  }
+  box.innerHTML = batches.map(batch => {
+    const id = String(batch.change_batch_id || '');
+    const selected = id === queueState.selectedBatchId;
+    const sources = (batch.source_channels || []).map(source => CHANNEL_LABELS[source] || source).join(' · ') || 'DB 내부';
+    const conflicts = Number(batch.conflicting_target_groups || 0);
+    const duplicates = Number(batch.duplicate_target_groups || 0);
+    const superseded = Number(batch.superseded_count || 0);
+    const warnings = [conflicts ? `충돌 ${formatNumber(conflicts)}` : '', duplicates ? `중복 ${formatNumber(duplicates)}` : '', superseded ? `대체 ${formatNumber(superseded)}` : ''].filter(Boolean);
+    return `<button type="button" class="queue-batch-card${selected ? ' selected' : ''}${conflicts ? ' has-conflict' : ''}" data-queue-batch="${escapeHtml(id)}">
+      <span><b>${escapeHtml(sources)}</b><time>${formatLiveTime(batch.newest_at)}</time></span>
+      <strong>${formatNumber(batch.active_count || 0)}<em>처리 대상</em></strong>
+      <small>전체 ${formatNumber(batch.total_count || 0)} · 검증 ${formatNumber(queueBatchStatusCount(batch, 'validated'))} · 실패 ${formatNumber(queueBatchStatusCount(batch, 'failed'))}${warnings.length ? ` · ${escapeHtml(warnings.join(' · '))}` : ''}</small>
+      <i>${escapeHtml(id.slice(0, 8) || '-')}</i>
+    </button>`;
+  }).join('');
+}
+
+function renderQueueTargetSafety(issues) {
+  queueState.targetIssues = issues;
+  const box = document.getElementById('queue-target-safety');
+  const labels = {conflicting_values:'서로 다른 변경값', blocked_calculation:'계산 차단', duplicate_target:'중복 대상'};
+  if (!issues.length) {
+    box.className = 'queue-target-safety safe';
+    box.innerHTML = '<b>판매처 대상 충돌 없음</b><span>현재 범위의 활성 수정안은 대상별로 한 건씩 정리되어 있습니다.</span>';
+    return;
+  }
+  const conflicts = issues.filter(issue => issue.issue_type !== 'duplicate_target').length;
+  box.className = 'queue-target-safety warning';
+  box.innerHTML = `<b>${conflicts ? `내보내기 차단 ${formatNumber(conflicts)}개 대상` : `중복 대상 ${formatNumber(issues.length)}개`}</b><span>${issues.slice(0, 4).map(issue => `${CHANNEL_LABELS[issue.source_channel] || issue.source_channel} ${issue.seller_product_code || '-'}${issue.seller_option_code ? `/${issue.seller_option_code}` : ''} · ${labels[issue.issue_type] || issue.issue_type}`).map(escapeHtml).join(' · ')}${issues.length > 4 ? ` 외 ${formatNumber(issues.length - 4)}개` : ''}</span>`;
+}
 
 function queueScalar(value) {
   if (value === null || value === undefined || value === '') return '-';
@@ -6050,14 +6351,21 @@ async function loadChangeQueue({silent = false} = {}) {
     queueBody.innerHTML = '<tr class="queue-empty"><td colspan="10">내보내기 준비 목록을 불러오는 중입니다.</td></tr>';
   }
   try {
-    const [queue, stats] = await Promise.all([
+    const scopeSources = queueScopeSources();
+    const [queue, stats, batches, targetIssues] = await Promise.all([
       liveData.loadChangeQueue({
         status:document.getElementById('queue-status-filter').value,
-        source:document.getElementById('queue-source-filter').value
+        source:document.getElementById('queue-source-filter').value,
+        batchId:queueState.selectedBatchId
       }),
-      liveData.loadChangeQueueStats()
+      liveData.loadChangeQueueStats(scopeSources),
+      liveData.loadChangeBatchSummaries({sources:scopeSources, limit:20}),
+      liveData.previewChangeTargetSafety({sources:scopeSources, limit:100})
     ]);
     renderChangeQueue(queue.rows);
+    renderQueueBatches(batches);
+    renderQueueTargetSafety(targetIssues);
+    document.getElementById('queue-batch-clear').hidden = !queueState.selectedBatchId;
     document.getElementById('queue-result-count').textContent = `${formatNumber(queue.count)}건 중 ${formatNumber(queue.rows.length)}건 표시`;
     document.getElementById('queue-active-count').textContent = formatNumber(stats.active || 0);
     document.getElementById('queue-validated-count').textContent = formatNumber(stats.validated || 0);
@@ -6139,8 +6447,22 @@ document.getElementById('queue-select-all').addEventListener('change', event => 
   updateQueueSelection();
 });
 document.getElementById('queue-status-filter').addEventListener('change', () => loadChangeQueue());
-document.getElementById('queue-source-filter').addEventListener('change', () => loadChangeQueue());
+document.getElementById('queue-source-filter').addEventListener('change', () => {
+  queueState.selectedBatchId = null;
+  loadChangeQueue();
+});
 document.getElementById('queue-refresh').addEventListener('click', () => loadChangeQueue());
+document.getElementById('queue-batch-list').addEventListener('click', event => {
+  const button = event.target.closest('[data-queue-batch]');
+  if (!button) return;
+  queueState.selectedBatchId = button.dataset.queueBatch;
+  document.getElementById('queue-status-filter').value = 'all';
+  loadChangeQueue();
+});
+document.getElementById('queue-batch-clear').addEventListener('click', () => {
+  queueState.selectedBatchId = null;
+  loadChangeQueue();
+});
 document.getElementById('queue-validate').addEventListener('click', event => runQueueAction('validate', event.currentTarget));
 document.getElementById('queue-cancel').addEventListener('click', event => runQueueAction('cancel', event.currentTarget));
 document.getElementById('queue-retry').addEventListener('click', event => runQueueAction('retry', event.currentTarget));
@@ -6655,6 +6977,21 @@ matrixContextSourceRefresh?.addEventListener('click', event => {
   void refreshSelectedSystemValuesFromSource();
 });
 
+selectedSourceRefreshApply?.addEventListener('click', () => { void applySelectedSourceRefreshBatch(); });
+selectedSourceRefreshRetry?.addEventListener('click', () => {
+  if (matrixSourceRefreshInFlight) return;
+  void retryFailedSelectedSourceRefreshChunks().catch(error => {
+    console.error('selected source refresh retry failed', error);
+    selectedSourceRefreshError.textContent = `실패 항목 재시도 실패: ${error?.message || error}`;
+    selectedSourceRefreshError.hidden = false;
+  });
+});
+document.getElementById('selected-source-refresh-close')?.addEventListener('click', closeSelectedSourceRefreshModal);
+document.getElementById('selected-source-refresh-cancel')?.addEventListener('click', closeSelectedSourceRefreshModal);
+selectedSourceRefreshModal?.addEventListener('click', event => {
+  if (event.target === selectedSourceRefreshModal) closeSelectedSourceRefreshModal();
+});
+
 matrixContextPriceBasis?.addEventListener('click', async event => {
   event.stopPropagation();
   const target = matrixContextPriceBasisTarget;
@@ -6755,7 +7092,7 @@ function openSellerExport({action = 'export', rows = []} = {}) {
   const rowSources = new Set(rows.flatMap(row => row.source_channel ? [row.source_channel] : (row.target_channels || [])));
   sellerExportModal.querySelectorAll('.seller-export-source-check').forEach(input => {
     input.disabled = false;
-    input.checked = !rowSources.size || rowSources.has(input.value);
+    input.checked = input.value !== 'makeshop' && (!rowSources.size || rowSources.has(input.value));
   });
   const skus = sellerExportState.selectedSkus;
   const scopePanel = document.getElementById('seller-export-scope');
@@ -7491,11 +7828,55 @@ function updateRelationEdgeEditorSaveState() {
   document.getElementById('relation-edge-editor-save').disabled = !parent || !child || parent === child;
 }
 
+function relationEdgeEventDescription(event) {
+  if (event.eventType === 'EDGE_UNDO') return `변경 #${event.afterValue?.undoOfEventId || '-'} 되돌림`;
+  if (event.eventType === 'EDGE_REMOVE') return '관계 연결 해제';
+  if (event.eventType === 'EDGE_SAVE' && !event.beforeValue) return '관계 연결 생성';
+  return '상위·하위 관계 수정';
+}
+
+function renderRelationEdgeHistory(events = []) {
+  const box = document.getElementById('relation-edge-history-list');
+  if (!events.length) {
+    box.innerHTML = '<span>이 관계의 변경 이력이 없습니다.</span>';
+    return;
+  }
+  box.innerHTML = events.map(event => `<article>
+    <time>${formatLiveTime(event.changedAt)}</time>
+    <div><b>${escapeHtml(relationEdgeEventDescription(event))}</b><span>${escapeHtml(event.changedBy || 'operations-hub')}</span></div>
+    ${event.canUndo ? `<button type="button" data-undo-relation-event="${Number(event.eventId)}">되돌리기</button>` : ''}
+  </article>`).join('');
+}
+
+async function loadRelationEdgeHistory(edgeId = relationCellSelection.editingEdgeId, {silent = false} = {}) {
+  const normalizedEdgeId = Number(edgeId);
+  if (!normalizedEdgeId || !liveData?.loadRelationEdgeHistory) return;
+  const requestId = ++relationEdgeHistoryState.requestId;
+  relationEdgeHistoryState.edgeId = normalizedEdgeId;
+  relationEdgeHistoryState.loading = true;
+  const box = document.getElementById('relation-edge-history-list');
+  if (!silent) box.innerHTML = '<span>관계 이력을 불러오는 중입니다.</span>';
+  try {
+    const result = await liveData.loadRelationEdgeHistory({edgeId:normalizedEdgeId, limit:20});
+    if (requestId !== relationEdgeHistoryState.requestId || normalizedEdgeId !== Number(relationCellSelection.editingEdgeId)) return;
+    renderRelationEdgeHistory(Array.isArray(result?.events) ? result.events : []);
+  } catch (error) {
+    if (requestId !== relationEdgeHistoryState.requestId) return;
+    box.innerHTML = `<span class="error">이력 조회 실패 · ${escapeHtml(error?.message || error)}</span>`;
+  } finally {
+    if (requestId === relationEdgeHistoryState.requestId) relationEdgeHistoryState.loading = false;
+  }
+}
+
 function closeRelationEdgeEditorDrawer({reset = true} = {}) {
   const drawer = document.getElementById('relation-edge-editor-drawer');
   if (drawer) drawer.hidden = true;
   document.querySelectorAll('#relation-edge-list tr.relation-edge-editing,#multi-link-body tr.relation-edge-editing').forEach(row => row.classList.remove('relation-edge-editing'));
-  if (reset) relationCellSelection.editingEdgeId = null;
+  if (reset) {
+    relationCellSelection.editingEdgeId = null;
+    relationEdgeHistoryState.edgeId = null;
+    relationEdgeHistoryState.requestId += 1;
+  }
 }
 
 function openRelationEdgeEditor(edgeId) {
@@ -7512,6 +7893,7 @@ function openRelationEdgeEditor(edgeId) {
   document.querySelectorAll(`[data-relation-edge-id="${Number(edge.edgeId)}"]`).forEach(row => row.classList.add('relation-edge-editing'));
   document.getElementById('relation-edge-editor-drawer').hidden = false;
   updateRelationEdgeEditorSaveState();
+  void loadRelationEdgeHistory(edge.edgeId);
 }
 
 function renderRelationTree() {
@@ -9641,6 +10023,31 @@ document.getElementById('relation-edge-save').addEventListener('click', async ev
 
 ['relation-edge-editor-parent','relation-edge-editor-child'].forEach(id => document.getElementById(id).addEventListener('change', updateRelationEdgeEditorSaveState));
 ['relation-edge-editor-close','relation-edge-editor-cancel'].forEach(id => document.getElementById(id).addEventListener('click', () => closeRelationEdgeEditorDrawer()));
+document.getElementById('relation-edge-history-refresh').addEventListener('click', () => loadRelationEdgeHistory());
+document.getElementById('relation-edge-history-list').addEventListener('click', async event => {
+  const button = event.target.closest('[data-undo-relation-event]');
+  const eventId = Number(button?.dataset.undoRelationEvent);
+  const edgeId = Number(relationCellSelection.editingEdgeId);
+  if (!button || !eventId || !edgeId || !window.confirm('이 관계의 최신 변경 한 건을 이전 상태로 되돌릴까요? 현재 상태가 이후에 바뀌었다면 서버에서 안전하게 차단됩니다.')) return;
+  button.disabled = true;
+  button.textContent = '확인 중…';
+  try {
+    const result = await liveData.undoRelationEdgeEvent(eventId);
+    if (multiLinkWorkspaceState.allLoaded) await loadMultiLinks();
+    else await loadRelationGraph();
+    const edgeStillActive = relationGraphState.edges.some(edge => Number(edge.edgeId) === edgeId);
+    if (edgeStillActive) {
+      relationCellSelection.editingEdgeId = edgeId;
+      await loadRelationEdgeHistory(edgeId);
+    } else {
+      closeRelationEdgeEditorDrawer();
+    }
+    showToast(result?.alreadyUndone ? '이미 되돌린 관계 변경입니다.' : '관계 변경을 이전 상태로 되돌렸습니다.');
+  } catch (error) {
+    showToast(`관계 되돌리기 실패: ${error?.message || error}`);
+    await loadRelationEdgeHistory(edgeId, {silent:true});
+  }
+});
 document.getElementById('relation-edge-editor-save').addEventListener('click', async event => {
   const edgeId = relationCellSelection.editingEdgeId;
   const parentNodeId = document.getElementById('relation-edge-editor-parent').value;
@@ -10947,6 +11354,7 @@ function showToast(message) {
 
 document.addEventListener('keydown', event => {
   if (event.key === 'Escape' && !inboundCostModal.hidden) closeInboundCostModal();
+  if (event.key === 'Escape' && selectedSourceRefreshModal && !selectedSourceRefreshModal.hidden) closeSelectedSourceRefreshModal();
   if (event.key === 'Escape' && !sellerExportModal.hidden) closeSellerExport();
   if (event.key === 'Escape' && !matrixCsvModal.hidden) closeMatrixCsvExport();
   if (event.key === 'Escape' && !viewSettingsModal.hidden) closeViewSettings();

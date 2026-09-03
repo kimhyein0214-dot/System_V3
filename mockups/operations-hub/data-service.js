@@ -554,7 +554,7 @@
   }
 
   async function loadListingGraph({source = 'all', relationType = 'complex', search = '', page = 1, pageSize = 50, folderId = null, organizationScope = 'all'} = {}) {
-    const {data, error} = await db.rpc('list_operations_hub_listing_graph_v2', {
+    const {data, error} = await db.rpc('list_operations_hub_listing_graph_v3', {
       p_source:cleanText(source) || 'all',
       p_relation_type:cleanText(relationType) || 'complex',
       p_search:cleanText(search),
@@ -995,6 +995,57 @@
     return data || {};
   }
 
+  async function runSelectedSourceRefreshBatch({
+    requestId,
+    targets = [],
+    scope = {},
+    dryRun = true,
+    batchId = null,
+    retryFailedOnlyFrom = null
+  } = {}) {
+    const safeRequestId = cleanText(requestId);
+    if (!safeRequestId) throw new Error('선택 원본 갱신 요청 ID가 필요합니다.');
+    if (Array.isArray(targets) && targets.length > 50) throw new Error('선택 원본 갱신 서버 요청은 한 번에 50개 DB 대상까지 가능합니다.');
+    const safeTargets = (Array.isArray(targets) ? targets : []).map(target => ({
+      kind:cleanText(target?.kind),
+      sku:cleanText(target?.sku),
+      source:cleanText(target?.source),
+      fieldKey:cleanText(target?.fieldKey),
+      priceComponent:cleanText(target?.priceComponent),
+      productCode:cleanText(target?.productCode),
+      optionCode:cleanText(target?.optionCode)
+    }));
+    if (dryRun !== false && !safeTargets.length && !cleanText(retryFailedOnlyFrom)) {
+      throw new Error('원본값으로 갱신할 선택 대상이 없습니다.');
+    }
+    const safeScope = scope && typeof scope === 'object' && !Array.isArray(scope) ? {
+      type:cleanText(scope.type) || 'selected_cells',
+      label:cleanText(scope.label) || '선택 셀',
+      selectedCellCount:Math.max(0, Number(scope.selectedCellCount) || 0),
+      selectedColumnLabels:(Array.isArray(scope.selectedColumnLabels) ? scope.selectedColumnLabels : []).map(cleanText).filter(Boolean).slice(0, 20),
+      visibleRowCount:Math.max(0, Number(scope.visibleRowCount) || 0),
+      selectedSkuCount:Math.max(0, Number(scope.selectedSkuCount) || 0),
+      databaseTargetCount:safeTargets.length,
+      page:Math.max(1, Number(scope.page) || 1),
+      pageSize:Math.max(1, Number(scope.pageSize) || 50),
+      search:cleanText(scope.search).slice(0, 200),
+      retryFailedOnly:Boolean(scope.retryFailedOnly),
+      chunkIndex:Math.max(0, Number(scope.chunkIndex) || 0),
+      chunkCount:Math.max(0, Number(scope.chunkCount) || 0)
+    } : {};
+    const {data, error} = await db.rpc('run_operations_hub_selected_source_refresh_batch_v1', {
+      p_session_token:requireOperationsHubSessionToken(),
+      p_request_id:safeRequestId,
+      p_targets:safeTargets,
+      p_scope:safeScope,
+      p_dry_run:dryRun !== false,
+      p_batch_id:cleanText(batchId) || null,
+      p_retry_failed_only_from:cleanText(retryFailedOnlyFrom) || null
+    });
+    if (error) throwOperationsHubRpcError(error);
+    return data || {};
+  }
+
   async function loadListingConnection({source, productCode, optionCode = ''} = {}) {
     const {data, error} = await db.rpc('get_operations_hub_listing_graph', {
       p_source:cleanText(source),
@@ -1303,7 +1354,7 @@
     });
   }
 
-  async function loadChangeQueue({status = 'active', source = 'all', limit = 250} = {}) {
+  async function loadChangeQueue({status = 'active', source = 'all', batchId = null, limit = 250} = {}) {
     let query = db
       .from('operations_hub_change_queue')
       .select('change_id,change_batch_id,sellpia_sku_code,field_key,before_value,after_value,target_channels,status,requested_by,requested_at,processed_at,error_message,source_channel,seller_product_code,seller_option_code,validation_errors,validated_at,retry_count,max_retry_count,last_attempt_at,next_retry_at,cancelled_at,cancelled_by,status_message,updated_at', {count:'exact'})
@@ -1312,19 +1363,42 @@
       .limit(Math.max(1, Math.min(Number(limit) || 250, 500)));
     if (status === 'active') query = query.in('status', ['pending','validated','failed']);
     else if (status !== 'all') query = query.eq('status', cleanText(status));
-    if (source !== 'all') query = query.contains('target_channels', [cleanText(source)]);
+    if (source === 'operational') query = query.overlaps('target_channels', ['smartstore','ably']);
+    else if (source !== 'all') query = query.contains('target_channels', [cleanText(source)]);
+    if (cleanText(batchId)) query = query.eq('change_batch_id', cleanText(batchId));
     const {data, error, count} = await query;
     if (error) throw error;
     return {rows:await attachChangeExportAudit(data || []), count:Number(count || 0)};
   }
 
-  async function loadChangeQueueStats() {
+  async function loadChangeBatchSummaries({sources = ['smartstore','ably'], limit = 20} = {}) {
+    const {data, error} = await db.rpc('list_operations_hub_change_batch_summaries_v1', {
+      p_sources:[...new Set((sources || []).map(cleanText).filter(Boolean))],
+      p_limit:Math.max(1, Math.min(Number(limit) || 20, 30))
+    });
+    if (error) throw error;
+    return Array.isArray(data) ? data : [];
+  }
+
+  async function previewChangeTargetSafety({sources = ['smartstore','ably'], limit = 100} = {}) {
+    const {data, error} = await db.rpc('preview_operations_hub_change_target_safety_v1', {
+      p_sources:[...new Set((sources || []).map(cleanText).filter(Boolean))],
+      p_limit:Math.max(1, Math.min(Number(limit) || 100, 500))
+    });
+    if (error) throw error;
+    return Array.isArray(data) ? data : [];
+  }
+
+  async function loadChangeQueueStats(sources = []) {
+    const selectedSources = [...new Set((sources || []).map(cleanText).filter(Boolean))];
     const statuses = ['pending','validated','failed','applied','saved','cancelled'];
     const counts = await Promise.all(statuses.map(async status => {
-      const {error, count} = await db
+      let query = db
         .from('operations_hub_change_queue')
         .select('change_id', {count:'exact', head:true})
         .eq('status', status);
+      if (selectedSources.length) query = query.overlaps('target_channels', selectedSources);
+      const {error, count} = await query;
       if (error) throw error;
       return [status, Number(count || 0)];
     }));
@@ -1343,6 +1417,25 @@
       .limit(100);
     if (error) throw error;
     return data || [];
+  }
+
+  async function loadRelationEdgeHistory({edgeId, limit = 20} = {}) {
+    const {data, error} = await db.rpc('list_operations_hub_relation_edge_history_v1', {
+      p_session_token:requireOperationsHubSessionToken(),
+      p_edge_id:Number(edgeId),
+      p_limit:Math.max(1, Math.min(Number(limit) || 20, 100))
+    });
+    if (error) throwOperationsHubRpcError(error);
+    return data || {edgeId:Number(edgeId), events:[]};
+  }
+
+  async function undoRelationEdgeEvent(eventId) {
+    const {data, error} = await db.rpc('undo_operations_hub_relation_edge_event_v1', {
+      p_session_token:requireOperationsHubSessionToken(),
+      p_event_id:Number(eventId)
+    });
+    if (error) throwOperationsHubRpcError(error);
+    return data || null;
   }
 
   async function loadProductHistory(sku, {limit = 60} = {}) {
@@ -2015,6 +2108,7 @@
 
   async function stageSellerInventoryDrafts({sources = [], skus = [], batchId = null} = {}) {
     const {data, error} = await db.rpc('stage_operations_hub_seller_inventory_match', {
+      p_session_token:requireOperationsHubSessionToken(),
       p_sources:(sources || []).map(cleanText),
       p_skus:(skus || []).map(cleanText),
       p_batch_id:batchId
@@ -2025,6 +2119,7 @@
 
   async function stageSellerInventoryDraftBatch({sources = [], skus = [], batchId = null, afterSku = null, batchSize = 100} = {}) {
     const {data, error} = await db.rpc('stage_operations_hub_seller_inventory_match_batch', {
+      p_session_token:requireOperationsHubSessionToken(),
       p_sources:(sources || []).map(cleanText),
       p_skus:(skus || []).map(cleanText),
       p_batch_id:batchId,
@@ -2122,6 +2217,7 @@
   async function prepareSellerExport({batchId, mode, changeIds = [], sources = []}) {
     if (cleanText(mode) !== 'change_queue') throw new Error('검토한 수정본 내보내기만 지원합니다.');
     const {data:summaryRows, error} = await db.rpc('prepare_operations_hub_change_export', {
+      p_session_token:requireOperationsHubSessionToken(),
       p_export_batch_id:batchId,
       p_change_ids:(changeIds || []).map(Number),
       p_sources:(sources || []).map(cleanText)
@@ -3055,6 +3151,7 @@
     createProductTag,
     saveSellpiaChanges,
     refreshMasterColumnFromSource,
+    runSelectedSourceRefreshBatch,
     searchSellerItems,
     loadSellerProductOptions,
     resolveRelationImportCodes,
@@ -3076,8 +3173,12 @@
     linkProductDraftOption,
     saveSellerListing,
     loadChangeQueue,
+    loadChangeBatchSummaries,
+    previewChangeTargetSafety,
     loadChangeQueueStats,
     loadChangeEvents,
+    loadRelationEdgeHistory,
+    undoRelationEdgeEvent,
     loadProductHistory,
     validateChangeQueue,
     cancelChangeQueue,

@@ -16,7 +16,7 @@ assert.match(html, /id="operations-auth-error"[^>]*role="alert"[\s\S]*?id="opera
 assert.match(html, /로그인에 여러 차례 실패하면[^<]*잠시 잠길 수 있습니다[\s\S]*?세션이 만료되거나 회수되면 다시 로그인/);
 assert.match(html, /id="operations-auth-logout"[^>]*>로그아웃/);
 assert.doesNotMatch(html, /id="operations-auth-(?:username|password)"[^>]*\svalue=/, 'credentials must never be embedded in the page');
-assert.match(html, /operations-auth\.css\?v=20260903-relation-filter-v75/);
+assert.match(html, /operations-auth\.css\?v=20260903-batch-safety-v76/);
 assert.match(css, /\.operations-auth-gate[\s\S]*?position:\s*fixed[\s\S]*?z-index:\s*10000/);
 assert.match(css, /body\.operations-auth-locked[\s\S]*?#operations-app-shell[\s\S]*?visibility:\s*hidden/);
 

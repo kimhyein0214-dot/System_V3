@@ -31,7 +31,7 @@ assert.match(html, /<th>상위 사진<\/th>[\s\S]*?<th>상위·세트 상품<\/t
 assert.match(app, /class="relation-photo-cell"[\s\S]*?showThumb:false/);
 
 assert.match(app, /function selectMatrixColumn[\s\S]*?matrixColumnCells[\s\S]*?matrixCellSelection\.selected/);
-assert.match(app, /selectedColumns\.length[\s\S]*?선택한 컬럼의 현재 화면 원본값을 갱신할까요/);
+assert.match(app, /selectedSourceRefreshScopeFor[\s\S]*?selectedColumns\.length[\s\S]*?current_page_columns[\s\S]*?databaseTargetCount/);
 assert.match(matrixCss, /th\.matrix-column-selected[\s\S]*?#cfeeff/);
 
 assert.match(dataService, /load_operations_hub_price_basis_v1/);
