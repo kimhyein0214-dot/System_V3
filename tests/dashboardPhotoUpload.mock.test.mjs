@@ -12,32 +12,66 @@ const migration = fs.readFileSync(
 assert.match(html, /dashboard-tools-grid[\s\S]*?출력 · 정렬[\s\S]*?조회 · 관리[\s\S]*?상품 사진 관리/);
 assert.match(html, /id="dashboard-photo-dropzone"[\s\S]*?여기에 상품 사진 여러 장을 드래그/);
 assert.match(html, /id="dashboard-photo-input"[^>]*multiple/);
-assert.match(html, /파일명 = 셀피아 SKU/);
-assert.match(html, /같은 이름은 기존 사진을 덮어씁니다/);
+assert.match(html, /파일명은 셀피아 SKU/);
+assert.match(html, /8601-\[1\]\[3\]\.jpg/);
+assert.match(html, /8601-\[1-10\]\.jpg/);
 assert.match(html, /data-dashboard-action="photo-upload-select"[^>]*>사진 여러 장 선택/);
 assert.match(css, /\.dashboard-photo-dropzone\.is-dragging/);
 assert.match(css, /\.dashboard-photo-upload-status\.success/);
 
 assert.match(appSource, /const IMAGE_SUPABASE_KEY = "sb_publishable_/);
 assert.doesNotMatch(appSource, /service_role|sb_secret_/i, "frontend must not expose a Supabase secret key");
-assert.match(appSource, /const objectPath = `\$\{PRODUCT_PHOTO_FOLDER\}\/\$\{sku\}\.jpg`/);
+assert.match(appSource, /const PRODUCT_PHOTO_GROUP_SUFFIX = "\.__group"/);
+assert.match(appSource, /const PRODUCT_PHOTO_RANGE_SUFFIX = "\.__range"/);
+assert.match(appSource, /const storageSku = targetTier === "group" \? productPhotoGroupCode\(sku\) : targetTier === "range" \? productPhotoRangeCode\(sku\) : sku/);
+assert.match(appSource, /const objectPath = `\$\{PRODUCT_PHOTO_FOLDER\}\/\$\{storageSku\}\.jpg`/);
 assert.match(
   appSource,
   /imageDb\.storage\.from\(IMAGE_BUCKET\)\.upload\(objectPath, jpeg, \{[\s\S]*?contentType: "image\/jpeg"[\s\S]*?cacheControl: "0"[\s\S]*?upsert: true/,
 );
 assert.match(appSource, /canvas\.toBlob[\s\S]*?"image\/jpeg"/);
 assert.match(appSource, /dashboardPhotoDropzone\?\.addEventListener\("drop"[\s\S]*?uploadProductPhotos\(event\.dataTransfer\?\.files\)/);
-assert.match(appSource, /markProductPhotoUpdated\(sku\)/);
+assert.match(appSource, /markProductPhotoUpdated\(storageSku\)/);
 
 const skuFunctionSource = appSource.slice(
-  appSource.indexOf("function sellpiaSkuFromPhotoFileName"),
+  appSource.indexOf("function photoFileStem"),
   appSource.indexOf("\nfunction productPhotoFileAllowed"),
 );
-const sellpiaSkuFromPhotoFileName = new Function(`${skuFunctionSource}; return sellpiaSkuFromPhotoFileName;`)();
+const { sellpiaSkuFromPhotoFileName, sellpiaSkuTargetsFromPhotoFileName, photoFileTargetTier } = new Function(`${skuFunctionSource}; return { sellpiaSkuFromPhotoFileName, sellpiaSkuTargetsFromPhotoFileName, photoFileTargetTier };`)();
 assert.equal(sellpiaSkuFromPhotoFileName("8601-1.JPG"), "8601-1");
 assert.equal(sellpiaSkuFromPhotoFileName("  10646-3.webp "), "10646-3");
 assert.equal(sellpiaSkuFromPhotoFileName("folder/8601-1.jpg"), "");
 assert.equal(sellpiaSkuFromPhotoFileName(".jpg"), "");
+assert.deepEqual(sellpiaSkuTargetsFromPhotoFileName("8601.jpg"), ["8601"]);
+assert.deepEqual(sellpiaSkuTargetsFromPhotoFileName("8601-[1][3][5].jpg"), ["8601-1", "8601-3", "8601-5"]);
+assert.deepEqual(sellpiaSkuTargetsFromPhotoFileName("8601-[1-10].jpg"), ["8601-1", "8601-2", "8601-3", "8601-4", "8601-5", "8601-6", "8601-7", "8601-8", "8601-9", "8601-10"]);
+assert.deepEqual(sellpiaSkuTargetsFromPhotoFileName("8601-[1,10].jpg"), []);
+assert.deepEqual(sellpiaSkuTargetsFromPhotoFileName("8601-[10-1].jpg"), []);
+assert.equal(photoFileTargetTier("8601.jpg"), "direct");
+assert.equal(photoFileTargetTier("8601-[1][3].jpg"), "group");
+assert.equal(photoFileTargetTier("8601-[1-3].jpg"), "range");
+assert.equal(photoFileTargetTier("8601-[1][2-4].jpg"), "");
+
+const imageFunctionSource = appSource.slice(
+  appSource.indexOf("function productImageUrlForCode"),
+  appSource.indexOf("\nfunction photoFileStem"),
+);
+const { productImageFallbackUrls } = new Function(
+  "IMAGE_SUPABASE_URL",
+  "IMAGE_BUCKET",
+  "PRODUCT_PHOTO_FOLDER",
+  "PRODUCT_PHOTO_GROUP_SUFFIX",
+  "PRODUCT_PHOTO_RANGE_SUFFIX",
+  "productPhotoVersion",
+  `${imageFunctionSource}; return { productImageFallbackUrls };`,
+)("https://test.supabase.co", "product-images", "sellpia", ".__group", ".__range", () => "");
+assert.deepEqual(productImageFallbackUrls("8601-2"), [
+  "https://test.supabase.co/storage/v1/object/public/product-images/sellpia/8601-2.__group.jpg",
+  "https://test.supabase.co/storage/v1/object/public/product-images/sellpia/8601-2.__range.jpg",
+  "https://test.supabase.co/storage/v1/object/public/product-images/sellpia/8601.jpg",
+]);
+assert.deepEqual(productImageFallbackUrls("8601"), []);
+assert.match(appSource, /data-photo-fallbacks/);
 
 assert.match(migration, /for insert[\s\S]*?to anon, authenticated[\s\S]*?bucket_id = 'product-images'/);
 assert.match(migration, /for update[\s\S]*?using[\s\S]*?with check/);
