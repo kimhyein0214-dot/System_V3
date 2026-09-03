@@ -6195,7 +6195,12 @@ function closeSellerExport() {
 }
 
 async function runSellerExport() {
-  if (!sellerExport || !liveData?.prepareSellerExport) {
+  const isDraftAction = sellerExportState.action === 'draft';
+  if (isDraftAction && !liveData?.stageSellerInventoryDraftBatch) {
+    showToast('재고 수정안 생성 기능을 불러오지 못했습니다. 새로고침 후 다시 시도해주세요.');
+    return;
+  }
+  if (!isDraftAction && (!sellerExport || !liveData?.prepareSellerExport)) {
     showToast('원본 내보내기 모듈을 불러오지 못했습니다. 새로고침 후 다시 시도해주세요.');
     return;
   }
@@ -6208,7 +6213,6 @@ async function runSellerExport() {
   document.getElementById('seller-export-cancel').disabled = true;
   document.getElementById('seller-export-close').disabled = true;
   let prepared = false;
-  const isDraftAction = sellerExportState.action === 'draft';
   try {
     if (isDraftAction) {
       const skus = selectedMatrixSkus();

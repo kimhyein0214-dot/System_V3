@@ -66,6 +66,7 @@ assert.match(app, /validateSellerDraftsForExport\(sources, scopeSkus\)/, 'export
 assert.match(app, /stageSellerInventoryDraftBatch[^]*?loadLiveMatrix/, 'inventory matching must stop at a reviewable matrix draft');
 assert.match(data, /stageSellerInventoryDraftBatch[^]*?p_after_sku:[^]*?p_batch_size:/, 'the frontend must stage large inventory matches through cursor batches');
 assert.match(app, /stageSellerInventoryDraftBatch\(\{sources, skus, batchId, afterSku, batchSize:100\}\)/, 'inventory drafts must use smaller transactions for reliable matrix-wide staging');
+assert.match(app, /isDraftAction && !liveData\?\.stageSellerInventoryDraftBatch[\s\S]*?!isDraftAction && \(!sellerExport \|\| !liveData\?\.prepareSellerExport\)/, 'draft creation must not depend on the ZIP export adapter or original-file export RPC');
 assert.match(app, /isDraftAction \? '수정안 생성 실패' : '내보내기 중단'[\s\S]*?isDraftAction \? '수정안 생성' : '원본 내보내기'/, 'draft failures must not be mislabeled as original-file export failures');
 assert.match(app, /while \(hasMore\)[^]*?processed \/ total[^]*?수정안 생성 중/, 'bulk inventory matching must show real SKU progress for each committed batch');
 assert.match(inventoryBatchMigration, /operations_hub_change_queue_inventory_active_idx[^]*?field_key = 'sellpia_current_stock'/, 'active inventory drafts need a focused replacement index');
