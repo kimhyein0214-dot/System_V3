@@ -155,6 +155,17 @@ assert.match(multilineHighlighted.sheetXml, /<c r="S3" t="inlineStr" s="2"><is><
 assert.match(multilineHighlighted.stylesXml, /<fonts count="2">/, 'partial rich text highlighting must not create a whole-cell bold font');
 assert.match(multilineHighlighted.stylesXml, /<cellXfs count="3">[\s\S]*?<xf (?=[^>]*fontId="0")(?=[^>]*fillId="2")(?=[^>]*applyFill="1")[^>]*\/>/, 'partial rich text highlighting must keep the base font and add only the yellow fill');
 
+const actualSmartstoreEntityRow = '<row r="710"><c r="P710" s="65" t="inlineStr"><is><t>57894360638&#xa;57894360640&#xa;57894360641</t></is></c><c r="S710" s="65" t="inlineStr"><is><t>100&#xa;99&#xa;100</t></is></c></row>';
+assert.equal(adapter.cellValue(actualSmartstoreEntityRow, 'P710', []), '57894360638\n57894360640\n57894360641', 'real Smartstore OOXML line-break entities must decode consistently');
+let actualSmartstoreHighlight = null;
+const actualEntityPatched = adapter.patchSmartstoreRow(actualSmartstoreEntityRow, [
+  {source_row_no:710, source_channel:'smartstore', sellpia_sku_code:'10784-103', seller_option_code:'57894360640', field_key:'sellpia_current_stock', expected_source_value:99, after_value:100},
+], [], null, (_, reference, highlight) => { actualSmartstoreHighlight = {reference, ...highlight}; });
+assert.equal(adapter.cellValue(actualEntityPatched, 'S710', []), '100\n100\n100', 'the actual Smartstore option line must be updated');
+const actualEntityHighlighted = adapter.applyChangeHighlights(`<worksheet><sheetData>${actualEntityPatched}</sheetData></worksheet>`, styleFixture, [actualSmartstoreHighlight]);
+assert.match(actualEntityHighlighted.stylesXml, /fgColor rgb="FFFFFF00"/, 'an actual Smartstore entity-backed changed cell must receive the yellow fill');
+assert.match(actualEntityHighlighted.sheetXml, /<r><rPr><b\/><\/rPr><t xml:space="preserve">100\n<\/t><\/r>/, 'only the actual changed Smartstore option line must be bold');
+
 const wholeTextSheetFixture = '<worksheet><sheetData><row r="3"><c r="D3" t="inlineStr"><is><t xml:space="preserve">변경된\n상품명</t></is></c></row></sheetData></worksheet>';
 const wholeTextHighlighted = adapter.applyChangeHighlights(wholeTextSheetFixture, styleFixture, [{reference:'D3',lineIndex:null}]);
 assert.equal((wholeTextHighlighted.sheetXml.match(/<rPr><b\/><\/rPr>/g) || []).length, 2, 'a whole-value text change must bold every line of the changed value');
