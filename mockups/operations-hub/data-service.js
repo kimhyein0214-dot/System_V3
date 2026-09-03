@@ -1877,13 +1877,13 @@
     return Array.isArray(data) ? data[0] : data;
   }
 
-  async function stageSellerInventoryDraftBatch({sources = [], skus = [], batchId = null, afterSku = null, batchSize = 500} = {}) {
+  async function stageSellerInventoryDraftBatch({sources = [], skus = [], batchId = null, afterSku = null, batchSize = 100} = {}) {
     const {data, error} = await db.rpc('stage_operations_hub_seller_inventory_match_batch', {
       p_sources:(sources || []).map(cleanText),
       p_skus:(skus || []).map(cleanText),
       p_batch_id:batchId,
       p_after_sku:cleanText(afterSku) || null,
-      p_batch_size:Math.max(25, Math.min(Number(batchSize) || 500, 500))
+      p_batch_size:Math.max(25, Math.min(Number(batchSize) || 100, 250))
     });
     if (error) throw error;
     return Array.isArray(data) ? data[0] : data;

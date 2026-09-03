@@ -7,14 +7,14 @@
     <title>System V3 · 상품 운영 허브</title>
     <link rel="preconnect" href="https://cdnjs.cloudflare.com" crossorigin>
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/pretendard/1.3.9/static/pretendard.css">
-    <link rel="stylesheet" href="./style.css?v=20260901-unified-links-v70">
-    <link rel="stylesheet" href="./inventory.css?v=20260901-unified-links-v70">
-    <link rel="stylesheet" href="./price-rule-lab.css?v=20260901-unified-links-v70">
-    <link rel="stylesheet" href="./ui-scale-base.css?v=20260901-unified-links-v70">
-    <link rel="stylesheet" href="./ui-scale-matrix.css?v=20260901-unified-links-v70">
-    <link rel="stylesheet" href="./ui-scale-workspaces.css?v=20260901-unified-links-v70">
-    <link rel="stylesheet" href="./channels-page.css?v=20260901-unified-links-v70">
-    <link rel="stylesheet" href="./attributes-page.css?v=20260901-unified-links-v70">
+    <link rel="stylesheet" href="./style.css?v=20260903-managed-connections-v71">
+    <link rel="stylesheet" href="./inventory.css?v=20260903-managed-connections-v71">
+    <link rel="stylesheet" href="./price-rule-lab.css?v=20260903-managed-connections-v71">
+    <link rel="stylesheet" href="./ui-scale-base.css?v=20260903-managed-connections-v71">
+    <link rel="stylesheet" href="./ui-scale-matrix.css?v=20260903-managed-connections-v71">
+    <link rel="stylesheet" href="./ui-scale-workspaces.css?v=20260903-managed-connections-v71">
+    <link rel="stylesheet" href="./channels-page.css?v=20260903-managed-connections-v71">
+    <link rel="stylesheet" href="./attributes-page.css?v=20260903-managed-connections-v71">
   </head>
   <body>
     <div class="app-shell">
@@ -427,21 +427,21 @@
                    </details>
                 </section>
                 <section class="multi-link-all-workspace">
-                  <summary><span>기존 SKU 구성·재고 상세 작업</span><em>판매처 옵션별 구성수량과 계산재고가 필요할 때만 펼치세요.</em></summary>
+                  <summary><span>상품 관계·세트 구성</span><em>저장된 상·하위 관계와 세트 구성품을 한 화면에서 확인합니다.</em></summary>
                   <div class="multi-link-toolbar">
-                    <div class="multi-link-search"><span>⌕</span><input id="multi-link-search" placeholder="판매처 코드 / 상품명 / 셀피아 SKU 검색"></div>
-                    <select id="multi-link-source"><option value="all">전체 판매처</option><option value="smartstore">스마트스토어</option><option value="makeshop">메이크샵</option><option value="ably">에이블리</option></select>
-                    <select id="multi-link-type"><option value="all">전체 연결</option><option value="complex">다중·조합만</option><option value="multi_bundle">다중+조합</option><option value="bundle">조합 상품</option><option value="multi">1:N 연결</option><option value="single">일반 1:1</option></select>
+                    <div class="multi-link-search"><span>⌕</span><input id="multi-link-search" placeholder="관계·세트 SKU / 상품명 / 옵션명 검색"></div>
+                    <input id="multi-link-source" type="hidden" value="all">
+                    <input id="multi-link-type" type="hidden" value="all">
                     <button id="multi-link-refresh" class="btn">새로고침</button>
-                    <span class="multi-link-result">결과 <b id="multi-link-count">-</b>개</span>
+                    <span class="multi-link-result">관계·구성 <b id="multi-link-count">-</b>건</span>
                   </div>
                   <div id="multi-link-workspace-body" class="multi-link-legacy-grid">
                     <section class="multi-link-table-card">
                       <table id="multi-link-workspace-matrix" class="multi-link-table unified-connection-matrix">
-                        <thead><tr><th>구분</th><th>상위·판매처 상품</th><th>연결</th><th>하위·셀피아 상품</th></tr></thead>
+                        <thead><tr><th>구분</th><th>상위·세트 상품</th><th>연결</th><th>하위·구성 상품</th></tr></thead>
                         <tbody id="multi-link-body"><tr class="multi-link-empty"><td colspan="4">전체 연결을 불러오는 중입니다.</td></tr></tbody>
                       </table>
-                      <div class="multi-link-foot"><span id="multi-link-range">-</span><div><button id="multi-link-prev" disabled>‹</button><b id="multi-link-page">1</b><button id="multi-link-next" disabled>›</button></div></div>
+                      <div class="multi-link-foot"><span id="multi-link-range">-</span><div hidden><button id="multi-link-prev" disabled>‹</button><b id="multi-link-page">1</b><button id="multi-link-next" disabled>›</button></div></div>
                     </section>
                     <aside class="multi-link-editor" aria-label="구성품 편집">
                       <div class="multi-link-editor-head"><span>판매처 옵션 구성</span><h3 id="multi-link-editor-title">연결을 선택해주세요</h3><p id="multi-link-editor-copy">목록의 판매처 옵션을 누르면 현재 구성과 계산 재고를 표시합니다.</p></div>
@@ -849,19 +849,19 @@
     <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.112.3/dist/umd/supabase.js"></script>
-    <script src="./seller-source-parsers.js?v=20260901-unified-links-v70"></script>
-    <script src="./seller-export-adapter.js?v=20260901-unified-links-v70"></script>
-    <script src="./matrix-csv-export.js?v=20260901-unified-links-v70"></script>
-    <script src="./discount-price-math.js?v=20260901-unified-links-v70"></script>
-    <script src="./source-refresh-verifier.js?v=20260901-unified-links-v70"></script>
-    <script src="./relation-import-parser.js?v=20260901-unified-links-v70"></script>
-    <script src="./bundle-import-parser.js?v=20260901-unified-links-v70"></script>
-    <script src="./seller-bundle-import-parser.js?v=20260901-unified-links-v70"></script>
-    <script src="./sellpia-source-parser.js?v=20260901-unified-links-v70"></script>
-    <script src="./data-service.js?v=20260901-unified-links-v70"></script>
-    <script src="./channels-page.js?v=20260901-unified-links-v70"></script>
-    <script src="./app.js?v=20260901-unified-links-v70"></script>
-    <script src="./attributes-page.js?v=20260901-unified-links-v70"></script>
-    <script src="./price-rule-lab.js?v=20260901-unified-links-v70"></script>
+    <script src="./seller-source-parsers.js?v=20260903-managed-connections-v71"></script>
+    <script src="./seller-export-adapter.js?v=20260903-managed-connections-v71"></script>
+    <script src="./matrix-csv-export.js?v=20260903-managed-connections-v71"></script>
+    <script src="./discount-price-math.js?v=20260903-managed-connections-v71"></script>
+    <script src="./source-refresh-verifier.js?v=20260903-managed-connections-v71"></script>
+    <script src="./relation-import-parser.js?v=20260903-managed-connections-v71"></script>
+    <script src="./bundle-import-parser.js?v=20260903-managed-connections-v71"></script>
+    <script src="./seller-bundle-import-parser.js?v=20260903-managed-connections-v71"></script>
+    <script src="./sellpia-source-parser.js?v=20260903-managed-connections-v71"></script>
+    <script src="./data-service.js?v=20260903-managed-connections-v71"></script>
+    <script src="./channels-page.js?v=20260903-managed-connections-v71"></script>
+    <script src="./app.js?v=20260903-managed-connections-v71"></script>
+    <script src="./attributes-page.js?v=20260903-managed-connections-v71"></script>
+    <script src="./price-rule-lab.js?v=20260903-managed-connections-v71"></script>
   </body>
 </html>

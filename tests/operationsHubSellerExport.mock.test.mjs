@@ -14,6 +14,7 @@ const aliasMigration = fs.readFileSync(new URL('../supabase/migrations/202608141
 const bulkMigration = fs.readFileSync(new URL('../supabase/migrations/20260814173000_operations_hub_export_bulk_prepare.sql', import.meta.url), 'utf8');
 const conflictMigration = fs.readFileSync(new URL('../supabase/migrations/20260814183000_operations_hub_export_row_conflicts.sql', import.meta.url), 'utf8');
 const inventoryBatchMigration = fs.readFileSync(new URL('../supabase/migrations/20260814190000_operations_hub_inventory_match_batches.sql', import.meta.url), 'utf8');
+const inventoryTimeoutMigration = fs.readFileSync(new URL('../supabase/migrations/20260903094500_operations_hub_inventory_draft_timeout.sql', import.meta.url), 'utf8');
 const priceComponentMigration = fs.readFileSync(new URL('../supabase/migrations/20260821014626_operations_hub_seller_price_components.sql', import.meta.url), 'utf8');
 const priceExportMigration = fs.readFileSync(new URL('../supabase/migrations/20260821020657_operations_hub_export_price_components.sql', import.meta.url), 'utf8');
 const lifecycleMigration = fs.readFileSync(new URL('../supabase/migrations/20260827023043_separate_change_state_from_export_history.sql', import.meta.url), 'utf8');
@@ -64,12 +65,15 @@ assert.match(app, /let firstChunk = true[^]*?while \(firstChunk \|\| offset < fi
 assert.match(app, /validateSellerDraftsForExport\(sources, scopeSkus\)/, 'export validation must receive the resolved SKU scope');
 assert.match(app, /stageSellerInventoryDraftBatch[^]*?loadLiveMatrix/, 'inventory matching must stop at a reviewable matrix draft');
 assert.match(data, /stageSellerInventoryDraftBatch[^]*?p_after_sku:[^]*?p_batch_size:/, 'the frontend must stage large inventory matches through cursor batches');
+assert.match(app, /stageSellerInventoryDraftBatch\(\{sources, skus, batchId, afterSku, batchSize:100\}\)/, 'inventory drafts must use smaller transactions for reliable matrix-wide staging');
+assert.match(app, /isDraftAction \? '수정안 생성 실패' : '내보내기 중단'[\s\S]*?isDraftAction \? '수정안 생성' : '원본 내보내기'/, 'draft failures must not be mislabeled as original-file export failures');
 assert.match(app, /while \(hasMore\)[^]*?processed \/ total[^]*?수정안 생성 중/, 'bulk inventory matching must show real SKU progress for each committed batch');
 assert.match(inventoryBatchMigration, /operations_hub_change_queue_inventory_active_idx[^]*?field_key = 'sellpia_current_stock'/, 'active inventory drafts need a focused replacement index');
 assert.match(inventoryBatchMigration, /with candidates as materialized[^]*?sku_page as materialized[^]*?limit v_batch_size/, 'inventory staging must bound each database transaction');
 assert.equal((inventoryBatchMigration.match(/from public\.operations_hub_matrix_live matrix/g) || []).length, 1, 'each batch must scan the live matrix only once');
 assert.match(inventoryBatchMigration, /cancelled as \([^]*?inserted as \([^]*?processed_count < batch_stats\.total_count/, 'each batch must replace stale drafts and return a real continuation signal');
 assert.doesNotMatch(inventoryBatchMigration, /security definer/i, 'inventory batching must not bypass RLS');
+assert.match(inventoryTimeoutMigration, /stage_operations_hub_seller_inventory_match_batch[\s\S]*?statement_timeout = '45s'/, 'inventory draft staging needs a function-scoped timeout without changing global DB settings');
 assert.match(data, /prepareSellerExport[\s\S]*?range\(from, from \+ pageSize - 1\)/, 'large export plans must be read through pagination');
 assert.match(data, /rpc\('prepare_operations_hub_change_export'/, 'the frontend must use the optimized bulk preparation RPC');
 assert.match(data, /completeSellerExport[\s\S]*?confirmChangesApplied/, 'the frontend adapter must expose export and manual apply confirmation');

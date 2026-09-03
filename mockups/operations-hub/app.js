@@ -34,7 +34,7 @@ const MATRIX_TRANSIENT_RETRY_DELAYS_MS = [700];
 const MAPPING_SYNC_POLL_INTERVAL_MS = 60000;
 const matrixState = {page:1, pageSize:initialMatrixPageSize, search:'', searchSources:['sellpia','smartstore','makeshop','ably'], status:'all', sort:'sku_asc', excludeCombinationSkus:false, includeRelatedSkuContext:true, advancedFilter:{logic:'and', conditions:[]}, total:0, directCount:0, relatedCount:0, rows:[], loading:false, requestId:0, requestController:null, codeListSkus:[], codeListRows:[], codeListName:''};
 const multiLinkState = {page:1, pageSize:50, search:'', source:'all', relationType:'all', folderId:null, organizationScope:'all', folders:[], foldersLoaded:false, total:0, allTotal:0, loading:false, requestId:0, rows:[], selected:null, loaded:false};
-const multiLinkWorkspaceState = {tab:'all', contextRow:null};
+const multiLinkWorkspaceState = {tab:'all', contextRow:null, allLoaded:false};
 const relationGraphState = {nodes:[], edges:[], selectedProduct:null, loading:false, requestId:0, searchTimer:null, viewMode:'list', search:'', focusNodeId:null};
 const relationBoardState = {nodes:new Map(), loadedProducts:new Map(), initialEdges:new Map(), levelCount:3, draggingKey:null, pointerDrag:null, connectorDrag:null, dragGhost:null, saving:false};
 const relationImportState = {fileName:'', parsed:null, items:new Map(), choices:new Map(), resolving:false, saving:false};
@@ -6208,8 +6208,9 @@ async function runSellerExport() {
   document.getElementById('seller-export-cancel').disabled = true;
   document.getElementById('seller-export-close').disabled = true;
   let prepared = false;
+  const isDraftAction = sellerExportState.action === 'draft';
   try {
-    if (sellerExportState.action === 'draft') {
+    if (isDraftAction) {
       const skus = selectedMatrixSkus();
       showSellerExportProgress(5, '재고 차이 계산 준비', `${skus.length ? `선택 ${formatNumber(skus.length)}개 SKU` : '전체 매트릭스'}를 안전한 묶음으로 나눠 확인합니다.`);
       let afterSku = null;
@@ -6219,7 +6220,7 @@ async function runSellerExport() {
       let cancelled = 0;
       let hasMore = true;
       while (hasMore) {
-        const result = await liveData.stageSellerInventoryDraftBatch({sources, skus, batchId, afterSku, batchSize:500});
+        const result = await liveData.stageSellerInventoryDraftBatch({sources, skus, batchId, afterSku, batchSize:100});
         const batchProcessed = Number(result?.processed_count || 0);
         if (!total) total = Number(result?.total_count || 0);
         processed += batchProcessed;
@@ -6276,12 +6277,16 @@ async function runSellerExport() {
     showToast(`판매처 원본 ${formatNumber(result.appliedItems.length)}건 내보내기 완료${skippedCount ? ` · 충돌 ${formatNumber(skippedCount)}건 제외` : ''}`);
     await Promise.all([loadChangeQueue({silent:true}), loadLiveMatrix()]);
   } catch (error) {
-    console.error('seller export failed', error);
+    console.error(isDraftAction ? 'seller inventory draft staging failed' : 'seller export failed', error);
     if (prepared) {
       try { await liveData.completeSellerExport({batchId, success:false, errorMessage:error?.message || String(error)}); } catch (completeError) { console.error('seller export failure state update failed', completeError); }
     }
-    showSellerExportProgress(0, '내보내기 중단', error?.message || '원본 파일을 확인해주세요.');
-    showToast(`원본 내보내기 실패: ${error?.message || error}`);
+    showSellerExportProgress(
+      0,
+      isDraftAction ? '수정안 생성 실패' : '내보내기 중단',
+      error?.message || (isDraftAction ? 'DB 연결 상태를 확인한 뒤 다시 시도해주세요.' : '원본 파일을 확인해주세요.')
+    );
+    showToast(`${isDraftAction ? '수정안 생성' : '원본 내보내기'} 실패: ${error?.message || error}`);
   } finally {
     sellerExportState.running = false;
     button.disabled = false;
@@ -6554,7 +6559,7 @@ function setMultiLinkWorkspaceTab(tab, {load = true} = {}) {
     panel.classList.toggle('active', active);
   });
   if (!load) return;
-  if (next === 'all') loadMultiLinks({resetPage:!multiLinkState.loaded, forceLegacy:true});
+  if (next === 'all') loadManagedConnections();
   if (next === 'relation') Promise.all([loadRelationFolders(), loadRelationGraph()]);
   if (next === 'bundle' && !bundleGraphState.loading) loadBundleGraph({query:bundleGraphState.query});
 }
@@ -8250,10 +8255,8 @@ function unifiedConnectionSearchMatch(...values) {
 
 function renderMultiLinkRows() {
   const body = document.getElementById('multi-link-body');
-  const selectedKey = multiLinkKey(multiLinkState.selected);
-  const showManagedConnections = multiLinkState.source === 'all' && multiLinkState.relationType === 'all';
   const relationById = new Map(relationGraphState.nodes.map(node => [String(node.nodeId), node]));
-  const relationRows = showManagedConnections ? relationGraphState.edges.map(edge => {
+  const relationRows = relationGraphState.edges.map(edge => {
     const parent = relationById.get(String(edge.parentNodeId));
     const child = relationById.get(String(edge.childNodeId));
     if (!parent || !child || !unifiedConnectionSearchMatch(relationNodeLabel(parent), relationNodeLabel(child))) return '';
@@ -8263,8 +8266,8 @@ function renderMultiLinkRows() {
       <td class="unified-link-cell"><span>상위 → 하위</span><i>→</i><small>${escapeHtml(edge.folderName || '관계 연결')}</small></td>
       <td>${unifiedRelationNodeCard(child)}</td>
     </tr>`;
-  }).filter(Boolean) : [];
-  const bundleRows = showManagedConnections ? bundleGraphState.bundles.flatMap(bundle => bundle.components.map(component => {
+  }).filter(Boolean);
+  const bundleRows = bundleGraphState.bundles.flatMap(bundle => bundle.components.map(component => {
     if (!unifiedConnectionSearchMatch(bundle.bundleSkuCode, bundle.productName, bundle.optionName, component.componentSkuCode, component.productName, component.optionName)) return '';
     return `<tr class="unified-connection-row bundle-connection-row" data-bundle-component-id="${component.componentId || ''}">
       <td><span class="unified-connection-family bundle">세트·번들</span></td>
@@ -8272,33 +8275,55 @@ function renderMultiLinkRows() {
       <td class="unified-link-cell"><span>${escapeHtml(component.role === 'packaging' ? '포장재' : '구성품')} × ${formatNumber(component.qty)}</span><i>→</i><small>세트 구성</small></td>
       <td>${unifiedConnectionNodeCard({imageUrl:component.imageUrl, identity:`${component.nestedBundleId ? '하위 세트' : '구성품'} SKU ${component.componentSkuCode || '-'}`, productName:component.productName, optionName:component.optionName, badge:component.nestedBundleId ? '하위 세트' : '구성품'})}</td>
     </tr>`;
-  }).filter(Boolean)) : [];
-  const sellerRows = multiLinkState.rows.flatMap(row => {
-    const components = Array.isArray(row.components) ? row.components : [];
-    const targets = components.length ? components : [null];
-    return targets.map(component => {
-      const fallbackProduct = !row.product_name && Boolean(component?.productName);
-      const fallbackOption = !row.option_name && Boolean(component?.optionName);
-      const productName = row.product_name || component?.productName || '';
-      const optionName = row.option_name || component?.optionName || '';
-      return `<tr class="multi-link-row unified-connection-row${selectedKey === multiLinkKey(row) ? ' selected' : ''}${row.inventory_change_id ? ' has-draft' : ''}" data-multi-link-key="${escapeHtml(multiLinkKey(row))}">
-        <td><span class="unified-connection-family seller ${escapeHtml(row.source_channel)}">판매처 연결</span></td>
-        <td>${unifiedConnectionNodeCard({imageUrl:component?.imageUrl || '', identity:`${multiLinkChannelLabel(row.source_channel)} ${row.product_code || '-'}${row.option_code ? ` / ${row.option_code}` : ''}`, productName, optionName, badge:multiLinkRelationLabel(row.relation_type, row.component_count, row.max_listing_count), fallback:fallbackProduct || fallbackOption})}</td>
-        <td class="unified-link-cell"><span>SKU 매핑 × ${formatNumber(component?.qty || 1)}</span><i>→</i><small>${escapeHtml(row.folder_name || '미분류')} · ${escapeHtml(row.group_name || RELATION_KIND_LABELS[row.relation_kind] || '기존 연결')}</small></td>
-        <td>${component ? unifiedConnectionNodeCard({imageUrl:component.imageUrl, identity:`셀피아 SKU ${component.sku || '-'}`, productName:component.productName, optionName:component.optionName, badge:component.role === 'primary' ? '기준 SKU' : '연결 SKU'}) : unifiedConnectionNodeCard({identity:'셀피아 SKU 미연결', productName:'연결 정보 없음', optionName:'-'})}</td>
-      </tr>`;
-    });
-  });
+  }).filter(Boolean));
   const groups = [
     ['상품 관계', relationRows],
-    ['세트·번들 구성', bundleRows],
-    ['판매처 ↔ 셀피아 연결', sellerRows]
+    ['세트·번들 구성', bundleRows]
   ].filter(([, rows]) => rows.length);
   if (!groups.length) {
     body.innerHTML = '<tr class="multi-link-empty"><td colspan="4">조회 조건에 해당하는 전체 연결이 없습니다.</td></tr>';
     return;
   }
   body.innerHTML = groups.map(([label, rows]) => `<tr class="unified-connection-group"><td colspan="4"><b>${escapeHtml(label)}</b><span>${formatNumber(rows.length)}건</span></td></tr>${rows.join('')}`).join('');
+}
+
+function updateManagedConnectionSummary() {
+  const relationById = new Map(relationGraphState.nodes.map(node => [String(node.nodeId), node]));
+  const relationCount = relationGraphState.edges.filter(edge => unifiedConnectionSearchMatch(
+    relationNodeLabel(relationById.get(String(edge.parentNodeId))),
+    relationNodeLabel(relationById.get(String(edge.childNodeId)))
+  )).length;
+  const bundleCount = bundleGraphState.bundles.reduce((count, bundle) => count + bundle.components.filter(component => unifiedConnectionSearchMatch(
+    bundle.bundleSkuCode,
+    bundle.productName,
+    bundle.optionName,
+    component.componentSkuCode,
+    component.productName,
+    component.optionName
+  )).length, 0);
+  document.getElementById('multi-link-count').textContent = formatNumber(relationCount + bundleCount);
+  document.getElementById('multi-link-range').textContent = `상품 관계 ${formatNumber(relationCount)}건 · 세트·번들 구성 ${formatNumber(bundleCount)}건`;
+}
+
+async function loadManagedConnections() {
+  if (!liveData?.loadRelationNodes || !liveData?.listBundleGraph) return false;
+  const body = document.getElementById('multi-link-body');
+  body.innerHTML = '<tr class="multi-link-empty loading"><td colspan="4">상품 관계와 세트·번들 구성을 불러오는 중입니다.</td></tr>';
+  try {
+    await Promise.all([loadRelationFolders(), loadRelationGraph(), loadBundleGraph({query:''})]);
+    multiLinkWorkspaceState.allLoaded = true;
+    multiLinkState.loaded = true;
+    multiLinkState.rows = [];
+    multiLinkState.selected = null;
+    renderRelationFolders();
+    renderMultiLinkRows();
+    updateManagedConnectionSummary();
+    return true;
+  } catch (error) {
+    console.error('managed connection matrix load failed', error);
+    body.innerHTML = `<tr class="multi-link-empty error"><td colspan="4">상품 관계·세트 구성을 불러오지 못했습니다. ${escapeHtml(error?.message || '')}</td></tr>`;
+    return false;
+  }
 }
 
 async function enrichMultiLinkRowVisuals(rows, requestId) {
@@ -8486,15 +8511,16 @@ async function loadMultiLinks({resetPage = false, selectKey = '', forceLegacy = 
 }
 
 function openMultiLinkWorkspace(source = 'all', sku = '') {
-  multiLinkState.source = source || 'all';
+  multiLinkState.source = 'all';
   multiLinkState.relationType = 'all';
   multiLinkState.search = sku || '';
-  document.getElementById('multi-link-source').value = multiLinkState.source;
-  document.getElementById('multi-link-type').value = multiLinkState.relationType;
   document.getElementById('multi-link-search').value = multiLinkState.search;
   setMultiLinkWorkspaceTab('all', {load:false});
   showPage('multi-links');
-  if (multiLinkState.loaded) loadMultiLinks({resetPage:true, forceLegacy:true});
+  if (multiLinkWorkspaceState.allLoaded) {
+    renderMultiLinkRows();
+    updateManagedConnectionSummary();
+  }
 }
 
 document.getElementById('multi-link-body').addEventListener('click', event => {
@@ -9286,22 +9312,20 @@ let multiLinkSearchTimer;
 document.getElementById('multi-link-search').addEventListener('input', event => {
   multiLinkState.search = event.target.value.trim();
   clearTimeout(multiLinkSearchTimer);
-  multiLinkSearchTimer = setTimeout(() => loadMultiLinks({resetPage:true}), 280);
+  multiLinkSearchTimer = setTimeout(() => {
+    renderMultiLinkRows();
+    updateManagedConnectionSummary();
+  }, 120);
 });
-document.getElementById('multi-link-source').addEventListener('change', event => {multiLinkState.source = event.target.value; loadMultiLinks({resetPage:true});});
-document.getElementById('multi-link-type').addEventListener('change', event => {multiLinkState.relationType = event.target.value; loadMultiLinks({resetPage:true});});
 document.getElementById('multi-link-refresh').addEventListener('click', async event => {
   event.target.disabled = true;
   event.target.textContent = '연결 갱신 중…';
   try {
-    await liveData.refreshListingGraphCache();
-    await Promise.all([loadMultiLinks(), loadLiveMatrix()]);
-    showToast('현재 매트릭스 연결을 다중·조합 목록에 반영했습니다.');
+    await loadManagedConnections();
+    showToast('상품 관계와 세트·번들 구성을 새로 불러왔습니다.');
   } catch (error) { showToast(`연결 갱신 실패: ${error?.message || error}`); }
   finally { event.target.disabled = false; event.target.textContent = '새로고침'; }
 });
-document.getElementById('multi-link-prev').addEventListener('click', () => {if (multiLinkState.page > 1 && !multiLinkState.loading) {multiLinkState.page -= 1; loadMultiLinks();}});
-document.getElementById('multi-link-next').addEventListener('click', () => {if (multiLinkState.page * multiLinkState.pageSize < multiLinkState.total && !multiLinkState.loading) {multiLinkState.page += 1; loadMultiLinks();}});
 
 function inventoryFilteredRows() {
   const query = document.getElementById('inventory-search').value.trim().toLowerCase();
@@ -9641,7 +9665,7 @@ function showPage(pageId) {
   if (pageId === 'jobs') loadChangeQueue();
   if (pageId === 'channels') window.SystemV3ChannelsPage?.show();
   if (pageId === 'attributes') window.SystemV3AttributesPage?.show();
-  if (pageId === 'multi-links' && !multiLinkState.loaded) loadMultiLinks({resetPage:true});
+  if (pageId === 'multi-links' && multiLinkWorkspaceState.tab === 'all' && !multiLinkWorkspaceState.allLoaded) loadManagedConnections();
   if (pageId === 'inventory') loadInventorySurvey({silent:inventoryState.loaded});
   if (pageId === 'price-rules') {
     window.SystemV3PriceRuleLab?.refresh();

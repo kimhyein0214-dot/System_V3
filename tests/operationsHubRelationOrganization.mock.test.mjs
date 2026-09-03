@@ -58,7 +58,7 @@ assert.doesNotMatch(app, /relation-board-node[^`]*draggable="true"/, "the relati
 assert.match(app, /relationBoardChanges[\s\S]*applyRelationBoard[\s\S]*removeEdgeIds/, "the board must review additions and removals before one atomic save");
 assert.match(app, /data-explore-relation-node[\s\S]*relationGraphState\.focusNodeId[\s\S]*setRelationViewMode\('graph'\)/, "a multi-membership badge must open the focused node's full relationship component");
 assert.match(app, /const includeLegacy[\s\S]*if \(!includeLegacy\)[\s\S]*loadRelationGraph[\s\S]*loadListingGraph/, "the default relation page must not run the heavy legacy listing query before its details workspace opens");
-assert.match(app, /setMultiLinkWorkspaceTab[\s\S]*next === 'all'[\s\S]*loadMultiLinks\(\{resetPage:[^}]*forceLegacy:true\}\)[\s\S]*multi-link-body[\s\S]*addEventListener\('contextmenu'[\s\S]*openMultiLinkWorkspaceContextMenu/, "the all-connections tab must explicitly load its listing graph and expose row-level context actions");
+assert.match(app, /setMultiLinkWorkspaceTab[\s\S]*next === 'all'[\s\S]*loadManagedConnections\(\)[\s\S]*function loadManagedConnections[\s\S]*loadRelationGraph\(\)[\s\S]*loadBundleGraph/, "the all-connections tab must load only managed relationships and bundle composition");
 assert.match(app, /ensureSellpiaRelationNode[\s\S]*ensureSellerRelationNode[\s\S]*saveRelationEdge/, "the UI must create either node type and save a user-selected direction");
 assert.match(app, /data-remove-relation-edge[\s\S]*removeRelationEdge/, "operators must be able to remove only the selected relation edge");
 assert.match(app, /saveListingComponentParent/, "the UI must save component dependencies");

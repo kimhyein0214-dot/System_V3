@@ -7,7 +7,7 @@ const data = fs.readFileSync(new URL('../mockups/operations-hub/data-service.js'
 const sql = fs.readFileSync(new URL('../supabase/migrations/20260831093000_resolve_relation_import_codes.sql', import.meta.url), 'utf8');
 
 assert.match(html, /id="relation-import-panel"[\s\S]*상품코드-옵션코드[\s\S]*헤더 A, B, C[\s\S]*id="relation-import-save"/);
-assert.match(html, /relation-import-parser\.js\?v=20260901-unified-links-v70/);
+assert.match(html, /relation-import-parser\.js\?v=20260903-managed-connections-v71/);
 assert.match(app, /parseRelationHierarchyRows[\s\S]*resolveRelationImportCodes[\s\S]*buildRelationImportPlan/);
 assert.match(app, /applyRelationBoard\(\{nodes:plan\.nodes, edges:plan\.edges, removeEdgeIds:\[\]\}\)/, 'Excel import must add reviewed edges atomically without deleting existing edges');
 assert.match(app, /relationReady[\s\S]*먼저 SKU 매칭 필요/, 'unlinked seller identities must be blocked before save');
