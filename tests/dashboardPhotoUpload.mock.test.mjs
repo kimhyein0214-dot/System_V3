@@ -31,6 +31,7 @@ assert.match(css, /\.dashboard-photo-upload-status\.success/);
 assert.match(css, /\.dashboard-photo-library-grid/);
 assert.match(css, /\.dashboard-photo-library-item/);
 assert.match(css, /\.dashboard-photo-library-scroll[\s\S]*?height: clamp\(260px, 36vh, 390px\)[\s\S]*?overflow: auto/);
+assert.match(css, /\.photo-library-context-menu[\s\S]*?position: fixed/);
 
 assert.match(appSource, /const IMAGE_SUPABASE_KEY = "sb_publishable_/);
 assert.doesNotMatch(appSource, /service_role|sb_secret_/i, "frontend must not expose a Supabase secret key");
@@ -49,8 +50,12 @@ assert.match(appSource, /storage\.from\(IMAGE_BUCKET\)\.list\(PRODUCT_PHOTO_FOLD
 assert.match(appSource, /limit: pageSize[\s\S]*?offset: library\.offset[\s\S]*?sortBy: \{ column: "name", order: "asc" \}/);
 assert.match(appSource, /button\.dataset\.dashboardAction === "photo-library-search"/);
 assert.match(appSource, /button\.dataset\.dashboardAction === "photo-library-more"/);
-assert.match(appSource, /data-photo-library-action="rename"/);
-assert.match(appSource, /data-photo-library-action="delete"/);
+assert.match(appSource, /data-photo-library-entry=/);
+assert.match(appSource, /function ensureProductPhotoLibraryContextMenu\(\)/);
+assert.match(appSource, /data-photo-library-context-action="rename"/);
+assert.match(appSource, /data-photo-library-context-action="delete"/);
+assert.match(appSource, /dashboardPhotoLibraryGrid\?\.addEventListener\("contextmenu"/);
+assert.doesNotMatch(appSource, /data-photo-library-action=/, "photo library cards must use the context menu, not inline action buttons");
 assert.match(appSource, /function productPhotoRenameStorageCode\(entry, code\)/);
 assert.match(appSource, /imageDb\.storage\.from\(IMAGE_BUCKET\)\.remove\(\[sourcePath\]\)/);
 assert.match(appSource, /imageDb\.storage\.from\(IMAGE_BUCKET\)\.remove\(\[`\$\{PRODUCT_PHOTO_FOLDER\}\/\$\{entry\.name\}`\]\)/);
