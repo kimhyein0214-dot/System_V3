@@ -4020,27 +4020,44 @@ function discountEditorDraftTerms() {
 
 function updateDiscountEditorPreview() {
   const terms = discountEditorDraftTerms();
-  const discountedPrice = discountPriceMath?.discountedBase?.(discountEditorState.basePrice, terms);
-  const exact = Number.isFinite(discountedPrice);
-  const preview = {
-    basePrice:discountEditorState.basePrice,
-    discountedPrice,
-    finalPrice:exact ? discountedPrice + Number(discountEditorState.anchorOptionPrice || 0) : null,
-    exact,
-    reason:exact ? '' : '현재 판매가에 할인조건을 적용하지 못했습니다.'
-  };
+  const preview = discountEditorState.autoAdjustBase
+    ? (discountPriceMath?.grossBaseForTarget
+      ? discountPriceMath.grossBaseForTarget(discountEditorState.anchorDiscountedBase, terms)
+      : {basePrice:null, discountedPrice:null, exact:false, reason:'할인 역산 모듈을 불러오지 못했습니다.'})
+    : (() => {
+      const discountedPrice = discountPriceMath?.discountedBase?.(discountEditorState.basePrice, terms);
+      const exact = Number.isFinite(discountedPrice);
+      return {
+        basePrice:discountEditorState.basePrice,
+        discountedPrice,
+        finalPrice:exact ? discountedPrice + Number(discountEditorState.anchorOptionPrice || 0) : null,
+        exact,
+        reason:exact ? '' : '현재 판매가에 할인조건을 적용하지 못했습니다.'
+      };
+    })();
   discountEditorState.preview = preview;
-  document.getElementById('discount-editor-preview-label').textContent = '현재 판매가 유지';
+  document.getElementById('discount-editor-preview-label').textContent = discountEditorState.autoAdjustBase ? '역산 판매가' : '현재 판매가 유지';
   document.getElementById('discount-editor-base-price').textContent = preview.basePrice === null ? '-' : `${formatNullableNumber(preview.basePrice)}원`;
   document.getElementById('discount-editor-preview-price').textContent = preview.discountedPrice === null ? '-' : `${formatNullableNumber(preview.discountedPrice)}원`;
-  const displayedFinalPrice = preview.finalPrice;
+  const displayedFinalPrice = discountEditorState.autoAdjustBase ? discountEditorState.anchorFinalPrice : preview.finalPrice;
   document.getElementById('discount-editor-anchor-final-price').textContent = Number.isFinite(Number(displayedFinalPrice)) ? `${formatNullableNumber(displayedFinalPrice)}원` : '-';
+  document.getElementById('discount-editor-anchor-source').textContent = discountEditorState.autoAdjustBase
+    ? `${discountEditorState.anchorSource} · 최종판가 기준`
+    : `${discountEditorState.anchorSource} · 판매가 기준`;
+  document.getElementById('discount-editor-anchor-price-label').textContent = discountEditorState.autoAdjustBase ? '유지할 최종구매가' : '예상 최종구매가';
   const note = document.getElementById('discount-editor-preview-note');
   note.classList.toggle('error', !preview.exact);
   note.textContent = !preview.exact
     ? preview.reason
-    : `판매가는 ${formatNullableNumber(preview.basePrice)}원으로 유지됩니다. 할인 적용가 ${formatNullableNumber(preview.discountedPrice)}원 + 옵션가 ${formatNullableNumber(discountEditorState.anchorOptionPrice)}원 = 예상 최종구매가 ${formatNullableNumber(preview.finalPrice)}원입니다.`;
+    : discountEditorState.autoAdjustBase
+      ? `최종판가를 유지하도록 판매가를 ${formatNullableNumber(preview.basePrice)}원으로 역산합니다. 할인 적용가 ${formatNullableNumber(preview.discountedPrice)}원 + 옵션가 ${formatNullableNumber(discountEditorState.anchorOptionPrice)}원 = ${formatNullableNumber(discountEditorState.anchorFinalPrice)}원입니다.`
+      : `판매가는 ${formatNullableNumber(preview.basePrice)}원으로 유지됩니다. 할인 적용가 ${formatNullableNumber(preview.discountedPrice)}원 + 옵션가 ${formatNullableNumber(discountEditorState.anchorOptionPrice)}원 = 예상 최종구매가 ${formatNullableNumber(preview.finalPrice)}원입니다.`;
   document.getElementById('discount-editor-save').disabled = !preview.exact;
+}
+
+function updateDiscountCalculationMode() {
+  discountEditorState.autoAdjustBase = document.querySelector('input[name="discount-calculation-mode"]:checked')?.value === 'reverse-base';
+  updateDiscountEditorPreview();
 }
 
 function closeDiscountEditor() {
@@ -4112,7 +4129,7 @@ async function openDiscountEditor(button) {
     showToast('가격 태그 목표가와 현재 옵션가를 함께 적용할 수 없습니다. 가격 태그 또는 옵션가를 확인해주세요.');
     return;
   }
-  const anchorSource = assignment ? `가격 태그 ‘${priceRuleSetName}’ 배정됨 · 수동 할인은 판매가 유지` : '현재 판매가 유지';
+  const anchorSource = assignment ? `가격 태그 ‘${priceRuleSetName}’ 배정됨` : '현재 수정안 또는 판매처 원본';
   Object.assign(discountEditorState, {
     source,
     productCode:button.dataset.productCode || product[`${source}_product_code`],
@@ -4132,7 +4149,9 @@ async function openDiscountEditor(button) {
   document.getElementById('discount-editor-kicker').textContent = `${CHANNEL_LABELS[source]} 할인정보`;
   document.getElementById('discount-editor-title').textContent = isSmartstore ? '기본할인 금액 수정' : '기간 할인코드 수정';
   document.getElementById('discount-editor-product-code').textContent = discountEditorState.productCode || '-';
-  document.getElementById('discount-editor-anchor-source').textContent = anchorSource;
+  const forwardMode = document.querySelector('input[name="discount-calculation-mode"][value="forward"]');
+  if (forwardMode) forwardMode.checked = true;
+  document.getElementById('discount-editor-anchor-source').textContent = `${anchorSource} · 판매가 기준`;
   document.getElementById('discount-editor-anchor-price-label').textContent = '예상 최종구매가';
   document.getElementById('discount-editor-anchor-final-price').textContent = `${formatNullableNumber(anchorFinalPrice)}원`;
   const groupSize = Math.max(1, Number(button.closest('td')?.dataset.groupSize) || 1);
@@ -4193,7 +4212,8 @@ async function saveDiscountEditor() {
       productCode,
       anchorSku:discountEditorState.sku,
       discountTerms:discountEditorDraftTerms(),
-      ruleCode:source === 'makeshop' ? ruleSelect.value : null
+      ruleCode:source === 'makeshop' ? ruleSelect.value : null,
+      calculationMode:discountEditorState.autoAdjustBase ? 'reverse-base' : 'forward'
     });
     for (const item of saved.items) applyLocalSellerPriceDraft(matrixRowsBySku.get(item.sku), source, item.result);
     renderLiveMatrixRows(matrixState.rows);
@@ -4204,7 +4224,7 @@ async function saveDiscountEditor() {
     closeDiscountEditor();
     const pending = saved.items.filter(item => item.result?.draft_status === 'pending').length;
     const unchanged = saved.items.length - pending;
-    showToast(`${CHANNEL_LABELS[source]} 상품 할인 수정안 ${pending}건 저장 · 판매가 유지·할인 후 최종가 변경${unchanged ? ` · 원본값 유지 ${unchanged}건` : ''}`);
+    showToast(`${CHANNEL_LABELS[source]} 상품 할인 수정안 ${pending}건 저장 · ${discountEditorState.autoAdjustBase ? '최종판가 유지·판매가 역산' : '판매가 유지·최종판가 재계산'}${unchanged ? ` · 원본값 유지 ${unchanged}건` : ''}`);
   } catch (error) {
     console.error('product discount draft save failed', error);
     showToast(`할인 수정안 저장 실패: ${error?.message || error}`);
@@ -4220,6 +4240,7 @@ document.getElementById('discount-editor-save').addEventListener('click', saveDi
 document.getElementById('discount-editor-modal').addEventListener('click', event => { if (event.target.id === 'discount-editor-modal') closeDiscountEditor(); });
 document.getElementById('discount-editor-amount').addEventListener('input', updateDiscountEditorPreview);
 document.getElementById('discount-editor-rule-code').addEventListener('change', updateDiscountEditorPreview);
+document.querySelectorAll('input[name="discount-calculation-mode"]').forEach(input => input.addEventListener('change', updateDiscountCalculationMode));
 
 const viewSettingsModal = document.getElementById('view-settings-modal');
 function fillViewSettingsForm(view = activeView) {

@@ -1619,19 +1619,20 @@
     return Array.isArray(data) ? data[0] : data;
   }
 
-  async function saveSellerProductDiscountDrafts({source, productCode, anchorSku = null, discountTerms = [], ruleCode = null}) {
+  async function saveSellerProductDiscountDrafts({source, productCode, anchorSku = null, discountTerms = [], ruleCode = null, calculationMode = 'forward'}) {
     const normalizedSource = cleanText(source);
     const normalizedProductCode = cleanText(productCode);
     const sourceField = {smartstore:'smartstore_product_code',makeshop:'makeshop_product_code',ably:'ably_product_code'}[normalizedSource];
     if (!sourceField || !normalizedProductCode) throw new Error('판매처와 상품코드를 확인해주세요.');
     if (normalizedSource !== 'ably') {
       const batchId = global.crypto?.randomUUID?.() || null;
-      const {data, error} = await db.rpc('save_operations_hub_seller_product_discount_draft_v2', {
+      const {data, error} = await db.rpc('save_operations_hub_seller_product_discount_mode_v1', {
         p_source:normalizedSource,
         p_product_code:normalizedProductCode,
         p_anchor_sku:cleanText(anchorSku) || null,
         p_discount_terms:Array.isArray(discountTerms) ? discountTerms : [],
         p_rule_code:ruleCode === null || ruleCode === undefined ? null : cleanText(ruleCode),
+        p_calculation_mode:cleanText(calculationMode) || 'forward',
         p_batch_id:batchId
       });
       if (error) throw readableDatabaseError(error);
