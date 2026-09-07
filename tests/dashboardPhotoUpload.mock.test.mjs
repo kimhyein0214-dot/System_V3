@@ -32,6 +32,8 @@ assert.match(css, /\.dashboard-photo-dropzone\.is-dragging/);
 assert.match(css, /\.dashboard-photo-upload-status\.success/);
 assert.match(css, /\.dashboard-photo-library-grid/);
 assert.match(css, /\.dashboard-photo-library-item/);
+assert.match(css, /\.dashboard-photo-library-item\.is-selected/);
+assert.match(css, /\.dashboard-photo-library-select input/);
 assert.match(css, /\.dashboard-photo-library-scroll[\s\S]*?height: clamp\(260px, 36vh, 390px\)[\s\S]*?overflow: auto/);
 assert.match(css, /\.photo-library-context-menu[\s\S]*?position: fixed/);
 assert.match(css, /\.photo-viewer-body[\s\S]*?overflow: auto/);
@@ -56,11 +58,17 @@ assert.match(appSource, /limit: pageSize[\s\S]*?offset: library\.offset[\s\S]*?s
 assert.match(appSource, /button\.dataset\.dashboardAction === "photo-library-search"/);
 assert.match(appSource, /button\.dataset\.dashboardAction === "photo-library-more"/);
 assert.match(appSource, /data-photo-library-entry=/);
+assert.match(appSource, /selectedNames: new Set\(\)/);
 assert.match(appSource, /function ensureProductPhotoLibraryContextMenu\(\)/);
 assert.match(appSource, /data-photo-library-context-action="rename"/);
 assert.match(appSource, /data-photo-library-context-action="delete"/);
 assert.match(appSource, /document\.addEventListener\("contextmenu", openProductPhotoLibraryContextMenuFromEvent, true\)/);
 assert.match(appSource, /function openProductPhotoLibraryContextMenuFromEvent\(event\)/);
+assert.match(appSource, /function selectedProductPhotoLibraryEntries\(\)/);
+assert.match(appSource, /function deleteProductPhotoLibraryEntries\(entries\)/);
+assert.match(appSource, /data-photo-library-select=/);
+assert.match(appSource, /deleteSelected \? "delete-selected" : "delete"/);
+assert.match(appSource, /선택 사진 \$\{selectedEntries\.length\}개 삭제/);
 assert.match(appSource, /const PHOTO_VIEWER_ZOOM_STORAGE_KEY = "system-v3-photo-viewer-zoom"/);
 assert.match(appSource, /function normalizePhotoViewerZoom\(value\)/);
 assert.match(appSource, /function setPhotoViewerZoom\(value, \{ persist = true \} = \{\}\)/);
@@ -69,7 +77,7 @@ assert.match(appSource, /window\.localStorage\.setItem\(PHOTO_VIEWER_ZOOM_STORAG
 assert.doesNotMatch(appSource, /data-photo-library-action=/, "photo library cards must use the context menu, not inline action buttons");
 assert.match(appSource, /function productPhotoRenameStorageCode\(entry, code\)/);
 assert.match(appSource, /imageDb\.storage\.from\(IMAGE_BUCKET\)\.remove\(\[sourcePath\]\)/);
-assert.match(appSource, /imageDb\.storage\.from\(IMAGE_BUCKET\)\.remove\(\[`\$\{PRODUCT_PHOTO_FOLDER\}\/\$\{entry\.name\}`\]\)/);
+assert.match(appSource, /imageDb\.storage\.from\(IMAGE_BUCKET\)\.remove\(uniqueEntries\.map\(\(entry\) => `\$\{PRODUCT_PHOTO_FOLDER\}\/\$\{entry\.name\}`\)\)/);
 
 const skuFunctionSource = appSource.slice(
   appSource.indexOf("function photoFileStem"),

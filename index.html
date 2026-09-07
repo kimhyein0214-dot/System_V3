@@ -161,7 +161,7 @@
                   <div class="dashboard-photo-library-head">
                     <div>
                       <h4 id="dashboard-photo-library-title">사진 라이브러리</h4>
-                      <p>사진은 클릭해 확대하고, 카드 우클릭으로 이름 변경·삭제할 수 있습니다. <code>{ }</code>로 감싼 파일은 최우선 사진이며, 그 안에서는 전용 → 묶음 → 범위 → 공용 순서가 유지됩니다. 이름 변경은 새 이름으로 저장한 뒤 원본을 삭제하므로 정상 완료 시 복제본이 남지 않고, 삭제는 파일과 연결을 바로 제거합니다.</p>
+                      <p>사진은 클릭해 확대하고, 왼쪽 위 체크로 여러 장을 선택할 수 있습니다. 선택한 사진 중 하나를 우클릭하면 한 번에 삭제할 수 있으며, 일반 우클릭에서는 이름 변경·삭제를 할 수 있습니다. <code>{ }</code>로 감싼 파일은 최우선 사진이며, 그 안에서는 전용 → 묶음 → 범위 → 공용 순서가 유지됩니다. 이름 변경은 새 이름으로 저장한 뒤 원본을 삭제하므로 정상 완료 시 복제본이 남지 않고, 삭제는 파일과 연결을 바로 제거합니다.</p>
                     </div>
                     <button class="btn" data-dashboard-action="photo-library-refresh" type="button">새로고침</button>
                   </div>
@@ -383,7 +383,7 @@
     <div id="toast" class="toast" hidden></div>
 
     <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
-    <script type="module" src="src/app/pickingApp.mjs?v=20260903-photo-library-priority1"></script>
+    <script type="module" src="src/app/pickingApp.mjs?v=20260907-photo-library-bulk-delete1"></script>
     <script>
       if ("serviceWorker" in navigator) {
         window.addEventListener("load", () => {

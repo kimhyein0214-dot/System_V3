@@ -232,6 +232,7 @@ const state = {
     type: "all",
     mutatingName: "",
     contextMenuName: "",
+    selectedNames: new Set(),
   },
   inventoryCountExportRunning: false,
 };
@@ -833,25 +834,50 @@ async function renameProductPhotoLibraryEntry(entry) {
   await loadProductPhotoLibrary({ reset: true });
 }
 
-async function deleteProductPhotoLibraryEntry(entry) {
-  if (!entry || !allowWrites) {
+function selectedProductPhotoLibraryEntries() {
+  const selectedNames = state.productPhotoLibrary.selectedNames;
+  return state.productPhotoLibrary.entries.filter((entry) => selectedNames.has(entry.name));
+}
+
+function setProductPhotoLibraryEntrySelected(name, selected) {
+  const selectedNames = state.productPhotoLibrary.selectedNames;
+  if (selected) selectedNames.add(String(name || ""));
+  else selectedNames.delete(String(name || ""));
+  renderProductPhotoLibrary();
+}
+
+async function deleteProductPhotoLibraryEntries(entries) {
+  const uniqueEntries = [...new Map((entries || []).filter(Boolean).map((entry) => [entry.name, entry])).values()];
+  if (!uniqueEntries.length) return;
+  if (!allowWrites) {
     toast("읽기전용입니다. URL에 write=1을 붙여 사진을 관리할 수 있습니다.");
     return;
   }
   if (state.productPhotoLibrary.mutatingName) return;
-  const confirmed = window.confirm(`사진 파일을 삭제할까요?\n\n${entry.name}\n\n삭제하면 이 사진은 라이브러리와 상품 연결에서 바로 제거됩니다.\n삭제 후에는 사진 파일이 남아 있지 않습니다.`);
+  const preview = uniqueEntries.slice(0, 12).map((entry) => `- ${entry.name}`).join("\n");
+  const remaining = uniqueEntries.length > 12 ? `\n… 외 ${uniqueEntries.length - 12}개` : "";
+  const confirmed = window.confirm(
+    `${uniqueEntries.length}개 사진 파일을 삭제할까요?\n\n${preview}${remaining}\n\n삭제하면 선택한 사진은 라이브러리와 상품 연결에서 바로 제거됩니다.\n삭제 후에는 사진 파일이 남아 있지 않습니다.`,
+  );
   if (!confirmed) return;
 
-  setProductPhotoLibraryMutating(entry.name);
+  setProductPhotoLibraryMutating(uniqueEntries.length > 1 ? "__bulk__" : uniqueEntries[0].name);
   try {
-    const { error } = await imageDb.storage.from(IMAGE_BUCKET).remove([`${PRODUCT_PHOTO_FOLDER}/${entry.name}`]);
+    const { error } = await imageDb.storage.from(IMAGE_BUCKET).remove(uniqueEntries.map((entry) => `${PRODUCT_PHOTO_FOLDER}/${entry.name}`));
     if (error) throw error;
-    markProductPhotoUpdated(entry.storageCode);
-    toast(`${entry.code} 사진을 삭제했습니다.`);
+    uniqueEntries.forEach((entry) => {
+      markProductPhotoUpdated(entry.storageCode);
+      state.productPhotoLibrary.selectedNames.delete(entry.name);
+    });
+    toast(uniqueEntries.length === 1 ? `${uniqueEntries[0].code} 사진을 삭제했습니다.` : `선택 사진 ${uniqueEntries.length}개를 삭제했습니다.`);
   } finally {
     setProductPhotoLibraryMutating("");
   }
   await loadProductPhotoLibrary({ reset: true });
+}
+
+function deleteProductPhotoLibraryEntry(entry) {
+  return deleteProductPhotoLibraryEntries([entry]);
 }
 
 function ensureProductPhotoLibraryContextMenu() {
@@ -865,7 +891,7 @@ function ensureProductPhotoLibraryContextMenu() {
   menu.setAttribute("aria-label", "사진 관리 메뉴");
   menu.innerHTML = `
     <button type="button" role="menuitem" data-photo-library-context-action="rename">이름 변경</button>
-    <button type="button" role="menuitem" class="danger" data-photo-library-context-action="delete">삭제</button>
+    <button id="photo-library-context-delete" type="button" role="menuitem" class="danger" data-photo-library-context-action="delete">삭제</button>
   `;
   document.body.append(menu);
   return menu;
@@ -880,6 +906,13 @@ function closeProductPhotoLibraryContextMenu() {
 function openProductPhotoLibraryContextMenu(entry, clientX, clientY) {
   if (!entry || state.productPhotoLibrary.mutatingName) return;
   const menu = ensureProductPhotoLibraryContextMenu();
+  const selectedEntries = selectedProductPhotoLibraryEntries();
+  const deleteButton = menu.querySelector("#photo-library-context-delete");
+  const deleteSelected = selectedEntries.length > 1 && state.productPhotoLibrary.selectedNames.has(entry.name);
+  if (deleteButton) {
+    deleteButton.dataset.photoLibraryContextAction = deleteSelected ? "delete-selected" : "delete";
+    deleteButton.textContent = deleteSelected ? `선택 사진 ${selectedEntries.length}개 삭제` : "삭제";
+  }
   state.productPhotoLibrary.contextMenuName = entry.name;
   menu.hidden = false;
   menu.style.visibility = "hidden";
@@ -909,6 +942,7 @@ function renderProductPhotoLibrary() {
   if (!els.dashboardPhotoLibraryGrid || !els.dashboardPhotoLibraryStatus) return;
   const library = state.productPhotoLibrary;
   const entries = visibleProductPhotoEntries();
+  const selectedCount = selectedProductPhotoLibraryEntries().length;
   if (library.error) {
     els.dashboardPhotoLibraryStatus.className = "dashboard-photo-library-status error";
     els.dashboardPhotoLibraryStatus.textContent = `사진 목록을 불러오지 못했습니다: ${library.error}`;
@@ -920,7 +954,7 @@ function renderProductPhotoLibrary() {
     els.dashboardPhotoLibraryStatus.textContent = "사진 목록을 불러오는 중입니다.";
   } else {
     els.dashboardPhotoLibraryStatus.className = "dashboard-photo-library-status";
-    els.dashboardPhotoLibraryStatus.textContent = `사진 ${entries.length}개 표시 · ${library.hasMore ? "더 불러올 수 있습니다." : "전체 목록을 불러왔습니다."}`;
+    els.dashboardPhotoLibraryStatus.textContent = `사진 ${entries.length}개 표시 · 선택 ${selectedCount}개 · ${library.hasMore ? "더 불러올 수 있습니다." : "전체 목록을 불러왔습니다."}`;
   }
 
   if (!entries.length) {
@@ -931,8 +965,12 @@ function renderProductPhotoLibrary() {
       .map((entry) => {
         const imageUrl = productImageUrlForCode(entry.storageCode);
         const title = `${entry.code} · ${productPhotoTypeLabel(entry.type, entry.priority)}`;
-        const isMutating = library.mutatingName === entry.name;
-        return `<article class="dashboard-photo-library-item${isMutating ? " is-mutating" : ""}" data-photo-library-entry="${escapeHtml(entry.name)}" title="우클릭: 이름 변경 또는 삭제">
+        const isMutating = library.mutatingName === entry.name || library.mutatingName === "__bulk__";
+        const isSelected = library.selectedNames.has(entry.name);
+        return `<article class="dashboard-photo-library-item${isMutating ? " is-mutating" : ""}${isSelected ? " is-selected" : ""}" data-photo-library-entry="${escapeHtml(entry.name)}" title="체크로 여러 장 선택 · 우클릭으로 관리">
+          <label class="dashboard-photo-library-select" title="이 사진 선택">
+            <input type="checkbox" data-photo-library-select="${escapeHtml(entry.name)}" ${isSelected ? "checked" : ""} aria-label="${escapeHtml(entry.code)} 사진 선택">
+          </label>
           <button class="dashboard-photo-library-thumb" type="button" ${photoImgAttrs(imageUrl, title)} aria-label="${escapeHtml(title)} 사진 확대">
             <img src="${escapeHtml(imageUrl)}" ${photoImgAttrs(imageUrl, title)} alt="${escapeHtml(entry.code)}" loading="lazy">
           </button>
@@ -957,6 +995,7 @@ async function loadProductPhotoLibrary({ reset = false } = {}) {
   if (!els.dashboardPhotoLibraryGrid || library.loading) return;
   if (reset) {
     library.entries = [];
+    library.selectedNames.clear();
     library.offset = 0;
     library.hasMore = true;
     library.loaded = false;
@@ -9665,7 +9704,13 @@ function bindEvents() {
   });
   els.dashboardPhotoFilter?.addEventListener("change", () => {
     state.productPhotoLibrary.type = String(els.dashboardPhotoFilter.value || "all");
+    state.productPhotoLibrary.selectedNames.clear();
     renderProductPhotoLibrary();
+  });
+  els.dashboardPhotoLibraryGrid?.addEventListener("change", (event) => {
+    const checkbox = event.target.closest("[data-photo-library-select]");
+    if (!checkbox) return;
+    setProductPhotoLibraryEntrySelected(checkbox.dataset.photoLibrarySelect, checkbox.checked);
   });
   // Capture this before thumbnail/modal handlers so a photo-card right click is
   // never mistaken for the normal image-click interaction in a browser.
@@ -9678,6 +9723,7 @@ function bindEvents() {
       closeProductPhotoLibraryContextMenu();
       if (kind === "rename") renameProductPhotoLibraryEntry(entry).catch(showError);
       if (kind === "delete") deleteProductPhotoLibraryEntry(entry).catch(showError);
+      if (kind === "delete-selected") deleteProductPhotoLibraryEntries(selectedProductPhotoLibraryEntries()).catch(showError);
       return;
     }
     if (!event.target.closest("#photo-library-context-menu")) closeProductPhotoLibraryContextMenu();

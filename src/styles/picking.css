@@ -991,11 +991,41 @@ input {
 }
 
 .dashboard-photo-library-item {
+  position: relative;
   overflow: hidden;
   border: 1px solid #dbe4f0;
   border-radius: 9px;
   background: #fff;
   cursor: context-menu;
+}
+
+.dashboard-photo-library-item.is-selected {
+  border-color: #4f46e5;
+  box-shadow: 0 0 0 2px rgba(99, 102, 241, 0.22);
+}
+
+.dashboard-photo-library-select {
+  position: absolute;
+  z-index: 2;
+  top: 6px;
+  left: 6px;
+  display: grid;
+  width: 22px;
+  height: 22px;
+  place-items: center;
+  border: 1px solid rgba(148, 163, 184, 0.8);
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.92);
+  box-shadow: 0 1px 3px rgba(15, 23, 42, 0.16);
+  cursor: pointer;
+}
+
+.dashboard-photo-library-select input {
+  width: 14px;
+  height: 14px;
+  margin: 0;
+  accent-color: #4f46e5;
+  cursor: pointer;
 }
 
 .dashboard-photo-library-thumb {
