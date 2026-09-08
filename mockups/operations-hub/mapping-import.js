@@ -1,0 +1,121 @@
+(function(global) {
+  'use strict';
+  const headers=['셀피아sku','스스 상품코드','스스 옵션코드','메이크샵 상품코드','메이크샵 옵션코드','에이블리 상품코드','에이블리 옵션코드'];
+  const sources=['smartstore','makeshop','ably'];
+  const labels={smartstore:'스마트스토어',makeshop:'메이크샵',ably:'에이블리'};
+  const text=value=>String(value??'').trim();
+  const header=value=>text(value).toLowerCase().replace(/\s/g,'').replace('스마트스토어','스스');
+  const escape=value=>text(value).replaceAll('&','&amp;').replaceAll('<','&lt;').replaceAll('>','&gt;').replaceAll('"','&quot;');
+  function parse(rows) {
+    if(!Array.isArray(rows)||!rows.length)throw new Error('파일이 비어 있습니다.');
+    const actual=rows[0].map(header), columns=headers.map(value=>actual.indexOf(header(value)));
+    if(columns.some(index=>index<0)||new Set(actual.filter(Boolean)).size!==actual.filter(Boolean).length)throw new Error('7개 필수 헤더를 확인해주세요. 양식을 내려받아 사용해주세요.');
+    if(rows.length>20001)throw new Error('한 번에 최대 20,000행까지 올릴 수 있습니다.');
+    const entries=[], errors=[], keys=new Map();
+    const code=value=>{
+      if(typeof value==='number' && (!Number.isSafeInteger(value)||value<0))throw new Error('숫자 코드가 손상되었습니다. 엑셀에서 텍스트 형식으로 입력해주세요.');
+      const result=text(value);
+      if(/[\r\n\t]/.test(result)||/^[+-]?\d+(?:\.\d+)?e[+-]?\d+$/i.test(result))throw new Error('코드는 지수표기나 줄바꿈 없이 텍스트로 입력해주세요.');
+      return result;
+    };
+    rows.slice(1).forEach((raw,index)=>{
+      const rowNo=index+2;
+      if(!columns.some(col=>text(raw?.[col])))return;
+      let values;
+      try{values=columns.map(col=>code(raw?.[col]));}catch(error){errors.push({rowNo,sku:text(raw?.[columns[0]]),status:'error',reason:error.message});return;}
+      const sku=values[0];
+      if(!sku){errors.push({rowNo,status:'error',reason:'셀피아 SKU가 없습니다.'});return;}
+      sources.forEach((source,index)=>{
+        const productCode=values[index*2+1],optionCode=values[index*2+2];
+        if(!productCode&&!optionCode)return;
+        if(!productCode){errors.push({rowNo,sku,source,optionCode,status:'error',reason:'옵션코드만 있습니다. 상품코드도 입력해주세요.'});return;}
+        const entry={rowNo,sku,source,productCode,optionCode};
+        const key=JSON.stringify([sku,source]);
+        if(keys.has(key)){
+          const previous=keys.get(key);
+          if(previous.productCode!==productCode||previous.optionCode!==optionCode){previous.conflict=true;errors.push({...entry,status:'error',reason:'같은 SKU·판매처에 서로 다른 연결값이 입력됐습니다.'});}
+        }else{keys.set(key,entry);entries.push(entry);}
+      });
+    });
+    const valid=entries.filter(entry=>!entry.conflict);
+    for(const entry of entries.filter(entry=>entry.conflict))errors.push({...entry,status:'error',reason:'같은 SKU·판매처에 서로 다른 연결값이 입력됐습니다.'});
+    return {entries:valid,errors};
+  }
+  global.SystemV3MappingImport={parse,headers};
+  if(!global.document)return;
+  const byId=id=>document.getElementById('mapping-import-'+id);
+  if(!byId('modal'))return;
+  const state={busy:false,stop:false,results:[]};
+  const names={ready:'신규 등록',replace:'기존 연결 변경',same:'이미 동일',error:'오류',saved:'저장 완료',failed:'저장 실패'};
+  const eligible=row=>['ready','replace'].includes(row.status);
+  function render(message='') {
+    const counts={};for(const row of state.results)counts[row.status]=(counts[row.status]||0)+1;
+    byId('status').textContent=message||Object.entries(counts).map(([key,count])=>(names[key]||key)+' '+count+'건').join(' · ')||'파일을 선택해주세요.';
+    byId('rows').innerHTML=state.results.slice(0,100).map(row=>'<tr><td>'+row.rowNo+'</td><td>'+escape(row.sku)+'</td><td>'+escape(labels[row.source])+'</td><td>'+escape(row.before?.productCode||'-')+' / '+escape(row.before?.optionCode||'-')+'</td><td>'+escape(row.productCode)+' / '+escape(row.optionCode||'-')+'</td><td>'+escape(names[row.status]||row.status)+'</td><td>'+escape(row.reason||[row.productName,row.optionName].filter(Boolean).join(' · '))+'</td></tr>').join('');
+    byId('apply').disabled=state.busy||!state.results.some(eligible);
+    byId('apply').textContent=state.busy?'처리 중…':state.results.some(eligible)?'가능 '+state.results.filter(eligible).length+'건 등록':'등록할 항목 없음';
+    byId('file').disabled=state.busy;
+    byId('cancel').textContent=state.busy?(state.stop?'중단 요청됨':'작업 중단'):'닫기';
+    byId('report').disabled=!state.results.length;
+  }
+  const download=(content,name,type='text/csv;charset=utf-8')=>{
+    const url=URL.createObjectURL(new Blob([content],{type})),a=document.createElement('a');a.href=url;a.download=name;a.click();setTimeout(()=>URL.revokeObjectURL(url),30000);
+  };
+  const csv=rows=>'\uFEFF'+rows.map(row=>row.map(value=>'"'+text(typeof value==='string'&&/^[=+@-]/.test(value)?"'"+value:value).replaceAll('"','""')+'"').join(',')).join('\r\n');
+  byId('template').onclick=()=>download(csv([headers]),'매칭값_일괄등록_양식.csv');
+  byId('report').onclick=()=>download(csv([['행','셀피아 SKU','판매처','이전 상품코드','이전 옵션코드','상품코드','옵션코드','상태','사유'],...state.results.map(row=>[row.rowNo,row.sku,labels[row.source],row.before?.productCode,row.before?.optionCode,row.productCode,row.optionCode,names[row.status],row.reason])]),'매칭값_등록결과.csv');
+  byId('cancel').onclick=()=>{
+    if(state.busy){state.stop=true;render('현재 요청을 마친 뒤 중단합니다. 저장 완료 건은 유지됩니다.');}
+    else byId('modal').hidden=true;
+  };
+  document.getElementById('mapping-import-open').onclick=()=>{byId('modal').hidden=false;render();byId('file').focus();};
+  document.addEventListener('keydown',event=>{if(event.key==='Escape'&&!byId('modal').hidden){event.preventDefault();byId('cancel').click();}});
+  byId('file').onchange=async()=>{
+    const file=byId('file').files[0];if(!file||state.busy)return;
+    state.busy=true;state.stop=false;state.results=[];render('파일 읽는 중');
+    try {
+      if(file.size>20*1024*1024)throw new Error('파일 크기는 최대 20MB입니다.');
+      const isCsv=/\.csv$/i.test(file.name);
+      const bytes=await file.arrayBuffer();
+      let input=bytes;
+      if(isCsv){try{input=new TextDecoder('utf-8',{fatal:true}).decode(bytes);}catch{input=new TextDecoder('euc-kr').decode(bytes);}}
+      const workbook=global.XLSX.read(input,{type:isCsv?'string':'array',cellDates:false,raw:true});
+      const rows=global.XLSX.utils.sheet_to_json(workbook.Sheets[workbook.SheetNames[0]],{header:1,defval:'',raw:true});
+      const parsed=parse(rows);state.results=parsed.errors;render('원본 코드 검사 중');
+      for(let offset=0;offset<parsed.entries.length;offset+=150){
+        if(state.stop)break;
+        const checked=await global.SystemV3Data.previewMappingImport(parsed.entries.slice(offset,offset+150));
+        state.results.push(...checked);render('원본 코드 검사 '+Math.min(offset+150,parsed.entries.length)+' / '+parsed.entries.length+'건');
+      }
+      if(state.stop)state.results=state.results.map(row=>({...row,status:'error',reason:'검사가 중단됐습니다. 파일을 다시 선택해주세요.'}));
+    }catch(error){state.results=state.results.map(row=>({...row,status:'error',reason:'검사가 완료되지 않았습니다. 파일을 다시 선택해주세요.'}));state.results.push({status:'error',reason:error.message||String(error)});}
+    finally{state.busy=false;byId('file').value='';render();}
+  };
+  byId('apply').onclick=async()=>{
+    if(state.busy)return;
+    const targets=state.results.filter(eligible);if(!targets.length)return;
+    state.busy=true;state.stop=false;render('등록 시작');
+    try {
+      for(let offset=0;offset<targets.length;offset+=50){
+        if(state.stop)break;
+        const batch=targets.slice(offset,offset+50);
+        // Recheck source availability and displayed old links before applying.
+        const current=await global.SystemV3Data.previewMappingImport(batch);
+        for(let index=0;index<batch.length;index++){
+          if(state.stop)break;
+          const row=batch[index],fresh=current[index];
+          if(fresh.status==='error'){row.status='failed';row.reason=fresh.reason;continue;}
+          if(fresh.status==='same'){row.status='same';continue;}
+          if(JSON.stringify(fresh.before)!==JSON.stringify(row.before)){row.status='failed';row.reason='검사 후 기존 연결이 변경됐습니다. 다시 확인해주세요.';continue;}
+          try{
+            const saved=await global.SystemV3Data.linkSellerItem(row);
+            if(text(saved?.product_code)!==row.productCode||text(saved?.option_code)!==row.optionCode)throw new Error('저장 응답을 확인하지 못했습니다. 새로 검사해주세요.');
+            row.status='saved';row.reason='공식 매칭값으로 저장됨';
+          }catch(error){row.status='failed';row.reason=(error.message||String(error))+' · 저장 여부를 다시 검사해주세요.';}
+          render('등록 처리 '+(offset+index+1)+' / '+targets.length+'건');
+        }
+      }
+    }catch(error){for(const row of targets.filter(eligible)){row.status='failed';row.reason=error.message||String(error);}}
+    finally{state.busy=false;render(state.stop?'중단되었습니다. 저장 완료 건은 유지되고 미처리 건은 다시 등록할 수 있습니다.':'');document.getElementById('matrix-refresh-btn')?.click();}
+  };
+})(typeof window==='undefined'?globalThis:window);

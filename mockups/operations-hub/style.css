@@ -352,6 +352,8 @@ body.matrix-cell-selecting{user-select:none}
 /* Search-only relation context: keep the actual matching SKU primary and render
    inherited collection/set context as a visibly secondary row. */
 .matrix-related-count{color:#6d7d92}.matrix-related-count strong{color:#607dbe}
+#mapping-import-modal .relation-import-table th,#mapping-import-modal .relation-import-table td{font-size:12px;line-height:1.45;padding:8px;text-align:left;overflow-wrap:anywhere}
+#mapping-import-modal button:disabled{opacity:.45;cursor:not-allowed}
 .matrix-table tbody tr.matrix-related-context-row td{background:#f7f9fc!important;color:#6b778b}
 .matrix-table tbody tr.matrix-related-context-row:hover td{background:#f0f5fb!important}
 .matrix-table tbody tr.matrix-related-context-row .sticky-col{background:#f7f9fc!important}

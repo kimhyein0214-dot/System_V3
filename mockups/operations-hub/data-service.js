@@ -1302,6 +1302,37 @@
     return Array.isArray(data) ? data[0] : data;
   }
 
+  async function previewMappingImport(entries) {
+    if (!entries.length || entries.length > 150) throw new Error('매칭 검사는 한 묶음에 150건까지 가능합니다.');
+    const skus = [...new Set(entries.map(row => row.sku))];
+    const {data:matrix, error} = await db.from(MATRIX_VIEW)
+      .select('sellpia_sku_code,smartstore_product_code,smartstore_option_code,makeshop_product_code,makeshop_option_code,ably_product_code,ably_option_code')
+      .in('sellpia_sku_code', skus);
+    if (error) throw error;
+    const existing = new Map((matrix || []).map(row => [row.sellpia_sku_code, row]));
+    const targets = new Map();
+    for (const source of ['smartstore','makeshop','ably']) {
+      const products = [...new Set(entries.filter(row => row.source === source).map(row => row.productCode))];
+      if (!products.length) continue;
+      for (let from = 0; ; from += 1000) {
+        const result = await db.from('seller_inventory_latest').select('product_code,option_code,product_name,option_name')
+          .eq('source_channel', source).in('product_code', products)
+          .order('product_code').order('option_code').range(from, from + 999);
+        if (result.error) throw result.error;
+        for (const row of result.data || []) targets.set(JSON.stringify([source,row.product_code,row.option_code || '']), row);
+        if ((result.data || []).length < 1000) break;
+      }
+    }
+    return entries.map(entry => {
+      const current = existing.get(entry.sku);
+      const target = targets.get(JSON.stringify([entry.source,entry.productCode,entry.optionCode]));
+      const before = current ? {productCode:cleanText(current[entry.source + '_product_code']),optionCode:cleanText(current[entry.source + '_option_code'])} : null;
+      const reason = !current ? '셀피아 SKU가 최신 매트릭스에 없습니다.' : !target ? '최신 판매처 원본에 정확한 상품·옵션코드가 없습니다.' : '';
+      const same = before && before.productCode === entry.productCode && before.optionCode === entry.optionCode;
+      return {...entry,before,productName:target?.product_name || '',optionName:target?.option_name || '',status:reason ? 'error' : same ? 'same' : before?.productCode ? 'replace' : 'ready',reason};
+    });
+  }
+
   async function saveSellerListing({sku, source, productCode, optionCode = '', productName = '', optionName = '', queue = false, batchId = null}) {
     const {data, error} = await db.rpc('save_operations_hub_seller_listing', {
       p_sku:cleanText(sku),
@@ -3219,6 +3250,7 @@
     resolveCodeEntries,
     refreshListingGraphCache,
     linkSellerItem,
+    previewMappingImport,
     saveProductLinkDraft,
     clearProductLinkDraft,
     linkProductDraftOption,
