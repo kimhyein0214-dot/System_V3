@@ -3191,7 +3191,21 @@
     return {snapshot, rows:joinedRows, activityRefreshedAt};
   }
 
+  async function loadAblyComponentStocks(skus) {
+    requireOperationsHubSessionToken();
+    const unique=[...new Set(skus.map(cleanText).filter(Boolean))];
+    const rows=[];
+    for(let offset=0;offset<unique.length;offset+=100) {
+      const {data,error}=await db.from('operations_hub_matrix_system_live')
+        .select('sellpia_sku_code,display_name,system_stock,system_stock_updated_at')
+        .in('sellpia_sku_code',unique.slice(offset,offset+100));
+      if(error)throw error;
+      rows.push(...(data||[]));
+    }
+    return rows;
+  }
   global.SystemV3Data = Object.freeze({
+    loadAblyComponentStocks,
     pageSize: PAGE_SIZE,
     loginOperationsHub,
     checkOperationsHubSession,

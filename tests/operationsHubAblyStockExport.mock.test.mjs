@@ -1,0 +1,14 @@
+import assert from 'node:assert/strict';
+await import('../mockups/operations-hub/ably-stock-export.js');
+const {patchCell,headers}=globalThis.AblyStockExport;
+assert.equal(headers.length,35);assert.equal(headers[16],'옵션관리코드');assert.equal(headers[22],'판매가능재고');
+const original='<worksheet><sheetData><row r="1"><c r="W1" t="inlineStr"><is><t>판매가능재고</t></is></c></row><row r="2"><c r="Q2" s="2"/><c r="R2" t="inlineStr"><is><t>001-1+2</t></is></c><c r="W2" s="3" t="s"><v>55</v></c><c r="X2"><v>1</v></c></row><row r="3"><c r="W3"><v>999</v></c></row></sheetData></worksheet>';
+const zero=patchCell(original,2,'W',0);
+assert.ok(zero.includes('<c r="W2" s="3"><v>0</v></c>'));
+assert.ok(zero.includes('<row r="3"><c r="W3"><v>999</v></c></row>'));
+const memo=patchCell(zero,2,'Q','001-1/001-2');
+assert.ok(memo.includes('001-1/001-2'));assert.equal((memo.match(/r="Q2"/g)||[]).length,1);
+const missing=patchCell('<row r="2"><c r="R2"/><c r="X2"><v>1</v></c></row>',2,'W',7);
+assert.ok(missing.indexOf('r="W2"')<missing.indexOf('r="X2"'));
+assert.throws(()=>patchCell(original,4,'W',5));
+console.log('PASS original headers, numeric zero, cell styles, Q strings, untouched rows and column order');
