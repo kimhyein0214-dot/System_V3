@@ -71,6 +71,10 @@ export function normalizeCurrentDbItem(item = {}) {
     productName: firstText(item.p_name, item.product_name),
     optionName: firstText(item.p_option, item.option_name),
     quantity: firstNumber(item.qty, item.o_amount, item.quantity) ?? 1,
+    // Source receipt timestamp only. Never fall back to scraped_at or order day.
+    receiptAt: firstText(item.sellpia_received_at),
+    receiptAtPrecision: firstText(item.sellpia_received_at_precision),
+    receiptAtRaw: firstText(item.sellpia_received_at_raw),
     itemSalesAmount: firstNumber(item.sellpia_item_sales_amount, item.item_sales_amount),
     sellpiaMemo1: firstText(item.o_shop_memo, item.shop_memo, item.memo1),
     sellpiaMemo2: firstText(item.o_shop_memo2, item.shop_memo2, item.memo2),
