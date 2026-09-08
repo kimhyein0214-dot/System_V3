@@ -3191,7 +3191,18 @@
     return {snapshot, rows:joinedRows, activityRefreshedAt};
   }
 
+  async function orderStockRpc(name, params = {}) {
+    const {data, error} = await db.rpc(name, {...params, p_session_token:requireOperationsHubSessionToken()});
+    if (error) throwOperationsHubRpcError(error);
+    return data;
+  }
+  const listOrderStock = ({date,offset=0}) => orderStockRpc('list_operations_hub_order_stock_v1',{p_date:date,p_offset:offset});
+  const saveOrderStock = ({actionId,date,mode,rows}) => orderStockRpc('save_operations_hub_order_stock_v1',{p_action_id:actionId,p_date:date,p_mode:mode,p_rows:rows});
+  const undoOrderStock = actionId => orderStockRpc('undo_operations_hub_order_stock_v1',{p_action_id:actionId});
+  const listStockHistory = () => orderStockRpc('list_operations_hub_stock_history_v1');
+
   global.SystemV3Data = Object.freeze({
+    listOrderStock,saveOrderStock,undoOrderStock,listStockHistory,
     pageSize: PAGE_SIZE,
     loginOperationsHub,
     checkOperationsHubSession,

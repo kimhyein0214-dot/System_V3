@@ -49,7 +49,7 @@ test('inventory page does not expose uploads or automatic operational refresh be
   const app = read('mockups/operations-hub/app.js');
   assert.match(html, /<option value="survey" disabled>재고조사 완료 파일 · 방식 검토 중<\/option>/);
   assert.match(html, /id="inventory-upload-open"[^>]*disabled/);
-  assert.match(html, /재고조사 설계 검토/);
+  assert.match(html, /접수일 주문 조회/);
   assert.doesNotMatch(app, /inventory-upload-open'\)\.addEventListener/);
   assert.doesNotMatch(app, /active-page'\)\) loadInventorySurvey\(\{silent:true\}\)/);
   assert.match(app, /inventory-refresh'\)\.addEventListener\('click',[\s\S]*?loadInventorySurvey\(\)/);

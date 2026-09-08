@@ -4,7 +4,7 @@ import fs from 'node:fs';
 const migration = fs.readFileSync(
   new URL('../supabase/migrations/20260903021316_operations_hub_operational_master_source_refresh_v7.sql', import.meta.url),
   'utf8'
-);
+).replaceAll('\r\n','\n');
 
 const between = (start, end, from = migration) => {
   const startIndex = from.indexOf(start);
