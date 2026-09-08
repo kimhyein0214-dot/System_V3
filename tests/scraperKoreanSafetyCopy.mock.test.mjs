@@ -26,7 +26,7 @@ assert.doesNotThrow(
   () => new vm.Script(bookmarklet),
   "the assembled bookmarklet must remain valid JavaScript",
 );
-assert.match(bookmarklet, /0908-접수시각 보관/);
+assert.match(bookmarklet, /0812-접수일 재동기화 오류 수정/);
 assert.match(
   bookmarklet,
   /전체 모드에서는 선택 기간의 기존 주문·상품 스크랩 데이터가/,
