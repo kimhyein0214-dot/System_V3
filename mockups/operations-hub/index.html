@@ -7,15 +7,15 @@
     <title>System V3 · 상품 운영 허브</title>
     <link rel="preconnect" href="https://cdnjs.cloudflare.com" crossorigin>
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/pretendard/1.3.9/static/pretendard.css">
-    <link rel="stylesheet" href="./style.css?v=20260908-inventory-cancel-v79">
-    <link rel="stylesheet" href="./inventory.css?v=20260908-inventory-cancel-v79">
-    <link rel="stylesheet" href="./price-rule-lab.css?v=20260908-inventory-cancel-v79">
-    <link rel="stylesheet" href="./ui-scale-base.css?v=20260908-inventory-cancel-v79">
-    <link rel="stylesheet" href="./ui-scale-matrix.css?v=20260908-inventory-cancel-v79">
-    <link rel="stylesheet" href="./ui-scale-workspaces.css?v=20260908-inventory-cancel-v79">
-    <link rel="stylesheet" href="./channels-page.css?v=20260908-inventory-cancel-v79">
-    <link rel="stylesheet" href="./attributes-page.css?v=20260908-inventory-cancel-v79">
-    <link rel="stylesheet" href="./operations-auth.css?v=20260908-inventory-cancel-v79">
+    <link rel="stylesheet" href="./style.css?v=20260908-partial-export-v80">
+    <link rel="stylesheet" href="./inventory.css?v=20260908-partial-export-v80">
+    <link rel="stylesheet" href="./price-rule-lab.css?v=20260908-partial-export-v80">
+    <link rel="stylesheet" href="./ui-scale-base.css?v=20260908-partial-export-v80">
+    <link rel="stylesheet" href="./ui-scale-matrix.css?v=20260908-partial-export-v80">
+    <link rel="stylesheet" href="./ui-scale-workspaces.css?v=20260908-partial-export-v80">
+    <link rel="stylesheet" href="./channels-page.css?v=20260908-partial-export-v80">
+    <link rel="stylesheet" href="./attributes-page.css?v=20260908-partial-export-v80">
+    <link rel="stylesheet" href="./operations-auth.css?v=20260908-partial-export-v80">
   </head>
   <body class="operations-auth-locked">
     <section id="operations-auth-gate" class="operations-auth-gate" aria-labelledby="operations-auth-title">
@@ -804,8 +804,15 @@
             <label><input id="seller-export-selected-scope" type="radio" name="seller-export-scope" value="selected"><span><b>선택한 셀 범위의 SKU</b><em id="seller-export-selected-count">선택한 SKU 없음</em></span></label>
             <label><input type="radio" name="seller-export-scope" value="all"><span><b>전체 내보내기 준비</b><em>현재 검색·필터와 관계없이 저장된 수정안 전체</em></span></label>
           </fieldset>
-          <div id="seller-export-preview" class="seller-export-preview"><span id="seller-export-preview-label">예상 반영 건수</span><b id="seller-export-preview-count">확인 중</b><em id="seller-export-preview-detail">선택한 판매처와 범위를 확인합니다.</em></div>
+          <div id="seller-export-preview" class="seller-export-preview"><span id="seller-export-preview-label">대상 수정안 · 실행 시 안전검사</span><b id="seller-export-preview-count">확인 중</b><em id="seller-export-preview-detail">선택한 판매처와 범위를 확인합니다.</em></div>
           <div id="seller-export-progress" class="seller-export-progress" hidden><div><b id="seller-export-progress-title">준비 중</b><span id="seller-export-progress-percent">0%</span></div><i><span id="seller-export-progress-bar"></span></i><p id="seller-export-progress-detail">원본을 확인합니다.</p></div>
+          <details id="seller-export-exclusions" class="seller-export-progress" hidden>
+            <summary id="seller-export-exclusions-title">제외 사유 보기</summary>
+            <p id="seller-export-exclusions-summary" style="white-space:pre-line"></p>
+            <button id="seller-export-exclusions-download" type="button">전체 제외 목록 CSV 저장</button>
+            <p>아래는 최대 50건입니다. 전체 목록은 CSV와 생성된 ZIP에 기록됩니다. 제외된 값은 원본 파일에 적용하지 않습니다.</p>
+            <div style="max-height:220px;overflow:auto"><table style="width:100%;font-size:12px"><thead><tr><th>판매처</th><th>셀피아 SKU</th><th>상품 / 옵션코드</th><th>제외 사유</th></tr></thead><tbody id="seller-export-exclusions-rows"></tbody></table></div>
+          </details>
         </div>
         <div class="modal-foot"><button class="btn" id="seller-export-cancel">취소</button><button class="btn primary" id="seller-export-run">검토한 수정본 ZIP 만들기</button></div>
       </section>
@@ -952,19 +959,19 @@
     <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.112.3/dist/umd/supabase.js"></script>
-    <script src="./seller-source-parsers.js?v=20260908-inventory-cancel-v79"></script>
-    <script src="./seller-export-adapter.js?v=20260908-inventory-cancel-v79"></script>
-    <script src="./matrix-csv-export.js?v=20260908-inventory-cancel-v79"></script>
-    <script src="./discount-price-math.js?v=20260908-inventory-cancel-v79"></script>
-    <script src="./source-refresh-verifier.js?v=20260908-inventory-cancel-v79"></script>
-    <script src="./relation-import-parser.js?v=20260908-inventory-cancel-v79"></script>
-    <script src="./bundle-import-parser.js?v=20260908-inventory-cancel-v79"></script>
-    <script src="./seller-bundle-import-parser.js?v=20260908-inventory-cancel-v79"></script>
-    <script src="./sellpia-source-parser.js?v=20260908-inventory-cancel-v79"></script>
-    <script src="./data-service.js?v=20260908-inventory-cancel-v79"></script>
-    <script src="./channels-page.js?v=20260908-inventory-cancel-v79"></script>
-    <script src="./app.js?v=20260908-inventory-cancel-v79"></script>
-    <script src="./attributes-page.js?v=20260908-inventory-cancel-v79"></script>
-    <script src="./price-rule-lab.js?v=20260908-inventory-cancel-v79"></script>
+    <script src="./seller-source-parsers.js?v=20260908-partial-export-v80"></script>
+    <script src="./seller-export-adapter.js?v=20260908-partial-export-v80"></script>
+    <script src="./matrix-csv-export.js?v=20260908-partial-export-v80"></script>
+    <script src="./discount-price-math.js?v=20260908-partial-export-v80"></script>
+    <script src="./source-refresh-verifier.js?v=20260908-partial-export-v80"></script>
+    <script src="./relation-import-parser.js?v=20260908-partial-export-v80"></script>
+    <script src="./bundle-import-parser.js?v=20260908-partial-export-v80"></script>
+    <script src="./seller-bundle-import-parser.js?v=20260908-partial-export-v80"></script>
+    <script src="./sellpia-source-parser.js?v=20260908-partial-export-v80"></script>
+    <script src="./data-service.js?v=20260908-partial-export-v80"></script>
+    <script src="./channels-page.js?v=20260908-partial-export-v80"></script>
+    <script src="./app.js?v=20260908-partial-export-v80"></script>
+    <script src="./attributes-page.js?v=20260908-partial-export-v80"></script>
+    <script src="./price-rule-lab.js?v=20260908-partial-export-v80"></script>
   </body>
 </html>

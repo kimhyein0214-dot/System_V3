@@ -2141,7 +2141,7 @@
     for (let from = 0; ; from += pageSize) {
       const {data, error} = await db
         .from('operations_hub_change_queue')
-        .select('change_id,source_channel,sellpia_sku_code,status,field_key')
+        .select('change_id,source_channel,sellpia_sku_code,status,field_key,seller_product_code,seller_option_code,target_channels,target_component_skus,target_safety_state,target_safety_details,error_message,validation_errors')
         .in('source_channel', selectedSources)
         .in('status', statuses)
         .order('change_id', {ascending:true})
@@ -2158,12 +2158,55 @@
   }
 
   async function validateSellerDraftsForExport(sources = [], skus = null) {
-    const reviewRows = await loadSellerDraftRows({sources, skus, statuses:['pending','failed']});
-    for (let offset = 0; offset < reviewRows.length; offset += 300) {
-      await validateChangeQueue(reviewRows.slice(offset, offset + 300).map(row => row.change_id));
+    return (await reviewSellerDraftsForExport({sources, skus})).changeIds;
+  }
+
+  function sellerExportExclusionReason(row) {
+    if (row.target_safety_state === 'conflict') return '재고 충돌: 연결된 구성 SKU가 서로 다른 수정값을 제안합니다. 연결·세트 구성을 확인해주세요.';
+    if (row.target_safety_state === 'incomplete') {
+      const detail = row.target_safety_details || {};
+      if (Number(detail.knownStockCount) < Number(detail.componentCount)) return '구성 SKU 재고 누락: 계산에 필요한 모든 셀피아 재고를 확인할 수 없습니다.';
+      return '판매처 원본 재고 확인 불가: 연결된 상품·옵션코드가 최신 원본에 있는지 확인해주세요.';
     }
-    const validatedRows = await loadSellerDraftRows({sources, skus, statuses:['validated']});
-    return validatedRows.map(row => Number(row.change_id));
+    if (row.source_channel && row.target_safety_state !== 'ready') return '내보내기 안전검사 상태를 확인할 수 없습니다.';
+    if (!['pending','validated','failed'].includes(row.status)) return '수정안 상태가 바뀌었습니다. 최신 수정안을 다시 확인해주세요.';
+    return '';
+  }
+
+  async function reviewSellerDraftsForExport({sources = [], skus = null, changeIds = null} = {}) {
+    const readSelected = async ids => {
+      const result = [];
+      for (let offset = 0; offset < ids.length; offset += 300) {
+        const {data, error} = await db.from('operations_hub_change_queue')
+          .select('change_id,source_channel,sellpia_sku_code,status,field_key,seller_product_code,seller_option_code,target_channels,target_component_skus,target_safety_state,target_safety_details,error_message,validation_errors')
+          .in('change_id', ids.slice(offset, offset + 300)).order('change_id', {ascending:true});
+        if (error) throw error;
+        result.push(...(data || []));
+      }
+      return result;
+    };
+    const selectedIds = Array.isArray(changeIds) ? [...new Set(changeIds.map(Number))] : null;
+    const rows = selectedIds ? await readSelected(selectedIds) : await loadSellerDraftRows({sources, skus});
+    const inScope = row => row.source_channel ? sources.includes(row.source_channel) : (row.target_channels || []).some(source => sources.includes(source));
+    const candidates = rows.filter(row => inScope(row) && !sellerExportExclusionReason(row) && ['pending','failed'].includes(row.status));
+    for (let offset = 0; offset < candidates.length; offset += 300) {
+      await validateChangeQueue(candidates.slice(offset, offset + 300).map(row => Number(row.change_id)));
+    }
+    // Re-read the same IDs so a new run, another operator, or a failed validation
+    // cannot silently expand the export scope.
+    const ids = selectedIds || rows.map(row => Number(row.change_id));
+    const fresh = new Map((await readSelected(ids)).map(row => [Number(row.change_id), row]));
+    const originals = new Map(rows.map(row => [Number(row.change_id), row]));
+    const eligible = [], excluded = [];
+    for (const id of ids) {
+      const row = fresh.get(id);
+      const reason = !row ? '수정안을 찾을 수 없거나 조회 권한이 변경되었습니다.'
+        : !inScope(row) ? '선택한 판매처 범위 밖의 수정안입니다.'
+        : sellerExportExclusionReason(row) || (row.status !== 'validated' ? row.error_message || (row.validation_errors || []).join(' · ') || '수정안 검증을 통과하지 못했습니다.' : '');
+      if (reason) excluded.push({item:row || originals.get(id) || {change_id:id}, reason});
+      else eligible.push(id);
+    }
+    return {changeIds:eligible, excluded};
   }
 
   async function loadLatestSellerOriginalStatus(sources = ['smartstore','makeshop','ably']) {
@@ -2237,7 +2280,14 @@
       items.push(...(data || []));
       if (!data || data.length < pageSize) break;
     }
-    return {items, summary:Array.isArray(summaryRows) ? summaryRows[0] : summaryRows};
+    const summary = Array.isArray(summaryRows) ? summaryRows[0] : summaryRows;
+    if (!items.length) {
+      const {data:batch, error:batchError} = await db.from('operations_hub_export_batches')
+        .select('error_message').eq('export_batch_id', batchId).maybeSingle();
+      if (batchError) throw batchError;
+      throw new Error(batch?.error_message || '내보내기 가능한 수정안이 없습니다. 제외 사유를 확인해주세요.');
+    }
+    return {items, summary};
   }
 
   async function completeSellerExport({batchId, success, manifest = [], errorMessage = '', skippedItems = []}) {
@@ -2249,7 +2299,7 @@
       p_skipped_items:(skippedItems || []).map(item => ({
         export_item_id:Number(item.export_item_id),
         reason:cleanText(item.reason)
-      })).filter(item => Number.isFinite(item.export_item_id))
+      })).filter(item => Number.isFinite(item.export_item_id) && item.export_item_id > 0)
     });
     if (error) throw error;
     return Array.isArray(data) ? data[0] : data;
@@ -3211,6 +3261,7 @@
     stageSellerInventoryDraftBatch,
     countSellerDraftsForExport,
     validateSellerDraftsForExport,
+    reviewSellerDraftsForExport,
     loadLatestSellerOriginalStatus,
     downloadLatestSellerOriginals,
     prepareSellerExport,

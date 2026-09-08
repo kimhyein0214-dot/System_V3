@@ -6497,6 +6497,7 @@ const sellerExportState = {
   running:false,
   cancelRequested:false,
   draftCancellable:false,
+  excludedItems:[],
   selectedSkus:[],
   filter:null,
   filteredSkus:null,
@@ -6651,6 +6652,18 @@ function showSellerExportProgress(percent, title, detail) {
   document.getElementById('seller-export-progress-percent').textContent = `${safePercent}%`;
   document.getElementById('seller-export-progress-bar').style.width = `${safePercent}%`;
   document.getElementById('seller-export-progress-detail').textContent = detail;
+}
+
+function showSellerExportExclusions(items = []) {
+  sellerExportState.excludedItems = items;
+  const panel = document.getElementById('seller-export-exclusions');
+  panel.hidden = !items.length;
+  document.getElementById('seller-export-exclusions-title').textContent = `제외 ${formatNumber(items.length)}건 · 사유 보기`;
+  const reasons = new Map();
+  for (const item of items) reasons.set(item.reason, (reasons.get(item.reason) || 0) + 1);
+  document.getElementById('seller-export-exclusions-summary').textContent = [...reasons].map(([reason, count]) => `${formatNumber(count)}건: ${reason}`).join('\n');
+  document.getElementById('seller-export-exclusions-rows').innerHTML = items.slice(0, 50).map(({item, reason}) =>
+    `<tr><td>${escapeHtml(CHANNEL_LABELS[item.source_channel] || item.source_channel || '공통')}</td><td>${escapeHtml(item.sellpia_sku_code || '')}</td><td>${escapeHtml(item.seller_product_code || '')}<br>${escapeHtml(item.seller_option_code || '(옵션 없음)')}</td><td>${escapeHtml(reason)}</td></tr>`).join('');
 }
 
 async function refreshSellerOriginalStates() {
@@ -7108,6 +7121,7 @@ function openSellerExport({action = 'export', rows = []} = {}) {
   if (sellerExportState.running) return;
   sellerExportState.cancelRequested = false;
   document.getElementById('seller-export-cancel').textContent = '취소';
+  showSellerExportExclusions([]);
   sellerExportState.rows = rows;
   sellerExportState.action = action;
   sellerExportState.selectedSkus = selectedMatrixSkus();
@@ -7238,19 +7252,19 @@ async function runSellerExport() {
     }
 
     showSellerExportProgress(4, '수정안 확인 중', '검토한 판매처 수정안으로 파일 생성 대상을 확정합니다. 수정 상태는 그대로 유지됩니다.');
-    let changeIds;
+    let review;
     if (sellerExportState.rows.length) {
       const scopedRows = sellerExportRowsForSources(sellerExportState.rows, sources);
-      const reviewIds = scopedRows.filter(row => ['pending','failed'].includes(row.status)).map(row => Number(row.change_id));
-      if (reviewIds.length) await liveData.validateChangeQueue(reviewIds);
-      changeIds = scopedRows.map(row => Number(row.change_id));
+      review = await liveData.reviewSellerDraftsForExport({sources, changeIds:scopedRows.map(row => Number(row.change_id))});
     } else {
       const scope = selectedSellerExportScope();
       const scopeSkus = await resolveSellerExportScopeSkus();
       if (scope !== 'all' && !scopeSkus.length) throw new Error(scope === 'selected' ? '선택한 셀 범위의 SKU가 없습니다.' : '현재 검색·필터 결과에 해당하는 SKU가 없습니다.');
-      changeIds = await liveData.validateSellerDraftsForExport(sources, scopeSkus);
+      review = await liveData.reviewSellerDraftsForExport({sources, skus:scopeSkus});
     }
-    if (!changeIds.length) throw new Error('매트릭스에서 검토할 판매처 수정안이 없습니다. 먼저 재고 수정안을 만들어주세요.');
+    const {changeIds, excluded} = review;
+    showSellerExportExclusions(excluded);
+    if (!changeIds.length) throw new Error(excluded.length ? `검증을 통과한 수정안이 없습니다. 제외 ${formatNumber(excluded.length)}건의 사유를 확인해주세요. 제외 목록은 CSV로 저장할 수 있습니다.` : '매트릭스에서 검토할 판매처 수정안이 없습니다. 먼저 재고 수정안을 만들어주세요.');
     showSellerExportProgress(9, '최신 원본 불러오는 중', '마지막 업로드 때 시스템에 보관한 원본 파일을 자동으로 가져옵니다.');
     const filesBySource = await liveData.downloadLatestSellerOriginals(sources, progress => {
       const ratio = progress.total ? progress.completed / progress.total : 0;
@@ -7262,18 +7276,23 @@ async function runSellerExport() {
     prepared = true;
     const blocked = items.filter(item => item.blocking_reason);
     const exportable = items.filter(item => !item.blocking_reason);
+    const initialExcluded = [...excluded, ...blocked.map(item => ({item, reason:item.blocking_reason, export_item_id:item.export_item_id}))];
+    showSellerExportExclusions(initialExcluded);
     if (!exportable.length) throw new Error(`원본 위치를 확인할 수 없는 항목만 ${formatNumber(blocked.length)}건입니다. 판매처 연결 코드와 최신 원본을 확인해주세요.`);
     showSellerExportProgress(22, '원본 파일 검증 중', `${formatNumber(exportable.length)}건을 대조합니다.${blocked.length ? ` 위치 확인 실패 ${formatNumber(blocked.length)}건은 제외합니다.` : ''}`);
-    const result = await sellerExport.buildExportArchive(filesBySource, exportable, (percent, detail) => showSellerExportProgress(22 + percent * .74, '판매처 수정본 생성 중', detail));
+    const result = await sellerExport.buildExportArchive(filesBySource, exportable, (percent, detail) => showSellerExportProgress(22 + percent * .74, '판매처 수정본 생성 중', detail), initialExcluded);
+    showSellerExportExclusions(result.skippedItems);
     await liveData.completeSellerExport({batchId, success:true, manifest:result.manifest, skippedItems:result.skippedItems});
+    prepared = false; // A later download/refresh failure must not overwrite a completed audit.
     const timestamp = new Date().toISOString().replace(/[-:T]/g,'').slice(0,12);
     sellerExport.downloadBlob(result.blob, `SystemV3_판매처원본_${timestamp}.zip`);
-    const skippedCount = blocked.length + result.skippedItems.length;
+    const skippedCount = result.skippedItems.length;
     showSellerExportProgress(100, 'ZIP 생성 완료', `${formatNumber(result.appliedItems.length)}건 · 파일 ${result.manifest.length}개를 내려받았습니다. XLSX 수정 셀은 형광 노랑·굵은 글씨로 표시했습니다.${skippedCount ? ` 원본 검증 충돌 ${formatNumber(skippedCount)}건은 제외목록 CSV에 기록했습니다.` : ''}`);
     showToast(`판매처 원본 ${formatNumber(result.appliedItems.length)}건 내보내기 완료${skippedCount ? ` · 충돌 ${formatNumber(skippedCount)}건 제외` : ''}`);
     await Promise.all([loadChangeQueue({silent:true}), loadLiveMatrix()]);
   } catch (error) {
     console.error(isDraftAction ? 'seller inventory draft staging failed' : 'seller export failed', error);
+    if (Array.isArray(error?.excludedItems)) showSellerExportExclusions(error.excludedItems);
     if (prepared) {
       try { await liveData.completeSellerExport({batchId, success:false, errorMessage:error?.message || String(error)}); } catch (completeError) { console.error('seller export failure state update failed', completeError); }
     }
@@ -7301,6 +7320,10 @@ document.getElementById('matrix-export-btn').addEventListener('click', () => ope
 document.getElementById('queue-export').addEventListener('click', () => openSellerExport({action:'export', rows:selectedQueueRows()}));
 document.getElementById('seller-export-close').addEventListener('click', closeSellerExport);
 document.getElementById('seller-export-cancel').addEventListener('click', closeSellerExport);
+document.getElementById('seller-export-exclusions-download').addEventListener('click', () => {
+  if (!sellerExportState.excludedItems.length) return;
+  sellerExport.downloadBlob(new Blob([sellerExport.conflictCsv(sellerExportState.excludedItems)], {type:'text/csv;charset=utf-8'}), 'SystemV3_내보내기_제외목록.csv');
+});
 document.getElementById('seller-export-run').addEventListener('click', runSellerExport);
 sellerExportModal.querySelectorAll('.seller-export-source-check').forEach(input => input.addEventListener('change', refreshSellerExportPreview));
 sellerExportModal.querySelectorAll('input[name="seller-export-scope"]').forEach(input => input.addEventListener('change', refreshSellerExportPreview));
