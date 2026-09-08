@@ -15,14 +15,44 @@
     // A repeated SKU is one stock source, not an implied component quantity.
     return {skus:[...new Set(parts)],error:''};
   }
-  global.AblyCombinationModel={parseSkuMemo};
+  function groupProducts(items) {
+    const groups=new Map();
+    for(const item of items) {
+      const row=item.row;
+      const key=JSON.stringify([row[0],row[1],row[2],row[3]].map(value=>String(value??'').trim()));
+      if(!groups.has(key))groups.set(key,{title:String(row[3]??'').trim()||'온라인 상품명 미입력',code:String(row[2]??''),items:[]});
+      groups.get(key).items.push(item);
+    }
+    return [...groups.values()];
+  }
+  global.AblyCombinationModel={parseSkuMemo,groupProducts};
   if(!global.document)return;
   const input=document.getElementById('ably-combination-file');
   const status=document.getElementById('ably-combination-file-status');
   const body=document.getElementById('ably-combination-preview');
   const escape=value=>String(value??'').replace(/[&<>"']/g,char=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[char]));
+  const products=document.getElementById('ably-imported-products');
+  const home=document.getElementById('ably-products-home');
+  const detail=document.getElementById('ably-imported-detail');
+  let groups=[],activeGroup=null,shown=0;
+  function showRows() {
+    shown=Math.min(shown+200,activeGroup.items.length);
+    body.innerHTML=activeGroup.items.slice(0,shown).map(({row,line,memo})=>`<tr><td>${line}</td><td>${escape(row[11])} / ${escape(row[13])}${row[15]?` / ${escape(row[15])}`:''}</td><td>${escape(row[17])||'미등록'}</td><td>${escape(row[16])||'—'}</td><td>${memo.skus.map(escape).join('<br>')||'—'}</td><td>${escape(memo.error||'연결값 확인 · 개별 재고 필요')}</td></tr>`).join('');
+    document.getElementById('ably-product-row-count').textContent=`조합 옵션 ${activeGroup.items.length}행 · 표시 ${shown}행`;
+    document.getElementById('ably-product-more').hidden=shown>=activeGroup.items.length;
+  }
+  products.addEventListener('click',event=>{
+    const button=event.target.closest('[data-ably-product]');if(!button)return;
+    activeGroup=groups[Number(button.dataset.ablyProduct)];shown=0;
+    document.getElementById('ably-product-title').textContent=activeGroup.title;
+    home.hidden=true;detail.hidden=false;showRows();document.getElementById('ably-product-back').focus();
+  });
+  document.getElementById('ably-product-back').onclick=()=>{
+    detail.hidden=true;home.hidden=false;input.focus();
+  };
+  document.getElementById('ably-product-more').onclick=showRows;
   input.addEventListener('change',async()=>{
-    const file=input.files?.[0];body.innerHTML='';if(!file)return;
+    const file=input.files?.[0];body.innerHTML='';products.innerHTML='';groups=[];if(!file)return;
     if(file.size>20*1024*1024){status.textContent='20MB 이하의 엑셀 파일을 선택하세요.';return;}
     input.disabled=true;status.textContent='파일의 Q열 연결 SKU를 확인하고 있습니다.';
     try {
@@ -33,7 +63,7 @@
       const range=global.XLSX.utils.decode_range(sheet['!ref']||'A1');
       if(range.e.r>20000)throw new Error('옵션 20,000행 이하의 파일을 선택하세요.');
       const data=global.XLSX.utils.sheet_to_json(sheet,{header:1,defval:'',raw:true,blankrows:true,range:'A1:AI'+(range.e.r+1)});
-      for(const [index,name] of [[2,'*판매자관리코드'],[9,'*옵션 Type'],[16,'옵션관리코드'],[17,'옵션 SKU 코드'],[22,'판매가능재고']]) {
+      for(const [index,name] of [[2,'*판매자관리코드'],[3,'온라인 상품명'],[9,'*옵션 Type'],[16,'옵션관리코드'],[17,'옵션 SKU 코드'],[22,'판매가능재고']]) {
         if(String(data[0]?.[index]??'').trim()!==name)throw new Error(`${global.XLSX.utils.encode_col(index)}열 헤더가 ${name}인지 확인하세요.`);
       }
       const rows=data.slice(1).map((row,index)=>({row,line:index+2})).filter(({row})=>row.some(value=>value!==''&&value!==null));
@@ -44,8 +74,9 @@
         if(!String(row[16]??'').trim())missing++;else if(memo.error)invalid++;else valid++;
         return {row,line,memo};
       });
-      body.innerHTML=result.slice(0,200).map(({row,line,memo})=>`<tr><td>${line}</td><td>${escape(row[2])}<br>${escape(row[11])} / ${escape(row[13])}${row[15]?` / ${escape(row[15])}`:''}</td><td>${escape(row[17])||'미등록'}</td><td>${escape(row[16])||'—'}</td><td>${memo.skus.map(escape).join('<br>')||'—'}</td><td>${escape(memo.error||'연결값 확인 · 개별 재고 필요')}</td></tr>`).join('')||'<tr><td colspan="6">조합형 옵션행이 없습니다.</td></tr>';
-      status.textContent=`${file.name} · 조합형 ${combinations.length}행 · 연결값 있음 ${valid} · 미등록 ${missing} · 형식 오류 ${invalid} · 미리보기 ${Math.min(200,result.length)}행. 파일은 이 브라우저에서만 읽으며 저장하지 않습니다.`;
+      groups=groupProducts(result);
+      products.innerHTML=groups.map((group,index)=>`<button type="button" class="ably-product-card" data-ably-product="${index}"><span><b>${escape(group.title)}</b><small>${escape(group.code)} · 조합 옵션 ${group.items.length}개</small></span><span>조합 보기 →</span></button>`).join('')||'<p>조합형 상품이 없습니다.</p>';
+      status.textContent=`${file.name} · 상품 ${groups.length}개 · 조합형 ${combinations.length}행 · 연결값 있음 ${valid} · 미등록 ${missing} · 형식 오류 ${invalid}. 파일은 이 브라우저에서만 읽으며 저장하지 않습니다.`;
     }catch(error){status.textContent=`파일 확인 실패: ${error.message}`;}
     finally{input.disabled=false;}
   });
