@@ -462,17 +462,35 @@
   function auditCsv(items){const rows=[['판매처','셀피아 SKU','변경항목','판매처 상품코드','옵션코드','변경 전','변경 후','원본 판매가','원본 옵션가','목표 판매가','할인 적용 판매가','목표 옵션가','목표 최종구매가','할인코드','원본 할인조건','목표 할인조건','입력 기준','가격 태그','원본파일','원본행']];for(const item of items)rows.push([SOURCE_LABELS[item.source_channel],item.sellpia_sku_code,FIELD_LABELS[item.field_key]||item.field_key,item.seller_product_code,item.seller_option_code,scalar(item.expected_source_value),scalar(item.after_value),item.base_price,item.option_price,item.target_base_price,item.target_discounted_base_price,item.target_option_price,item.target_final_price,discountRuleCode(item),JSON.stringify(item.source_discount_terms||[]),JSON.stringify(item.target_discount_terms||[]),item.pricing_input_mode||'legacy_final',item.price_rule_set_id||'',item.source_file_name,item.source_row_no]);return '\uFEFF'+rows.map(row=>row.map(csvCell).join(',')).join('\r\n');}
   function conflictCsv(conflicts){const rows=[['판매처','셀피아 SKU','변경항목','판매처 상품코드','옵션코드','제외 사유','원본파일','원본행','수정안 ID','구성 SKU']];for(const conflict of conflicts){const item=conflict.item;rows.push([SOURCE_LABELS[item.source_channel]||item.source_channel||'공통',item.sellpia_sku_code,FIELD_LABELS[item.field_key]||item.field_key,item.seller_product_code,item.seller_option_code,conflict.reason,item.source_file_name,item.source_row_no,item.change_id,(item.target_component_skus||[]).join(' · ')]);}return '\uFEFF'+rows.map(row=>row.map(value=>csvCell(typeof value==='string'&&/^[=+@-]/.test(value)?"'"+value:value)).join(',')).join('\r\n');}
 
-  async function buildExportArchive(filesBySource,items,onProgress,excludedItems = []) {
-    if(!items?.length) throw new Error('내보낼 항목이 없습니다.');
-    const blocked=items.filter(item=>item.blocking_reason); if(blocked.length) throw new Error(`원본 위치를 확인할 수 없는 항목이 ${blocked.length}건 있습니다.`);
-    const files=[...filesBySource.values()].flat(); const byName=new Map(files.map(file=>[file.name,file])); const grouped=new Map();
-    for(const item of items){if(!grouped.has(item.source_file_name))grouped.set(item.source_file_name,[]);grouped.get(item.source_file_name).push({...item});}
-    const missing=[...grouped.keys()].filter(name=>!byName.has(name)); if(missing.length)throw new Error(`최근 DB 스냅샷과 같은 원본 파일을 선택해주세요: ${missing.join(', ')}`);
-    const archive=new global.JSZip(); const manifest=[]; const appliedItems=[]; const skippedItems=[...excludedItems]; let index=0;
-    for(const [name,fileItems] of grouped){index+=1;onProgress?.(Math.round((index-1)/grouped.size*85),`${name} 검증·반영 중`);const file=byName.get(name);
-      const fileApplied=[];const recordApplied=item=>{fileApplied.push(item);appliedItems.push(item);};const recordConflict=conflict=>skippedItems.push({...conflict,export_item_id:Number(conflict.item.export_item_id)});
-      const blob=name.toLowerCase().endsWith('.csv')?await patchCsvFile(file,fileItems,recordConflict,recordApplied):await patchXlsxFile(file,fileItems,recordConflict,recordApplied);if(fileApplied.length){const nextName=outputName(name); archive.file(nextName,blob); manifest.push({source:fileItems[0].source_channel,source_name:name,output_name:nextName,item_count:fileApplied.length,skipped_count:fileItems.length-fileApplied.length,size:blob.size});}}
-    if(!appliedItems.length){const error=new Error(skippedItems[0]?.reason||'원본 검증을 통과한 항목이 없습니다.');error.excludedItems=skippedItems;throw error;}
+  async function buildExportArchive(filesBySource,items = [],onProgress,excludedItems = []) {
+    const key=(source,name)=>JSON.stringify([source,name]);
+    const files=[...filesBySource].flatMap(([source,entries])=>entries.map(file=>({source,file})));
+    if(!files.length)throw new Error('보관된 판매처 원본 파일이 없습니다. 원본을 먼저 업로드해주세요.');
+    const available=new Set(files.map(({source,file})=>key(source,file.name)));
+    const grouped=new Map(), archive=new global.JSZip(), manifest=[], appliedItems=[], skippedItems=[...excludedItems];
+    for(const item of items){
+      const fileKey=key(item.source_channel,item.source_file_name);
+      const reason=item.blocking_reason||(!available.has(fileKey)?'해당 수정안의 원본 파일이 최신 보관본에 없습니다. 원본값을 유지했습니다.':'');
+      if(reason){skippedItems.push({item,reason,export_item_id:Number(item.export_item_id)});continue;}
+      if(!grouped.has(fileKey))grouped.set(fileKey,[]);
+      grouped.get(fileKey).push({...item});
+    }
+    const nameCounts=new Map();
+    for(const {file} of files)nameCounts.set(file.name,(nameCounts.get(file.name)||0)+1);
+    for(const [index,{source,file}] of files.entries()){
+      const name=file.name, fileItems=grouped.get(key(source,name))||[], fileApplied=[];
+      onProgress?.(Math.round(index/files.length*85),`${name} ${fileItems.length?'검증·반영 중':'원본 그대로 포함'}`);
+      const recordApplied=item=>fileApplied.push(item);
+      const recordConflict=conflict=>skippedItems.push({...conflict,export_item_id:Number(conflict.item.export_item_id)});
+      // No edits means a byte-for-byte copy; never reserialize an unchanged XLSX.
+      let blob=file;
+      if(fileItems.length)blob=name.toLowerCase().endsWith('.csv')?await patchCsvFile(file,fileItems,recordConflict,recordApplied):await patchXlsxFile(file,fileItems,recordConflict,recordApplied);
+      if(!fileApplied.length)blob=file;
+      appliedItems.push(...fileApplied);
+      const nextName=(nameCounts.get(name)>1?source+'/':'')+outputName(name);
+      archive.file(nextName,blob);
+      manifest.push({source,source_name:name,output_name:nextName,item_count:fileApplied.length,skipped_count:fileItems.length-fileApplied.length,unchanged:!fileApplied.length,size:blob.size});
+    }
     archive.file('SystemV3_내보내기_검증.csv',auditCsv(appliedItems));if(skippedItems.length)archive.file('SystemV3_내보내기_제외목록.csv',conflictCsv(skippedItems));onProgress?.(90,'ZIP 파일 압축 중');
     const blob=await archive.generateAsync({type:'blob',compression:'DEFLATE',compressionOptions:{level:6}});return{blob,manifest,appliedItems,skippedItems};
   }

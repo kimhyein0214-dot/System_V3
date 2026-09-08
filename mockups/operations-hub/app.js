@@ -7153,15 +7153,15 @@ function openSellerExport({action = 'export', rows = []} = {}) {
   const defaultScope = matrixHasActiveExportFilter() ? 'filtered' : (skus.length ? 'selected' : 'all');
   const defaultScopeInput = sellerExportModal.querySelector(`input[name="seller-export-scope"][value="${defaultScope}"]`);
   if (defaultScopeInput) defaultScopeInput.checked = true;
-  document.getElementById('seller-export-title').textContent = action === 'draft' ? '셀피아 기준 재고 수정안' : '검토한 수정본 내보내기';
+  document.getElementById('seller-export-title').textContent = action === 'draft' ? '셀피아 기준 재고 수정안' : '현재 데이터 내보내기';
   document.getElementById('seller-export-kicker').textContent = action === 'draft' ? '매트릭스 수정안 생성' : '판매처 원본 파일 생성';
   document.getElementById('seller-export-guide-title').textContent = action === 'draft'
     ? `셀피아 재고와 다른 판매처 값을 수정안으로 만듭니다.${skus.length ? ` · 선택 ${formatNumber(skus.length)}개 SKU` : ' · 전체 매트릭스'}`
-    : '매트릭스에서 검토한 수정안만 최신 보관 원본에 반영합니다.';
+    : '최신 보관 원본에 현재 저장된 수정값을 반영해 내보냅니다.';
   document.getElementById('seller-export-guide-detail').textContent = action === 'draft'
     ? '원본 파일은 아직 바뀌지 않습니다. 생성 후 파란 수정 가능 셀에서 값을 확인하거나 다시 고칠 수 있습니다.'
-    : '원본을 다시 선택할 필요가 없습니다. 수정된 XLSX 셀은 형광 노랑 배경과 굵은 글씨로 표시해 별도의 ZIP 수정본으로 내려받습니다.';
-  document.getElementById('seller-export-run').textContent = action === 'draft' ? '매트릭스에 수정안 만들기' : '검토한 수정본 ZIP 만들기';
+    : '원본 파일 전체를 담고 선택 범위의 수정값을 반영합니다. 수정값이 없으면 원본 그대로 내보냅니다. 변경 셀은 노랑·굵은 글씨로 표시합니다.';
+  document.getElementById('seller-export-run').textContent = action === 'draft' ? '매트릭스에 수정안 만들기' : '현재 데이터 ZIP 만들기';
   document.getElementById('seller-export-progress').hidden = true;
   sellerExportModal.hidden = false;
   refreshSellerExportPreview();
@@ -7265,30 +7265,30 @@ async function runSellerExport() {
     }
     const {changeIds, excluded} = review;
     showSellerExportExclusions(excluded);
-    if (!changeIds.length) throw new Error(excluded.length ? `검증을 통과한 수정안이 없습니다. 제외 ${formatNumber(excluded.length)}건의 사유를 확인해주세요. 제외 목록은 CSV로 저장할 수 있습니다.` : '매트릭스에서 검토할 판매처 수정안이 없습니다. 먼저 재고 수정안을 만들어주세요.');
     showSellerExportProgress(9, '최신 원본 불러오는 중', '마지막 업로드 때 시스템에 보관한 원본 파일을 자동으로 가져옵니다.');
     const filesBySource = await liveData.downloadLatestSellerOriginals(sources, progress => {
       const ratio = progress.total ? progress.completed / progress.total : 0;
       showSellerExportProgress(9 + ratio * 8, '최신 원본 불러오는 중', progress.name ? `${progress.name} 다운로드 중` : '원본 다운로드 완료');
     });
     showSellerExportProgress(18, 'DB 반영 계획 생성 중', `${formatNumber(changeIds.length)}건의 원본 위치를 판매처 코드로 확인하고 있습니다.`);
-    const preparedExport = await liveData.prepareSellerExport({batchId, mode:'change_queue', changeIds, sources});
+    const preparedExport = changeIds.length
+      ? await liveData.prepareSellerExport({batchId, mode:'change_queue', changeIds, sources})
+      : {items:[]};
     const items = preparedExport.items;
-    prepared = true;
+    prepared = Boolean(changeIds.length);
     const blocked = items.filter(item => item.blocking_reason);
     const exportable = items.filter(item => !item.blocking_reason);
     const initialExcluded = [...excluded, ...blocked.map(item => ({item, reason:item.blocking_reason, export_item_id:item.export_item_id}))];
     showSellerExportExclusions(initialExcluded);
-    if (!exportable.length) throw new Error(`원본 위치를 확인할 수 없는 항목만 ${formatNumber(blocked.length)}건입니다. 판매처 연결 코드와 최신 원본을 확인해주세요.`);
     showSellerExportProgress(22, '원본 파일 검증 중', `${formatNumber(exportable.length)}건을 대조합니다.${blocked.length ? ` 위치 확인 실패 ${formatNumber(blocked.length)}건은 제외합니다.` : ''}`);
     const result = await sellerExport.buildExportArchive(filesBySource, exportable, (percent, detail) => showSellerExportProgress(22 + percent * .74, '판매처 수정본 생성 중', detail), initialExcluded);
     showSellerExportExclusions(result.skippedItems);
-    await liveData.completeSellerExport({batchId, success:true, manifest:result.manifest, skippedItems:result.skippedItems});
+    if (prepared) await liveData.completeSellerExport({batchId, success:result.appliedItems.length > 0, manifest:result.manifest, skippedItems:result.skippedItems, errorMessage:result.appliedItems.length ? '' : '수정값은 모두 제외되어 원본값으로 파일을 생성했습니다.'});
     prepared = false; // A later download/refresh failure must not overwrite a completed audit.
     const timestamp = new Date().toISOString().replace(/[-:T]/g,'').slice(0,12);
     sellerExport.downloadBlob(result.blob, `SystemV3_판매처원본_${timestamp}.zip`);
     const skippedCount = result.skippedItems.length;
-    showSellerExportProgress(100, 'ZIP 생성 완료', `${formatNumber(result.appliedItems.length)}건 · 파일 ${result.manifest.length}개를 내려받았습니다. XLSX 수정 셀은 형광 노랑·굵은 글씨로 표시했습니다.${skippedCount ? ` 원본 검증 충돌 ${formatNumber(skippedCount)}건은 제외목록 CSV에 기록했습니다.` : ''}`);
+    showSellerExportProgress(100, 'ZIP 생성 완료', `파일 ${result.manifest.length}개 · 수정값 ${formatNumber(result.appliedItems.length)}건 반영. ${result.appliedItems.length ? 'XLSX 수정 셀은 형광 노랑·굵은 글씨로 표시했습니다.' : '반영할 수정값이 없어 최신 보관 원본을 그대로 담았습니다.'}${skippedCount ? ` 이상 항목 ${formatNumber(skippedCount)}건은 제외목록 CSV에 기록했으며 원본값을 유지했습니다.` : ''}`);
     showToast(`판매처 원본 ${formatNumber(result.appliedItems.length)}건 내보내기 완료${skippedCount ? ` · 충돌 ${formatNumber(skippedCount)}건 제외` : ''}`);
     await Promise.all([loadChangeQueue({silent:true}), loadLiveMatrix()]);
   } catch (error) {

@@ -79,7 +79,7 @@ assert.match(data, /prepareSellerExport[\s\S]*?range\(from, from \+ pageSize - 1
 assert.match(data, /rpc\('prepare_operations_hub_change_export'/, 'the frontend must use the optimized bulk preparation RPC');
 assert.match(data, /completeSellerExport[\s\S]*?confirmChangesApplied/, 'the frontend adapter must expose export and manual apply confirmation');
 assert.match(data, /p_skipped_items:[\s\S]*?export_item_id[\s\S]*?reason/, 'runtime export conflicts must be sent back to the database');
-assert.match(app, /buildExportArchive[\s\S]*?completeSellerExport\(\{batchId, success:true/, 'files must be built before their export audit is finalized');
+assert.match(app, /buildExportArchive[\s\S]*?completeSellerExport\(\{batchId, success:result\.appliedItems\.length > 0/, 'files must be built before their export audit is finalized');
 assert.match(data, /attachChangeExportAudit[\s\S]*?has_exported_file:audit\.exported_file_count > 0/, 'queue rows must derive file history from export items');
 assert.match(app, /row\.status === 'validated' && row\.has_exported_file/, 'manual apply confirmation must use validated edits with an exported-file audit');
 assert.doesNotMatch(html, /<option value="(?:processing|exported)">/, 'file lifecycle states must not appear in the change-status filter');

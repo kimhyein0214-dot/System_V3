@@ -103,7 +103,7 @@ for (const allExcluded of [false,true]) {
       downloadLatestSellerOriginals:async()=>new Map(),prepareSellerExport:async()=>{calls.push('prepare');return {items:[good,blocked]};},
       completeSellerExport:async p=>completed.push(p)},
     sellerExport:{buildExportArchive:async(files,items,progress,initial)=>{
-      assert.deepEqual(items,[good]);assert.equal(initial.length,2);
+      assert.deepEqual(Array.from(items),allExcluded?[]:[good]);assert.equal(initial.length,allExcluded?1:2);
       return {manifest:[],blob:new Blob(),appliedItems:items,skippedItems:initial};
     },downloadBlob:()=>calls.push('download')},
     loadChangeQueue:async()=>{},loadLiveMatrix:async()=>{}};
@@ -112,7 +112,7 @@ for (const allExcluded of [false,true]) {
   await context.run();
   assert.equal(state.running,false);
   assert.equal(completed.length,allExcluded?0:1);
-  assert.equal(calls.includes('download'),!allExcluded);
+  assert.equal(calls.includes('download'),true,'all excluded must still download unchanged originals');
   assert.equal(state.excludedItems.length,allExcluded?1:2);
   if(!allExcluded)assert.ok(calls.some(x=>x?.p===100 && /2건은 제외목록/.test(x.d)),'excluded count must not be double-counted');
 }
