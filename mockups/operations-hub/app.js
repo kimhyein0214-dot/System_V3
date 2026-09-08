@@ -11066,11 +11066,6 @@ sidebarToggle.addEventListener('click', () => {
 });
 setSidebarCollapsed(localStorage.getItem(SIDEBAR_COLLAPSED_KEY) === 'true', {persist:false});
 
-window.addEventListener('operations-stock-changed', () => {
-  void loadLiveMatrix({resetPage:false,resetScroll:false});
-  multiLinkWorkspaceState.allLoaded = false;
-});
-
 function showPage(pageId) {
   document.querySelectorAll('.page').forEach(page => page.classList.remove('active-page'));
   document.querySelectorAll('.nav-item').forEach(item => item.classList.toggle('active', item.dataset.page === pageId));
@@ -11080,7 +11075,7 @@ function showPage(pageId) {
   if (pageId === 'channels') window.SystemV3ChannelsPage?.show();
   if (pageId === 'attributes') window.SystemV3AttributesPage?.show();
   if (pageId === 'multi-links' && multiLinkWorkspaceState.tab === 'all' && !multiLinkWorkspaceState.allLoaded) loadManagedConnections();
-  if (pageId === 'inventory') window.OperationsOrderStock?.open();
+  if (pageId === 'inventory') loadInventorySurvey({silent:inventoryState.loaded});
   if (pageId === 'price-rules') {
     window.SystemV3PriceRuleLab?.refresh();
     loadInboundCostTags({silent:inboundCostState.loaded});
