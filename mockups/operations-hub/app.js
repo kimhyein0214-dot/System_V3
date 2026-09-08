@@ -730,7 +730,8 @@ function matrixRelationPathBadge(product) {
   if (context.kind !== 'related') return '';
   const path = context.pathSkus.length ? context.pathSkus.join(' → ') : context.rootSku;
   const label = `${matrixRelationshipFamilyLabel(context.relationshipFamily)} · ${matrixRelationDirectionLabel(context.direction)}${context.depth ? ` · ${context.depth}단계` : ''}`;
-  return `<em class="matrix-related-context-badge" title="${escapeHtml(path)}">${escapeHtml(label)}</em>`;
+  const shortLabel = {ancestor:'상위', descendant:'하위', bundle_component:'구성품', bundle_parent:'세트', seller_bundle_sibling:'함께 구성'}[context.direction] || '관련';
+  return `<em class="matrix-related-context-badge" title="${escapeHtml(label + '\n' + path)}" aria-label="${escapeHtml(label + ' · ' + path)}">↳ ${escapeHtml(shortLabel)}</em>`;
 }
 
 function inboundCostCell(product) {
@@ -1228,9 +1229,9 @@ function renderLiveMatrixRows(products) {
     const isRelatedContext = product?.matrix_context?.kind === 'related';
     const relationBadge = matrixRelationPathBadge(product);
     const skuMarkup = codeRow
-      ? `<span class="code-list-sku-cell"><b>${sku}</b><em>엑셀 ${inputRow}행</em></span>`
+      ? `<span class="code-list-sku-cell"><b>${sku}</b><em>엑셀 ${inputRow}행</em>${isRelatedContext ? relationBadge : ''}</span>`
       : isRelatedContext
-        ? `<span class="matrix-related-sku"><b>${sku}</b><em>↳ ${escapeHtml(matrixRelationshipFamilyLabel(relationContext.relationshipFamily))} · ${escapeHtml(matrixRelationDirectionLabel(relationContext.direction))}</em></span>`
+        ? `<span class="matrix-related-sku"><b>${sku}</b>${relationBadge}</span>`
         : sku;
     const rawOwnCode = product.sellpia_own_code || product.own_code || '';
     const ownCode = escapeHtml(rawOwnCode || '-');
@@ -1269,7 +1270,7 @@ function renderLiveMatrixRows(products) {
       <td class="sticky-col select-col" aria-hidden="true"></td>
       <td class="sticky-col image-col image-drop-cell" data-image-drop="${sku}" title="이미지를 이 셀에 놓으면 ${sku}.jpg로 저장됩니다.">${matrixImage(product)}<span class="image-drop-hint">DROP</span></td>
       <td class="sticky-col sellpia-sku-col sellpia-code-cell${isPriceBasis ? ' price-basis-cell' : ''}"><button type="button" class="sellpia-sku-link" data-open-sku-links title="이 SKU의 판매처 연결정보 열기">${skuMarkup}</button></td>
-      <td class="sticky-col sellpia-name-col sellpia-text-cell"><span title="${displayName}">${displayName}</span>${relationBadge}</td>
+      <td class="sticky-col sellpia-name-col sellpia-text-cell"><span title="${displayName}">${displayName}</span></td>
       <td class="sticky-col sellpia-option-name-col sellpia-text-cell"><span title="${optionName}">${optionName}</span></td>
       <td class="sticky-col own-code-col">${sellpiaEditor('sellpia_own_code', '셀피아 자사코드', rawOwnCode, {className:'sellpia-text-compact'})}</td>
       <td class="sticky-col sellpia-stock-col number-cell">${systemOperationalCell(product, 'system_stock', '시스템 기준재고', sellpiaSourceStock)}</td>

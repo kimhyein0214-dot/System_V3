@@ -365,8 +365,7 @@
 .matrix-table .tag,
 .matrix-table .price-rule-badge,
 .matrix-table .price-rule-final,
-.matrix-table .inbound-cost-badge,
-.matrix-related-context-badge {
+.matrix-table .inbound-cost-badge {
   min-height: var(--oh-matrix-badge-height);
   box-sizing: border-box;
   padding: 4px 7px;

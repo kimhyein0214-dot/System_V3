@@ -80,7 +80,7 @@ assert.match(
 );
 assert.match(
   app,
-  /function matrixRelationContext\(product\)[\s\S]*?raw\.relationshipFamily[\s\S]*?return \{kind, rootSku, direction, depth, pathSkus, relationshipFamily[\s\S]*?function renderLiveMatrixRows[\s\S]*?relationContext\.relationshipFamily[\s\S]*?data-relationship-family/i,
+  /function matrixRelationContext\(product\)[\s\S]*?raw\.relationshipFamily[\s\S]*?return \{kind, rootSku, direction, depth, pathSkus, relationshipFamily[\s\S]*?function renderLiveMatrixRows[\s\S]*?data-relationship-family="\$\{escapeHtml\(relationContext\.relationshipFamily\)/i,
   '관련 행 렌더링은 정규화된 relationshipFamily를 실제 행 라벨과 식별 속성에 사용해야 한다',
 );
 assert.match(
