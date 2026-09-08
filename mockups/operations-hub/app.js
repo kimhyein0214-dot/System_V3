@@ -6495,6 +6495,8 @@ const sellerExportState = {
   rows:[],
   action:'export',
   running:false,
+  cancelRequested:false,
+  draftCancellable:false,
   selectedSkus:[],
   filter:null,
   filteredSkus:null,
@@ -7103,6 +7105,9 @@ matrixContextDisconnect?.addEventListener('click', event => {
 });
 
 function openSellerExport({action = 'export', rows = []} = {}) {
+  if (sellerExportState.running) return;
+  sellerExportState.cancelRequested = false;
+  document.getElementById('seller-export-cancel').textContent = '취소';
   sellerExportState.rows = rows;
   sellerExportState.action = action;
   sellerExportState.selectedSkus = selectedMatrixSkus();
@@ -7149,11 +7154,21 @@ function openSellerExport({action = 'export', rows = []} = {}) {
 }
 
 function closeSellerExport() {
-  if (sellerExportState.running) return;
+  if (sellerExportState.running) {
+    if (sellerExportState.action !== 'draft' || !sellerExportState.draftCancellable || sellerExportState.cancelRequested) return;
+    sellerExportState.cancelRequested = true;
+    document.getElementById('seller-export-cancel').disabled = true;
+    document.getElementById('seller-export-close').disabled = true;
+    document.getElementById('seller-export-cancel').textContent = '중단 요청됨';
+    document.getElementById('seller-export-progress-title').textContent = '중단 요청 · 현재 묶음 처리 대기';
+    document.getElementById('seller-export-progress-detail').textContent = '이미 요청한 최대 100개 SKU의 결과를 확인한 뒤 중단합니다. 이미 저장된 수정안은 유지됩니다.';
+    return;
+  }
   sellerExportModal.hidden = true;
 }
 
 async function runSellerExport() {
+  if (sellerExportState.running) return;
   const isDraftAction = sellerExportState.action === 'draft';
   if (isDraftAction && !liveData?.stageSellerInventoryDraftBatch) {
     showToast('재고 수정안 생성 기능을 불러오지 못했습니다. 새로고침 후 다시 시도해주세요.');
@@ -7168,13 +7183,18 @@ async function runSellerExport() {
   const batchId = createRequestId();
   const button = document.getElementById('seller-export-run');
   sellerExportState.running = true;
+  sellerExportState.cancelRequested = false;
+  sellerExportState.draftCancellable = isDraftAction;
   button.disabled = true;
-  document.getElementById('seller-export-cancel').disabled = true;
-  document.getElementById('seller-export-close').disabled = true;
+  document.getElementById('seller-export-cancel').disabled = !isDraftAction;
+  document.getElementById('seller-export-cancel').textContent = isDraftAction ? '생성 중단' : '취소';
+  document.getElementById('seller-export-close').disabled = !isDraftAction;
   let prepared = false;
+  let draftProcessed = 0;
+  let draftStaged = 0;
   try {
     if (isDraftAction) {
-      const skus = selectedMatrixSkus();
+      const skus = [...sellerExportState.selectedSkus];
       showSellerExportProgress(5, '재고 차이 계산 준비', `${skus.length ? `선택 ${formatNumber(skus.length)}개 SKU` : '전체 매트릭스'}를 안전한 묶음으로 나눠 확인합니다.`);
       let afterSku = null;
       let processed = 0;
@@ -7183,24 +7203,37 @@ async function runSellerExport() {
       let cancelled = 0;
       let hasMore = true;
       while (hasMore) {
+        if (sellerExportState.cancelRequested) break;
+        // Let the in-flight transaction finish: aborting HTTP cannot undo committed drafts.
         const result = await liveData.stageSellerInventoryDraftBatch({sources, skus, batchId, afterSku, batchSize:100});
         const batchProcessed = Number(result?.processed_count || 0);
         if (!total) total = Number(result?.total_count || 0);
         processed += batchProcessed;
         staged += Number(result?.staged_count || 0);
+        draftProcessed = processed;
+        draftStaged = staged;
         cancelled += Number(result?.cancelled_count || 0);
         afterSku = result?.next_cursor || null;
         hasMore = Boolean(result?.has_more) && batchProcessed > 0 && afterSku;
         const ratio = total ? Math.min(processed / total, 1) : 1;
         showSellerExportProgress(
           5 + ratio * 90,
-          '재고 수정안 생성 중',
+          sellerExportState.cancelRequested ? '중단 결과 확인 중' : '재고 수정안 생성 중',
           `${formatNumber(Math.min(processed, total || processed))} / ${formatNumber(total || processed)} SKU 확인 · 수정안 ${formatNumber(staged)}건 저장`
         );
       }
-      showSellerExportProgress(100, '수정안 생성 완료', `${formatNumber(staged)}건을 매트릭스 검토 대기로 저장했습니다. 판매처 셀에서 값을 다시 수정할 수 있습니다.`);
-      showToast(staged ? `재고 수정안 ${formatNumber(staged)}건을 만들었습니다.${cancelled ? ` 기존 수정안 ${formatNumber(cancelled)}건은 교체했습니다.` : ''}` : '셀피아 재고와 다른 판매처 값이 없습니다.');
-      await Promise.all([loadLiveMatrix(), loadChangeQueue({silent:true}), loadLiveDashboardMetrics()]);
+      sellerExportState.draftCancellable = false;
+      document.getElementById('seller-export-cancel').disabled = true;
+      document.getElementById('seller-export-close').disabled = true;
+      if (sellerExportState.cancelRequested && hasMore) {
+        showSellerExportProgress(total ? processed / total * 100 : 0, '재고 수정안 생성 중단', `${formatNumber(processed)} / ${formatNumber(total || processed)} SKU 확인 · 수정안 ${formatNumber(staged)}건 저장·유지. 나머지는 생성하지 않았습니다.${cancelled ? ` 기존 수정안 ${formatNumber(cancelled)}건은 교체되었습니다.` : ''}`);
+        showToast(`재고 수정안 생성을 중단했습니다. 저장된 ${formatNumber(staged)}건은 유지됩니다.`);
+      } else {
+        showSellerExportProgress(100, '수정안 생성 완료', `${formatNumber(staged)}건을 매트릭스 검토 대기로 저장했습니다. 판매처 셀에서 값을 다시 수정할 수 있습니다.${sellerExportState.cancelRequested ? ' 마지막 묶음까지 처리가 완료되어 남은 작업은 없습니다.' : ''}`);
+        showToast(staged ? `재고 수정안 ${formatNumber(staged)}건을 만들었습니다.${cancelled ? ` 기존 수정안 ${formatNumber(cancelled)}건은 교체했습니다.` : ''}` : '셀피아 재고와 다른 판매처 값이 없습니다.');
+      }
+      const refreshes = await Promise.allSettled([loadLiveMatrix(), loadChangeQueue({silent:true}), loadLiveDashboardMetrics()]);
+      if (refreshes.some(result => result.status === 'rejected')) showToast('수정안 처리 결과는 저장되었습니다. 화면 갱신에 실패한 항목은 DB 새로고침으로 확인해주세요.');
       return;
     }
 
@@ -7247,13 +7280,18 @@ async function runSellerExport() {
     showSellerExportProgress(
       0,
       isDraftAction ? '수정안 생성 실패' : '내보내기 중단',
-      error?.message || (isDraftAction ? 'DB 연결 상태를 확인한 뒤 다시 시도해주세요.' : '원본 파일을 확인해주세요.')
+      isDraftAction
+        ? `${error?.message || 'DB 연결 상태를 확인해주세요.'} · 응답으로 확인한 ${formatNumber(draftProcessed)} SKU / 수정안 ${formatNumber(draftStaged)}건은 유지됩니다. 마지막 요청의 반영 여부는 DB 새로고침 후 확인해주세요.`
+        : error?.message || '원본 파일을 확인해주세요.'
     );
     showToast(`${isDraftAction ? '수정안 생성' : '원본 내보내기'} 실패: ${error?.message || error}`);
   } finally {
     sellerExportState.running = false;
+    sellerExportState.cancelRequested = false;
+    sellerExportState.draftCancellable = false;
     button.disabled = false;
     document.getElementById('seller-export-cancel').disabled = false;
+    document.getElementById('seller-export-cancel').textContent = '닫기';
     document.getElementById('seller-export-close').disabled = false;
   }
 }
