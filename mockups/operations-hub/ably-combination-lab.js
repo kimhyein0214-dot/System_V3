@@ -4,10 +4,10 @@
     {sku:'1000-1+2',name:'테스트 2종 조합',memo:'1000-1/1000-2'},
     {sku:'1000-3+4+5',name:'테스트 3종 조합',memo:'[1000-3],[1000-4],[1000-5]'},
     {sku:'1000-6+7+8',name:'테스트 품절 조합',memo:'1000-6/1000-7/1000-8'},
-    {sku:'1000-9+10',name:'테스트 마지막 조합',memo:'[1000-9],[1000-10]'}
+    {sku:'1000-9',name:'테스트 단일 SKU',memo:'[1000-9]'}
   ];
   function initialState() {
-    return {stocks:Object.fromEntries([20,12,30,8,16,10,0,25,7,18].map((stock,index)=>[`1000-${index+1}`,String(stock)])),
+    return {stocks:Object.fromEntries([20,12,30,8,16,10,0,25,7].map((stock,index)=>[`1000-${index+1}`,String(stock)])),
       combinations:definitions.map(row=>({...row,stock:'999'}))};
   }
   function calculate(memo,stocks) {
