@@ -545,10 +545,8 @@
       throwIfAborted(signal);
       products = await attach(products, signal, prefetched);
     }
-    if (global.HubPlatformRules?.projectRows) {
-      products = await global.HubPlatformRules.projectRows(products);
-      throwIfAborted(signal);
-    }
+    products = await attachStoredCalculatedPrices(products, signal);
+    throwIfAborted(signal);
     return products;
   }
 
@@ -1845,6 +1843,17 @@
     return data || {};
   }
 
+  async function loadInboundCostTagSkus(tagId) {
+    const rows=[];
+    for(let from=0;;from+=1000){
+      const {data,error}=await db.from('operations_hub_inbound_cost_settings').select('sellpia_sku_code').eq('formula_tag_id',Number(tagId)).range(from,from+999);
+      if(error)throw error;
+      rows.push(...(data||[]));
+      if((data||[]).length<1000)break;
+    }
+    return [...new Set(rows.map(row=>cleanText(row.sellpia_sku_code)).filter(Boolean))];
+  }
+
   async function savePriceRuleTag({tagId = null, tagName, color, tagRole = 'price', discountSource = null, discountRuleCode = null, replacePrice, modifyType, modifyValue, minPrice, maxPrice, roundingUnit, roundingMode, note = ''}) {
     const optionalNumber = value => value === '' || value === null || value === undefined ? null : Number(value);
     const {data, error} = await db.rpc('save_operations_hub_price_rule_tag', {
@@ -2462,6 +2471,92 @@
     }));
     return results.flat();
   }
+  async function beginCalculationGeneration({reason = '가격 계산 결과 갱신', requestId = global.crypto.randomUUID()} = {}) {
+    const {data,error}=await db.rpc('hub_calculation_begin_v1',{
+      p_session_token:requireOperationsHubSessionToken(),p_reason:cleanText(reason),p_request_id:requestId
+    });
+    if(error)throw readableDatabaseError(error);return data||{};
+  }
+  async function upsertCalculatedPriceResults({generationId,rows} = {}) {
+    const entries=Array.isArray(rows)?rows:[];
+    if(!entries.length||entries.length>1000)throw Error('계산 결과 저장은 요청당 1~1,000개여야 합니다.');
+    const {data,error}=await db.rpc('hub_calculation_results_upsert_v1',{
+      p_session_token:requireOperationsHubSessionToken(),p_generation_id:Number(generationId),p_rows:entries
+    });
+    if(error)throw readableDatabaseError(error);return data||{};
+  }
+  async function loadCalculatedResults({skus,scope=null,fields=null,onProgress} = {}) {
+    const codes=[...new Set((skus||[]).map(cleanText).filter(Boolean))];
+    if(!codes.length)return {rows:[],missing:[],missingSkus:[]};
+    const rows=[],missing=[],missingSkus=[];
+    for(let offset=0;offset<codes.length;offset+=200){
+      const chunk=codes.slice(offset,offset+200);let afterKey=null;
+      do{
+        const {data,error}=await db.rpc('hub_calculation_results_read_v1',{
+          p_session_token:requireOperationsHubSessionToken(),p_skus:chunk,p_scope:scope,p_fields:fields,p_after_key:afterKey,p_limit:1000
+        });
+        if(error)throw readableDatabaseError(error);
+        rows.push(...(data?.rows||[]));missing.push(...(data?.missing||[]));missingSkus.push(...(data?.missing_skus||[]));afterKey=data?.next_key||null;
+      }while(afterKey);
+      onProgress?.(Math.min(offset+chunk.length,codes.length),codes.length);
+    }
+    return {rows,missing,missingSkus:[...new Set(missingSkus)]};
+  }
+  async function loadStoredMatrixPrices({sources=['smartstore','makeshop','ably'],skus=null,onProgress} = {}) {
+    const selected=[...new Set(sources.map(cleanText).filter(source=>['smartstore','makeshop','ably'].includes(source)))];
+    let codes=skus===null?null:[...new Set((skus||[]).map(cleanText).filter(Boolean))];
+    if(codes===null){
+      const target=await loadAllFilteredSkus({status:'all'},{onProgress:progress=>onProgress?.(progress?.message||'전체 SKU 목록을 읽습니다.')});
+      codes=target.skus;
+    }
+    if(!selected.length||!codes.length)return {rows:[],missing:[]};
+    const required=['platform_registration_price','platform_discount_price','platform_option_price','platform_final_price'];
+    const flat=[],missing=[],jobs=[];let completed=0,total=codes.length*selected.length,nextJob=0;
+    for(const source of selected)for(let offset=0;offset<codes.length;offset+=200)jobs.push({source,codes:codes.slice(offset,offset+200)});
+    await Promise.all(Array.from({length:Math.min(6,jobs.length)},async()=>{
+      while(nextJob<jobs.length){
+        const job=jobs[nextJob++],result=await loadCalculatedResults({skus:job.codes,scope:job.source,fields:required});
+        flat.push(...result.rows);missing.push(...result.missing);completed+=job.codes.length;
+        onProgress?.(`저장 가격 ${Math.min(completed,total).toLocaleString('ko-KR')} / ${total.toLocaleString('ko-KR')} SKU 조회`);
+      }
+    }));
+    const grouped=new Map();
+    for(const row of flat){
+      if(row.mapping_missing||!cleanText(row.seller_product_code))continue;
+      const key=JSON.stringify([row.sku,row.scope]),entry=grouped.get(key)||{sellpia_sku_code:row.sku,source_channel:row.scope,seller_product_code:row.seller_product_code||'',seller_option_code:row.seller_option_code||'',fields:new Map(),rule_versions:[]};
+      entry.fields.set(row.field,row);entry.rule_versions.push(...(row.rule_versions||[]));grouped.set(key,entry);
+    }
+    const rows=[...grouped.values()].map(entry=>{
+      const get=field=>entry.fields.get(field),values=required.map(get),errors=values.filter(row=>row?.status==='error'||row?.error),generations=new Set(values.map(row=>row?.generation_id).filter(value=>value!==null&&value!==undefined));
+      const discountDetails=get('platform_final_price')?.result_details||get('platform_discount_price')?.result_details||{};
+      const incomplete=values.some(row=>!row),mixed=generations.size>1;
+      const versions=[...new Map(entry.rule_versions.map(version=>[`${version.id}:${version.version}:${version.assignmentVersion||''}`,version])).values()];
+      return {sellpia_sku_code:entry.sellpia_sku_code,source_channel:entry.source_channel,seller_product_code:entry.seller_product_code,seller_option_code:entry.seller_option_code,
+        base_price:get('platform_registration_price')?.value,discounted_base_price:get('platform_discount_price')?.value,option_price:get('platform_option_price')?.value,final_price:get('platform_final_price')?.value,
+        discount_terms:Array.isArray(discountDetails.discount_terms)?discountDetails.discount_terms:[],rule_versions:versions,generation_id:generations.size===1?[...generations][0]:null,
+        status:errors.length||incomplete||mixed?'error':'calculated',error:errors.map(row=>row.error).filter(Boolean).join(' / ')||(incomplete?'저장된 가격 단계가 일부 없습니다.':mixed?'저장된 가격의 계산 세대가 일치하지 않습니다.':'')};
+    });
+    onProgress?.(`저장된 매트릭스 가격 ${rows.length.toLocaleString('ko-KR')}건을 불러왔습니다.`);
+    return {rows,missing};
+  }
+  async function attachStoredCalculatedPrices(products, signal) {
+    const codes=[...new Set(products.map(product=>cleanText(product?.sellpia_sku_code)).filter(Boolean))];
+    if(!codes.length)return products;
+    const [internal,platform]=await Promise.all([
+      loadCalculatedResults({skus:codes,scope:'',fields:['calculated_base_price']}),
+      loadStoredMatrixPrices({sources:['smartstore','makeshop','ably'],skus:codes})
+    ]);
+    throwIfAborted(signal);
+    const internalBySku=new Map(internal.rows.map(row=>[row.sku,row])),platformBySku=new Map();
+    for(const row of platform.rows){if(!platformBySku.has(row.sellpia_sku_code))platformBySku.set(row.sellpia_sku_code,{});platformBySku.get(row.sellpia_sku_code)[row.source_channel]={platformBase:row.base_price,discounted:row.discounted_base_price,platformDiscount:row.base_price==null||row.discounted_base_price==null?null:Number(row.base_price)-Number(row.discounted_base_price),platformOption:row.option_price,platformFinal:row.final_price,platformTerms:row.discount_terms,versions:row.rule_versions,error:row.error};}
+    return products.map(product=>{
+      const sku=cleanText(product?.sellpia_sku_code),row={...product},storedInternal=internalBySku.get(sku),storedPlatform=platformBySku.get(sku);
+      if(storedInternal)row.__hubInternalPrices={calculated_base_price:storedInternal.status==='error'?{error:storedInternal.error,versions:storedInternal.rule_versions||[]}:{value:Number(storedInternal.value),versions:storedInternal.rule_versions||[]}};
+      else delete row.__hubInternalPrices;
+      if(storedPlatform)row.__hubRulePrices=storedPlatform;else delete row.__hubRulePrices;
+      return row;
+    });
+  }
   async function savePlatformRuleGroup(rule) {
     const {data,error}=await db.rpc('hub_platform_rule_group_save_v1',{p_session_token:requireOperationsHubSessionToken(),p_rule:rule});
     if(error)throw readableDatabaseError(error);return data;
@@ -2984,7 +3079,8 @@
         snapshotId,
         uploadMode,
         uploadedRowCount:normalizedRows.length,
-        rowCount:finalRowCount
+        rowCount:finalRowCount,
+        affectedSkus:normalizedRows.map(row=>row.sellpia_sku_code)
       };
     } catch (error) {
       if (snapshotId) {
@@ -3220,6 +3316,10 @@
     assignRules,
     loadRulePlatformSiblings,
     loadFormulaProducts,
+    beginCalculationGeneration,
+    upsertCalculatedPriceResults,
+    loadCalculatedResults,
+    loadStoredMatrixPrices,
     loadSiblingOptions,
     updateProductTag,
     ensureProductProfile,
@@ -3274,6 +3374,7 @@
     saveInboundCostFormulaTag,
     deleteInboundCostFormulaTag,
     saveInboundCost,
+    loadInboundCostTagSkus,
     savePriceRuleTag,
     savePriceRuleSet,
     deletePriceRuleTag,

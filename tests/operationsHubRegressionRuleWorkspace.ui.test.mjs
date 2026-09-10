@@ -15,7 +15,7 @@ try{
  await page.evaluate(()=>{
   const copy=v=>structuredClone(v);
   const rule=(id,target,source,steps,extra={})=>({id,name:id,version:1,is_active:true,target_field:target,source_field:source,input_origin:'self',scope:'',config:{steps},...extra});
-  const q=window.qa={calls:[],writes:[],purchase:5000,registry:{rules:[
+  const q=window.qa={calls:[],writes:[],purchase:5000,stored:{},internal:{},registry:{rules:[
    rule('inbound','actual_inbound_cost','purchase_price',[{op:'multiply',value:1}]),
    rule('base','calculated_base_price','actual_inbound_cost',[{op:'multiply',value:3}]),
    rule('child','calculated_base_price','calculated_base_price',[{op:'add',value:2000}],{input_origin:'parent'}),
@@ -33,13 +33,17 @@ try{
    async assignRules(action,entries){q.writes.push({action,entries:copy(entries)});for(const e of entries){const r=q.registry.rules.find(r=>r.id===e.rule_id);if(action==='remove'){q.registry.assignments=q.registry.assignments.filter(a=>!(a.sku===e.sku&&a.rule_id===e.rule_id));continue;}q.registry.assignments=q.registry.assignments.filter(a=>!(a.sku===e.sku&&a.target_field===r.target_field&&a.scope===r.scope));q.registry.assignments.push({sku:e.sku,rule_id:r.id,target_field:r.target_field,scope:r.scope,version:1});if(e.reference){q.registry.dependencies=q.registry.dependencies.filter(d=>!(d.child_sku===e.sku&&d.target_field===r.target_field&&d.scope===r.scope));q.registry.dependencies.push({...e.reference,child_sku:e.sku,target_field:r.target_field,rule_id:r.id,scope:r.scope,relation_valid:true});}}return {};},
    async loadFormulaProducts(skus){q.calls.push('products');return copy(products().filter(p=>skus.includes(p.sellpia_sku_code)));},
    async loadProducts({search}){return {rows:copy(products().filter(p=>p.display_name.includes(search)))};},
+   async loadAllFilteredSkus(){return {skus:products().map(product=>product.sellpia_sku_code),total:products().length};},
    async loadRulePlatformSiblings(skus){return skus.some(s=>['six','eight'].includes(s))?['six','eight']:[];},
+   async loadStoredMatrixPrices({sources,skus}){const rows=sources.flatMap(source=>(q.stored[source]||[]).filter(row=>skus.includes(row.sellpia_sku_code)));return {rows:copy(rows),missing:[]};},
+   async loadCalculatedResults({skus}){return {rows:skus.filter(sku=>q.internal[sku]!==undefined).map(sku=>({sku,value:q.internal[sku],status:'calculated'})),missing:[],missingSkus:[]};},
    async workDocument(action,kind,payload){if(action==='list')return copy(q.docs);if(action==='get')return copy(q.docs.find(d=>d.id===payload.id));if(action==='save'){const d={...payload,id:payload.id||'new-doc',version:(payload.version||0)+1};q.docs=q.docs.filter(x=>x.id!==d.id);q.docs.push(copy(d));q.writes.push({action:'document-save',value:copy(d)});return copy(d);}throw Error('Unexpected document action');},
    async loadLatestSellerOriginalStatus(){q.calls.push('latest-file-status');return [{source:'ably',available:true,files:[{name:'fixture-latest.xlsx'}]}];},
    async loadTags(){return [];},
    async loadPriceRuleTags(){return [];},
    async loadInboundCostFormulaTags(){return [{tag_id:'legacy',tag_name:'legacy divide',multiply_value:3,divide_value:2,add_value:100,rounding_unit:100,rounding_mode:'up'}];},
   };
+  window.HubPriceMaterializer={async materialize({skus,sources}){let persistedRows=0,errorRows=0;for(const source of sources){if(source!=='ably')continue;const result=await HubPlatformRules.calculate(skus,source);for(const row of result.rows)q.internal[row.sku]=row.value;q.stored[source]=result.rows.map(row=>({sellpia_sku_code:row.sku,source_channel:source,seller_product_code:row.component.seller_product_code,seller_option_code:row.component.seller_option_code,base_price:row.platformBase,discounted_base_price:row.platformBase-row.platformDiscount,option_price:row.platformOption,final_price:row.platformFinal,discount_terms:row.platformTerms||[],rule_versions:row.versions||[],status:row.error?'error':'calculated',error:row.error||''}));persistedRows+=q.stored[source].length*4;errorRows+=result.errors.length*4;}return {totalSkus:skus.length,persistedRows,errorRows,status:errorRows?'partial':'complete'};}};
  });
  for(const file of ['rule-registry.js','tag-price-workspace.js','discount-price-math.js','platform-rule-service.js','rule-workspace.js'])await page.addScriptTag({path:path.join(root,'mockups/operations-hub',file)});
  const idle=()=>page.waitForFunction(()=>!HubPriceWorkspace.state.busy);

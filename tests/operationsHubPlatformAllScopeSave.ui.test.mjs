@@ -6,14 +6,16 @@ try{
  const page=await browser.newPage({viewport:{width:1440,height:900}});await page.route('**/*',r=>r.abort());await page.setContent('<html><body><main id="price-rules"></main></body></html>');
  await page.addStyleTag({path:fileURLToPath(new URL('rule-workspace.css',root))});
  await page.evaluate(()=>{
-  const copy=v=>structuredClone(v);window.qa={registry:{rules:[],assignments:[],dependencies:[]},groupCalls:[],singleCalls:[],filterCalls:[],calculated:[],defer:false};
+  const copy=v=>structuredClone(v);window.qa={registry:{rules:[],assignments:[],dependencies:[]},groupCalls:[],singleCalls:[],filterCalls:[],storedCalls:[],defer:false};
   window.SystemV3Data={
    ruleRegistry:async(action,rule)=>{if(action==='list')return copy(qa.registry);qa.singleCalls.push(copy(rule));const saved={...rule,version:2};qa.registry.rules=qa.registry.rules.map(r=>r.id===saved.id?saved:r);return copy(saved);},
    savePlatformRuleGroup:async rule=>{qa.groupCalls.push(copy(rule));if(qa.defer)await new Promise(resolve=>qa.release=resolve);if(qa.registry.rules.some(r=>r.name===rule.name))throw Error('같은 이름의 규칙이 이미 있습니다.');const saved=['smartstore','makeshop','ably'].map(scope=>({...copy(rule),id:scope+'-'+qa.groupCalls.length,scope,source_scope:HubRuleRegistry.isPlatform(rule.source_field)?rule.source_scope||scope:'',version:1,is_active:true}));qa.registry.rules.push(...saved);return copy(saved);},
-   loadFormulaProducts:async()=>[],loadLatestSellerOriginalStatus:async()=>[],workDocument:async()=>[],
+   loadFormulaProducts:async()=>[],loadLatestSellerOriginalStatus:async()=>[{source:'ably',available:true,files:[{name:'latest.xlsx'}]}],downloadLatestSellerOriginals:async()=>new Map([['ably',[new File(['fixture'],'latest.xlsx')]]]),workDocument:async()=>[],
    filterRulePlatformSkus:async(skus,source)=>{qa.filterCalls.push({count:skus.length,source,crossPlatform:skus.some(s=>s.startsWith('makeshop-')||s.startsWith('smartstore-'))});return ['linked-1'];}
   };
-  window.HubPlatformRules={calculate:async(skus,source)=>{qa.calculated.push({skus,source});return {rows:[],errors:[]};}};
+  window.HubPlatformRules={calculate:async()=>({rows:[],errors:[]})};
+  window.HubPriceMaterializer={materialize:async({skus})=>({totalSkus:skus.length,persistedRows:0,errorRows:0,status:'complete'})};
+  window.HubCurrentPriceExport={refreshItems:async(items,files,{sources,skus})=>{qa.storedCalls.push({skus,sources});return {items:[],excludedItems:[]};}};
  });
  for(const name of ['rule-registry.js','rule-workspace.js'])await page.addScriptTag({path:fileURLToPath(new URL(name,root))});
  const idle=()=>page.waitForFunction(()=>!HubPriceWorkspace.state.busy);
@@ -37,6 +39,6 @@ try{
  await prepare('missing atomic API');await page.evaluate(()=>{qa.groupApi=SystemV3Data.savePlatformRuleGroup;delete SystemV3Data.savePlatformRuleGroup;});await page.locator('#rw-save').click();await idle();assert.match(await page.locator('#rw-save-status').innerText(),/전체판매처 저장 기능/);assert.equal(await page.locator('#rw-name').inputValue(),'missing atomic API');assert.equal(await page.evaluate(()=>qa.singleCalls.length),1,'missing atomic API must never fall back to partial single saves');
  await page.evaluate(()=>{SystemV3Data.savePlatformRuleGroup=qa.groupApi;qa.registry.assignments=Array.from({length:80000},(_,i)=>{const scope=['','ably','makeshop','smartstore'][i%4];return {sku:(scope||'common')+'-'+i,scope,rule_id:'no-rendered-rule'};});HubPriceWorkspace.state.registry=qa.registry;});
  await page.locator('.rw-tabs [data-tab="export"]').click();await page.locator('#rw-export-scope').selectOption('assigned');await page.locator('#rw-export-preview').click();await idle();
- assert.deepEqual(await page.evaluate(()=>qa.filterCalls),[{count:40000,source:'ably',crossPlatform:false}]);assert.deepEqual(await page.evaluate(()=>qa.calculated),[{skus:['linked-1'],source:'ably'}]);
- console.log('PASS user exact all-platform +0 rule save -> atomic3 definitions; source scope per platform; single edit unchanged; loading/duplicate/missing API preserve inputs with visible errors;80000 assignment sourcefilter reduces40000 then linked-only calculation.');
+ assert.deepEqual(await page.evaluate(()=>qa.filterCalls),[{count:40000,source:'ably',crossPlatform:false}]);assert.deepEqual(await page.evaluate(()=>qa.storedCalls),[{skus:['linked-1'],sources:['ably']}]);
+ console.log('PASS user exact all-platform +0 rule save -> atomic3 definitions; source scope per platform; single edit unchanged; loading/duplicate/missing API preserve inputs with visible errors;80000 assignment sourcefilter reduces40000 then reads linked-only stored prices.');
 }finally{await browser.close();}

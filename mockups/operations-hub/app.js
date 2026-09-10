@@ -2428,11 +2428,11 @@ function applyLocalSellerPriceDraft(product, source, result) {
 let hubPriceProjectionEpoch = 0;
 let pendingHubPriceRender = false;
 async function refreshHubPriceProjection() {
-  if (!window.HubPlatformRules?.projectRows || !matrixState.rows.length) return;
+  if (!liveData?.loadProductsBySkus || !matrixState.rows.length) return;
   const epoch = ++hubPriceProjectionEpoch;
   const pageSkus = matrixState.rows.map(row => row.sellpia_sku_code).join('\u0000');
   try {
-    const projected = await window.HubPlatformRules.projectRows(matrixState.rows);
+    const projected = await liveData.loadProductsBySkus(matrixState.rows.map(row => row.sellpia_sku_code));
     if (epoch !== hubPriceProjectionEpoch || pageSkus !== matrixState.rows.map(row => row.sellpia_sku_code).join('\u0000')) return false;
     for (const row of projected) {
       const product = matrixRowsBySku.get(row.sellpia_sku_code);
@@ -2449,8 +2449,19 @@ async function refreshHubPriceProjection() {
       for (const comparison of productDrawer.querySelectorAll('[data-internal-base-comparison]')) comparison.innerHTML = `시스템 기준가격 <b>${internalBasePriceComparison(openProduct)}</b>`;
     }
   } catch (error) {
-    throw new Error(`수정안은 저장됐지만 최신 Rule 계산을 갱신하지 못했습니다: ${error?.message || error}`);
+    throw new Error(`수정안은 저장됐지만 매트릭스 저장 가격을 다시 읽지 못했습니다: ${error?.message || error}`);
   }
+}
+
+async function materializeHubPrices(skus, {sources=['smartstore','makeshop','ably'],reason='matrix-price-change',onProgress} = {}) {
+  if (!window.HubPriceMaterializer?.materialize) throw new Error('가격 계산 결과 저장 모듈을 불러오지 못했습니다. 새로고침 후 다시 시도해주세요.');
+  return window.HubPriceMaterializer.materialize({skus:[...new Set((skus||[]).filter(Boolean))],sources,reason,onProgress});
+}
+
+function materializationWarning(result) {
+  return result?.status === 'partial'
+    ? `가격 저장 오류 ${formatNumber(result.errorRows || 0)}건 · 오류 값은 내보내기에서 제외됩니다.`
+    : '';
 }
 
 window.addEventListener('hub-rules-changed', async () => {
@@ -3083,6 +3094,12 @@ async function flushPendingSellpiaChanges({automatic = false} = {}) {
     const result = await liveData.saveSellpiaChanges(snapshot, batchId);
     saved = true;
     applySavedSellpiaChanges(snapshot, result);
+    const priceInputSkus = [...new Set(snapshot.filter(change => ['system_base_price','sellpia_purchase_price'].includes(change.fieldKey)).map(change => change.sku))];
+    let calculationError = '';
+    if (priceInputSkus.length) {
+      try { calculationError = materializationWarning(await materializeHubPrices(priceInputSkus,{reason:'sellpia-price-input-save'})); }
+      catch (error) { calculationError = error?.message || String(error); console.error('saved Sellpia value price materialization failed', error); }
+    }
     removeSavedCellState(snapshot);
     changeModal.hidden = true;
     const savedBasePrice = snapshot.some(change => change.fieldKey === 'system_base_price');
@@ -3092,6 +3109,7 @@ async function flushPendingSellpiaChanges({automatic = false} = {}) {
         ? `시스템 기준가격 ${result.savedCount}건 DB ${automatic ? '자동 ' : ''}저장 완료 · 판매처 원본은 유지`
         : `${result.savedCount}건 DB ${automatic ? '자동 ' : ''}저장 완료`);
     if (result.repriceRefreshError) setTimeout(() => showToast('저장은 완료됐지만 재계산 표시 갱신이 지연됐습니다. DB 새로고침으로 확인해주세요.'), 900);
+    if (calculationError) setTimeout(() => showToast(`기준값은 저장됐지만 계산 가격 저장에 실패했습니다: ${calculationError}`), 900);
     if (!pendingChanges.length) {
       void loadLiveDashboardMetrics();
       refreshChangeQueueInBackground();
@@ -3709,12 +3727,19 @@ async function applySelectedSourceRefreshBatch() {
     selectedSourceRefreshState.appliedChunks = appliedChunks;
     selectedSourceRefreshState.phase = 'completed';
     renderSelectedSourceRefreshBatch(batch);
+    const priceInputSkus = [...new Set((batch.items || []).filter(item => item.resultStatus === 'success' && (item.kind === 'seller_price' || item.kind === 'seller_discount' || ['system_base_price','sellpia_purchase_price'].includes(item.fieldKey))).map(item => item.sku).filter(Boolean))];
+    let calculationWarning = '';
+    if (priceInputSkus.length) {
+      try { calculationWarning = materializationWarning(await materializeHubPrices(priceInputSkus,{reason:'selected-source-price-refresh'})); }
+      catch (error) { calculationWarning = `원본값은 저장됐지만 가격 저장 실패: ${error?.message || error}`; }
+    }
     const browserVerification = await reloadSelectedSourceRefreshRows(batch);
     if (browserVerification.failures?.length) {
       selectedSourceRefreshError.textContent = `서버 저장은 완료됐지만 화면 재조회 ${browserVerification.failures.length}건이 아직 일치하지 않습니다. 새로고침 후 다시 확인해주세요.`;
       selectedSourceRefreshError.hidden = false;
     }
     showToast(`원본값 배치 완료 · 성공 ${formatNumber(batch.successCount || 0)} · DB 확인 ${formatNumber(batch.verifiedCount || 0)} · 제외 ${formatNumber(batch.skippedCount || 0)}${batch.failedCount ? ` · 실패 ${formatNumber(batch.failedCount)}` : ''}`);
+    if (calculationWarning) setTimeout(()=>showToast(calculationWarning),900);
     void loadLiveDashboardMetrics();
   } catch (error) {
     selectedSourceRefreshState.phase = 'failed';
@@ -4297,7 +4322,11 @@ async function saveDiscountEditor() {
       calculationMode:discountEditorState.autoAdjustBase ? 'reverse-base' : 'forward'
     });
     for (const item of saved.items) applyLocalSellerPriceDraft(matrixRowsBySku.get(item.sku), source, item.result);
-    await refreshHubPriceProjection();
+    let calculationWarning = '';
+    try {
+      calculationWarning = materializationWarning(await materializeHubPrices(saved.items.map(item=>item.sku),{sources:[source],reason:`seller-discount:${source}`}));
+      await refreshHubPriceProjection();
+    } catch (error) { calculationWarning = `할인 수정안은 저장됐지만 가격 저장 실패: ${error?.message || error}`; }
     renderLiveMatrixRows(matrixState.rows);
     const drawerProduct = matrixRowsBySku.get(productDrawer.dataset.sku);
     if (productDrawer.getAttribute('aria-hidden') === 'false' && drawerProduct) renderDrawerInventory(drawerProduct);
@@ -4306,7 +4335,7 @@ async function saveDiscountEditor() {
     closeDiscountEditor();
     const pending = saved.items.filter(item => item.result?.draft_status === 'pending').length;
     const unchanged = saved.items.length - pending;
-    showToast(`${CHANNEL_LABELS[source]} 상품 할인 수정안 ${pending}건 저장 · ${discountEditorState.autoAdjustBase ? '최종판가 유지·판매가 역산' : '판매가 유지·최종판가 재계산'}${unchanged ? ` · 원본값 유지 ${unchanged}건` : ''}`);
+    showToast(calculationWarning || `${CHANNEL_LABELS[source]} 상품 할인 수정안 ${pending}건 저장 · ${discountEditorState.autoAdjustBase ? '최종판가 유지·판매가 역산' : '판매가 유지·최종판가 재계산'}${unchanged ? ` · 원본값 유지 ${unchanged}건` : ''}`);
   } catch (error) {
     console.error('product discount draft save failed', error);
     showToast(`할인 수정안 저장 실패: ${error?.message || error}`);
@@ -4592,11 +4621,17 @@ async function applyBulkSourceRefresh() {
       completed.push(normalized);
     }
     const changedCount = completed.reduce((sum, row) => sum + row.changedCount, 0);
+    let calculationWarning = '';
+    if (completed.some(row => ['system_base_price','sellpia_purchase_price'].includes(row.fieldKey))) {
+      const target = await liveData.loadAllFilteredSkus({status:'all'});
+      try { calculationWarning = materializationWarning(await materializeHubPrices(target.skus,{reason:'bulk-source-price-refresh'})); }
+      catch (error) { calculationWarning = `원본값은 저장됐지만 가격 저장 실패: ${error?.message || error}`; }
+    }
     await loadLiveMatrix();
     void loadLiveDashboardMetrics();
     bulkSourceRefreshState.running = false;
     closeBulkSourceRefresh();
-    showToast(`컬럼 전체 원본값 갱신 완료 · ${completed.length}개 컬럼 · ${formatNumber(changedCount)}건 저장`);
+    showToast(calculationWarning || `컬럼 전체 원본값 갱신 완료 · ${completed.length}개 컬럼 · ${formatNumber(changedCount)}건 저장`);
   } catch (error) {
     console.error('bulk source refresh apply failed', error);
     const completedLabels = completed.map(row => BULK_SOURCE_REFRESH_FIELDS[row.fieldKey]?.label).filter(Boolean);
@@ -4958,12 +4993,18 @@ function openMatrixInlineEditor(cell) {
           }
         } else if (priceComponent) applyLocalSellerPriceDraft(product, cell.dataset.source, result);
         else applyLocalSellerDraft(product, cell.dataset.source, cell.dataset.fieldKey, after, result);
-        if (groupResult || priceComponent) await refreshHubPriceProjection();
-        showToast(groupResult
+        let calculationWarning = '';
+        if (groupResult || priceComponent) {
+          try {
+            calculationWarning = materializationWarning(await materializeHubPrices(groupResult?.items?.map(item=>item.sku)||[row.dataset.sku],{sources:[cell.dataset.source],reason:`seller-price:${cell.dataset.source}`}));
+            await refreshHubPriceProjection();
+          } catch (error) { calculationWarning = `수정안은 저장됐지만 가격 저장 실패: ${error?.message || error}`; }
+        }
+        showToast(calculationWarning || (groupResult
           ? `${cell.dataset.field}를 같은 판매처 상품 ${groupResult.savedCount}개 옵션에 저장했습니다.`
           : result?.draft_status === 'unchanged'
           ? `${cell.dataset.field} 수정안을 취소했습니다.`
-          : `${cell.dataset.field} 수정안을 매트릭스에 저장했습니다.`);
+          : `${cell.dataset.field} 수정안을 매트릭스에 저장했습니다.`));
         renderLiveMatrixRows(matrixState.rows);
         refreshChangeQueueInBackground();
         void loadLiveDashboardMetrics();
@@ -6068,7 +6109,13 @@ document.getElementById('drawer-inventory-list').addEventListener('click', async
       results.push(...saved.items.map(item => item.result));
       for (const item of saved.items) applyLocalSellerPriceDraft(matrixRowsBySku.get(item.sku), source, item.result);
     }
-    if (baseChanged || optionChanged || finalChanged || discountChanged) await refreshHubPriceProjection();
+    let calculationWarning = '';
+    if (baseChanged || optionChanged || finalChanged || discountChanged) {
+      try {
+        calculationWarning = materializationWarning(await materializeHubPrices([sku],{sources:[source],reason:`seller-drawer-price:${source}`}));
+        await refreshHubPriceProjection();
+      } catch (error) { calculationWarning = `수정안은 저장됐지만 가격 저장 실패: ${error?.message || error}`; }
+    }
     renderLiveMatrixRows(matrixState.rows);
     renderDrawerInventory(product);
     ['smartstore','makeshop','ably'].forEach(channel => renderCurrentPricePolicy(channel, product, drawerState.priceRuleSelections[channel] || ''));
@@ -6076,7 +6123,7 @@ document.getElementById('drawer-inventory-list').addEventListener('click', async
     void loadLiveDashboardMetrics();
     const savedCount = results.filter(result => result?.draft_status === 'pending').length;
     const cancelledCount = results.filter(result => result?.draft_status === 'unchanged').length;
-    showToast(`${CHANNEL_LABELS[source]} 수정안 ${savedCount}건 저장${cancelledCount ? ` · 원본값 복귀 ${cancelledCount}건` : ''}`);
+    showToast(calculationWarning || `${CHANNEL_LABELS[source]} 수정안 ${savedCount}건 저장${cancelledCount ? ` · 원본값 복귀 ${cancelledCount}건` : ''}`);
   } catch (error) {
     console.error('drawer seller value save failed', error);
     showToast(`재고·가격 수정안 저장 실패: ${error?.message || error}`);
@@ -6682,10 +6729,12 @@ async function applyMatrixFilterTag() {
   let applied=false;
   try {
     await liveData.applyTagToSkus({tagId,skus,action:'add'});applied=true;
-    status.textContent=`‘${tag.tag_name}’ 태그와 연결 Rule을 ${formatNumber(skus.length)}개 SKU에 적용했습니다.`;
+    status.textContent=`태그 적용 완료 · ${formatNumber(skus.length)}개 SKU의 매트릭스 가격 계산·저장 중…`;
+    const calculation=await materializeHubPrices(skus,{reason:`filter-tag:${tagId}`,onProgress:progress=>{status.textContent=`‘${tag.tag_name}’ 적용 가격 저장 중 · ${formatNumber(progress.persistedRows)}개 값 저장`;}});
+    const warning=materializationWarning(calculation);
+    status.textContent=warning?`태그 적용 완료 · ${warning}`:`‘${tag.tag_name}’ 태그와 계산 가격을 ${formatNumber(calculation.totalSkus)}개 영향 SKU에 저장했습니다.`;
     matrixFilterTagState.skus=[];
     await loadLiveMatrix();
-    window.dispatchEvent(new Event('hub-rules-changed'));
   } catch(error) {
     document.getElementById('matrix-filter-tag-error').textContent=`${applied?'태그 적용은 완료됐지만 화면 갱신에 실패했습니다. ':''}${error?.message||error}`;
     if(!applied)status.textContent='태그를 적용하지 못했습니다. 오류를 확인한 후 다시 적용할 수 있습니다.';
@@ -7387,10 +7436,10 @@ function openSellerExport({action = 'export', rows = []} = {}) {
   document.getElementById('seller-export-kicker').textContent = action === 'draft' ? '매트릭스 수정안 생성' : '판매처 원본 파일 생성';
   document.getElementById('seller-export-guide-title').textContent = action === 'draft'
     ? `셀피아 재고와 다른 판매처 값을 수정안으로 만듭니다.${skus.length ? ` · 선택 ${formatNumber(skus.length)}개 SKU` : ' · 전체 매트릭스'}`
-    : rows.length ? '선택한 저장 수정안을 최신 보관 원본에 반영합니다.' : '최신 태그·수식 가격을 최신 보관 원본 양식에 다시 계산해 반영합니다.';
+    : rows.length ? '선택한 저장 수정안을 최신 보관 원본에 반영합니다.' : '매트릭스에 저장된 가격을 최신 보관 원본 양식에 반영합니다.';
   document.getElementById('seller-export-guide-detail').textContent = action === 'draft'
     ? '원본 파일은 아직 바뀌지 않습니다. 생성 후 파란 수정 가능 셀에서 값을 확인하거나 다시 고칠 수 있습니다.'
-    : rows.length ? '선택한 수정안을 검증하고 원본 양식에 반영합니다.' : '선택 범위의 최신 태그·수식으로 가격을 다시 계산합니다. 재고 수정안은 아래 선택 항목을 켠 경우에만 검증·반영합니다. 변경 셀은 노랑·굵은 글씨로 표시합니다.';
+    : rows.length ? '선택한 수정안을 검증하고 원본 양식에 반영합니다.' : '가격 수식은 여기서 다시 계산하지 않습니다. 현재 매트릭스에 저장된 판매처 가격만 원본의 연결 행에 기록합니다. 재고 수정안은 아래 선택 항목을 켠 경우에만 검증·반영합니다.';
   document.getElementById('seller-export-run').textContent = action === 'draft' ? '매트릭스에 수정안 만들기' : rows.length ? '선택 수정안 파일 만들기' : '최신 가격 파일 만들기';
   document.getElementById('seller-export-progress').hidden = true;
   sellerExportModal.hidden = false;
@@ -7493,8 +7542,8 @@ async function runSellerExport() {
     }
 
     sellerExportState.includeStockDrafts = includeStockDrafts;
-    showSellerExportProgress(4, includeStockDrafts ? '재고 수정안 확인 중' : '최신 가격 계산 준비', includeStockDrafts ? '선택 범위의 저장된 재고 수정값을 검증하고 파일 생성 대상을 확정합니다.' : '재고 수정안 검증을 건너뛰고 선택 범위의 최신 태그·수식 가격을 계산합니다.');
-    const reviewProgress=(done,total)=>{showSellerExportProgress(4+(total?done/total*4:0),'저장 수정값 검증 중',`${formatNumber(done)} / ${formatNumber(total)}건 확인 · 최신 수식 가격은 다음 단계에서 계산합니다.`);stopCancelledSellerExport();};
+    showSellerExportProgress(4, includeStockDrafts ? '재고 수정안 확인 중' : '저장 가격 조회 준비', includeStockDrafts ? '선택 범위의 저장된 재고 수정값을 검증하고 파일 생성 대상을 확정합니다.' : '재고 수정안 검증을 건너뛰고 매트릭스에 저장된 판매처 가격을 불러옵니다.');
+    const reviewProgress=(done,total)=>{showSellerExportProgress(4+(total?done/total*4:0),'저장 수정값 검증 중',`${formatNumber(done)} / ${formatNumber(total)}건 확인 · 매트릭스 저장 가격은 다음 단계에서 불러옵니다.`);stopCancelledSellerExport();};
     let review={changeIds:[],excluded:[]}, scopeSkusForRules=null;
     if (sellerExportState.rows.length) {
       const scopedRows = sellerExportRowsForSources(sellerExportState.rows, sources);
@@ -7515,15 +7564,13 @@ async function runSellerExport() {
       showSellerExportProgress(9 + ratio * 8, '최신 원본 불러오는 중', progress.name ? `${progress.name} 다운로드 중` : '원본 다운로드 완료');
     });
     stopCancelledSellerExport();
-    showSellerExportProgress(18, changeIds.length ? 'DB 반영 계획 생성 중' : '최신 수식 가격 계산 준비', changeIds.length ? `${formatNumber(changeIds.length)}건의 원본 위치를 판매처 코드로 확인하고 있습니다.` : '저장된 재고 수정안 없이 최신 가격 규칙만 원본 양식에 반영합니다.');
+    showSellerExportProgress(18, changeIds.length ? 'DB 반영 계획 생성 중' : '매트릭스 저장 가격 조회 준비', changeIds.length ? `${formatNumber(changeIds.length)}건의 원본 위치를 판매처 코드로 확인하고 있습니다.` : '저장된 재고 수정안 없이 매트릭스에 저장된 판매처 가격만 원본 양식에 반영합니다.');
     const preparedExport = changeIds.length
       ? await liveData.prepareSellerExport({batchId, mode:'change_queue', changeIds, sources})
       : {items:[]};
     prepared = Boolean(changeIds.length);
     stopCancelledSellerExport();
-    const refreshed = globalThis.HubCurrentPriceExport
-      ? await globalThis.HubCurrentPriceExport.refreshItems(preparedExport.items,filesBySource,{sources,skus:scopeSkusForRules,includeRules:!sellerExportState.rows.length,onProgress:detail=>{showSellerExportProgress(19,'최신 수식 가격 계산 중',detail);stopCancelledSellerExport();}})
-      : {items:globalThis.HubPlatformRules?await globalThis.HubPlatformRules.refreshExportItems(preparedExport.items,filesBySource):preparedExport.items,excludedItems:[]};
+    const refreshed = await globalThis.HubCurrentPriceExport.refreshItems(preparedExport.items,filesBySource,{sources,skus:scopeSkusForRules,includeRules:!sellerExportState.rows.length,onProgress:detail=>{showSellerExportProgress(19,'매트릭스 저장 가격 조회 중',detail);stopCancelledSellerExport();}});
     stopCancelledSellerExport();
     const items=refreshed.items;
     const blocked = items.filter(item => item.blocking_reason);
@@ -7531,7 +7578,7 @@ async function runSellerExport() {
     const initialExcluded = [...excluded, ...refreshed.excludedItems, ...blocked.map(item => ({item, reason:item.blocking_reason, export_item_id:item.export_item_id}))];
     showSellerExportExclusions(initialExcluded);
     showSellerExportProgress(22, '원본 파일 검증 중', `${formatNumber(exportable.length)}건을 대조합니다.${blocked.length ? ` 위치 확인 실패 ${formatNumber(blocked.length)}건은 제외합니다.` : ''}`);
-    const result = await (globalThis.HubCurrentPriceExport?.buildArchive||sellerExport.buildExportArchive)(filesBySource, exportable, (percent, detail) => {showSellerExportProgress(22 + percent * .74, '판매처 수정본 생성 중', detail);stopCancelledSellerExport();}, initialExcluded);
+    const result = await globalThis.HubCurrentPriceExport.buildArchive(filesBySource, exportable, (percent, detail) => {showSellerExportProgress(22 + percent * .74, '판매처 수정본 생성 중', detail);stopCancelledSellerExport();}, initialExcluded);
     stopCancelledSellerExport();
     // The archive is complete. Keep the last audit + download step indivisible from this point.
     sellerExportState.draftCancellable = false;
@@ -11187,10 +11234,20 @@ document.getElementById('inbound-cost-tag-form').addEventListener('submit', asyn
   }
   button.disabled = true;
   try {
+    const affectedSkus = value.tagId && liveData.loadInboundCostTagSkus ? await liveData.loadInboundCostTagSkus(value.tagId) : [];
     const saved = await liveData.saveInboundCostFormulaTag(value);
+    let calculationWarning = '';
+    if (affectedSkus.length) {
+      try {
+        const calculation = await materializeHubPrices(affectedSkus,{reason:`inbound-formula-tag:${saved.tag_id}`});
+        calculationWarning = materializationWarning(calculation);
+      } catch (calculationError) {
+        calculationWarning = `수식태그는 저장됐지만 가격 저장 실패: ${calculationError?.message || calculationError}`;
+      }
+    }
     await loadInboundCostTags({silent:true});
     editInboundCostTag(saved.tag_id);
-    showToast(`실입고가 수식태그 ‘${saved.tag_name}’을 저장했습니다.`);
+    showToast(calculationWarning || `실입고가 수식태그 ‘${saved.tag_name}’을 저장했습니다.`);
   } catch (error) { showToast(`수식태그 저장 실패: ${error?.message || error}`); }
   finally { button.disabled = false; }
 });
@@ -11222,9 +11279,16 @@ document.getElementById('inbound-cost-modal-save').addEventListener('click', asy
   event.currentTarget.disabled = true;
   try {
     await liveData.saveInboundCost({sku:product.sellpia_sku_code, manualCost, formulaTagId});
+    let calculationWarning = '';
+    try {
+      const calculation = await materializeHubPrices([product.sellpia_sku_code],{reason:'inbound-cost-save'});
+      calculationWarning = materializationWarning(calculation);
+    } catch (calculationError) {
+      calculationWarning = `실입고가는 저장됐지만 가격 저장 실패: ${calculationError?.message || calculationError}`;
+    }
     closeInboundCostModal();
     await loadLiveMatrix();
-    showToast(`${product.sellpia_sku_code} 실입고가를 DB에 바로 저장했습니다.`);
+    showToast(calculationWarning || `${product.sellpia_sku_code} 실입고가를 DB에 바로 저장했습니다.`);
   } catch (error) { showToast(`실입고가 저장 실패: ${error?.message || error}`); }
   finally { event.currentTarget.disabled = false; }
 });
@@ -11593,6 +11657,24 @@ uploadButton.addEventListener('click', async () => {
         return;
       }
     }
+    let calculationWarning = '';
+    const affectsSellpiaPrice = sourceSelect.value === 'sellpia' && (fields.price || fields.purchasePrice);
+    const affectsSellerPrice = ['smartstore','makeshop','ably'].includes(sourceSelect.value) && (fields.price || fields.discount);
+    if (affectsSellpiaPrice || affectsSellerPrice) {
+      try {
+        showUploadProgress({percent:98,title:'저장 가격 갱신 중',detail:'변경된 원본값으로 매트릭스 가격을 다시 저장합니다.'});
+        let affectedSkus = result.affectedSkus || [];
+        if (affectsSellerPrice) affectedSkus = (await liveData.loadAllFilteredSkus({status:'all'})).skus || [];
+        const calculation = await materializeHubPrices(affectedSkus,{
+          sources:affectsSellerPrice?[sourceSelect.value]:['smartstore','makeshop','ably'],
+          reason:`source-upload:${sourceSelect.value}`,
+          onProgress:progress=>showUploadProgress({percent:98,title:'저장 가격 갱신 중',detail:`영향 SKU ${formatNumber(progress.totalSkus || 0)}개 · ${formatNumber(progress.persistedRows || 0)}개 값 저장`})
+        });
+        calculationWarning = materializationWarning(calculation);
+      } catch (calculationError) {
+        calculationWarning = `원본은 저장됐지만 가격 저장 실패: ${calculationError?.message || calculationError}`;
+      }
+    }
     const rowLabel = ['sellpia','survey'].includes(sourceSelect.value) ? 'SKU' : '상품·옵션';
     showUploadProgress({
       percent:100,
@@ -11605,9 +11687,9 @@ uploadButton.addEventListener('click', async () => {
           ? `업로드 ${formatNumber(result.uploadedRowCount)}개만 갱신하고, 최신 판매처 원본 ${formatNumber(result.rowCount)}개를 유지했습니다.`
           : `${formatNumber(result.rowCount)}개 ${rowLabel}으로 판매처 원본을 전체 교체했습니다.`
     });
-    showToast(result.uploadMode === 'patch'
+    showToast(calculationWarning || (result.uploadMode === 'patch'
       ? `${config.name} ${formatNumber(result.uploadedRowCount)}개 부분 갱신 완료`
-      : `${config.name} ${formatNumber(result.rowCount)}개 ${rowLabel} 업로드 완료`);
+      : `${config.name} ${formatNumber(result.rowCount)}개 ${rowLabel} 업로드 완료`));
     await refreshLiveData({resetPage:true});
     window.setTimeout(() => showPage('matching'), 500);
   } catch (error) {

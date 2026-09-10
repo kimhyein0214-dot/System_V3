@@ -63,7 +63,8 @@ assert.match(app, /matrixHasActiveExportFilter\(\)[^]*?defaultScope = matrixHasA
 assert.match(app, /scope === 'selected'[^]*?scope === 'filtered'[^]*?collectSellerExportFilteredSkus/, 'checked and filtered SKU scopes must resolve separately');
 assert.match(app, /let firstChunk = true[^]*?while \(firstChunk \|\| offset < filter\.total\)/, 'filtered export must query once even when the matrix total is still loading');
 assert.match(app, /includeStockDrafts\) review = await liveData\.reviewSellerDraftsForExport\(\{sources, skus:scopeSkus,onProgress:reviewProgress\}\)/, 'inventory draft validation must be opt-in and receive the resolved SKU scope');
-assert.match(app, /includeStockDrafts \? '재고 수정안 확인 중' : '최신 가격 계산 준비'/, 'matrix export must default to latest-price calculation without inventory draft review');
+assert.match(app, /includeStockDrafts \? '재고 수정안 확인 중' : '저장 가격 조회 준비'/, 'matrix export must read persisted matrix prices without inventory draft review');
+assert.match(app, /HubCurrentPriceExport\.refreshItems[\s\S]*?includeRules:!sellerExportState\.rows\.length/, 'matrix export must route price-only export through the stored-price adapter');
 assert.match(app, /stageSellerInventoryDraftBatch[^]*?loadLiveMatrix/, 'inventory matching must stop at a reviewable matrix draft');
 assert.match(data, /stageSellerInventoryDraftBatch[^]*?p_after_sku:[^]*?p_batch_size:/, 'the frontend must stage large inventory matches through cursor batches');
 assert.match(app, /stageSellerInventoryDraftBatch\(\{sources, skus, batchId, afterSku, batchSize:100\}\)/, 'inventory drafts must use smaller transactions for reliable matrix-wide staging');
@@ -81,7 +82,7 @@ assert.match(data, /prepareSellerExport[\s\S]*?range\(from, from \+ pageSize - 1
 assert.match(data, /rpc\('prepare_operations_hub_change_export'/, 'the frontend must use the optimized bulk preparation RPC');
 assert.match(data, /completeSellerExport[\s\S]*?confirmChangesApplied/, 'the frontend adapter must expose export and manual apply confirmation');
 assert.match(data, /p_skipped_items:[\s\S]*?export_item_id[\s\S]*?reason/, 'runtime export conflicts must be sent back to the database');
-assert.match(app, /buildExportArchive[\s\S]*?completeSellerExport\(\{batchId, success:result\.appliedItems\.length > 0/, 'files must be built before their export audit is finalized');
+assert.match(app, /HubCurrentPriceExport\.buildArchive[\s\S]*?completeSellerExport\(\{batchId, success:result\.appliedItems\.length > 0/, 'stored-price files must be built before their export audit is finalized');
 assert.match(data, /attachChangeExportAudit[\s\S]*?has_exported_file:audit\.exported_file_count > 0/, 'queue rows must derive file history from export items');
 assert.match(app, /row\.status === 'validated' && row\.has_exported_file/, 'manual apply confirmation must use validated edits with an exported-file audit');
 assert.doesNotMatch(html, /<option value="(?:processing|exported)">/, 'file lifecycle states must not appear in the change-status filter');
