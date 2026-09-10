@@ -5,7 +5,7 @@
  const unique=values=>[...new Set(values.map(value=>String(value??'').trim()).filter(Boolean))];
  function aborted(signal){if(signal?.aborted){const error=new Error('계산 결과 저장을 중단했습니다. 완료된 배치는 유지됩니다.');error.name='AbortError';throw error;}}
  const message=error=>String(error?.message||error);
- function versions(result){return [...new Map((result?.versions||[]).map(v=>[JSON.stringify([v.id,v.version,v.assignmentVersion]),{id:v.id,...(v.name?{name:v.name}:{}),version:v.version,...(v.assignmentVersion!==undefined?{assignmentVersion:v.assignmentVersion}:{})}])).values()];}
+ function versions(result){return [...new Map((result?.versions||[]).map(v=>[JSON.stringify([v.id,v.version,v.assignmentVersion]),{id:v.id,version:v.version,...(v.assignmentVersion!==undefined?{assignmentVersion:v.assignmentVersion}:{})}])).values()];}
  async function materialize({skus,sources=ALL_SOURCES,reason='price-input-change',requestId,signal,onProgress}={}){
   const D=g.SystemV3Data,M=g.HubRuleRegistry,P=g.HubPlatformRules;
   const selected=unique(sources);if(selected.some(source=>!ALL_SOURCES.includes(source)))throw Error('지원하지 않는 판매처입니다.');

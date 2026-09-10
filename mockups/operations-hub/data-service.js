@@ -2502,24 +2502,39 @@
     }
     return {rows,missing,missingSkus:[...new Set(missingSkus)]};
   }
+  async function loadCalculatedResultsForExport({source,onProgress} = {}) {
+    const rows=[];let afterSku=null;
+    do{
+      const {data,error}=await db.rpc('hub_calculation_results_export_read_v1',{
+        p_session_token:requireOperationsHubSessionToken(),p_scope:source,p_after_sku:afterSku,p_limit:200
+      });
+      if(error)throw readableDatabaseError(error);
+      rows.push(...(data?.rows||[]));afterSku=data?.next_sku||null;
+      const label={smartstore:'스마트스토어',makeshop:'메이크샵',ably:'에이블리'}[source]||source;
+      onProgress?.(`저장된 ${label} 가격 ${Math.floor(rows.length/4).toLocaleString('ko-KR')}개 SKU 조회`);
+    }while(afterSku);
+    return rows;
+  }
   async function loadStoredMatrixPrices({sources=['smartstore','makeshop','ably'],skus=null,includeMatrixDrafts=false,onProgress} = {}) {
     const selected=[...new Set(sources.map(cleanText).filter(source=>['smartstore','makeshop','ably'].includes(source)))];
     let codes=skus===null?null:[...new Set((skus||[]).map(cleanText).filter(Boolean))];
-    if(codes===null){
-      const target=await loadAllFilteredSkus({status:'all'},{onProgress:progress=>onProgress?.(progress?.message||'전체 SKU 목록을 읽습니다.')});
-      codes=target.skus;
-    }
-    if(!selected.length||!codes.length)return {rows:[],missing:[]};
+    if(!selected.length||codes!==null&&!codes.length)return {rows:[],missing:[]};
     const required=['platform_registration_price','platform_discount_price','platform_option_price','platform_final_price'];
-    const flat=[],missing=[],jobs=[];let completed=0,total=codes.length*selected.length,nextJob=0;
-    for(const source of selected)for(let offset=0;offset<codes.length;offset+=200)jobs.push({source,codes:codes.slice(offset,offset+200)});
-    await Promise.all(Array.from({length:Math.min(6,jobs.length)},async()=>{
-      while(nextJob<jobs.length){
-        const job=jobs[nextJob++],result=await loadCalculatedResults({skus:job.codes,scope:job.source,fields:required});
-        flat.push(...result.rows);missing.push(...result.missing);completed+=job.codes.length;
-        onProgress?.(`저장 가격 ${Math.min(completed,total).toLocaleString('ko-KR')} / ${total.toLocaleString('ko-KR')} SKU 조회`);
-      }
-    }));
+    const flat=[],missing=[];
+    if(codes===null){
+      const results=await Promise.all(selected.map(source=>loadCalculatedResultsForExport({source,onProgress})));
+      results.forEach(result=>flat.push(...result));
+    }else{
+      const jobs=[];let completed=0,total=codes.length*selected.length,nextJob=0;
+      for(const source of selected)for(let offset=0;offset<codes.length;offset+=200)jobs.push({source,codes:codes.slice(offset,offset+200)});
+      await Promise.all(Array.from({length:Math.min(6,jobs.length)},async()=>{
+        while(nextJob<jobs.length){
+          const job=jobs[nextJob++],result=await loadCalculatedResults({skus:job.codes,scope:job.source,fields:required});
+          flat.push(...result.rows);missing.push(...result.missing);completed+=job.codes.length;
+          onProgress?.(`저장 가격 ${Math.min(completed,total).toLocaleString('ko-KR')} / ${total.toLocaleString('ko-KR')} SKU 조회`);
+        }
+      }));
+    }
     const grouped=new Map();
     for(const row of flat){
       if(row.mapping_missing||!cleanText(row.seller_product_code))continue;
@@ -2538,8 +2553,9 @@
     });
     const calculatedKeys=new Set(rows.map(row=>JSON.stringify([row.sellpia_sku_code,row.source_channel])));
     if(includeMatrixDrafts){
-      const drafts=[],draftJobs=[];for(let offset=0;offset<codes.length;offset+=500)draftJobs.push(codes.slice(offset,offset+500));let nextDraftJob=0;
-      await Promise.all(Array.from({length:Math.min(6,draftJobs.length)},async()=>{while(nextDraftJob<draftJobs.length){const chunk=draftJobs[nextDraftJob++],{data,error}=await db.from('operations_hub_active_seller_drafts').select('change_id,sellpia_sku_code,source_channel,price_base_after,price_discounted_base_after,price_option_after,price_final_after,price_discount_terms_after,price_rule_set_id,updated_at').eq('field_key','sellpia_sale_price').in('source_channel',selected).in('sellpia_sku_code',chunk).order('updated_at',{ascending:false}).order('change_id',{ascending:false});if(error)throw readableDatabaseError(error);drafts.push(...(data||[]));}}));
+      const drafts=[],selectDrafts=()=>db.from('operations_hub_active_seller_drafts').select('change_id,sellpia_sku_code,source_channel,price_base_after,price_discounted_base_after,price_option_after,price_final_after,price_discount_terms_after,price_rule_set_id,updated_at').eq('field_key','sellpia_sale_price').in('source_channel',selected).order('updated_at',{ascending:false}).order('change_id',{ascending:false});
+      if(codes===null){let from=0;while(true){const {data,error}=await selectDrafts().range(from,from+499);if(error)throw readableDatabaseError(error);drafts.push(...(data||[]));if((data||[]).length<500)break;from+=500;}}
+      else{const draftJobs=[];for(let offset=0;offset<codes.length;offset+=500)draftJobs.push(codes.slice(offset,offset+500));let nextDraftJob=0;await Promise.all(Array.from({length:Math.min(6,draftJobs.length)},async()=>{while(nextDraftJob<draftJobs.length){const chunk=draftJobs[nextDraftJob++],{data,error}=await selectDrafts().in('sellpia_sku_code',chunk);if(error)throw readableDatabaseError(error);drafts.push(...(data||[]));}}));}
       const draftByKey=new Map();for(const draft of drafts){const key=JSON.stringify([cleanText(draft.sellpia_sku_code),cleanText(draft.source_channel)]);if(!draftByKey.has(key))draftByKey.set(key,draft);}
       const draftSkus=[...new Set(drafts.map(draft=>cleanText(draft.sellpia_sku_code)).filter(Boolean))],components=[],componentJobs=[];for(let offset=0;offset<draftSkus.length;offset+=200)componentJobs.push(draftSkus.slice(offset,offset+200));let nextComponentJob=0;
       await Promise.all(Array.from({length:Math.min(4,componentJobs.length)},async()=>{while(nextComponentJob<componentJobs.length){const chunk=componentJobs[nextComponentJob++],{data,error}=await db.rpc('load_operations_hub_seller_price_components',{p_skus:chunk});if(error)throw readableDatabaseError(error);components.push(...(data||[]));}}));
