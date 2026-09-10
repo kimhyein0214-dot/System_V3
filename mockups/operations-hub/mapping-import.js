@@ -1,6 +1,7 @@
 (function(global) {
   'use strict';
   const headers=['셀피아sku','스스 상품코드','스스 옵션코드','메이크샵 상품코드','메이크샵 옵션코드','에이블리 상품코드','에이블리 옵션코드'];
+  const templateHeaders=['썸네일',...headers];
   const sources=['smartstore','makeshop','ably'];
   const labels={smartstore:'스마트스토어',makeshop:'메이크샵',ably:'에이블리'};
   const text=value=>String(value??'').trim();
@@ -41,7 +42,29 @@
     for(const entry of entries.filter(entry=>entry.conflict))errors.push({...entry,status:'error',reason:'같은 SKU·판매처에 서로 다른 연결값이 입력됐습니다.'});
     return {entries:valid,errors};
   }
-  global.SystemV3MappingImport={parse,headers};
+  const excelFormulaText=value=>text(value).replaceAll('"','""');
+  function buildThumbnailTemplate(products=[]) {
+    if(!global.XLSX?.utils)throw new Error('XLSX 생성 모듈을 불러오지 못했습니다. 새로고침 후 다시 시도해주세요.');
+    const rows=[templateHeaders,...products.map(product=>[
+      '',text(product?.sellpia_sku_code),'','','','','',''
+    ])];
+    const sheet=global.XLSX.utils.aoa_to_sheet(rows);
+    products.forEach((product,index)=>{
+      const row=index+2,imageUrl=text(product?.sellpia_override_image_url||product?.image_url);
+      if(imageUrl)sheet['A'+row]={t:'n',f:`IMAGE("${excelFormulaText(imageUrl)}","",3,48,48)`};
+      for(let col=1;col<templateHeaders.length;col++){
+        const ref=global.XLSX.utils.encode_cell({r:row-1,c:col});
+        sheet[ref]={t:'s',v:text(rows[row-1][col]),z:'@'};
+      }
+    });
+    sheet['!cols']=[{wch:13},{wch:18},{wch:19},{wch:19},{wch:21},{wch:21},{wch:19},{wch:19}];
+    sheet['!rows']=[{hpt:24},...products.map(()=>({hpt:42}))];
+    sheet['!autofilter']={ref:`A1:H${Math.max(1,rows.length)}`};
+    const book=global.XLSX.utils.book_new();
+    global.XLSX.utils.book_append_sheet(book,sheet,'매칭값');
+    return global.XLSX.write(book,{bookType:'xlsx',type:'array',cellStyles:true});
+  }
+  global.SystemV3MappingImport={parse,headers,templateHeaders,buildThumbnailTemplate};
   if(!global.document)return;
   const byId=id=>document.getElementById('mapping-import-'+id);
   if(!byId('modal'))return;
@@ -62,7 +85,31 @@
     const url=URL.createObjectURL(new Blob([content],{type})),a=document.createElement('a');a.href=url;a.download=name;a.click();setTimeout(()=>URL.revokeObjectURL(url),30000);
   };
   const csv=rows=>'\uFEFF'+rows.map(row=>row.map(value=>'"'+text(typeof value==='string'&&/^[=+@-]/.test(value)?"'"+value:value).replaceAll('"','""')+'"').join(',')).join('\r\n');
-  byId('template').onclick=()=>download(csv([headers]),'매칭값_일괄등록_양식.csv');
+  byId('template').onclick=async()=>{
+    const button=byId('template'),original=button.textContent;
+    if(!global.SystemV3Data?.loadAllFilteredSkus||!global.SystemV3Data?.loadProductsBySkus){
+      download(csv([templateHeaders]),'매칭값_일괄등록_양식.csv');
+      return;
+    }
+    button.disabled=true;
+    try{
+      button.textContent='미매칭 셀피아 SKU 조회 중…';
+      const target=await global.SystemV3Data.loadAllFilteredSkus({status:'unmatched'});
+      button.textContent=`썸네일 조회 ${target.total.toLocaleString()}개 SKU`;
+      const products=await global.SystemV3Data.loadProductsBySkus(target.skus);
+      const bySku=new Map(products.map(product=>[text(product?.sellpia_sku_code),product]));
+      const ordered=target.skus.map(sku=>bySku.get(text(sku))||{sellpia_sku_code:sku});
+      const bytes=buildThumbnailTemplate(ordered);
+      download(bytes,'매칭값_일괄등록_미매칭셀피아SKU_썸네일포함.xlsx','application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+      byId('status').textContent=`미매칭 셀피아 SKU ${ordered.length.toLocaleString()}개를 채운 XLSX 양식을 받았습니다. A열 썸네일은 확인용이며 B열 셀피아 SKU부터 매칭값을 입력하세요.`;
+    }catch(error){
+      console.error('mapping thumbnail template download failed',error);
+      byId('status').textContent=`썸네일 포함 양식을 만들지 못했습니다: ${error?.message||error}`;
+    }finally{
+      button.disabled=false;
+      button.textContent=original;
+    }
+  };
   byId('report').onclick=()=>download(csv([['행','셀피아 SKU','판매처','이전 상품코드','이전 옵션코드','상품코드','옵션코드','상태','사유'],...state.results.map(row=>[row.rowNo,row.sku,labels[row.source],row.before?.productCode,row.before?.optionCode,row.productCode,row.optionCode,names[row.status],row.reason])]),'매칭값_등록결과.csv');
   byId('cancel').onclick=()=>{
     if(state.busy){state.stop=true;render('현재 요청을 마친 뒤 중단합니다. 저장 완료 건은 유지됩니다.');}

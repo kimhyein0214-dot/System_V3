@@ -4,7 +4,7 @@ import vm from 'node:vm';
 import {pathToFileURL} from 'node:url';
 const source=fs.readFileSync(new URL('../mockups/operations-hub/mapping-import.js',import.meta.url),'utf8');
 const c={};vm.createContext(c);vm.runInContext(source,c);
-const {parse,headers}=c.SystemV3MappingImport;
+const {parse,headers,templateHeaders,buildThumbnailTemplate}=c.SystemV3MappingImport;
 let result=parse([headers,['sku1','001','0002','','','',''],['sku2','','','3','','4','5']]);
 assert.equal(result.entries.length,3);
 assert.equal(result.entries[0].productCode,'001');
@@ -20,6 +20,19 @@ assert.equal(result.errors.length,2);
 assert.equal(parse([headers,['sku',9007199254740992,'','','','','']]).errors.length,1);
 assert.equal(parse([headers,['sku','1.2e+9','','','','','']]).errors.length,1);
 assert.throws(()=>parse([['wrong']]),/필수 헤더/);
+// Thumbnail column is presentation-only: B onward stays an ordinary mapping upload.
+assert.equal(parse([templateHeaders,['=IMAGE(...)','sku-thumb','001','0002','','','','']]).entries[0].sku,'sku-thumb');
+c.XLSX={utils:{
+  aoa_to_sheet(rows){return {'!data':rows};},
+  encode_cell({r,c}){return String.fromCharCode(65+c)+(r+1);},
+  book_new(){return {SheetNames:[],Sheets:{}};},
+  book_append_sheet(book,sheet,name){book.SheetNames.push(name);book.Sheets[name]=sheet;}
+},write(book){return book;}};
+const thumbnailBook=buildThumbnailTemplate([{sellpia_sku_code:'sku-thumb',image_url:'https://images.example/item.png'}]);
+assert.deepEqual(Array.from(thumbnailBook.Sheets.매칭값['!data'][0]),Array.from(templateHeaders));
+assert.equal(thumbnailBook.Sheets.매칭값.A2.f,'IMAGE("https://images.example/item.png","",3,48,48)');
+assert.equal(thumbnailBook.Sheets.매칭값.B2.v,'sku-thumb');
+assert.equal(thumbnailBook.Sheets.매칭값['!autofilter'].ref,'A1:H2');
 const {chromium}=await import(pathToFileURL('C:/Users/hihi0/.cache/codex-runtimes/codex-primary-runtime/dependencies/node/node_modules/playwright/index.mjs'));
 // Exercise the actual preview adapter with bounded fixture queries.
 const dataSource=fs.readFileSync(new URL('../mockups/operations-hub/data-service.js',import.meta.url),'utf8');
