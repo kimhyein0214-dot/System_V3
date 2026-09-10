@@ -9,13 +9,13 @@ function harness(rows, {rejectIds = [], cancelId = null} = {}) {
   let reads = 0;
   const validated = [], queries = [];
   const db = {from(table) {
-    const filters = [], query = {select(){return this;}, in(key, values){filters.push([key, values]); return this;}, order(){return this;}, range(a,b){this.bounds=[a,b];return this;},
+    const filters = [], query = {select(){return this;}, in(key, values){filters.push([key, values]); return this;}, order(){return this;}, gt(key,value){this.after=[key,value];return this;}, limit(value){this.limitValue=value;return this;}, range(a,b){this.bounds=[a,b];return this;},
       then(resolve,reject) {
         reads++;
         if (reads === 2 && cancelId) rows.find(r => r.change_id === cancelId).status = 'cancelled';
-        const result = rows.filter(r => filters.every(([k,v]) => v.includes(r[k])));
+        const result = rows.filter(r => filters.every(([k,v]) => v.includes(r[k])) && (!this.after || r[this.after[0]] > this.after[1]));
         queries.push({table, filters});
-        return Promise.resolve({data:(this.bounds ? result.slice(this.bounds[0],this.bounds[1]+1) : result).map(r=>({...r})),error:null}).then(resolve,reject);
+        return Promise.resolve({data:(this.bounds ? result.slice(this.bounds[0],this.bounds[1]+1) : result.slice(0,this.limitValue??result.length)).map(r=>({...r})),error:null}).then(resolve,reject);
       }};
     return query;
   }};
@@ -51,7 +51,7 @@ function harness(rows, {rejectIds = [], cancelId = null} = {}) {
   const h=harness(Array.from({length:1201},(_,i)=>row(i+1)));
   const r=await h.review({sources:['smartstore']});
   assert.equal(r.changeIds.length,1201);
-  assert.deepEqual(h.validated.map(x=>x.length),[300,300,300,300,1]);
+  assert.deepEqual(h.validated.map(x=>x.length),[...Array(24).fill(50),1]);
 }
 {
   const h=harness([row(1),row(2)]);
@@ -107,13 +107,34 @@ for (const allExcluded of [false,true]) {
       return {manifest:[],blob:new Blob(),appliedItems:items,skippedItems:initial};
     },downloadBlob:()=>calls.push('download')},
     loadChangeQueue:async()=>{},loadLiveMatrix:async()=>{}};
+  context.HubCurrentPriceExport={refreshItems:async(items,files,options)=>{calls.push('refresh-current');assert.equal(options.includeRules,true);return {items,excludedItems:[]};},buildArchive:async(...args)=>{calls.push('build-current');return context.sellerExport.buildExportArchive(...args);}};
   vm.createContext(context);
   vm.runInContext(app.slice(app.indexOf('async function runSellerExport()'),app.indexOf("document.getElementById('matrix-match-stock-btn').addEventListener"))+'\nthis.run=runSellerExport;',context);
   await context.run();
   assert.equal(state.running,false);
   assert.equal(completed.length,allExcluded?0:1);
   assert.equal(calls.includes('download'),true,'all excluded must still download unchanged originals');
+  assert.equal(calls.includes('refresh-current'),true);assert.equal(calls.includes('build-current'),true);
   assert.equal(state.excludedItems.length,allExcluded?1:2);
   if(!allExcluded)assert.ok(calls.some(x=>x?.p===100 && /2건은 제외목록/.test(x.d)),'excluded count must not be double-counted');
+}
+// Current-data exports must calculate rules even with zero queue IDs; explicit queue rows retain scope.
+for(const scenario of ['rule-only','explicit-rows','missing-module']){
+ const explicit=scenario==='explicit-rows',missing=scenario==='missing-module',calls=[],toasts=[],nodes=new Map();
+ const price={export_item_id:21,source_channel:'smartstore',sellpia_sku_code:'1014-1',field_key:'sellpia_sale_price',target_final_price:5400};
+ const state={action:'export',running:false,rows:explicit?[row(1)]:[],selectedSkus:[],excludedItems:[]};
+ const context={console:{error(){}},Blob,sellerExportState:state,document:{getElementById(id){if(!nodes.has(id))nodes.set(id,{style:{},disabled:false});return nodes.get(id);}},
+  selectedExportSources:()=>['smartstore'],selectedSellerExportScope:()=> 'filtered',resolveSellerExportScopeSkus:async()=>['1014-1'],sellerExportRowsForSources:rows=>rows,
+  createRequestId:()=> 'fixture',formatNumber:String,showToast:message=>toasts.push(message),showSellerExportProgress(){},showSellerExportExclusions:items=>{state.excludedItems=items;},
+  liveData:{reviewSellerDraftsForExport:async options=>{calls.push({name:'review',options});return {changeIds:explicit?[1]:[],excluded:[]};},downloadLatestSellerOriginals:async()=>new Map(),prepareSellerExport:async()=>{calls.push({name:'prepare'});return {items:[price]};},completeSellerExport:async()=>calls.push({name:'complete'})},
+  sellerExport:{buildExportArchive:async()=>{throw Error('legacy archive fallback must not run');},downloadBlob:()=>calls.push({name:'download'})},loadChangeQueue:async()=>{},loadLiveMatrix:async()=>{}};
+ if(!missing)context.HubCurrentPriceExport={refreshItems:async(items,files,options)=>{calls.push({name:'refresh',options,inputCount:items.length});return {items:explicit?items:[price],excludedItems:[]};},buildArchive:async(files,items)=>{calls.push({name:'build',items});return {manifest:[],blob:new Blob(),appliedItems:items,skippedItems:[]};}};
+ vm.createContext(context);vm.runInContext(app.slice(app.indexOf('async function runSellerExport()'),app.indexOf("document.getElementById('matrix-match-stock-btn').addEventListener"))+'\nthis.run=runSellerExport;',context);
+ await context.run();assert.equal(state.running,false);
+ if(missing){assert.equal(calls.length,0,'missing module must fail before queue validation or other export work');assert.ok(toasts.some(t=>/모듈|수식|계산/.test(t)));continue;}
+ const refresh=calls.find(c=>c.name==='refresh');assert.ok(refresh,'controller must call current-price refresh');assert.equal(refresh.options.includeRules,!explicit);
+ assert.equal(refresh.inputCount,explicit?1:0);assert.deepEqual(refresh.options.skus===null?null:Array.from(refresh.options.skus),explicit?null:['1014-1']);
+ assert.equal(calls.some(c=>c.name==='prepare'),explicit);assert.equal(calls.some(c=>c.name==='complete'),explicit);
+ assert.deepEqual(Array.from(calls.find(c=>c.name==='build').items),[price]);assert.equal(calls.some(c=>c.name==='download'),true);
 }
 console.log('Partial export: mixed safety, selection, pagination, validation failure, stale IDs, original server error, ZIP report and app export controller passed');

@@ -57,11 +57,11 @@
  async function calculate(skus,source,context={}){
   const [registry,config]=await Promise.all([context.registry??data().ruleRegistry('list'),context.config??settings(source)]);
   const requested=[...new Set(skus)];if(!requested.length)throw Error('대상 SKU를 선택하세요.');
-  const siblings=await data().loadRulePlatformSiblings(requested,source);
+  const siblings=context.siblings??await data().loadRulePlatformSiblings(requested,source);
   const targets=[...new Set([...requested,...siblings])];
   const all=model().expandSkus(targets,registry.dependencies,false,{maxSkus:50000});
-  const products=Object.fromEntries((await data().loadFormulaProducts(all)).map(p=>[p.sellpia_sku_code,p]));
-  const evaluator=model().createEvaluator({...registry,products});
+  const products=context.products?(context.products instanceof Map?Object.fromEntries(context.products):context.products):Object.fromEntries((await data().loadFormulaProducts(all)).map(p=>[p.sellpia_sku_code,p]));
+  const evaluator=model().createEvaluator({...registry,products,resolvedValues:context.resolvedValues});
   const assignmentSlots=new Map(registry.assignments.map(a=>[model().key(a.sku,a.target_field,a.scope),a]));
   const groups=new Map(), errors=[];
   for(const sku of targets){try{
@@ -80,7 +80,7 @@
    const key=component.seller_product_code;if(!groups.has(key))groups.set(key,[]);groups.get(key).push(row);
   }catch(e){errors.push({sku,product_code:products[sku]?.__sellerPriceComponents?.[source]?.seller_product_code||products[sku]?.[source+'_product_code']||'',unresolved_product:!products[sku],error:e.message});}}
   const rows=[];for(const group of groups.values()){try{rows.push(...compose(group,{...config.body,source},registry));}catch(e){errors.push(...group.map(r=>({sku:r.sku,product_code:r.component.seller_product_code,error:e.message})));}}
-  const resolved=new Map();
+  const resolved=new Map(context.resolvedValues||[]);
   const freeze=(row,field,value)=>resolved.set(model().key(row.sku,field,source),{value,base:value,versions:row.versions,trace:[{sku:row.sku,field,value}],formula:model().fields[field]});
   for(const row of rows){freeze(row,'platform_registration_price',row.platformBase);freeze(row,'platform_discount_price',row.platformBase-row.platformDiscount);freeze(row,'platform_option_input',row.platformOption);}
   const stages=model().createEvaluator({...registry,products,resolvedValues:resolved});
@@ -192,6 +192,26 @@
   if(!products.length)return products;
   const [registry,documents]=await Promise.all([data().ruleRegistry('list'),data().workDocument('list','formula')]);
   const configured=new Set(documents.filter(d=>d.title?.startsWith('registry-platform:')).map(d=>d.title.slice('registry-platform:'.length)));
+  const internal=new Map(),resolvedValues=new Map(),names=new Map(registry.rules.map(r=>[r.id,r.name]));
+  const internalNames=new Map();
+  for(const a of registry.assignments)if(!a.scope&&['actual_inbound_cost','basis_sku_price','calculated_base_price'].includes(a.target_field)){
+   if(!internalNames.has(a.sku))internalNames.set(a.sku,new Set());if(names.get(a.rule_id))internalNames.get(a.sku).add(names.get(a.rule_id));
+  }
+  const internalSkus=new Set(internalNames.keys());
+  const internalTargets=products.filter(p=>internalSkus.has(p.sellpia_sku_code)).map(p=>p.sellpia_sku_code);
+  if(internalTargets.length){
+   const fallbackNames=sku=>[...(internalNames.get(sku)||[])];
+   try{
+    const all=model().expandSkus(internalTargets,registry.dependencies,false,{maxSkus:50000});
+    const inputs=Object.fromEntries((await data().loadFormulaProducts(all)).map(p=>[p.sellpia_sku_code,p]));
+    const evaluator=model().createEvaluator({...registry,products:inputs});
+    for(const sku of internalTargets){try{
+     const value=evaluator.evaluate(sku,'calculated_base_price');
+     internal.set(sku,{calculated_base_price:{...value,ruleNames:[...new Set(value.versions.map(v=>names.get(v.id)).filter(Boolean))]}});
+     resolvedValues.set(model().key(sku,'calculated_base_price',''),value);
+    }catch(error){internal.set(sku,{calculated_base_price:{error:error.message,ruleNames:fallbackNames(sku),versions:[]}});}}
+   }catch(error){for(const sku of internalTargets)internal.set(sku,{calculated_base_price:{error:error.message,ruleNames:fallbackNames(sku),versions:[]}});}
+  }
   const projections=new Map();
   for(const source of ['smartstore','makeshop','ably']){
    const applicable=new Set(registry.assignments.filter(a=>a.target_field!=='calculated_stock'&&(!a.scope||a.scope===source)).map(a=>a.sku));
@@ -201,13 +221,20 @@
    try{
     const document=documents.find(d=>d.title==='registry-platform:'+source);
     const config=document?await data().workDocument('get','formula',{id:document.id}):{body:{source,mode:'reverse',anchor:'lowest',registration_rule_id:null,discount_rule_id:null}};
-    const result=await calculate(selected.map(p=>p.sellpia_sku_code),source,{registry,config});
+    const result=await calculate(selected.map(p=>p.sellpia_sku_code),source,{registry,config,resolvedValues});
     const names=new Map(result.registry.rules.map(r=>[r.id,r.name]));
     for(const row of result.rows){const {product,component,...projection}=row;set(row.sku,{...projection,ruleNames:[...new Set((row.versions||[]).map(v=>names.get(v.id)).filter(Boolean))]});}
     for(const failure of result.errors)set(failure.sku,{error:failure.error,ruleNames:[],versions:[]});
    }catch(error){for(const p of selected)set(p.sellpia_sku_code,{error:error.message,ruleNames:[],versions:[]});}
   }
-  return products.map(p=>projections.has(p.sellpia_sku_code)?{...p,__hubRulePrices:projections.get(p.sellpia_sku_code)}:p);
+  return products.map(p=>{
+   const sku=p.sellpia_sku_code;
+   if(!projections.has(sku)&&!internal.has(sku)&&!p.__hubRulePrices&&!p.__hubInternalPrices)return p;
+   const {__hubRulePrices:oldPlatform,__hubInternalPrices:oldInternal,...row}=p;
+   if(projections.has(sku))row.__hubRulePrices=projections.get(sku);
+   if(internal.has(sku))row.__hubInternalPrices=internal.get(sku);
+   return row;
+  });
  }
  g.HubPlatformRules={compose,settings,calculate,exportLatest,refreshExportItems,itemsFromCalculation,partitionExportGroups,manualIntent,projectRows};
 })(typeof window==='undefined'?globalThis:window);

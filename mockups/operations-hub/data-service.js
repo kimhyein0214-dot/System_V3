@@ -2167,24 +2167,48 @@
     const selectedSkus = Array.isArray(skus) ? new Set(skus.map(cleanText).filter(Boolean)) : null;
     if (selectedSkus && !selectedSkus.size) return [];
     const rows = [];
-    const pageSize = 1000;
-    for (let from = 0; ; from += pageSize) {
-      const {data, error} = await db
+    const pageSize = 500;
+    const skuList = selectedSkus ? [...selectedSkus] : null;
+    const batches = skuList ? Array.from({length:Math.ceil(skuList.length / 200)}, (_, index) => skuList.slice(index * 200, index * 200 + 200)) : [null];
+    for (const skuBatch of batches) {
+      let afterId = null;
+      for (;;) {
+        let query = db
         .from('operations_hub_change_queue')
         .select('change_id,source_channel,sellpia_sku_code,status,field_key,seller_product_code,seller_option_code,target_channels,target_component_skus,target_safety_state,target_safety_details,error_message,validation_errors')
         .in('source_channel', selectedSources)
         .in('status', statuses)
-        .order('change_id', {ascending:true})
-        .range(from, from + pageSize - 1);
-      if (error) throw error;
-      rows.push(...(data || []).filter(row => !selectedSkus || selectedSkus.has(cleanText(row.sellpia_sku_code))));
-      if (!data || data.length < pageSize) break;
+        .order('change_id', {ascending:true});
+        if (skuBatch) query = query.in('sellpia_sku_code', skuBatch);
+        if (afterId !== null) query = query.gt('change_id', afterId);
+        const {data, error} = await query.limit(pageSize);
+        if (error) throw error;
+        rows.push(...(data || []).filter(row => !selectedSkus || selectedSkus.has(cleanText(row.sellpia_sku_code))));
+        if (!data || data.length < pageSize) break;
+        const nextId = Number(data[data.length - 1].change_id);
+        if (!Number.isSafeInteger(nextId) || nextId <= (afterId ?? -1)) throw new Error('수정안 조회 위치가 진행되지 않았습니다. 다시 시도해주세요.');
+        afterId = nextId;
+      }
     }
-    return rows;
+    return [...new Map(rows.map(row => [Number(row.change_id), row])).values()].sort((a, b) => Number(a.change_id) - Number(b.change_id));
   }
 
   async function countSellerDraftsForExport(sources = [], skus = null) {
-    return (await loadSellerDraftRows({sources, skus, statuses:['pending','validated','failed']})).length;
+    const selectedSources = [...new Set((sources || []).map(cleanText).filter(Boolean))];
+    const selectedSkus = Array.isArray(skus) ? [...new Set(skus.map(cleanText).filter(Boolean))] : null;
+    if (!selectedSources.length || selectedSkus && !selectedSkus.length) return 0;
+    const batches = selectedSkus ? Array.from({length:Math.ceil(selectedSkus.length / 200)}, (_, index) => selectedSkus.slice(index * 200, index * 200 + 200)) : [null];
+    let total = 0;
+    for (const skuBatch of batches) {
+      let query = db.from('operations_hub_change_queue').select('change_id', {count:'exact', head:true})
+        .in('source_channel', selectedSources).in('status', ['pending','validated','failed']).limit(0);
+      if (skuBatch) query = query.in('sellpia_sku_code', skuBatch);
+      const {count, error} = await query;
+      if (error) throw error;
+      if (!Number.isSafeInteger(count) || count < 0) throw new Error('수정안 개수를 확인하지 못했습니다. 다시 시도해주세요.');
+      total += count;
+    }
+    return total;
   }
 
   async function validateSellerDraftsForExport(sources = [], skus = null) {
@@ -2203,13 +2227,13 @@
     return '';
   }
 
-  async function reviewSellerDraftsForExport({sources = [], skus = null, changeIds = null} = {}) {
+  async function reviewSellerDraftsForExport({sources = [], skus = null, changeIds = null, onProgress = null} = {}) {
     const readSelected = async ids => {
       const result = [];
-      for (let offset = 0; offset < ids.length; offset += 300) {
+      for (let offset = 0; offset < ids.length; offset += 100) {
         const {data, error} = await db.from('operations_hub_change_queue')
           .select('change_id,source_channel,sellpia_sku_code,status,field_key,seller_product_code,seller_option_code,target_channels,target_component_skus,target_safety_state,target_safety_details,error_message,validation_errors')
-          .in('change_id', ids.slice(offset, offset + 300)).order('change_id', {ascending:true});
+          .in('change_id', ids.slice(offset, offset + 100)).order('change_id', {ascending:true});
         if (error) throw error;
         result.push(...(data || []));
       }
@@ -2219,8 +2243,9 @@
     const rows = selectedIds ? await readSelected(selectedIds) : await loadSellerDraftRows({sources, skus});
     const inScope = row => row.source_channel ? sources.includes(row.source_channel) : (row.target_channels || []).some(source => sources.includes(source));
     const candidates = rows.filter(row => inScope(row) && !sellerExportExclusionReason(row) && ['pending','failed'].includes(row.status));
-    for (let offset = 0; offset < candidates.length; offset += 300) {
-      await validateChangeQueue(candidates.slice(offset, offset + 300).map(row => Number(row.change_id)));
+    for (let offset = 0; offset < candidates.length; offset += 50) {
+      await validateChangeQueue(candidates.slice(offset, offset + 50).map(row => Number(row.change_id)));
+      onProgress?.(Math.min(offset+50,candidates.length),candidates.length);
     }
     // Re-read the same IDs so a new run, another operator, or a failed validation
     // cannot silently expand the export scope.
@@ -2404,10 +2429,18 @@
     for(let i=0;i<codes.length;i+=200){const {data:part,error:e}=await db.from(MATRIX_VIEW).select('sellpia_sku_code,sellpia_product_name,sellpia_option_name').in('sellpia_sku_code',codes.slice(i,i+200));if(e)throw e;rows.push(...part);}
     return rows;
   }
-  async function loadFormulaProducts(skus) {
-    requireOperationsHubSessionToken();let rows=[];
-    for(let i=0;i<skus.length;i+=200){const {data,error}=await db.from(MATRIX_VIEW).select('sellpia_sku_code,display_name,sellpia_source_sale_price,system_base_price,smartstore_price,makeshop_price,ably_price,smartstore_product_code,makeshop_product_code,ably_product_code').in('sellpia_sku_code',skus.slice(i,i+200));if(error)throw error;rows.push(...data);}
-    let enriched=[];for(let i=0;i<rows.length;i+=200){let part=await attachProductProfiles(rows.slice(i,i+200));part=await attachInboundCostDetails(part);part=await attachSystemOperationalDetails(part);enriched.push(...await attachSellerDrafts(await attachSellerPriceComponents(part)));}return enriched;
+  async function loadFormulaProducts(skus, {onProgress} = {}) {
+    requireOperationsHubSessionToken();
+    const codes=[...new Set(skus)],chunks=[];for(let i=0;i<codes.length;i+=200)chunks.push(codes.slice(i,i+200));
+    const results=new Array(chunks.length);let next=0,completed=0;
+    await Promise.all(Array.from({length:Math.min(4,chunks.length)},async()=>{
+      while(next<chunks.length){const index=next++,chunk=chunks[index];
+        const {data,error}=await db.from(MATRIX_VIEW).select('sellpia_sku_code,display_name,sellpia_source_sale_price,system_base_price,smartstore_price,makeshop_price,ably_price,smartstore_product_code,makeshop_product_code,ably_product_code').in('sellpia_sku_code',chunk);if(error)throw error;
+        let part=await attachProductProfiles(data||[]);part=await attachInboundCostDetails(part);part=await attachSystemOperationalDetails(part);
+        results[index]=await attachSellerDrafts(await attachSellerPriceComponents(part));completed+=chunk.length;onProgress?.(completed,codes.length);
+      }
+    }));
+    return results.flat();
   }
   async function savePlatformRuleGroup(rule) {
     const {data,error}=await db.rpc('hub_platform_rule_group_save_v1',{p_session_token:requireOperationsHubSessionToken(),p_rule:rule});
