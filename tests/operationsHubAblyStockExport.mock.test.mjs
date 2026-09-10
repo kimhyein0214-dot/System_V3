@@ -12,3 +12,14 @@ const missing=patchCell('<row r="2"><c r="R2"/><c r="X2"><v>1</v></c></row>',2,'
 assert.ok(missing.indexOf('r="W2"')<missing.indexOf('r="X2"'));
 assert.throws(()=>patchCell(original,4,'W',5));
 console.log('PASS original headers, numeric zero, cell styles, Q strings, untouched rows and column order');
+
+globalThis.XLSX={utils:{encode_col:index=>String.fromCharCode(65+index)}};
+const template='<worksheet><dimension ref="A1:C2"/><sheetData><row r="1"><c r="A1" s="5"><v>10</v></c></row><row r="2" ht="30"><c r="A2" s="7"><v>999</v></c><c r="B2" s="8"/></row></sheetData></worksheet>';
+const filled=globalThis.AblyStockExport.populateSheet(template,Array.from({length:12},(_,i)=>[i,'a&b']));
+assert.ok(filled.includes('<row r="13" ht="30">'));
+assert.ok(filled.includes('<c r="A13" s="7"><v>11</v></c>'));
+assert.ok(filled.includes('<c r="B13" s="8" t="inlineStr">'));
+assert.ok(filled.includes('a&amp;b'));
+assert.ok(filled.includes('ref="A1:AI13"'));
+assert.ok(filled.includes('<row r="1"><c r="A1" s="5"><v>10</v></c></row>'));
+console.log('PASS template header, row height, style, XML escaping and multi-digit row references');

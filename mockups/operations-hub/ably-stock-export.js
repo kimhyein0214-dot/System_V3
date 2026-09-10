@@ -42,7 +42,42 @@
       if(!results[index].error)xml=patchCell(xml,item.line,'W',results[index].value);
     });
     zip.file(path,xml,{createFolders:false});
-    return zip.generateAsync({type:'blob',compression:'DEFLATE'});
+    return zip.generateAsync({type:'blob',mimeType:'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',compression:'DEFLATE'});
   }
-  global.AblyStockExport={headers,patchCell,build};
+  function populateSheet(xml,rows){
+    const data=xml.match(/<sheetData\b[^>]*>([\s\S]*?)<\/sheetData>/);
+    if(!data)throw new Error('템플릿 데이터 영역을 찾지 못했습니다.');
+    const originals=[...data[1].matchAll(/<row\b[^>]*>[\s\S]*?<\/row>/g)].map(m=>m[0]);
+    const header=originals.find(row=>/\br="1"/.test(row));
+    const prototype=originals.find(row=>/\br="2"/.test(row));
+    if(!header||!prototype)throw new Error('1행 헤더와 2행 서식이 있는 템플릿을 선택하세요.');
+    const rendered=rows.map((values,index)=>{
+      const line=index+2;
+      let row=prototype.replace(/(<row\b[^>]*\br=")\d+"/,`$1${line}"`).replace(/(<c\b[^>]*\br="[A-Z]+)\d+"/g,`$1${line}"`);
+      values.forEach((value,column)=>{const letters=global.XLSX.utils.encode_col(column);row=patchCell(row,line,letters,value??'');});
+      return row;
+    }).join('');
+    let output=xml.replace(data[0],()=>`<sheetData>${header}${rendered}</sheetData>`);
+    output=output.replace(/(<dimension\b[^>]*\bref=")[^"]+"/,`$1A1:AI${rows.length+1}"`);
+    output=output.replace(/(<autoFilter\b[^>]*\bref=")[^"]+"/,`$1A1:AI${rows.length+1}"`);
+    return output;
+  }
+  async function buildFromTemplate(file,rows){
+    if(!file)throw new Error('서식을 사용할 원본 템플릿 파일을 선택하세요.');
+    const bytes=await file.arrayBuffer();
+    const parsed=global.XLSX.read(bytes,{type:'array'}),sheet=parsed.Sheets['옵션기본'];
+    if(!sheet)throw new Error('옵션기본 시트가 있는 템플릿을 선택하세요.');
+    headers.forEach((name,index)=>{if(String(sheet[global.XLSX.utils.encode_cell({r:0,c:index})]?.v??'').trim()!==name)throw new Error(`${name} 헤더가 원본 양식과 다릅니다.`);});
+    const zip=await global.JSZip.loadAsync(bytes),parser=new DOMParser();
+    const workbook=parser.parseFromString(await zip.file('xl/workbook.xml').async('string'),'application/xml');
+    const descriptor=[...workbook.getElementsByTagName('sheet')].find(el=>el.getAttribute('name')==='옵션기본');
+    const rels=parser.parseFromString(await zip.file('xl/_rels/workbook.xml.rels').async('string'),'application/xml');
+    const target=[...rels.getElementsByTagName('Relationship')].find(el=>el.getAttribute('Id')===descriptor?.getAttribute('r:id'))?.getAttribute('Target');
+    if(!target)throw new Error('템플릿 시트 연결을 찾지 못했습니다.');
+    const path=target.startsWith('/')?target.slice(1):'xl/'+target.replace(/^\.\//,'');
+    const xml=await zip.file(path).async('string');
+    zip.file(path,populateSheet(xml,rows),{createFolders:false});
+    return zip.generateAsync({type:'blob',mimeType:'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',compression:'DEFLATE'});
+  }
+  global.AblyStockExport={headers,patchCell,build,populateSheet,buildFromTemplate};
 })(typeof window==='undefined'?globalThis:window);

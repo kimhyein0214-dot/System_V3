@@ -44,7 +44,7 @@
       const stockMap=Object.fromEntries(rows.map(row=>[row.sellpia_sku_code,row.system_stock]));
       const results=items.map(item=>global.AblyCombinationLabModel.calculate(item.memoText,stockMap));
       const blob=await global.AblyStockExport.build({file:sourceFile,items,results});
-      global.SystemV3SellerExport.downloadBlob(blob,sourceFile.name.replace(/\.xlsx$/i,'')+'_전체조합_재고갱신.xlsx');
+      global.SystemV3SellerExport.downloadBlob(blob,sourceFile.name.replace(/\.xls[xm]$/i,'')+'_전체조합_재고갱신.xlsx');
       const valid=results.filter(result=>!result.error).length;
       status.textContent=`전체 ${groups.length}개 상품 · ${items.length}개 조합 · 재고 갱신 ${valid}행 · 확인 필요 ${items.length-valid}행은 원본 재고 유지. 다운로드 완료.`;
     }catch(error){status.textContent=`전체 재고 파일 생성 실패: ${error.message}`;}
@@ -94,7 +94,7 @@
     try{
       const results=calculations(),valid=results.filter(r=>!r.error).length;
       const blob=await global.AblyStockExport.build({file:sourceFile,items:group.items,results,test:group.test});
-      const name=(group.test?'테스트_1000':sourceFile.name.replace(/\.xlsx$/i,''))+'_조합재고반영.xlsx';
+      const name=(group.test?'테스트_1000':sourceFile.name.replace(/\.xls[xm]$/i,''))+'_조합재고반영.xlsx';
       global.SystemV3SellerExport.downloadBlob(blob,name);
       el('ably-stock-status').textContent=`엑셀 다운로드 완료 · 재고 반영 ${valid}행 · 확인 필요 ${results.length-valid}행은 원본 재고 유지. Q열 수정값 포함. 시스템 재고는 변경하지 않았습니다.`;
     }catch(error){el('ably-stock-status').textContent=`다운로드 실패: ${error.message}`;}

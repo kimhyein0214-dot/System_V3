@@ -7,3 +7,9 @@ assert.equal(rows.filter(r=>r[11]===r[13]).length,9);assert.deepEqual(rows[0].sl
 assert.equal(rows[1][16],'[1000-1],[1000-2]');assert.equal(rows[9][16],'[1000-2],[1000-1]');assert.equal(rows[1][22],0);assert.equal(rows[80][22],8);
 assert.throws(()=>globalThis.AblyPairGenerator.generate([{...products[0],system_stock:null}],{title:'test'}));
 console.log('PASS 9x9=81, option order, 9 self-pairs, exact Q references, zero and missing stock');
+const triples=globalThis.AblyPairGenerator.generate(products,{title:'3개 조합',size:3,option1:'첫 선택',option2:'두 번째',option3:'세 번째'});
+assert.equal(triples.length,729);assert.equal(new Set(triples.map(r=>JSON.stringify([r[11],r[13],r[15]]))).size,729);
+assert.deepEqual([triples[0][10],triples[0][12],triples[0][14]],['첫 선택','두 번째','세 번째']);
+assert.equal(triples[728][16],'[1000-9],[1000-9],[1000-9]');assert.equal(triples[728][22],8);
+assert.throws(()=>globalThis.AblyPairGenerator.generate(Array.from({length:30},(_,i)=>({...products[0],sellpia_sku_code:String(i)})),{title:'too many',size:3}));
+console.log('PASS 9x9x9=729, editable option labels, three exact Q references and size limit');
