@@ -117,8 +117,8 @@
   const choices=platform?{...(!current()?{'':'전체판매처(스마트스토어·메이크샵·에이블리)'}:{}),...sources}:{'':'공통'};
   $('scope').innerHTML=option(choices,previous);$('scope').disabled=!platform;
   $('source-scope').disabled=!M.isPlatform($('source-field').value);
-  const count=assignedRuleCount(),locked=count>0;$('target').disabled=locked;$('origin').disabled=locked;$('scope').disabled=locked||!platform;
-  $('stage-note').hidden=!locked;$('stage-note').textContent=locked?`저장된 위치: ${fieldLabels[current().target_field]} · ${sources[current().scope]||'공통'} · ${current().input_origin==='parent'?'상위 SKU 입력':'해당 SKU 입력'}. ${count.toLocaleString('ko-KR')}개 SKU에 적용되어 결과 위치·판매처·입력 위치는 고정됩니다. 입력값과 계산 순서는 여기서 수정할 수 있습니다.`:'';
+  const count=assignedRuleCount(),hasAssignments=count>0;$('target').disabled=false;$('origin').disabled=hasAssignments;$('scope').disabled=!platform;
+  $('stage-note').hidden=!hasAssignments;$('stage-note').textContent=hasAssignments?`현재 ${count.toLocaleString('ko-KR')}개 SKU에 적용 중입니다. 도착값이나 판매처를 바꾸면 연결된 Assignment도 새 위치로 함께 이동합니다. 같은 위치에 다른 Rule이 있는 SKU가 발견되면 전체 저장을 취소합니다. 상위 SKU 참조 전환은 종속관계가 필요하므로 Assignment를 제거한 뒤 설정하세요.`:'';
   updateRuleFlow();
  }
  async function saveRule(){

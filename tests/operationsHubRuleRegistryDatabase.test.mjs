@@ -18,6 +18,7 @@ test('registry migration and RPCs execute in isolated PostgreSQL', {skip:!PGlite
  `);
  await db.exec(migration);
  await db.exec(await readFile(new URL('../supabase/migrations/20260910031709_hub_platform_stage_inputs.sql',import.meta.url),'utf8'));
+ await db.exec(await readFile(new URL('../supabase/migrations/20260910113000_hub_rule_destination_reassignment.sql',import.meta.url),'utf8'));
  const call=async(fn,args)=>{const placeholders=args.map((_,i)=>'$'+(i+1)).join(',');const x=await db.query(`select public.${fn}(${placeholders}) as result`,args);return x.rows[0].result;};
  const save=rule=>call('hub_rule_registry_v1',['operator','save',JSON.stringify(rule)]);
  let request=0;
@@ -63,11 +64,15 @@ test('registry migration and RPCs execute in isolated PostgreSQL', {skip:!PGlite
   await assert.rejects(assign('apply',[{sku:'B',rule_id:parent.id,reference:{parent_sku:'C'}}]),/여러 개/);
   const list=await call('hub_rule_registry_v1',['operator','list',null]);assert.equal(list.dependencies[0].parent_sku,'A');
  });
- await t.test('rule edits cannot change assigned stage or introduce cycles',async()=>{
-  await assert.rejects(save({...base,target_field:'basis_sku_price'}),/새 규칙/);
+ await t.test('assigned destination moves atomically, rejects collisions and still prevents implicit parent conversion',async()=>{
+  base=await save({...base,target_field:'basis_sku_price'});
+  let moved=await call('hub_rule_registry_v1',['operator','list',null]);let assignment=moved.assignments.find(a=>a.sku==='A'&&a.rule_id===base.id);assert.equal(assignment.target_field,'basis_sku_price');assert.equal(assignment.version,2);
+  base=await save({...base,target_field:'calculated_base_price'});moved=await call('hub_rule_registry_v1',['operator','list',null]);assignment=moved.assignments.find(a=>a.sku==='A'&&a.rule_id===base.id);assert.equal(assignment.target_field,'calculated_base_price');assert.equal(assignment.version,3);
+  await db.exec("insert into public.operations_hub_product_profiles values('F')");const moving=await save(rule('moving','basis_sku_price'));const occupied=await save(rule('occupied'));await assign('apply',[{sku:'F',rule_id:moving.id},{sku:'F',rule_id:occupied.id}]);await assert.rejects(save({...moving,target_field:'calculated_base_price'}),/적용점 변경 충돌.*전체 저장을 취소/);
+  await assert.rejects(save({...base,input_origin:'parent'}),/종속관계/);
   await assert.rejects(save({...base,source_field:'calculated_base_price'}),/순환/);
   const list=await call('hub_rule_registry_v1',['operator','list',null]);assert.equal(list.rules.find(r=>r.id===base.id).source_field,'purchase_price');
-  const edit=await save({...base,config:{steps:[{op:'add',value:500}]}});assert.equal(edit.version,2);
+  const edit=await save({...base,config:{steps:[{op:'add',value:500}]}});assert.equal(edit.version,base.version+1);
  });
  await t.test('reference source override survives rule edits; explicit and implicit cycles reject',async()=>{
   await assign('apply',[{sku:'B',rule_id:parent.id,reference:{parent_sku:'A',source_field:'actual_inbound_cost'}}]);
