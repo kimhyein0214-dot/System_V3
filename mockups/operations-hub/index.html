@@ -84,7 +84,7 @@
               <article class="side-metric"><span>전체 SKU</span><strong id="live-total-sku">-</strong><em id="live-catalog-state">조회 중</em></article>
               <article class="side-metric good"><span>판매처 연결</span><strong id="live-connected-sku">-</strong><em id="live-connected-rate">조회 중</em></article>
               <article class="side-metric danger"><span>재고 불일치</span><strong id="live-inventory-mismatch">-</strong><em id="live-inventory-mismatch-detail">조회 중</em></article>
-              <article class="side-metric warn"><span>미매칭</span><strong id="live-unmatched-sku">-</strong><em>매트릭스 실집계</em></article>
+              <article class="side-metric warn"><span>판매처 미연결</span><strong id="live-unmatched-sku">-</strong><em>셀피아 SKU 연결 없음</em></article>
               <article class="side-metric blue"><span>오늘 피킹</span><strong id="live-today-picked">-</strong><em id="live-shortage-drawer">조회 중</em></article>
               <article class="side-metric muted"><span>최근 동기화</span><strong id="live-latest-sync">-</strong><em id="live-latest-sync-detail">조회 중</em></article>
             </div>
@@ -130,7 +130,7 @@
               <section class="panel alert-panel">
                 <div class="panel-title"><div><h3>확인할 항목</h3><p>업무 우선순위가 높은 항목입니다.</p></div></div>
                 <div class="alert-list">
-                  <button data-page="matching"><span class="alert-dot red">!</span><p><b id="dashboard-unmatched-alert">미매칭 집계 중</b><em>현재 매트릭스 미연결 SKU</em></p><strong>검토</strong></button>
+                  <button data-page="matching"><span class="alert-dot red">!</span><p><b id="dashboard-unmatched-alert">미매칭 집계 중</b><em>판매처별 셀피아 SKU 연결 없음</em></p><strong>검토</strong></button>
                   <button data-page="matching"><span class="alert-dot amber">!</span><p><b id="dashboard-inventory-alert">재고 차이 집계 중</b><em>셀피아와 판매처 수량 불일치</em></p><strong>확인</strong></button>
                   <button data-page="jobs"><span class="alert-dot blue">i</span><p><b id="dashboard-failed-alert">실패 작업 확인 중</b><em>최근 30일 실행 로그 기준</em></p><strong>보기</strong></button>
                 </div>
@@ -959,6 +959,7 @@
     </div>
     <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js"></script>
+    <script src="./vendor/exceljs.min.js?v=4.4.0"></script>
     <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.112.3/dist/umd/supabase.js"></script>
     <script src="./seller-source-parsers.js?v=20260910-tags-v107"></script>
     <script src="./seller-export-adapter.js?v=20260910-tags-v107"></script>
@@ -969,10 +970,10 @@
     <script src="./bundle-import-parser.js?v=20260910-tags-v107"></script>
     <script src="./seller-bundle-import-parser.js?v=20260910-tags-v107"></script>
     <script src="./sellpia-source-parser.js?v=20260910-tags-v107"></script>
-    <script src="./data-service.js?v=20260910-tags-v107"></script>
+    <script src="./data-service.js?v=20260910-seller-unmatched-v1"></script>
     <script src="./channels-page.js?v=20260910-tags-v107"></script>
-    <script src="./app.js?v=20260910-tags-v107"></script>
-    <script src="./mapping-import.js?v=20260910-thumbnail-embed-v2"></script>
+    <script src="./app.js?v=20260910-seller-unmatched-v1"></script>
+    <script src="./mapping-import.js?v=20260910-thumbnail-embed-v3"></script>
     <script src="./attributes-page.js?v=20260910-tags-v107"></script>
     <script src="./price-rule-lab.js?v=20260910-tags-v107"></script>
     <script src="./ably-stock-export.js?v=20260910-tags-v107"></script>

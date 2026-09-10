@@ -66,6 +66,9 @@ assert.match(presetMigration, /end::text as overall_status/, "the live matrix vi
 assert.match(html, /class="side-metrics"[\s\S]*?id="live-connected-sku"[\s\S]*?id="live-inventory-mismatch"[\s\S]*?id="live-today-picked"/, "compact sidebar metrics must keep the live-data targets");
 assert.match(dataSource, /\.from\('operations_hub_dashboard_metrics'\)/, "dashboard metrics must load from the database");
 assert.match(dataSource, /projected_inventory_mismatch_sku[\s\S]*?inventory_draft_cells/, "dashboard metrics must distinguish projected mismatches from raw snapshots");
+assert.match(dataSource, /seller_unmatched_sku/, "dashboard metrics must request the seller-side unmatched count");
+assert.match(source, /seller_unmatched_sku \?\? metrics\.unmatched_sku/, "the sidebar must prefer seller SKUs with no Sellpia connection");
+assert.match(html, /판매처 미연결[\s\S]*?셀피아 SKU 연결 없음/, "the sidebar label must state the seller-side unmatched definition");
 assert.match(source, /live-inventory-mismatch-detail[\s\S]*?원본 \$\{formatNumber\(mismatched\)\}/, "the metric loader must retain raw and draft-projected inventory counts");
 assert.match(dataSource, /\.from\('operations_hub_active_seller_drafts'\)/, "matrix draft colors must load from the de-duplicated active draft view");
 assert.doesNotMatch(dataSource, /operations_hub_active_seller_drafts'[\s\S]{0,500}?\.limit\(1000\)/, "active seller drafts must not be truncated at 1,000 history rows");

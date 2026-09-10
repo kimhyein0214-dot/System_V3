@@ -1675,7 +1675,7 @@ async function loadLiveDashboardMetrics() {
     const metrics = await liveData.loadDashboardMetrics();
     const total = Number(metrics.total_sku || 0);
     const connected = Number(metrics.connected_sku || 0);
-    const unmatched = Number(metrics.unmatched_sku || 0);
+    const unmatched = Number(metrics.seller_unmatched_sku ?? metrics.unmatched_sku ?? 0);
     const mismatched = Number(metrics.inventory_mismatch_sku || 0);
     const projectedMismatch = Number(metrics.projected_inventory_mismatch_sku ?? mismatched);
     const inventoryDraftCells = Number(metrics.inventory_draft_cells || 0);
@@ -1688,7 +1688,7 @@ async function loadLiveDashboardMetrics() {
     document.getElementById('live-inventory-mismatch-detail').textContent = `원본 ${formatNumber(mismatched)} · 수정안 ${formatNumber(inventoryDraftCells)}셀${inventoryFailedCells ? ` · 실패 ${formatNumber(inventoryFailedCells)}셀` : ''}`;
     document.getElementById('live-unmatched-sku').textContent = formatNumber(unmatched);
     document.getElementById('matrix-unmatched-badge').textContent = formatNumber(unmatched);
-    document.getElementById('dashboard-unmatched-alert').textContent = `미매칭 SKU ${formatNumber(unmatched)}건`;
+    document.getElementById('dashboard-unmatched-alert').textContent = `판매처 미연결 SKU ${formatNumber(unmatched)}건`;
     document.getElementById('dashboard-inventory-alert').textContent = `수정안 반영 후 재고 차이 ${formatNumber(projectedMismatch)}건 · 원본 ${formatNumber(mismatched)}건`;
     const picking = metrics.today_picked;
     const shortage = metrics.shortage_drawer_qty;

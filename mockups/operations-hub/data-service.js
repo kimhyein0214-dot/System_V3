@@ -889,7 +889,7 @@
   async function loadDashboardMetrics() {
     const {data, error} = await db
       .from('operations_hub_dashboard_metrics')
-      .select('total_sku,connected_sku,unmatched_sku,inventory_mismatch_sku,projected_inventory_mismatch_sku,inventory_draft_cells,inventory_failed_cells,latest_sync_at,today_picked,shortage_drawer_qty')
+      .select('total_sku,connected_sku,unmatched_sku,seller_sku_total,seller_connected_sku,seller_unmatched_sku,inventory_mismatch_sku,projected_inventory_mismatch_sku,inventory_draft_cells,inventory_failed_cells,latest_sync_at,today_picked,shortage_drawer_qty')
       .single();
     if (error) throw error;
     return data;
