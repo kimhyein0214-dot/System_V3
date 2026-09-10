@@ -7524,7 +7524,7 @@ async function runSellerExport() {
     }
     showSellerExportProgress(
       0,
-      error?.userCancelled ? '내보내기 중단 완료' : isDraftAction ? '수정안 생성 실패' : '내보내기 중단',
+      error?.userCancelled ? '내보내기 중단 완료' : isDraftAction ? '수정안 생성 실패' : '내보내기 실패',
       isDraftAction
         ? `${error?.message || 'DB 연결 상태를 확인해주세요.'} · 응답으로 확인한 ${formatNumber(draftProcessed)} SKU / 수정안 ${formatNumber(draftStaged)}건은 유지됩니다. 마지막 요청의 반영 여부는 DB 새로고침 후 확인해주세요.`
         : error?.message || '원본 파일을 확인해주세요.'

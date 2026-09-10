@@ -2223,6 +2223,7 @@
       return '판매처 원본 재고 확인 불가: 연결된 상품·옵션코드가 최신 원본에 있는지 확인해주세요.';
     }
     if (row.source_channel && row.target_safety_state !== 'ready') return '내보내기 안전검사 상태를 확인할 수 없습니다.';
+    if (row.source_channel && !cleanText(row.seller_product_code)) return '판매처 상품코드 누락: 최신 원본 연결을 확인한 뒤 수정안을 다시 생성해주세요.';
     if (!['pending','validated','failed'].includes(row.status)) return '수정안 상태가 바뀌었습니다. 최신 수정안을 다시 확인해주세요.';
     return '';
   }

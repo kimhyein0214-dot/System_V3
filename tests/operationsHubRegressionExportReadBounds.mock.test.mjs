@@ -5,7 +5,7 @@ import {test} from 'node:test';
 const source=fs.readFileSync(new URL('../mockups/operations-hub/data-service.js',import.meta.url),'utf8');
 const helper=source.slice(source.indexOf('  async function loadSellerDraftRows('),source.indexOf('  async function loadLatestSellerOriginalStatus('));
 function setup(size=1201){
- const rows=Array.from({length:size},(_,i)=>({change_id:i+1,sellpia_sku_code:'sku-'+(i+1),source_channel:'ably',status:'pending',field_key:'sellpia_current_stock',target_safety_state:'ready'})),calls=[],validations=[];
+ const rows=Array.from({length:size},(_,i)=>({change_id:i+1,sellpia_sku_code:'sku-'+(i+1),source_channel:'ably',seller_product_code:'product-'+(i+1),status:'pending',field_key:'sellpia_current_stock',target_safety_state:'ready'})),calls=[],validations=[];
  const db={from(table){const q={table,filters:[],head:false,max:null,after:null,select(fields,options){this.head=options?.head===true;this.count=options?.count;return this;},in(field,values){this.filters.push([field,Array.from(values)]);return this;},gt(field,value){assert.equal(field,'change_id');this.after=value;return this;},order(){return this;},limit(value){this.max=value;return this;},then(resolve,reject){
   calls.push({head:this.head,count:this.count,max:this.max,after:this.after,filters:this.filters});
   const all=rows.filter(r=>this.filters.every(([field,values])=>values.includes(r[field]))&&(this.after===null||r.change_id>this.after));
@@ -36,4 +36,11 @@ test('review preserves validation semantics using50-row writes and100-ID fresh r
  assert.equal(result.changeIds.length,250);assert.equal(result.excluded.length,1);assert.deepEqual(h.validations.map(ids=>ids.length),[50,50,50,50,50]);
  assert.equal(h.calls.length,6);assert.ok(h.calls.every(c=>c.filters.find(([f])=>f==='change_id')[1].length<=100));
  assert.equal(h.rows[250].status,'pending','unsafe proposal must not be mutated by review');
+});
+test('validated rows without a seller product code are excluded before export preparation',async()=>{
+ const h=setup(8099);for(let index=0;index<154;index++){h.rows[index].status='validated';h.rows[index].seller_product_code='';}
+ for(let index=154;index<h.rows.length;index++)h.rows[index].status='validated';
+ const result=await h.reviewSellerDraftsForExport({sources:['ably'],changeIds:h.rows.map(row=>row.change_id)});
+ assert.equal(result.changeIds.length,7945);assert.equal(result.excluded.length,154);assert.equal(h.validations.length,0);
+ assert.ok(result.excluded.every(entry=>/상품코드 누락/.test(entry.reason)));
 });

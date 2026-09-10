@@ -24,3 +24,16 @@ test('running current-data export stops after the active 50-row validation batch
  assert.ok(toasts.some(message=>/중단.*ZIP/.test(message)));
  assert.equal(node('seller-export-cancel').textContent,'닫기');assert.equal(node('seller-export-close').disabled,false);
 });
+
+test('database errors are labeled as export failures, not user cancellations',async()=>{
+ const nodes=new Map(),progress=[],toasts=[];const node=id=>{if(!nodes.has(id))nodes.set(id,{disabled:false,textContent:'',style:{}});return nodes.get(id);};
+ const state={action:'export',running:false,cancelRequested:false,draftCancellable:false,rows:[],selectedSkus:[],excludedItems:[]};
+ const context={console:{error(){}},Blob,sellerExportState:state,sellerExportModal:{hidden:false},document:{getElementById:node},
+  selectedExportSources:()=>['smartstore'],selectedSellerExportScope:()=> 'all',resolveSellerExportScopeSkus:async()=>null,createRequestId:()=> 'failure-fixture',formatNumber:String,
+  showToast:m=>toasts.push(m),showSellerExportProgress:(p,t,d)=>progress.push({p,t,d}),showSellerExportExclusions(){},
+  liveData:{prepareSellerExport:async()=>({items:[]}),reviewSellerDraftsForExport:async()=>{throw Error('DB 준비 오류');}},
+  sellerExport:{downloadBlob(){},buildExportArchive(){}},HubCurrentPriceExport:{refreshItems(){},buildArchive(){}},loadChangeQueue:async()=>{},loadLiveMatrix:async()=>{}};
+ vm.createContext(context);vm.runInContext(controller+'\nthis.run=runSellerExport;',context);await context.run();
+ assert.ok(progress.some(item=>item.t==='내보내기 실패'&&/DB 준비 오류/.test(item.d)));
+ assert.ok(toasts.some(message=>/원본 내보내기 실패/.test(message)));assert.ok(toasts.every(message=>!/중단했습니다/.test(message)));
+});
