@@ -87,7 +87,7 @@
   const csv=rows=>'\uFEFF'+rows.map(row=>row.map(value=>'"'+text(typeof value==='string'&&/^[=+@-]/.test(value)?"'"+value:value).replaceAll('"','""')+'"').join(',')).join('\r\n');
   byId('template').onclick=async()=>{
     const button=byId('template'),original=button.textContent;
-    if(!global.SystemV3Data?.loadAllFilteredSkus||!global.SystemV3Data?.loadProductsBySkus){
+    if(!global.SystemV3Data?.loadAllFilteredSkus||!global.SystemV3Data?.loadProductThumbnailsBySkus){
       download(csv([templateHeaders]),'매칭값_일괄등록_양식.csv');
       return;
     }
@@ -95,12 +95,9 @@
     try{
       button.textContent='미매칭 셀피아 SKU 조회 중…';
       const target=await global.SystemV3Data.loadAllFilteredSkus({status:'unmatched'});
-      const products=[];
-      for(let offset=0;offset<target.skus.length;offset+=200){
-        const batch=target.skus.slice(offset,offset+200);
-        button.textContent=`썸네일 조회 ${Math.min(offset+batch.length,target.total).toLocaleString()} / ${target.total.toLocaleString()}개 SKU`;
-        products.push(...await global.SystemV3Data.loadProductsBySkus(batch));
-      }
+      const products=await global.SystemV3Data.loadProductThumbnailsBySkus(target.skus,{onProgress:progress=>{
+        button.textContent=`썸네일 조회 ${progress.loaded.toLocaleString()} / ${progress.total.toLocaleString()}개 SKU`;
+      }});
       const bySku=new Map(products.map(product=>[text(product?.sellpia_sku_code),product]));
       const ordered=target.skus.map(sku=>bySku.get(text(sku))||{sellpia_sku_code:sku});
       const bytes=buildThumbnailTemplate(ordered);

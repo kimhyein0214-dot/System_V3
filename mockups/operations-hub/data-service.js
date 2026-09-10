@@ -825,6 +825,25 @@
     return attachProductMetadata(rows, signal);
   }
 
+  // Mapping templates only need the SKU and its visible thumbnail.  Do not
+  // attach pricing, tag, draft, or mapping metadata here: that expanded RPC
+  // is intentionally capped and can time out for a multi-thousand-row file.
+  async function loadProductThumbnailsBySkus(skus = [], {onProgress = null} = {}) {
+    const normalizedSkus = [...new Set((Array.isArray(skus) ? skus : []).map(cleanText).filter(Boolean))];
+    const rows = [];
+    for (let offset = 0; offset < normalizedSkus.length; offset += 500) {
+      const batch = normalizedSkus.slice(offset, offset + 500);
+      const {data, error} = await db
+        .from(MATRIX_VIEW)
+        .select('sellpia_sku_code,image_url,sellpia_override_image_url')
+        .in('sellpia_sku_code', batch);
+      if (error) throw error;
+      rows.push(...(data || []));
+      onProgress?.({loaded:Math.min(offset + batch.length, normalizedSkus.length), total:normalizedSkus.length});
+    }
+    return rows;
+  }
+
   async function loadMatrixExportChunk({
     offset = 0,
     limit = 1000,
@@ -3166,6 +3185,7 @@
     setOperationsHubSessionToken,
     loadProducts,
     loadProductsBySkus,
+    loadProductThumbnailsBySkus,
     loadMatrixExportChunk,
     loadListingGraph,
     loadRelationFolders,
