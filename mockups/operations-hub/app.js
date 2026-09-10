@@ -6862,9 +6862,31 @@ function showSellerExportExclusions(items = []) {
   const panel = document.getElementById('seller-export-exclusions');
   panel.hidden = !items.length;
   document.getElementById('seller-export-exclusions-title').textContent = `제외 ${formatNumber(items.length)}건 · 사유 보기`;
+  const representativeReason = reason => {
+    const text = String(reason || '제외 사유 없음').replace(/\s+/g, ' ').replace(/^(?:상품 묶음 전체 제외:\s*)+/, '').trim();
+    const categories = [
+      [/재고 충돌|구성 SKU.*(?:수정값.*충돌|서로 다른 수정값)/, '재고 수정값 충돌'],
+      [/원본에 동일 판매처 상품·옵션/, '원본의 판매처 상품·옵션 중복'],
+      [/동일 판매처 상품·옵션에 여러 SKU/, '같은 판매처 옵션에 여러 SKU 연결'],
+      [/공통가격 변경.*미연결 옵션/, '공통가격 변경에 필요한 옵션 연결 누락'],
+      [/DB.*원본.*다릅니다/, 'DB 값과 보관 원본 값 불일치'],
+      [/선택 원본.*찾지 못|보관 원본.*찾지 못|상품 기본 판매가 행을 찾지 못/, '최신 원본의 상품·옵션 또는 행 누락'],
+      [/구성 SKU 재고 누락/, '구성 SKU 재고 누락'],
+      [/판매처 원본 재고 확인 불가/, '판매처 원본 재고 확인 불가'],
+      [/SKU 원본 없음/, 'SKU 원본 없음'],
+      [/매입가 없음/, '매입가 없음']
+    ];
+    const category = categories.find(([pattern]) => pattern.test(text));
+    if (category) return category[1];
+    return text.replace(/\b[A-Za-z0-9_][A-Za-z0-9_.-]*\s*:\s*/g, '')
+      .replace(/\b[A-Za-z_]*\d[A-Za-z0-9_.-]*\b/g, '#').slice(0, 180) || '기타 제외 사유';
+  };
   const reasons = new Map();
-  for (const item of items) reasons.set(item.reason, (reasons.get(item.reason) || 0) + 1);
-  document.getElementById('seller-export-exclusions-summary').textContent = [...reasons].map(([reason, count]) => `${formatNumber(count)}건: ${reason}`).join('\n');
+  for (const item of items) { const reason = representativeReason(item.reason); reasons.set(reason, (reasons.get(reason) || 0) + 1); }
+  const rankedReasons = [...reasons].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0], 'ko'));
+  const summary = rankedReasons.slice(0, 10).map(([reason, count]) => `${formatNumber(count)}건: ${reason}`);
+  if (rankedReasons.length > 10) summary.push(`나머지 ${formatNumber(rankedReasons.slice(10).reduce((sum, [, count]) => sum + count, 0))}건 · ${formatNumber(rankedReasons.length - 10)}개 사유`);
+  document.getElementById('seller-export-exclusions-summary').textContent = summary.join('\n');
   document.getElementById('seller-export-exclusions-rows').innerHTML = items.slice(0, 50).map(({item, reason}) =>
     `<tr><td>${escapeHtml(CHANNEL_LABELS[item.source_channel] || item.source_channel || '공통')}</td><td>${escapeHtml(item.sellpia_sku_code || '')}</td><td>${escapeHtml(item.seller_product_code || '')}<br>${escapeHtml(item.seller_option_code || '(옵션 없음)')}</td><td>${escapeHtml(reason)}</td></tr>`).join('');
 }
@@ -7515,13 +7537,16 @@ async function runSellerExport() {
     sellerExportState.draftCancellable = false;
     document.getElementById('seller-export-cancel').disabled = true;
     document.getElementById('seller-export-cancel').textContent = '마무리 중';
-    const calculatedRuleVersions = [...new Map(result.appliedItems.flatMap(item => item.rule_versions || []).map(version => [version.id,version])).values()];
+    const calculatedPriceItems = result.appliedItems.filter(item => item.field_key === 'sellpia_sale_price' && !item.preserve_unmapped && item.sellpia_sku_code);
+    const preservedPriceItems = result.appliedItems.filter(item => item.field_key === 'sellpia_sale_price' && item.preserve_unmapped);
+    const appliedStockItems = result.appliedItems.filter(item => item.field_key !== 'sellpia_sale_price');
+    const calculatedRuleVersions = [...new Map(calculatedPriceItems.flatMap(item => item.rule_versions || []).map(version => [version.id,version])).values()];
     if (calculatedRuleVersions.length) result.manifest.forEach(file => { file.rule_versions = calculatedRuleVersions; });
     if (calculatedRuleVersions.length) await liveData.workDocument('save', 'formula', {
       title:`registry-export:${batchId}`,
       body:{created_at:new Date().toISOString(),source:sources.join(','),export_batch_id:batchId,
-        sku_count:new Set(result.appliedItems.map(item=>item.sellpia_sku_code)).size,
-        rule_versions:calculatedRuleVersions,applied_count:result.appliedItems.length,manifest:result.manifest,
+        sku_count:new Set(calculatedPriceItems.map(item=>item.sellpia_sku_code)).size,
+        rule_versions:calculatedRuleVersions,applied_count:calculatedPriceItems.length,manifest:result.manifest,
         skipped_count:result.skippedItems.length}
     });
     showSellerExportExclusions(result.skippedItems);
@@ -7530,8 +7555,9 @@ async function runSellerExport() {
     const timestamp = new Date().toISOString().replace(/[-:T]/g,'').slice(0,12);
     sellerExport.downloadBlob(result.blob, `SystemV3_판매처원본_${timestamp}.zip`);
     const skippedCount = result.skippedItems.length;
-    showSellerExportProgress(100, 'ZIP 생성 완료', `파일 ${result.manifest.length}개 · 수정값 ${formatNumber(result.appliedItems.length)}건 반영. ${result.appliedItems.length ? 'XLSX 수정 셀은 형광 노랑·굵은 글씨로 표시했습니다.' : '반영할 수정값이 없어 최신 보관 원본을 그대로 담았습니다.'}${skippedCount ? ` 이상 항목 ${formatNumber(skippedCount)}건은 제외목록 CSV에 기록했으며 원본값을 유지했습니다.` : ''}`);
-    showToast(`판매처 원본 ${formatNumber(result.appliedItems.length)}건 내보내기 완료${skippedCount ? ` · 충돌 ${formatNumber(skippedCount)}건 제외` : ''}`);
+    const appliedDetail = `계산 가격 ${formatNumber(calculatedPriceItems.length)}건${appliedStockItems.length ? ` · 재고 ${formatNumber(appliedStockItems.length)}건` : ''}${preservedPriceItems.length ? ` · 미연결 옵션 ${formatNumber(preservedPriceItems.length)}건은 기존 최종가 보존` : ''}`;
+    showSellerExportProgress(100, 'ZIP 생성 완료', `파일 ${result.manifest.length}개 · ${appliedDetail}. ${result.appliedItems.length ? 'XLSX 수정 셀은 형광 노랑·굵은 글씨로 표시했습니다.' : '반영할 수정값이 없어 최신 보관 원본을 그대로 담았습니다.'}${skippedCount ? ` 이상 항목 ${formatNumber(skippedCount)}건은 제외목록 CSV에 기록했으며 원본값을 유지했습니다.` : ''}`);
+    showToast(`판매처 원본 내보내기 완료 · ${appliedDetail}${skippedCount ? ` · 충돌 ${formatNumber(skippedCount)}건 제외` : ''}`);
     await Promise.all([loadChangeQueue({silent:true}), loadLiveMatrix()]);
   } catch (error) {
     if (!error?.userCancelled) console.error(isDraftAction ? 'seller inventory draft staging failed' : 'seller export failed', error);

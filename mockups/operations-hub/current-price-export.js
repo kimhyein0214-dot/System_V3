@@ -47,7 +47,10 @@
   while(true){
    const archive=await g.SystemV3SellerExport.buildExportArchive(files,remaining,onProgress,excluded);
    const ruleGroups=new Set(remaining.filter(i=>i.rule_generated).map(group));
-   const blocked=new Map(archive.skippedItems.filter(e=>price(e.item)&&ruleGroups.has(group(e.item))).map(e=>[group(e.item),e.reason]));
+   const remainingIds=new Set(remaining.map(item=>Number(item.export_item_id)));
+   // Initial calculation exclusions are already settled. Only a new serializer
+   // conflict on an item attempted in this pass can roll its shared-price group back.
+   const blocked=new Map(archive.skippedItems.filter(e=>remainingIds.has(Number(e.export_item_id??e.item?.export_item_id))&&price(e.item)&&ruleGroups.has(group(e.item))).map(e=>[group(e.item),e.reason]));
    if(!blocked.size)return archive;
    excluded.push(...remaining.filter(i=>price(i)&&blocked.has(group(i))).map(item=>({item,export_item_id:item.export_item_id,reason:'상품 묶음 전체 제외: '+blocked.get(group(item))})));
    remaining=remaining.filter(i=>!(price(i)&&blocked.has(group(i))));

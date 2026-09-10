@@ -157,15 +157,16 @@
       return nextStyleId;
     }
 
-    let nextSheetXml = String(sheetXml);
-    for (const highlight of highlights) {
-      const reference = highlight.reference;
-      const cellAttrs = nextSheetXml.match(new RegExp(`<c\\b([^>]*\\br="${reference}"[^>]*)>`))?.[1] || '';
+    const byReference = new Map(highlights.map(highlight => [highlight.reference, highlight]));
+    // Visit the sheet once; text/style edits below only scan the matching cell.
+    const nextSheetXml = String(sheetXml).replace(/<c\b([^>]*?)(?:\/>|>[\s\S]*?<\/c>)/g, (cellXml, cellAttrs) => {
+      const highlight = byReference.get(xmlAttribute(cellAttrs, 'r'));
+      if (!highlight) return cellXml;
       const baseStyleId = Number(xmlAttribute(cellAttrs, 's', '0')) || 0;
-      const richText = boldInlineText(nextSheetXml, highlight);
-      nextSheetXml = richText.sheetXml;
-      nextSheetXml = setCellStyle(nextSheetXml, reference, highlightedStyle(baseStyleId, !richText.applied));
-    }
+      const richText = boldInlineText(cellXml, highlight);
+      const styleId = highlightedStyle(baseStyleId, !richText.applied);
+      return richText.sheetXml.replace(/^<c\b[^>]*>/, opening => opening.replace(/\s+s="[^"]*"/, '').replace(/\s*(\/?>)$/, ` s="${styleId}"$1`));
+    });
     const yellowFill = '<fill><patternFill patternType="solid"><fgColor rgb="FFFFFF00"/><bgColor indexed="64"/></patternFill></fill>';
     let nextStylesXml = appendStyleNodes(stylesXml, 'fonts', addedFonts, fonts.length + addedFonts.length);
     nextStylesXml = appendStyleNodes(nextStylesXml, 'fills', [yellowFill], fills.length + 1);

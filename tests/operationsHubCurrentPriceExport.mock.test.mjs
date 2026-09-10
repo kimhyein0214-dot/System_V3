@@ -35,7 +35,7 @@ function fixture(){
 {
  const f=fixture();f.originals.ably.push(clone(f.originals.ably[0]));f.products.D.sellpia_source_purchase_price=null;
  const stalePrice={...f.stock,export_item_id:92,field_key:'sellpia_sale_price',after_value:99999};
- const r=await api.refreshItems([f.stock,stalePrice],f.files,{sources:['ably']});assert.deepEqual(r.items,[f.stock]);assert.equal(r.excludedItems.length,4);assert.ok(r.excludedItems.some(e=>/동일 판매처 상품·옵션/.test(e.reason)));assert.ok(r.excludedItems.some(e=>/매입가 없음/.test(e.reason)));assert.deepEqual(new Set(r.excludedItems.map(e=>e.item.seller_product_code)),new Set(['P','Q']));assert.equal(f.calls.all,1);
+ const r=await api.refreshItems([f.stock,stalePrice],f.files,{sources:['ably']});assert.equal(r.items[0],f.stock);assert.deepEqual(r.items.slice(1).map(i=>i.sellpia_sku_code),['C'],'valid sibling survives another SKU calculation error');assert.equal(r.excludedItems.length,3);assert.ok(r.excludedItems.some(e=>/동일 판매처 상품·옵션/.test(e.reason)));assert.ok(r.excludedItems.some(e=>/매입가 없음/.test(e.reason)));assert.deepEqual(new Set(r.excludedItems.map(e=>e.item.seller_product_code)),new Set(['P','Q']));assert.equal(f.calls.all,1);
 }
 {
  const f=fixture();f.registry.assignments=f.registry.assignments.map(a=>({...a,target_field:'platform_registration_price',scope:'smartstore'}));const r=await api.refreshItems([f.stock],f.files,{sources:['ably'],skus:['A']});assert.deepEqual(r.items,[f.stock]);assert.equal(f.calls.products.length,0,'other platform assignments do not expand scope');
@@ -55,5 +55,10 @@ function fixture(){
  assert.deepEqual(archive.appliedItems.map(i=>[i.sellpia_sku_code,i.field_key]),[['A','sellpia_current_stock'],['C','sellpia_sale_price']]);assert.equal(archive.skippedItems.length,2);assert.ok(archive.skippedItems.every(e=>/상품 묶음 전체 제외/.test(e.reason)));
  const zip=await JSZip.loadAsync(await archive.blob.arrayBuffer()),output=await zip.file('ably_SystemV3반영.csv').async('string'),book=XLSX.read(output,{type:'string',raw:true}),actual=XLSX.utils.sheet_to_json(book.Sheets[book.SheetNames[0]],{header:1,raw:true});
  assert.equal(Number(actual[1][6]),9000,'already serialized A price restored from original after sibling failure');assert.equal(Number(actual[2][6]),9000);assert.equal(Number(actual[3][6]),5000,'unrelated valid group retained');assert.equal(Number(actual[1][15]),7,'stock change survives group price rollback');assert.equal(await file.text(),csv,'original source file unchanged');
+
+ const alreadyExcluded={item:item('B',2),export_item_id:2,reason:'SKU 계산 오류: 테스트 제외'};
+ const prefiltered=await api.buildArchive(files,[item('A',1),item('C',3)],undefined,[alreadyExcluded]);
+ assert.deepEqual(prefiltered.appliedItems.map(i=>i.sellpia_sku_code),['A','C'],'a pre-calculation exclusion must not roll back its valid sibling');
+ assert.equal(prefiltered.skippedItems.filter(e=>e.export_item_id===2).length,1);
 }
 console.log('PASS actual rule/platform/current-export: zero price drafts → latest purchase÷2; originalstock identity; selected scope + requiredsiblings; unlinked ignored; duplicates and invalid products fullyexcluded;3 platforms one productload; actual CSV/ZIP serializer rolls entire conflicted price group back and preservesstock.');

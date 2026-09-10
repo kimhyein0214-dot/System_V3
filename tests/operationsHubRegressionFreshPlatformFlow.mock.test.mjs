@@ -93,9 +93,10 @@ await assert.rejects(()=>api.exportLatest(['eight'],'ably'),/원본에서/);
 assert.equal(logs.length,1,'missing original option must not log successful export');
 assert.equal(exports.length,1);
 omitOriginal=false;omitSibling=true;
-await assert.rejects(()=>api.exportLatest(['six'],'ably'),/eight/,'missing sibling data must not produce partial product export');
-assert.equal(logs.length,1);
-assert.equal(exports.length,1);
+const partialSibling=await api.exportLatest(['six'],'ably');
+assert.deepEqual(partialSibling.appliedItems.map(item=>item.sellpia_sku_code),['six'],'a valid matrix row exports without inventing a missing sibling calculation');
+assert.equal(logs.length,2);
+assert.equal(exports.length,2);
 assert.equal(productLoads,5);
 assert.equal(registryLoads,5);
 assert.equal(latestLoads,3);
@@ -104,8 +105,10 @@ registry.rules.push(rule('direct-purchase-registration','platform_registration_p
 registry.assignments.push({sku:'six',rule_id:'direct-purchase-registration',target_field:'platform_registration_price',scope:'ably',version:1});
 const conflicting=await api.calculate(['six'],'ably');
 assert.match(conflicting.errors.find(r=>r.sku==='six').error,/충돌/,'explicit SKU rule cannot silently override a conflicting platform default');
-await assert.rejects(()=>api.exportLatest(['six'],'ably'),/충돌/);
-assert.equal(logs.length,1,'conflicted export must not log success');
+const partialConflict=await api.exportLatest(['six'],'ably');
+assert.deepEqual(partialConflict.appliedItems.map(item=>item.sellpia_sku_code),['eight'],'the conflicted SKU is excluded while its valid matrix sibling remains exportable');
+assert.equal(logs.length,3,'partial success records only the valid applied SKU');
+assert.deepEqual(logs.at(-1).body.actual_items.map(item=>item.sellpia_sku_code),['eight']);
 platform.body.registration_rule_id=null;
 const assigned=await api.calculate(['six'],'ably');
 assert.deepEqual(assigned.errors,[]);
@@ -158,7 +161,12 @@ registry.assignments=registry.assignments.filter(a=>a.sku!=='high');
 const originalRows=['six','eight'].map((sku,index)=>({product_code:'same-product',option_code:sku,final_price:9000+index,base_price:9000,option_price:index,discount_terms:[],source_row_no:index+2,raw_payload:{source_file_name:'latest.xlsx'}}));
 const extraOriginal={...originalRows[0],option_code:'unlinked-option',source_row_no:4};
 for(const source of ['smartstore','makeshop']){
- assert.throws(()=>api.itemsFromCalculation({...staged,source},[...originalRows,extraOriginal]),/미연결 옵션/,'shared product price requires every original option mapping');
+ const preserved=api.itemsFromCalculation({...staged,source},[...originalRows,extraOriginal]);
+ assert.equal(preserved.length,3,'shared product price keeps an unmapped original option in the same product');
+ assert.deepEqual(preserved.find(item=>item.preserve_unmapped),{
+  ...preserved.find(item=>item.preserve_unmapped),
+  sellpia_sku_code:null,preserve_unmapped:true,seller_option_code:'unlinked-option',target_final_price:9000,
+ },'unmapped original option is not assigned to a fake SKU and keeps its final price');
  const complete=api.itemsFromCalculation({...staged,source},originalRows);assert.equal(complete.length,2);
 }
 assert.equal(api.itemsFromCalculation({...staged,source:'ably'},[...originalRows,extraOriginal]).length,2,'Ably row-local prices do not impose the shared-price coverage requirement');
