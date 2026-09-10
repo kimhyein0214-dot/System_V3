@@ -545,6 +545,10 @@
       throwIfAborted(signal);
       products = await attach(products, signal, prefetched);
     }
+    if (global.HubPlatformRules?.projectRows) {
+      products = await global.HubPlatformRules.projectRows(products);
+      throwIfAborted(signal);
+    }
     return products;
   }
 
@@ -2403,7 +2407,43 @@
   async function loadFormulaProducts(skus) {
     requireOperationsHubSessionToken();let rows=[];
     for(let i=0;i<skus.length;i+=200){const {data,error}=await db.from(MATRIX_VIEW).select('sellpia_sku_code,display_name,sellpia_source_sale_price,system_base_price,smartstore_price,makeshop_price,ably_price,smartstore_product_code,makeshop_product_code,ably_product_code').in('sellpia_sku_code',skus.slice(i,i+200));if(error)throw error;rows.push(...data);}
-    rows=await attachProductProfiles(rows);rows=await attachInboundCostDetails(rows);rows=await attachSystemOperationalDetails(rows);let enriched=[];for(let i=0;i<rows.length;i+=200)enriched.push(...await attachSellerPriceComponents(rows.slice(i,i+200)));return enriched;
+    let enriched=[];for(let i=0;i<rows.length;i+=200){let part=await attachProductProfiles(rows.slice(i,i+200));part=await attachInboundCostDetails(part);part=await attachSystemOperationalDetails(part);enriched.push(...await attachSellerDrafts(await attachSellerPriceComponents(part)));}return enriched;
+  }
+  async function savePlatformRuleGroup(rule) {
+    const {data,error}=await db.rpc('hub_platform_rule_group_save_v1',{p_session_token:requireOperationsHubSessionToken(),p_rule:rule});
+    if(error)throw readableDatabaseError(error);return data;
+  }
+  async function loadAllFilteredSkus(options={}, {onProgress}={}) {
+    onProgress?.({loaded:0,total:0,message:'현재 필터에 맞는 전체 SKU 조회 중'});
+    const codeRows=Array.isArray(options.codeListRows)?options.codeListRows:[];
+    const codes=[...new Set((codeRows.length?codeRows.map(r=>r.sellpia_sku_code):options.skus||options.codeListSkus||[]).map(cleanText).filter(Boolean))];
+    if(codeRows.length&&!codes.length)return {skus:[],total:0};
+    const isCodeList=codeRows.length||codes.length;
+    const {data,error}=await db.rpc('hub_filtered_skus_v1',{
+      p_session_token:requireOperationsHubSessionToken(),
+      p_search:isCodeList?'':normalizedSearch(options.search),
+      p_search_sources:options.searchSources||['sellpia','smartstore','makeshop','ably'],
+      p_status:codeRows.length?'all':normalizeConnectionStatus(options.status),
+      p_sort:'sku_asc',p_filter:normalizeConnectionConditions(isCodeList?null:options.advancedFilter),
+      p_skus:codes,p_exclude_dependent:isCodeList?false:Boolean(options.excludeCombinationSkus)
+    });
+    if(error)throw readableDatabaseError(error);
+    const skus=[...new Set((data?.skus||[]).map(cleanText).filter(Boolean))];
+    if(Number(data?.total)!==skus.length)throw Error('필터 전체 대상 수와 SKU 목록이 일치하지 않습니다. 다시 조회하세요.');
+    onProgress?.({loaded:skus.length,total:skus.length});return {skus,total:skus.length};
+  }
+  async function applyTagToSkus({tagId,skus,action='add'}) {
+    const {data,error}=await db.rpc('hub_tag_assign_v1',{p_session_token:requireOperationsHubSessionToken(),p_tag_id:tagId,p_skus:[...new Set(skus)],p_action:action});
+    if(error)throw readableDatabaseError(error);return data;
+  }
+  async function saveTagRule({tag,rule}) {
+    const {data,error}=await db.rpc('hub_tag_rule_save_v1',{p_session_token:requireOperationsHubSessionToken(),p_tag:tag,p_rule:rule});
+    if(error)throw readableDatabaseError(error);return data;
+  }
+  async function filterRulePlatformSkus(skus,source) {
+    requireOperationsHubSessionToken();if(!['ably','smartstore','makeshop'].includes(source))throw Error('판매처 오류');
+    const field=source+'_product_code',codes=[...new Set(skus)],linked=[];
+    for(let i=0;i<codes.length;i+=200){const {data,error}=await db.from(MATRIX_VIEW).select('sellpia_sku_code,'+field).in('sellpia_sku_code',codes.slice(i,i+200));if(error)throw error;linked.push(...data.filter(r=>r[field]).map(r=>r.sellpia_sku_code));}return linked;
   }
   async function ruleRegistry(action, rule = null) {
     const {data,error}=await db.rpc('hub_rule_registry_v1',{p_session_token:requireOperationsHubSessionToken(),p_action:action,p_rule:rule});
@@ -2417,7 +2457,7 @@
     requireOperationsHubSessionToken();if(!['ably','smartstore','makeshop'].includes(source))throw Error('판매처 오류');
     const field=source+'_product_code',codes=new Set(),result=new Set(skus);
     for(let i=0;i<skus.length;i+=200){const {data,error}=await db.from(MATRIX_VIEW).select(field).in('sellpia_sku_code',skus.slice(i,i+200));if(error)throw error;data.forEach(r=>{if(r[field])codes.add(r[field]);});}
-    for(const code of codes){for(let from=0;;from+=1000){const {data,error}=await db.from(MATRIX_VIEW).select('sellpia_sku_code').eq(field,code).range(from,from+999);if(error)throw error;data.forEach(r=>result.add(r.sellpia_sku_code));if(data.length<1000)break;}}
+    const groupedCodes=[...codes];for(let i=0;i<groupedCodes.length;i+=100){for(let from=0;;from+=1000){const {data,error}=await db.from(MATRIX_VIEW).select('sellpia_sku_code').in(field,groupedCodes.slice(i,i+100)).order('sellpia_sku_code').range(from,from+999);if(error)throw error;data.forEach(r=>result.add(r.sellpia_sku_code));if(data.length<1000)break;}}
     return [...result];
   }
   async function updateProductTag({id,name,color}) {
@@ -2448,14 +2488,14 @@
   }
 
   async function saveProductProfile({sku, material, productGroup, shape, productTagIds = [], skuTagIds = []}) {
-    const {data, error} = await db.rpc('save_operations_hub_product_profile', {
+    const {data, error} = await db.rpc('hub_profile_save_with_rules_v1', {
+      p_session_token:requireOperationsHubSessionToken(),
       p_sku:cleanText(sku),
       p_material:cleanText(material),
       p_product_group:cleanText(productGroup),
       p_shape:cleanText(shape),
       p_product_tag_ids:productTagIds,
-      p_sku_tag_ids:skuTagIds,
-      p_updated_by:'operations-hub'
+      p_sku_tag_ids:skuTagIds
     });
     if (error) throw error;
     return data || null;
@@ -3071,6 +3111,11 @@
     return rows;
   }
   global.SystemV3Data = Object.freeze({
+    savePlatformRuleGroup,
+    filterRulePlatformSkus,
+    loadAllFilteredSkus,
+    applyTagToSkus,
+    saveTagRule,
     loadAblyComponentStocks,
     pageSize: PAGE_SIZE,
     loginOperationsHub,

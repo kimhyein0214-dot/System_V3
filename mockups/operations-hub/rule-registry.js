@@ -106,9 +106,9 @@
   }
   return {evaluate};
  }
- function expandSkus(requested,dependencies,includeChildren=false){
+ function expandSkus(requested,dependencies,includeChildren=false,{maxSkus=2000}={}){
   const all=new Set(requested);let changed=true;
-  while(changed){changed=false;for(const d of dependencies){if(all.has(d.child_sku)&&!all.has(d.parent_sku)){all.add(d.parent_sku);changed=true;}if(includeChildren&&all.has(d.parent_sku)&&!all.has(d.child_sku)){all.add(d.child_sku);changed=true;}}if(all.size>2000)throw Error('연결 SKU가 2,000개를 넘습니다. 범위를 나누세요.');}
+  while(changed){changed=false;for(const d of dependencies){if(all.has(d.child_sku)&&!all.has(d.parent_sku)){all.add(d.parent_sku);changed=true;}if(includeChildren&&all.has(d.parent_sku)&&!all.has(d.child_sku)){all.add(d.child_sku);changed=true;}}if(all.size>maxSkus)throw Error(`연결 SKU가 ${maxSkus.toLocaleString('ko-KR')}개를 넘습니다. 범위를 나누세요.`);}
   return [...all];
  }
  function descendants(requested,dependencies){const all=new Set(requested);let changed=true;while(changed){changed=false;for(const d of dependencies)if(all.has(d.parent_sku)&&!all.has(d.child_sku)){all.add(d.child_sku);changed=true;}if(all.size>2000)throw Error('연결 SKU가 2,000개를 넘습니다.');}return [...all];}

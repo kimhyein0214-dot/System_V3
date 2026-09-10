@@ -112,7 +112,7 @@
         </fieldset>
         <fieldset class="attributes-fieldset" hidden><legend><label><input type="checkbox" data-attributes-apply="productTags">상품 공통 태그 교체</label></legend><div class="attributes-tag-grid" data-attributes-tags="product" aria-disabled="true">${renderTagChoices('product')}</div></fieldset>
         <fieldset class="attributes-fieldset"><legend><label><input type="checkbox" data-attributes-apply="skuTags">선택 SKU 태그 교체</label></legend><div class="attributes-tag-grid" data-attributes-tags="sku" aria-disabled="true">${renderTagChoices('sku')}</div></fieldset>
-        <details class="attributes-new-tag"><summary>새 운영 태그 만들기</summary><div><input id="attributes-new-tag-name" maxlength="32" placeholder="태그 이름"><input id="attributes-new-tag-color" type="color" value="#dbeafe"><button class="btn" id="attributes-create-tag" type="button">태그 생성(DB 저장)</button></div></details>
+        <div class="attributes-tag-formula"><label>기존 태그 수식<select id="attributes-formula-tag" aria-label="수식을 편집할 태그"></select></label><button class="btn" id="attributes-edit-tag-formula" type="button">수식 편집</button></div><details class="attributes-new-tag"><summary>새 운영 태그 만들기</summary><div><input id="attributes-new-tag-name" maxlength="32" placeholder="태그 이름"><input id="attributes-new-tag-color" type="color" value="#dbeafe"><button class="btn" id="attributes-create-tag" type="button">태그 생성(DB 저장)</button><button class="btn" id="attributes-create-tag-formula" type="button">태그 + 수식 설정</button></div></details>
         <div id="attributes-save-progress" class="attributes-save-progress" hidden><div><b>저장 준비</b><span>0/0</span></div><i><em></em></i></div>
         <button class="btn primary attributes-save" id="attributes-save" type="button" disabled>선택 SKU에 저장</button>
       </aside>
@@ -194,6 +194,7 @@
       state.rows = result.rows || [];
       state.count = Number(result.count || 0);
       state.tags = tags || [];
+      renderFormulaTags();
       state.lastLoadedAt = Date.now();
       const tagHosts = document.querySelectorAll('[data-attributes-tags]');
       tagHosts.forEach(host => { host.innerHTML = renderTagChoices(host.dataset.attributesTags); });
@@ -285,6 +286,7 @@
     try {
       const created = await global.SystemV3Data.createProductTag({name, color, group:'운영'});
       state.tags = await global.SystemV3Data.loadTags();
+      renderFormulaTags();
       void global.TagPriceWorkspace?.refresh();
       document.querySelectorAll('[data-attributes-tags]').forEach(host => { host.innerHTML = renderTagChoices(host.dataset.attributesTags); });
       document.querySelectorAll('[data-attributes-tag="product"]').forEach(item => { item.checked = checkedProductTags.has(item.value); });
@@ -296,6 +298,17 @@
     } finally {
       button.disabled = false;
     }
+  }
+
+  function renderFormulaTags() {
+    const select=document.getElementById('attributes-formula-tag');if(!select)return;
+    const previous=select.value;select.innerHTML='<option value="">태그 선택</option>'+state.tags.map(tag=>`<option value="${escapeHtml(tag.tag_id)}">${escapeHtml(tag.tag_name)}</option>`).join('');
+    if(state.tags.some(tag=>String(tag.tag_id)===previous))select.value=previous;
+  }
+  async function openTagFormula(tag) {
+    if(!tag?.name?.trim()){status('수식을 설정할 태그 이름을 입력하거나 기존 태그를 선택하세요.','error');return;}
+    if(!global.HubPriceWorkspace?.openForTag){status('공통 수식 편집기를 불러오지 못했습니다. 새로고침 후 다시 시도하세요.','error');return;}
+    try{await global.HubPriceWorkspace.openForTag(tag);}catch(error){status(cleanError(error),'error');}
   }
 
   function bindEvents(host) {
@@ -341,6 +354,8 @@
     }));
     host.querySelector('#attributes-save').addEventListener('click', () => void saveSelected());
     host.querySelector('#attributes-create-tag').addEventListener('click', () => void createTag());
+    host.querySelector('#attributes-create-tag-formula').addEventListener('click', () => void openTagFormula({name:document.getElementById('attributes-new-tag-name').value.trim(),color:document.getElementById('attributes-new-tag-color').value,group:'운영'}));
+    host.querySelector('#attributes-edit-tag-formula').addEventListener('click', () => {const tag=state.tags.find(t=>String(t.tag_id)===document.getElementById('attributes-formula-tag').value);void openTagFormula(tag?{id:tag.tag_id,name:tag.tag_name,color:tag.tag_color,group:tag.tag_group}:null);});
   }
 
   function init() {

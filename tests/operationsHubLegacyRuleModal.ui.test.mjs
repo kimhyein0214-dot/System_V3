@@ -1,0 +1,40 @@
+import assert from 'node:assert/strict';
+import {readFile} from 'node:fs/promises';
+import {fileURLToPath} from 'node:url';
+import {chromium} from 'playwright';
+const root=new URL('../mockups/operations-hub/',import.meta.url),html=await readFile(new URL('index.html',root),'utf8');
+const legacy=html.slice(html.indexOf('<div id="price-rules"'),html.indexOf('<div id="jobs"'));
+const browser=await chromium.launch({channel:'msedge',headless:true});
+try{
+ const page=await browser.newPage({viewport:{width:1440,height:1000}});await page.route('**/*',r=>r.abort());
+ await page.setContent('<button id="price-rule-lab-open">Original entry</button>'+legacy+'<div id="toast"></div>');
+ for(const file of ['price-rule-lab.css','rule-workspace.css'])await page.addStyleTag({path:fileURLToPath(new URL(file,root))});
+ await page.evaluate(()=>{
+  window.qa={reads:0,inboundReads:0,writes:[],setWrites:[],inboundClicks:0,pages:[],originalForm:document.getElementById('price-rule-tag-form')};
+  const common={color:'#123456',replace_price:null,min_price:120,max_price:99999,rounding_unit:100,rounding_mode:'up',note:'기존 메모'};
+  const tags=[{...common,price_rule_tag_id:11,tag_name:'기존 판매가 +2000',tag_role:'price',modify_type:'add',modify_value:2000},{...common,price_rule_tag_id:12,tag_name:'기존 메이크샵 M15',tag_role:'discount',discount_source_channel:'makeshop',discount_rule_code:'M15',modify_type:'percent',modify_value:-15}];
+  window.SystemV3Data={ruleRegistry:async()=>({rules:[],assignments:[],dependencies:[]}),loadPriceRuleTags:async()=>{qa.reads++;return structuredClone(tags);},loadPriceRuleSets:async()=>[{price_rule_set_id:21,set_name:'기존 혼합 조합',color:'#345678',tags:[{tag_id:12,tag_name:tags[1].tag_name,order:2},{tag_id:11,tag_name:tags[0].tag_name,order:1}]}],savePriceRuleTag:async x=>qa.writes.push(x),savePriceRuleSet:async x=>qa.setWrites.push(x)};
+  window.loadInboundCostTags=async()=>{qa.inboundReads++;document.getElementById('inbound-cost-tag-list').innerHTML='<button type="button" data-inbound="1">기존 쌍입고</button>';};
+  document.getElementById('inbound-cost-tag-list').addEventListener('click',e=>{if(e.target.closest('[data-inbound]')){qa.inboundClicks++;document.getElementById('inbound-cost-tag-name').value='기존 쌍입고';document.getElementById('inbound-cost-tag-divide').value=2;}});
+  window.showPage=id=>qa.pages.push(id);
+ });
+ for(const file of ['price-rule-lab.js','rule-registry.js','rule-workspace.js'])await page.addScriptTag({path:fileURLToPath(new URL(file,root))});
+ assert.equal(await page.locator('#rw-legacy-backdrop').isVisible(),false);
+ assert.equal(await page.evaluate(()=>qa.reads+qa.inboundReads+qa.writes.length),0,'mount does not read or mutate legacy data');
+ await page.locator('#rw-legacy-open').click();await page.waitForFunction(()=>qa.reads===1&&qa.inboundReads===1&&document.getElementById('rw-legacy-status').textContent.includes('그대로'));
+ assert.equal(await page.locator('#rw-legacy-backdrop').isVisible(),true);
+ assert.equal(await page.evaluate(()=>document.getElementById('price-rule-tag-form')===qa.originalForm),true,'original form and handlers survive relocation');
+ assert.equal(await page.locator('#price-rule-tag-list [data-tag-id]').count(),2);assert.equal(await page.locator('#price-rule-set-list [data-set-id]').count(),1);
+ assert.equal(await page.evaluate(()=>getComputedStyle(document.querySelector('.rw-legacy-body')).overflowY),'auto');
+ await page.locator('[data-tag-id="12"]').click();assert.equal(await page.locator('#price-rule-tag-mode').inputValue(),'percent_discount');assert.equal(await page.locator('#price-rule-tag-source').inputValue(),'makeshop');assert.equal(await page.locator('#price-rule-tag-value').inputValue(),'15');
+ await page.locator('#price-rule-tag-name').fill('기존 메이크샵 이름 수정');await page.locator('#rw-legacy-close').click();assert.equal(await page.locator('#rw-legacy-backdrop').isVisible(),false);
+ await page.locator('#rw-legacy-open').click();assert.equal(await page.locator('#price-rule-tag-name').inputValue(),'기존 메이크샵 이름 수정');assert.equal(await page.evaluate(()=>qa.reads),1,'reopening does not erase drafts with reload');
+ await page.locator('#price-rule-tag-form button[type="submit"]').click();await page.waitForFunction(()=>qa.writes.length===1);
+ const saved=await page.evaluate(()=>qa.writes[0]);assert.equal(saved.tagId,12);assert.equal(saved.discountRuleCode,'M15');assert.equal(saved.modifyValue,-15);assert.equal(saved.discountSource,'makeshop');assert.equal(saved.note,'기존 메모');assert.equal(saved.minPrice,120);assert.equal(saved.maxPrice,99999);assert.equal(saved.roundingUnit,100);assert.equal(saved.roundingMode,'up');
+ await page.locator('[data-set-id="21"]').click();assert.deepEqual(await page.locator('#price-rule-set-selected article').evaluateAll(nodes=>nodes.map(n=>n.querySelector('b').textContent)),['기존 판매가 +2000','기존 메이크샵 M15']);
+ await page.locator('#price-rule-set-form button[type="submit"]').click();await page.waitForFunction(()=>qa.setWrites.length===1);assert.deepEqual(await page.evaluate(()=>qa.setWrites[0].tagIds),[11,12]);
+ await page.locator('[data-inbound="1"]').click();assert.equal(await page.locator('#inbound-cost-tag-divide').inputValue(),'2');assert.equal(await page.evaluate(()=>qa.inboundClicks),1);
+ await page.keyboard.press('Escape');assert.equal(await page.locator('#rw-legacy-backdrop').isVisible(),false);assert.equal(await page.locator('#rw-legacy-open').evaluate(el=>el===document.activeElement),true);
+ await page.locator('#rw-legacy-open').click();await page.locator('#price-rule-lab-done').click();assert.equal(await page.evaluate(()=>qa.pages.at(-1)),'matching');assert.equal(await page.locator('#rw-legacy-backdrop').isVisible(),false);
+ console.log('PASS original legacy form/list node handlers retained; price/discount/ordered sets/inbound accessible; modal scroll/close/Escape/focus; draft retained; Makeshop M15, note and guards preserved on re-save; original navigation closes modal; opening makes zero writes.');
+}finally{await browser.close();}

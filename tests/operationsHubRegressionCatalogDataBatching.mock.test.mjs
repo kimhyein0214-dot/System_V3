@@ -1,0 +1,33 @@
+import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import vm from 'node:vm';
+const source=fs.readFileSync(new URL('../mockups/operations-hub/data-service.js',import.meta.url),'utf8');
+const names=['loadFormulaProducts','attachProductProfiles','attachInboundCostDetails','attachSystemOperationalDetails','attachSellerPriceComponents','attachSellerDrafts'];
+function extract(name){const start=source.search(new RegExp('  (?:async )?function '+name+'\\('));assert.ok(start>=0,name);const rest=source.slice(start+2),end=rest.slice(2).search(/\n  (?:async )?function /);return end<0?rest:rest.slice(0,end+2);}
+const skus=Array.from({length:23760},(_,i)=>'catalog-'+String(i).padStart(5,'0'));
+const calls=[];
+const db={from(table){let ids=[],selection='';return {select(value){selection=value;return this;},in(field,values){ids=Array.from(values);return this;},order(){return this;},then(resolve,reject){
+ calls.push({kind:'from',table,count:ids.length,selection});
+ if(ids.length>500)return Promise.reject(Error(`unbounded ${table} request: ${ids.length} SKUs`)).then(resolve,reject);
+ const data=ids.map(sku=>table==='matrix'?{sellpia_sku_code:sku,system_base_price:1}:table==='operations_hub_product_profiles'?{sellpia_sku_code:sku,sku_tags:[{tag_id:'catalog-test'}]}:table==='operations_hub_sku_operational_live'?{sellpia_sku_code:sku,system_base_price:10000,system_stock:7}:table==='operations_hub_inbound_cost_live'?{sellpia_sku_code:sku,actual_inbound_cost:5000}:null).filter(Boolean);
+ return Promise.resolve({data,error:null}).then(resolve,reject);
+}};},async rpc(name,args){const ids=Array.from(args.p_skus);calls.push({kind:'rpc',name,count:ids.length});assert.ok(ids.length<=200,'component requests stay within existing200-SKU batch');return {data:[],error:null};}};
+const c={db,MATRIX_VIEW:'matrix',cleanText:v=>String(v??'').trim(),requireOperationsHubSessionToken:()=> 'fixture',withAbortSignal:q=>q,global:{}};
+vm.createContext(c);vm.runInContext(names.map(extract).join('\n')+'\nthis.load=loadFormulaProducts;',c);
+const rows=await c.load(skus);
+assert.equal(rows.length,23760);
+assert.equal(new Set(rows.map(p=>p.sellpia_sku_code)).size,23760);
+assert.ok(rows.every(p=>p.__profile.sku_tags[0].tag_id==='catalog-test'),'no catalog profile/tag truncation');
+assert.ok(rows.every(p=>p.system_base_price===10000&&p.actual_inbound_cost===5000),'all original+operational basis values attached');
+assert.ok(calls.filter(c=>c.table==='matrix').every(c=>c.count<=200));
+assert.ok(calls.filter(c=>c.table==='operations_hub_product_profiles').every(c=>c.count<=500));
+const pipeline=[];
+const stageNames=['attachInboundCostDetails','attachSystemOperationalDetails','attachPriceBasis','attachProductLinkDrafts','attachManualLinks','attachProductProfiles','attachLinkBadges','attachSellerPriceComponents','attachSellerDrafts','attachPriceRuleAssignments','attachLinkSuppressions'];
+const metadataContext={cleanText:v=>String(v??'').trim(),throwIfAborted:signal=>{if(signal?.aborted)throw Error('abort fixture');},withAbortSignal:q=>q,db:{async rpc(name,args){assert.equal(name,'load_operations_hub_matrix_metadata_v1');assert.deepEqual(Array.from(args.p_skus),['one']);return {data:{},error:null};}},global:{HubPlatformRules:{async projectRows(rows){pipeline.push('shared-projection');assert.ok(rows[0].enriched.includes('attachSellerDrafts'),'manual drafts attached before shared calculation');assert.ok(rows[0].enriched.includes('attachSystemOperationalDetails'),'latest operational base attached before shared calculation');return rows.map(r=>({...r,__hubRulePrices:{ably:{platformFinal:10300,platformOption:300}}}));}}}};
+for(const name of stageNames)metadataContext[name]=async rows=>{pipeline.push(name);return rows.map(r=>({...r,enriched:[...(r.enriched||[]),name]}));};
+vm.createContext(metadataContext);vm.runInContext(extract('attachProductMetadata')+'\nthis.attach=attachProductMetadata;',metadataContext);
+const matrixRows=await metadataContext.attach([{sellpia_sku_code:'one'}]);
+assert.equal(matrixRows[0].__hubRulePrices.ably.platformFinal,10300);
+assert.equal(pipeline.at(-1),'shared-projection','shared calculation runs after source/draft metadata');
+const aborted={aborted:true};await assert.rejects(()=>metadataContext.attach([{sellpia_sku_code:'one'}],aborted),/abort fixture/);
+console.log('PASS23760-SKU actual data-service enrichment: full row/profile preservation and bounded matrix/profile/component reads');

@@ -176,7 +176,15 @@
     const lines=String(value??'').split(/\r?\n/); while(lines.length<=index) lines.push(''); lines[index]=String(next??''); return lines.join('\n');
   }
   function sameValue(left,right,field) {
-    if(field==='sellpia_current_stock'||field==='sellpia_sale_price') return Number(left)===Number(right);
+    if(field==='sellpia_current_stock'||field==='sellpia_sale_price') {
+      const numericValue=value=>{
+        const text=clean(value);
+        if(!text.includes(',')) return Number(value);
+        return /^[+-]?\d{1,3}(?:,\d{3})+(?:\.\d+)?$/.test(text)?Number(text.replace(/,/g,'')):NaN;
+      };
+      const actual=numericValue(left),expected=numericValue(right);
+      return Number.isFinite(actual)&&Number.isFinite(expected)&&actual===expected;
+    }
     return clean(left)===clean(right);
   }
   function exportConflict(item,message) {

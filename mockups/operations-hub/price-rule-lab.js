@@ -232,6 +232,10 @@
     try {
       const calc = modePayload(byId('price-rule-tag-mode').value, byId('price-rule-tag-value').value);
       const tagRole = byId('price-rule-tag-role').value;
+      const previousTag = state.tags.find(tag => Number(tag.price_rule_tag_id) === cleanNumber(byId('price-rule-tag-id').value));
+      const sameDiscount = tagRole === 'discount' && previousTag?.tag_role === 'discount'
+        && previousTag.discount_source_channel === byId('price-rule-tag-source').value
+        && previousTag.modify_type === calc.modifyType && Number(previousTag.modify_value) === calc.modifyValue;
       if (tagRole === 'discount' && !['amount_discount','percent_discount'].includes(byId('price-rule-tag-mode').value)) {
         throw new Error('할인 태그는 금액 할인 또는 퍼센트 할인만 선택할 수 있습니다.');
       }
@@ -239,7 +243,7 @@
         tagId:cleanNumber(byId('price-rule-tag-id').value), tagName:byId('price-rule-tag-name').value,
         color:byId('price-rule-tag-color').value, tagRole,
         discountSource:tagRole === 'discount' ? byId('price-rule-tag-source').value : null,
-        discountRuleCode:null, ...calc,
+        discountRuleCode:sameDiscount ? previousTag.discount_rule_code : null, note:previousTag?.note || '', ...calc,
         minPrice:cleanNumber(byId('price-rule-tag-min').value), maxPrice:cleanNumber(byId('price-rule-tag-max').value),
         roundingUnit:cleanNumber(byId('price-rule-tag-round-unit').value) || 1,
         roundingMode:byId('price-rule-tag-round-mode').value
