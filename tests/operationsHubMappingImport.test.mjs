@@ -41,6 +41,8 @@ c.ExcelJS={Workbook:class {
   addImage(image){this.images.push(image);return this.images.length;}
 }};
 c.fetch=async()=>({ok:true,arrayBuffer:async()=>new Uint8Array([1,2,3]).buffer});
+c.Blob=class { constructor(parts,options){this.parts=parts;this.options=options;} };
+c.createImageBitmap=async()=>({width:300,height:100,close(){}});
 const thumbnailBook=await buildThumbnailTemplate([
   {sellpia_sku_code:'sku-thumb',image_url:'https://images.example/item.jpg'},
   {sellpia_sku_code:'sku-empty'}
@@ -50,6 +52,9 @@ assert.equal(mockBook.sheet.columns[0].header,'썸네일');
 assert.equal(mockBook.sheet.getRow(2).getCell(2).value,'sku-thumb');
 assert.equal(mockBook.images[0].extension,'jpeg');
 assert.equal(mockBook.sheet.images.length,1);
+assert.equal(mockBook.sheet.images[0].range.ext.width,96);
+assert.equal(mockBook.sheet.images[0].range.ext.height,32);
+assert.equal(mockBook.sheet.getRow(2).height,76);
 assert.equal(mockBook.sheet.getRow(3).getCell(1).value,'이미지 없음');
 assert.equal(mockBook.sheet.autoFilter.to,'H3');
 const {chromium}=await import(pathToFileURL('C:/Users/hihi0/.cache/codex-runtimes/codex-primary-runtime/dependencies/node/node_modules/playwright/index.mjs'));

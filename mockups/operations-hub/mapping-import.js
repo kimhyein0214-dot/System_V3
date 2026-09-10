@@ -43,6 +43,24 @@
     return {entries:valid,errors};
   }
   const thumbnailUrl=product=>text(product?.sellpia_override_image_url||product?.image_url);
+  const THUMBNAIL_MAX_PX=96;
+  async function thumbnailDimensions(buffer) {
+    if(!global.createImageBitmap||!global.Blob)return {width:THUMBNAIL_MAX_PX,height:THUMBNAIL_MAX_PX};
+    let image;
+    try{
+      image=await global.createImageBitmap(new global.Blob([buffer],{type:'image/jpeg'}));
+      return {width:Number(image.width)||THUMBNAIL_MAX_PX,height:Number(image.height)||THUMBNAIL_MAX_PX};
+    }catch(error){
+      console.warn('thumbnail image dimensions unavailable',error);
+      return {width:THUMBNAIL_MAX_PX,height:THUMBNAIL_MAX_PX};
+    }finally{image?.close?.();}
+  }
+  function thumbnailSize(image={}) {
+    const width=Math.max(1,Number(image.width)||THUMBNAIL_MAX_PX);
+    const height=Math.max(1,Number(image.height)||THUMBNAIL_MAX_PX);
+    const scale=Math.min(THUMBNAIL_MAX_PX/width,THUMBNAIL_MAX_PX/height);
+    return {width:Math.max(1,Math.round(width*scale)),height:Math.max(1,Math.round(height*scale))};
+  }
   async function loadThumbnailImages(products,onProgress) {
     const targets=products.map((product,index)=>({index,url:thumbnailUrl(product)})).filter(target=>target.url);
     const images=new Map();let completed=0,next=0;
@@ -55,7 +73,7 @@
           const response=await fetch(target.url);
           if(!response.ok)throw new Error(`HTTP ${response.status}`);
           const buffer=await response.arrayBuffer();
-          if(buffer.byteLength)images.set(target.index,buffer);
+          if(buffer.byteLength)images.set(target.index,{buffer,...await thumbnailDimensions(buffer)});
         }catch(error){console.warn('thumbnail image download failed',target.url,error);}
         completed++;report();
       }
@@ -70,7 +88,7 @@
     book.creator='System V3';book.created=new Date();
     const sheet=book.addWorksheet('매칭값',{views:[{state:'frozen',xSplit:2,ySplit:1}]});
     sheet.columns=[
-      {header:'썸네일',key:'thumbnail',width:13},{header:headers[0],key:'sellpia',width:18},
+      {header:'썸네일',key:'thumbnail',width:18},{header:headers[0],key:'sellpia',width:18},
       {header:headers[1],key:'smartstoreProduct',width:19},{header:headers[2],key:'smartstoreOption',width:19},
       {header:headers[3],key:'makeshopProduct',width:21},{header:headers[4],key:'makeshopOption',width:21},
       {header:headers[5],key:'ablyProduct',width:19},{header:headers[6],key:'ablyOption',width:19}
@@ -78,13 +96,13 @@
     const header=sheet.getRow(1);header.height=24;header.font={bold:true};header.alignment={vertical:'middle'};
     header.eachCell(cell=>{cell.fill={type:'pattern',pattern:'solid',fgColor:{argb:'FFE8EFF7'}};cell.border={bottom:{style:'thin',color:{argb:'FF9DAFC5'}}};});
     products.forEach((product,index)=>{
-      const row=sheet.addRow({sellpia:text(product?.sellpia_sku_code)});row.height=42;
+      const row=sheet.addRow({sellpia:text(product?.sellpia_sku_code)});row.height=76;
       row.eachCell({includeEmpty:true},cell=>{cell.alignment={vertical:'middle'};});
       for(let col=2;col<=8;col++)row.getCell(col).numFmt='@';
       const image=images.get(index);
       if(image){
-        const imageId=book.addImage({buffer:image,extension:'jpeg'});
-        sheet.addImage(imageId,{tl:{col:0,row:row.number-1},ext:{width:48,height:48}});
+        const imageId=book.addImage({buffer:image.buffer,extension:'jpeg'});
+        sheet.addImage(imageId,{tl:{col:0,row:row.number-1},ext:thumbnailSize(image)});
       }else{
         const cell=row.getCell(1);cell.value='이미지 없음';cell.font={color:{argb:'FF7A8796'},size:9};cell.alignment={horizontal:'center',vertical:'middle',wrapText:true};
       }
