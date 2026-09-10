@@ -2446,6 +2446,14 @@
     for(let i=0;i<codes.length;i+=200){const {data,error}=await db.from(MATRIX_VIEW).select('sellpia_sku_code,'+field).in('sellpia_sku_code',codes.slice(i,i+200));if(error)throw error;linked.push(...data.filter(r=>r[field]).map(r=>r.sellpia_sku_code));}return linked;
   }
   async function ruleRegistry(action, rule = null) {
+    if (action === 'list') {
+      const {data,error}=await db.rpc('hub_rule_registry_list_v2',{p_session_token:requireOperationsHubSessionToken()});
+      if(error)throw readableDatabaseError(error);
+      // Transfer shared assignment fields once per group, then restore the engine contract.
+      const {assignment_groups = [], ...registry} = data;
+      return {...registry, assignments: assignment_groups.flatMap(({entries, ...group}) =>
+        entries.map(([sku, version]) => ({...group, sku, version})))};
+    }
     const {data,error}=await db.rpc('hub_rule_registry_v1',{p_session_token:requireOperationsHubSessionToken(),p_action:action,p_rule:rule});
     if(error)throw readableDatabaseError(error);return data;
   }
