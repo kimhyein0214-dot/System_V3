@@ -13,6 +13,7 @@ test('calculated result persistence executes real bounded SQL without copying ru
    insert into public.matrix_fixture select 'SKU'||lpad(g::text,5,'0'),'S'||(g/10),'s'||g,'M'||(g/10),'m'||g,'A'||(g/10),'a'||g from generate_series(1,23760)g;
    insert into public.matrix_fixture values('missing-linked','missing-product','missing-option',null,null,null,null),('unlinked',null,null,null,null,null,null);
    create view public.operations_hub_matrix_managed_live as select * from public.matrix_fixture;
+   create view operations_private.operations_hub_matrix_export_cache as select * from public.matrix_fixture;
    create table operations_private.hub_rules(id uuid primary key,config jsonb);insert into operations_private.hub_rules values('00000000-0000-4000-8000-000000000001','{"steps":[{"op":"divide","value":2}]}');
    create table operations_private.hub_rule_assignments(sku text,rule_id uuid);insert into operations_private.hub_rule_assignments select sellpia_sku_code,'00000000-0000-4000-8000-000000000001' from public.matrix_fixture;
    analyze public.matrix_fixture;`);

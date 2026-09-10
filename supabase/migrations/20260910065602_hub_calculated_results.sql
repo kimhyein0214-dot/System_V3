@@ -98,7 +98,7 @@ begin
   order by r.sku,r.scope,r.field limit p_limit+1
  ), visible as materialized(select * from page order by sku,scope,field limit p_limit), identities as materialized(
   select m.sellpia_sku_code,m.smartstore_product_code,m.smartstore_option_code,m.makeshop_product_code,m.makeshop_option_code,m.ably_product_code,m.ably_option_code
-  from public.operations_hub_matrix_managed_live m where m.sellpia_sku_code in(select sku from visible where scope<>'' union select unnest(p_skus) where p_scope in ('smartstore','makeshop','ably'))
+  from operations_private.operations_hub_matrix_export_cache m where m.sellpia_sku_code in(select sku from visible where scope<>'' union select unnest(p_skus) where p_scope in ('smartstore','makeshop','ably'))
  ), resolved as (
   select v.*,case v.scope when 'smartstore' then m.smartstore_product_code when 'makeshop' then m.makeshop_product_code when 'ably' then m.ably_product_code end seller_product_code,
    case v.scope when 'smartstore' then m.smartstore_option_code when 'makeshop' then m.makeshop_option_code when 'ably' then m.ably_option_code end seller_option_code

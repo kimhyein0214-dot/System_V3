@@ -2502,7 +2502,7 @@
     }
     return {rows,missing,missingSkus:[...new Set(missingSkus)]};
   }
-  async function loadStoredMatrixPrices({sources=['smartstore','makeshop','ably'],skus=null,onProgress} = {}) {
+  async function loadStoredMatrixPrices({sources=['smartstore','makeshop','ably'],skus=null,includeMatrixDrafts=false,onProgress} = {}) {
     const selected=[...new Set(sources.map(cleanText).filter(source=>['smartstore','makeshop','ably'].includes(source)))];
     let codes=skus===null?null:[...new Set((skus||[]).map(cleanText).filter(Boolean))];
     if(codes===null){
@@ -2536,16 +2536,34 @@
         discount_terms:Array.isArray(discountDetails.discount_terms)?discountDetails.discount_terms:[],rule_versions:versions,generation_id:generations.size===1?[...generations][0]:null,
         status:errors.length||incomplete||mixed?'error':'calculated',error:errors.map(row=>row.error).filter(Boolean).join(' / ')||(incomplete?'저장된 가격 단계가 일부 없습니다.':mixed?'저장된 가격의 계산 세대가 일치하지 않습니다.':'')};
     });
+    const calculatedKeys=new Set(rows.map(row=>JSON.stringify([row.sellpia_sku_code,row.source_channel])));
+    if(includeMatrixDrafts){
+      const drafts=[],draftJobs=[];for(let offset=0;offset<codes.length;offset+=500)draftJobs.push(codes.slice(offset,offset+500));let nextDraftJob=0;
+      await Promise.all(Array.from({length:Math.min(6,draftJobs.length)},async()=>{while(nextDraftJob<draftJobs.length){const chunk=draftJobs[nextDraftJob++],{data,error}=await db.from('operations_hub_active_seller_drafts').select('change_id,sellpia_sku_code,source_channel,price_base_after,price_discounted_base_after,price_option_after,price_final_after,price_discount_terms_after,price_rule_set_id,updated_at').eq('field_key','sellpia_sale_price').in('source_channel',selected).in('sellpia_sku_code',chunk).order('updated_at',{ascending:false}).order('change_id',{ascending:false});if(error)throw readableDatabaseError(error);drafts.push(...(data||[]));}}));
+      const draftByKey=new Map();for(const draft of drafts){const key=JSON.stringify([cleanText(draft.sellpia_sku_code),cleanText(draft.source_channel)]);if(!draftByKey.has(key))draftByKey.set(key,draft);}
+      const draftSkus=[...new Set(drafts.map(draft=>cleanText(draft.sellpia_sku_code)).filter(Boolean))],components=[],componentJobs=[];for(let offset=0;offset<draftSkus.length;offset+=200)componentJobs.push(draftSkus.slice(offset,offset+200));let nextComponentJob=0;
+      await Promise.all(Array.from({length:Math.min(4,componentJobs.length)},async()=>{while(nextComponentJob<componentJobs.length){const chunk=componentJobs[nextComponentJob++],{data,error}=await db.rpc('load_operations_hub_seller_price_components',{p_skus:chunk});if(error)throw readableDatabaseError(error);components.push(...(data||[]));}}));
+      const storedKeys=new Set(rows.map(row=>JSON.stringify([row.sellpia_sku_code,row.source_channel])));
+      for(const component of components){const sku=cleanText(component.sellpia_sku_code),source=cleanText(component.source_channel),key=JSON.stringify([sku,source]),draft=draftByKey.get(key);if(!draft||!selected.includes(source)||storedKeys.has(key)||!cleanText(component.seller_product_code))continue;const terms=Array.isArray(draft.price_discount_terms_after)?draft.price_discount_terms_after:(Array.isArray(component.source_discount_terms)?component.source_discount_terms:[]);rows.push({sellpia_sku_code:sku,source_channel:source,seller_product_code:component.seller_product_code,seller_option_code:component.seller_option_code||'',base_price:draft.price_base_after??component.draft_base_price??component.source_base_price,discounted_base_price:draft.price_discounted_base_after??component.draft_discounted_base_price??component.source_discounted_base_price,option_price:draft.price_option_after??component.draft_option_price??component.source_option_price??0,final_price:draft.price_final_after??component.draft_final_price??component.source_final_price,discount_terms:terms,rule_versions:[],generation_id:null,status:'matrix_draft',error:null,change_id:draft.change_id});storedKeys.add(key);}
+    }
     onProgress?.(`저장된 매트릭스 가격 ${rows.length.toLocaleString('ko-KR')}건을 불러왔습니다.`);
-    return {rows,missing};
+    return {rows,missing:missing.filter(item=>calculatedKeys.has(JSON.stringify([item.sellpia_sku_code,item.source_channel])))};
   }
   async function attachStoredCalculatedPrices(products, signal) {
     const codes=[...new Set(products.map(product=>cleanText(product?.sellpia_sku_code)).filter(Boolean))];
     if(!codes.length)return products;
-    const [internal,platform]=await Promise.all([
-      loadCalculatedResults({skus:codes,scope:'',fields:['calculated_base_price']}),
-      loadStoredMatrixPrices({sources:['smartstore','makeshop','ably'],skus:codes})
-    ]);
+    let internal,platform;
+    try {
+      [internal,platform]=await Promise.all([
+        loadCalculatedResults({skus:codes,scope:'',fields:['calculated_base_price']}),
+        loadStoredMatrixPrices({sources:['smartstore','makeshop','ably'],skus:codes})
+      ]);
+    } catch(error) {
+      // Stored prices enrich the matrix; they must never make the core catalog
+      // unavailable when this auxiliary read is slow or temporarily fails.
+      console.warn('stored matrix price enrichment failed',error);
+      return products;
+    }
     throwIfAborted(signal);
     const internalBySku=new Map(internal.rows.map(row=>[row.sku,row])),platformBySku=new Map();
     for(const row of platform.rows){if(!platformBySku.has(row.sellpia_sku_code))platformBySku.set(row.sellpia_sku_code,{});platformBySku.get(row.sellpia_sku_code)[row.source_channel]={platformBase:row.base_price,discounted:row.discounted_base_price,platformDiscount:row.base_price==null||row.discounted_base_price==null?null:Number(row.base_price)-Number(row.discounted_base_price),platformOption:row.option_price,platformFinal:row.final_price,platformTerms:row.discount_terms,versions:row.rule_versions,error:row.error};}

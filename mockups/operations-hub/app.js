@@ -6868,7 +6868,7 @@ async function refreshSellerExportPreview() {
   if (!includeStockDrafts) {
     const scope = selectedSellerExportScope();
     const scopeLabels = {filtered:'현재 검색·필터 결과', selected:'선택한 셀 범위의 SKU', all:'전체 상품'};
-    countNode.textContent = '최신 가격 수식 계산';
+    countNode.textContent = '저장된 매트릭스 가격 반영';
     detailNode.textContent = `${scopeLabels[scope]} · ${sources.map(source => CHANNEL_LABELS[source] || source).join('·')} · 재고 수정안 검증 없음`;
     return;
   }
@@ -6887,7 +6887,7 @@ async function refreshSellerExportPreview() {
       const scopeLabels = {filtered:'현재 검색·필터 결과', selected:'선택한 셀 범위의 SKU', all:'전체 상품'};
       detailNode.textContent = `${scopeLabels[scope]} · ${sources.map(source => CHANNEL_LABELS[source] || source).join('·')}`;
     }
-    countNode.textContent = `${formatNumber(count)}건 재고 수정안 · 가격 수식 별도 계산`;
+    countNode.textContent = `${formatNumber(count)}건 재고 수정안 · 저장된 가격 함께 반영`;
     if (sellerExportState.rows.length) detailNode.textContent = `내보내기 준비에서 선택한 항목 · ${sources.map(source => CHANNEL_LABELS[source] || source).join('·')}`;
   } catch (error) {
     if (requestId !== sellerExportState.previewRequestId) return;

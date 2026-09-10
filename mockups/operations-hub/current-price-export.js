@@ -9,7 +9,7 @@
   if(!selectedSources.length||requested&& !requested.length)return {items:[...items],excludedItems:[]};
   if(!g.SystemV3Data?.loadStoredMatrixPrices)throw Error('저장된 매트릭스 가격 조회 모듈을 불러오지 못했습니다.');
   onProgress?.('저장된 매트릭스 가격을 읽습니다.');
-  const stored=await g.SystemV3Data.loadStoredMatrixPrices({sources:selectedSources,skus:requested,onProgress});
+  const stored=await g.SystemV3Data.loadStoredMatrixPrices({sources:selectedSources,skus:requested,includeMatrixDrafts:true,onProgress});
   if(!Array.isArray(stored?.rows)||!Array.isArray(stored?.missing))throw Error('저장된 매트릭스 가격 응답이 유효하지 않습니다.');
   const scope=new Set(selectedSources),requestedSet=requested&&new Set(requested),inScope=item=>scope.has(item.source_channel)&&(!requestedSet||requestedSet.has(item.sellpia_sku_code));
   let output=items.filter(item=>!price(item)||!inScope(item)),excludedItems=[],nextId=items.reduce((minimum,item)=>Math.min(minimum,Number(item.export_item_id)||0),0)-1;
@@ -57,7 +57,8 @@
    }
    for(const item of generated)if(unsafe.has(item.seller_product_code))exclude(item,unsafe.get(item.seller_product_code));else output.push(item);
   }
-  for(const missing of stored.missing){const row=typeof missing==='string'?{sellpia_sku_code:missing,source_channel:selectedSources.length===1?selectedSources[0]:''}:missing;exclude(row,'저장된 매트릭스 가격 없음: '+(row.reason||row.error||'저장값을 찾지 못했습니다.'));}
+  // A SKU without a calculated tuple has no stored price change. The latest
+  // original row must stay untouched instead of being reported as an error.
   return {items:output,excludedItems};
  }
  async function buildArchive(files,items,onProgress,excludedItems=[]){

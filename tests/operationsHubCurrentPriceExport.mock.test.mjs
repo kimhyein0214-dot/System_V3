@@ -35,7 +35,7 @@ function fixture(){
  const f=fixture();f.rows.find(r=>r.source_channel==='ably'&&r.sellpia_sku_code==='A').error='stored price error';f.rows.find(r=>r.source_channel==='ably'&&r.sellpia_sku_code==='B').final_price=null;
  f.missing.push({source_channel:'ably',sellpia_sku_code:'MISSING',reason:'not materialized'});
  const stale={...f.stock,field_key:'sellpia_sale_price',after_value:99999},r=await api.refreshItems([f.stock,stale],f.files,{sources:['ably']});
- assert.equal(r.items[0],f.stock);assert.deepEqual(r.items.filter(i=>i.field_key==='sellpia_sale_price').map(i=>i.sellpia_sku_code),['C','D']);assert.equal(r.excludedItems.length,3);assert.ok(r.excludedItems.some(e=>/not materialized/.test(e.reason)));assert.ok(!r.items.some(i=>i.after_value===99999),'missing/error rows must not fall back to prepared price or original');
+ assert.equal(r.items[0],f.stock);assert.deepEqual(r.items.filter(i=>i.field_key==='sellpia_sale_price').map(i=>i.sellpia_sku_code),['C','D']);assert.equal(r.excludedItems.length,2);assert.ok(!r.excludedItems.some(e=>/not materialized/.test(e.reason)),'a wholly uncalculated row keeps the original and is not an exclusion');assert.ok(!r.items.some(i=>i.after_value===99999),'missing/error rows must not reuse a stale prepared price');
 }
 {
  const f=fixture();const a=f.rows.find(r=>r.source_channel==='ably'&&r.sellpia_sku_code==='A');f.rows.push({...a,sellpia_sku_code:'SAME'});const r=await api.refreshItems([],f.files,{sources:['ably']});assert.equal(r.items.length,4);assert.deepEqual(r.items.find(i=>i.sellpia_sku_code==='A').target_component_skus,['A','SAME']);
@@ -83,4 +83,4 @@ function fixture(){
  assert.equal(Number(storedRows[1][15]),7);assert.equal(storedArchive.appliedItems.length,2);assert.equal(storedArchive.skippedItems.length,0);
  for(let r=1;r<rows.length;r++)for(let col=0;col<rows[r].length;col++)if(r!==1||![4,5,6,15].includes(col))assert.equal(storedRows[r][col]??'',String(rows[r][col]),'unrelated actual CSV cell preserved');
 }
-console.log('PASS stored-matrix export: no formula/registry/product reads; exact saved tuple and versions; null/all and selected scope; explicit queue unchanged; missing/error exclusions without fallback; same-value coalescing; unmapped final preservation;23760 rows; actual CSV/ZIP group rollback and stock preservation.');
+console.log('PASS stored-matrix export: no formula/registry/product reads; exact saved tuple and versions; null/all and selected scope; explicit queue unchanged; uncalculated rows preserve originals while stored errors stay excluded; same-value coalescing; unmapped final preservation;23760 rows; actual CSV/ZIP group rollback and stock preservation.');
