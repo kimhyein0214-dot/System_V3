@@ -11,6 +11,7 @@ try{
  });
  for(const file of ['rule-registry.js','rule-workspace.js'])await page.addScriptTag({path:fileURLToPath(new URL(file,root))});
  await page.evaluate(()=>{HubPriceWorkspace.state.selected='tag-rule';return HubPriceWorkspace.refresh();});
+ assert.equal(await page.locator('#rw-legacy-rules').inputValue(),'shared:tag-rule','linked formula tag is immediately available inside the formula builder');assert.match(await page.locator('#rw-bulk').innerText(),/이 수식 태그를 SKU에 적용/);
  assert.equal(await page.locator('#rw-target').inputValue(),'calculated_base_price');
  for(const id of ['target','scope','origin'])assert.equal(await page.locator('#rw-'+id).isDisabled(),true,id+' immutable before edit');
  assert.equal(await page.locator('#rw-source-field').isEnabled(),true);assert.equal(await page.locator('.rw-op input').isEnabled(),true);

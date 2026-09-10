@@ -100,8 +100,10 @@ try{
  const geometry=await page.evaluate(()=>{const box=document.querySelector('.rw').getBoundingClientRect();return {width:box.width,height:box.height,viewport:innerHeight,bodyWidth:document.body.scrollWidth};});
  assert.ok(geometry.bodyWidth<=1440,'workspace must fit desktop width');assert.ok(geometry.height<geometry.viewport,'workspace must fit desktop height');
  const beforeLegacyWrites=await page.evaluate(()=>qa.writes.length);
- await page.locator('#rw-legacy-load').click();await idle();await page.locator('#rw-legacy-rules').selectOption('0');
+ const beforeLegacyTarget=await page.locator('#rw-target').inputValue();
+ await page.locator('#rw-legacy-load').click();await idle();await page.locator('#rw-legacy-rules').selectOption('legacy:0');
  assert.equal(await page.locator('#rw-name').inputValue(),'legacy divide');
+ assert.equal(await page.locator('#rw-target').inputValue(),beforeLegacyTarget,'loading a formula preset must preserve the separately selected destination');
  assert.deepEqual(await page.locator('.rw-op').locator('input').evaluateAll(inputs=>inputs.map(x=>x.value)),['3','2','100','100']);
  assert.equal(await page.evaluate(()=>qa.writes.length),beforeLegacyWrites,'loading saved legacy rule must not persist until save');
  assert.deepEqual(errors,[]);
