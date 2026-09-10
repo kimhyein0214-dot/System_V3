@@ -39,7 +39,8 @@ try{
    async loadCalculatedResults({skus}){return {rows:skus.filter(sku=>q.internal[sku]!==undefined).map(sku=>({sku,value:q.internal[sku],status:'calculated'})),missing:[],missingSkus:[]};},
    async workDocument(action,kind,payload){if(action==='list')return copy(q.docs);if(action==='get')return copy(q.docs.find(d=>d.id===payload.id));if(action==='save'){const d={...payload,id:payload.id||'new-doc',version:(payload.version||0)+1};q.docs=q.docs.filter(x=>x.id!==d.id);q.docs.push(copy(d));q.writes.push({action:'document-save',value:copy(d)});return copy(d);}throw Error('Unexpected document action');},
    async loadLatestSellerOriginalStatus(){q.calls.push('latest-file-status');return [{source:'ably',available:true,files:[{name:'fixture-latest.xlsx'}]}];},
-   async loadTags(){return [];},
+   async loadTags(){return [{tag_id:'tag-one',tag_name:'공통 태그'},{tag_id:'tag-two',tag_name:'행별 태그'}];},
+   async bulkImportTags({rows,tagId,preview}){const tags={'tag-one':'공통 태그','tag-two':'행별 태그'},byName=Object.fromEntries(Object.entries(tags).map(([id,name])=>[name,id])),seen=new Set(),previewRows=[],valid=[];rows.forEach((row,index)=>{const resolved=tagId||byName[row.tag_name],exists=products().some(product=>product.sellpia_sku_code===row.sku),key=row.sku+'|'+resolved,error=!resolved?'태그명을 찾지 못했습니다.':!exists?'셀피아 원본에 없는 SKU입니다.':'',is_duplicate=!error&&seen.has(key);seen.add(key);previewRows.push({row_no:index+1,sku:row.sku,tag_name:tags[resolved]||row.tag_name,error:error||null,is_duplicate});if(!error&&!is_duplicate)valid.push({sku:row.sku,tag_id:resolved});});const result={mode:tagId?'single_tag':'per_row',row_count:rows.length,valid_count:valid.length,error_count:previewRows.filter(row=>row.error).length,duplicate_count:previewRows.filter(row=>row.is_duplicate).length,sku_count:new Set(valid.map(row=>row.sku)).size,tag_count:new Set(valid.map(row=>row.tag_id)).size,inserted_tag_count:valid.length,rule_assignment_count:0,preview_rows:previewRows.slice(0,200)};if(!preview){if(result.error_count)throw Error('전체 저장을 취소했습니다.');q.writes.push({action:'tag-excel-import',tagId,rows:copy(rows)});}return result;},
    async loadPriceRuleTags(){return [];},
    async loadInboundCostFormulaTags(){return [{tag_id:'legacy',tag_name:'legacy divide',multiply_value:3,divide_value:2,add_value:100,rounding_unit:100,rounding_mode:'up'}];},
   };
@@ -106,6 +107,17 @@ try{
  assert.equal(await page.locator('#rw-target').inputValue(),beforeLegacyTarget,'loading a formula preset must preserve the separately selected destination');
  assert.deepEqual(await page.locator('.rw-op').locator('input').evaluateAll(inputs=>inputs.map(x=>x.value)),['3','2','100','100']);
  assert.equal(await page.evaluate(()=>qa.writes.length),beforeLegacyWrites,'loading saved legacy rule must not persist until save');
+ assert.deepEqual(await page.evaluate(()=>HubPriceWorkspace.parseTagImportRows([['셀피아 SKU'],['six'],['loose']])),{mode:'single_tag',rows:[{sku:'six',tag_name:''},{sku:'loose',tag_name:''}]});
+ assert.deepEqual(await page.evaluate(()=>HubPriceWorkspace.parseTagImportRows([['셀피아 SKU','태그명'],['six','공통 태그'],['loose','행별 태그']])),{mode:'per_row',rows:[{sku:'six',tag_name:'공통 태그'},{sku:'loose',tag_name:'행별 태그'}]});
+ await page.locator('.rw-tabs [data-tab="bulk"]').click();await idle();
+ await page.locator('#rw-tag-import-file').setInputFiles({name:'one-column.csv',mimeType:'text/csv',buffer:Buffer.from('\ufeff셀피아 SKU\nsix\nloose\n')});await idle();
+ assert.match(await page.locator('#rw-tag-import-mode').innerText(),/공통 태그 선택/);assert.equal(await page.locator('#rw-tag-import-apply').isDisabled(),true);
+ await page.locator('#rw-tag-import-tag').selectOption('tag-one');await idle();assert.equal(await page.locator('#rw-tag-import-apply').isDisabled(),false,(await page.locator('#rw-tag-import-summary').innerText())+' | '+(await page.locator('#rw-drawer-status').innerText())+' | '+(await page.locator('#rw-tag-import-rows').innerText()));
+ await page.locator('#rw-tag-import-apply').click();await idle();assert.equal(await page.evaluate(()=>qa.writes.filter(write=>write.action==='tag-excel-import').length),1);
+ await page.locator('#rw-close').click();await page.locator('.rw-tabs [data-tab="bulk"]').click();await idle();
+ await page.locator('#rw-tag-import-file').setInputFiles({name:'two-column.csv',mimeType:'text/csv',buffer:Buffer.from('\ufeff셀피아 SKU,태그명\nsix,공통 태그\nloose,행별 태그\n')});await idle();
+ assert.match(await page.locator('#rw-tag-import-mode').innerText(),/B열 태그명/);assert.equal(await page.locator('#rw-tag-import-tag').isDisabled(),true);assert.equal(await page.locator('#rw-tag-import-apply').isDisabled(),false);
+ await page.locator('#rw-tag-import-apply').click();await idle();assert.equal(await page.evaluate(()=>qa.writes.filter(write=>write.action==='tag-excel-import').length),2);
  assert.deepEqual(errors,[]);
- console.log('PASS actual Rule workspace browser flow: ordered save/reload, CSV bulk conflict and selected removal, dependency CSV validation/save, live calculation refresh, scoped platform settings, export file load, desktop density; fixture adapter only');
+ console.log('PASS actual Rule workspace browser flow: ordered save/reload, selected Rule bulk action, one-column and two-column Excel tag import, dependency CSV validation/save, live calculation refresh, scoped platform settings, export file load, desktop density; fixture adapter only');
 }finally{await browser.close();}

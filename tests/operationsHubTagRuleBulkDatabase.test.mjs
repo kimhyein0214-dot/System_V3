@@ -8,6 +8,7 @@ try {({PGlite}=await import('@electric-sql/pglite'));} catch {try {({PGlite}=awa
 const tagSqlPath=process.env.HUB_TAG_SQL_PATH||new URL('../supabase/migrations/20260910043254_hub_tag_rule_assignments.sql',import.meta.url);
 const tagOptimizationSqlPath=process.env.HUB_TAG_OPTIMIZATION_SQL_PATH||new URL('../supabase/migrations/20260910044039_hub_tag_rule_query_optimization.sql',import.meta.url);
 const tagPerformanceSqlPath=process.env.HUB_TAG_PERFORMANCE_SQL_PATH||new URL('../supabase/migrations/20260910050448_hub_tag_apply_performance.sql',import.meta.url);
+const tagExcelSqlPath=process.env.HUB_TAG_EXCEL_SQL_PATH||new URL('../supabase/migrations/20260910123002_hub_tag_excel_import.sql',import.meta.url);
 test('tag-linked shared rule bulk transactions execute in isolated PostgreSQL',{skip:!PGlite&&'Install @electric-sql/pglite'},async t=>{
  const db=new PGlite();
  try {
@@ -18,7 +19,7 @@ test('tag-linked shared rule bulk transactions execute in isolated PostgreSQL',{
  insert into public.sellpia_stock_snapshots values(1,'ready','2026-09-01'),(2,'ready','2026-09-02'),(3,'uploading','2026-09-03');
  create table public.sellpia_stock_snapshot_rows(snapshot_id int references public.sellpia_stock_snapshots(snapshot_id),sellpia_sku_code text,sellpia_product_code text,primary key(snapshot_id,sellpia_sku_code));
  insert into public.sellpia_stock_snapshot_rows select 2,'SKU'||g,'PRODUCT'||(g/5)::int from generate_series(1,23760)g;
- insert into public.sellpia_stock_snapshot_rows values(2,'outside','OTHER'),(2,'manual','MANUAL'),(2,'conflict','CONFLICT'),(1,'retired','OLD'),(3,'pending','NEW');
+ insert into public.sellpia_stock_snapshot_rows values(2,'outside','OTHER'),(2,'manual','MANUAL'),(2,'conflict','CONFLICT'),(2,'excel-a','EXCEL'),(2,'excel-b','EXCEL'),(2,'excel-c','EXCEL'),(1,'retired','OLD'),(3,'pending','NEW');
  create view public.sellpia_stock_latest as select r.* from public.sellpia_stock_snapshot_rows r join public.sellpia_stock_snapshots s using(snapshot_id) where s.snapshot_id=(select snapshot_id from public.sellpia_stock_snapshots where upload_status='ready' order by created_at desc limit 1);
  create table public.sellpia_tag_assignments(assignment_id bigint generated always as identity primary key,tag_id uuid not null references public.product_tags(tag_id),tag_scope text not null,sellpia_sku_code text,sellpia_product_code text,is_active boolean not null default true,reviewer text,memo text,created_at timestamptz default now(),updated_at timestamptz default now());
  create index tag_assignment_sku_idx on public.sellpia_tag_assignments(sellpia_sku_code,is_active);
@@ -42,11 +43,13 @@ test('tag-linked shared rule bulk transactions execute in isolated PostgreSQL',{
  await db.exec(await readFile(tagSqlPath,'utf8'));
  await db.exec(await readFile(tagOptimizationSqlPath,'utf8'));
  await db.exec(await readFile(tagPerformanceSqlPath,'utf8'));
+ await db.exec(await readFile(tagExcelSqlPath,'utf8'));
  await db.exec("alter function operations_private.hub_validate_rule_graph() rename to hub_validate_rule_graph_actual;create table operations_private.qa_graph_calls(n int);insert into operations_private.qa_graph_calls values(0);create function operations_private.hub_validate_rule_graph() returns void language plpgsql as $$begin update operations_private.qa_graph_calls set n=n+1;perform operations_private.hub_validate_rule_graph_actual();end$$;");
  const call=async(fn,args)=>{const out=await db.query(`select public.${fn}(${args.map((_,i)=>'$'+(i+1)).join(',')}) result`,args);return out.rows[0].result;};
  const rule=(name,target='calculated_base_price')=>({name,target_field:target,source_field:'source_base_price',input_origin:'self',scope:'',config:{steps:[{op:'multiply',value:1.2},{op:'round',unit:100,rounding:'up'},{op:'add',value:33}]}});
  const save=(tag,r)=>call('hub_tag_rule_save_v1',['operator',JSON.stringify(tag),JSON.stringify(r)]);
  const assign=(tag,skus,action='add')=>call('hub_tag_assign_v1',['operator',tag,skus,action]);
+ const excelImport=(rows,tag=null,preview=true)=>call('hub_tag_bulk_import_v1',['operator',JSON.stringify(rows),tag,preview]);
  const scalar=async sql=>(await db.query(sql)).rows[0];
  let saved,untouched,manualRule;
  await t.test('tag plus ordered rule save is atomic and shares UUID',async()=>{
@@ -69,6 +72,14 @@ test('tag-linked shared rule bulk transactions execute in isolated PostgreSQL',{
   assert.equal((await db.query('select count(*)::int n from public.sellpia_tag_assignments where tag_id=$1 and is_active',[untouched.tag.tag_id])).rows[0].n,2);
   assert.equal((await scalar("select relkind from pg_class where oid='operations_private.operations_hub_matrix_export_cache'::regclass")).relkind,'m');
   assert.equal((await scalar("select profile_json->>'unchanged' value from operations_private.operations_hub_matrix_export_cache where sellpia_sku_code='SKU23760'")).value,'true','bulk tag mutation must not UPDATE or refresh the materialized export cache');
+ });
+ await t.test('Excel import supports A-only selected tag and A/B per-row tag names',async()=>{
+  const oneColumn=await excelImport([{sku:'SKU2'},{sku:'SKU3'}],saved.tag.tag_id,true);assert.deepEqual({mode:oneColumn.mode,rows:oneColumn.row_count,valid:oneColumn.valid_count,tags:oneColumn.tag_count},{mode:'single_tag',rows:2,valid:2,tags:1});
+  const oneApplied=await excelImport([{sku:'SKU2'},{sku:'SKU3'}],saved.tag.tag_id,false);assert.equal(oneApplied.sku_count,2);assert.equal(oneApplied.inserted_tag_count,0,'the earlier full-tag test already linked these rows idempotently');
+  const perRow=await excelImport([{sku:'excel-a',tag_name:'bulk-tag'},{sku:'excel-b',tag_name:'untouched-tag'},{sku:'excel-a',tag_name:'bulk-tag'}],null,true);assert.equal(perRow.mode,'per_row');assert.equal(perRow.valid_count,2);assert.equal(perRow.duplicate_count,1);assert.equal(perRow.error_count,0);
+  const perApplied=await excelImport([{sku:'excel-a',tag_name:'bulk-tag'},{sku:'excel-b',tag_name:'untouched-tag'}],null,false);assert.equal(perApplied.tag_count,2);assert.equal(perApplied.sku_count,2);
+  const invalid=await excelImport([{sku:'absent',tag_name:'missing-tag'},{sku:'SKU4',tag_name:''}],null,true);assert.equal(invalid.error_count,2);assert.match(invalid.preview_rows[0].error,/태그명을 찾지 못했습니다.*원본에 없는 SKU/);await assert.rejects(excelImport([{sku:'excel-c',tag_name:'missing-tag'}],null,false),/전체 저장을 취소/);
+  assert.equal((await scalar("select count(*)::int n from public.sellpia_tag_assignments where sellpia_sku_code='excel-c' and is_active")).n,0,'failed import must not leave a partial tag assignment');
  });
  await t.test('same-stage conflict rolls back all added tags and assignments',async()=>{
   const existing=await call('hub_rule_registry_v1',['operator','save',JSON.stringify(rule('conflicting-manual'))]);
