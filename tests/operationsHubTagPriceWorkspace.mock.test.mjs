@@ -17,3 +17,13 @@ assert.equal(calculate('six',products,formulas,{}).value,0);
 products.six.__profile.sku_tags.push({tag_id:2});
 assert.throws(()=>calculate('six',products,formulas,{}),/2개/);
 console.log('PASS chained 6mm/8mm add and multiply, zero, missing basis, conflicting tags, cycle');
+
+const {fromSavedRule}=globalThis.TagPriceModel;
+const half=fromSavedRule({multiply_value:1,divide_value:2,add_value:-500,rounding_unit:100,rounding_mode:'up'},'inbound');
+const sample={one:{sellpia_source_purchase_price:10000,__profile:{sku_tags:[{tag_id:7}]}}};
+assert.equal(calculate('one',sample,{7:half},{}).value,4500);
+const fixed=fromSavedRule({replace_price:3000,modify_type:'percent',modify_value:10,min_price:0,max_price:4000,rounding_unit:100,rounding_mode:'nearest'},'price','purchase');
+assert.equal(calculate('one',sample,{7:fixed},{}).value,3300);
+assert.equal(fromSavedRule({modify_type:'add',modify_value:-2000},'price').add,-2000);
+assert.throws(()=>fromSavedRule({divide_value:0},'inbound'));
+console.log('PASS saved-rule import: divide, signed amounts, fixed price then percentage, bounds and rounding');
