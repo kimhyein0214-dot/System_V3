@@ -2569,7 +2569,7 @@
     for(const row of platform.rows){if(!platformBySku.has(row.sellpia_sku_code))platformBySku.set(row.sellpia_sku_code,{});platformBySku.get(row.sellpia_sku_code)[row.source_channel]={platformBase:row.base_price,discounted:row.discounted_base_price,platformDiscount:row.base_price==null||row.discounted_base_price==null?null:Number(row.base_price)-Number(row.discounted_base_price),platformOption:row.option_price,platformFinal:row.final_price,platformTerms:row.discount_terms,versions:row.rule_versions,error:row.error};}
     return products.map(product=>{
       const sku=cleanText(product?.sellpia_sku_code),row={...product},storedInternal=internalBySku.get(sku),storedPlatform=platformBySku.get(sku);
-      if(storedInternal)row.__hubInternalPrices={calculated_base_price:storedInternal.status==='error'?{error:storedInternal.error,versions:storedInternal.rule_versions||[]}:{value:Number(storedInternal.value),versions:storedInternal.rule_versions||[]}};
+      if(storedInternal){const versions=storedInternal.rule_versions||[],ruleNames=[...new Set(versions.map(version=>cleanText(version?.name)).filter(Boolean))];row.__hubInternalPrices={calculated_base_price:storedInternal.status==='error'?{error:storedInternal.error,versions,ruleNames}:{value:Number(storedInternal.value),versions,ruleNames}};}
       else delete row.__hubInternalPrices;
       if(storedPlatform)row.__hubRulePrices=storedPlatform;else delete row.__hubRulePrices;
       return row;

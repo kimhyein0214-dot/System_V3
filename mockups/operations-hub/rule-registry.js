@@ -102,7 +102,7 @@
    }
    const input=evaluate(sourceSku,sourceField,sourceScope,[...stack,k]);
    const value=transform(input.value,rule.config,{allowNegative:field==='platform_option_price'});
-   const result={value,base:input.value,rule,formula:`${sourceSku} ${fields[sourceField]} ${stepsText(rule.config.steps).replace(/\n/g,' ')}`,versions:[...input.versions,{id:rule.id,version:rule.version,assignmentVersion:assignment.version}],trace:[...input.trace,{sku,field,scope,value,rule_id:rule.id,version:rule.version}]};cache.set(k,result);return result;
+   const result={value,base:input.value,rule,formula:`${sourceSku} ${fields[sourceField]} ${stepsText(rule.config.steps).replace(/\n/g,' ')}`,versions:[...input.versions,{id:rule.id,name:rule.name,version:rule.version,assignmentVersion:assignment.version}],trace:[...input.trace,{sku,field,scope,value,rule_id:rule.id,version:rule.version}]};cache.set(k,result);return result;
   }
   return {evaluate};
  }

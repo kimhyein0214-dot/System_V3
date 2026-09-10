@@ -968,7 +968,8 @@ function internalBasePriceText(product) {
   const result = product?.__hubInternalPrices?.calculated_base_price;
   const stored = formatNullableNumber(product?.system_base_price);
   if (!result) return stored;
-  return `${result.error ? `계산 오류: ${result.error}` : `수식 결과 ${formatNullableNumber(result.value)}`} · ${result.ruleNames.join(' · ')} · 저장값 ${stored}`;
+  const ruleLabel = Array.isArray(result.ruleNames) && result.ruleNames.length ? result.ruleNames.join(' · ') : '저장된 수식';
+  return `${result.error ? `계산 오류: ${result.error}` : `수식 결과 ${formatNullableNumber(result.value)}`} · ${ruleLabel} · 저장값 ${stored}`;
 }
 
 function internalBasePriceComparison(product) {
@@ -1002,7 +1003,7 @@ function systemOperationalCell(product, fieldKey, label, sourceValue) {
   const sourceClass = hasSource && (!hasValue || differs) ? ' source-pending' : '';
   return `<button class="editable-cell sellpia-edit system-master-cell${!hasValue ? ' unset' : ''}${differs ? ' diff' : ''}${sourceClass}" data-source="system" data-field-key="${fieldKey}" data-field="${calculated ? '원본 기준가격 저장값' : label}" data-value="${escapeHtml(hasValue ? value : '')}" data-value-type="nullable-number" title="${calculated ? '표시된 수식 결과와 별도로 원본 기준가격 저장값을 편집합니다. 수식은 태그 규칙에서 변경하세요. ' : ''}시스템 기준값을 즉시 저장합니다. 원본 숫자는 자동 반영되지 않으며, 선택 셀 원본값 갱신 또는 컬럼 전체 원본값 갱신 작업을 실행할 때만 복사됩니다.">
     <b>${calculated ? (calculated.error ? '계산 오류' : formatNullableNumber(calculated.value)) : (hasValue ? formatNullableNumber(value) : '미설정')}</b>
-    ${calculated ? `<em>${escapeHtml(calculated.error || `수식 결과 · ${calculated.ruleNames.join(' · ')}`)}</em><em>원본 저장값 ${hasValue ? formatNullableNumber(value) : '미설정'}</em>` : ''}
+    ${calculated ? `<em>${escapeHtml(calculated.error || `수식 결과 · ${Array.isArray(calculated.ruleNames) && calculated.ruleNames.length ? calculated.ruleNames.join(' · ') : '저장된 수식'}`)}</em><em>원본 저장값 ${hasValue ? formatNullableNumber(value) : '미설정'}</em>` : ''}
     <em>${sourceState}${updatedAt ? ` · 저장 ${formatLiveTime(updatedAt)}` : ''}</em>
   </button>`;
 }
@@ -6730,7 +6731,11 @@ async function applyMatrixFilterTag() {
   try {
     await liveData.applyTagToSkus({tagId,skus,action:'add'});applied=true;
     status.textContent=`태그 적용 완료 · ${formatNumber(skus.length)}개 SKU의 매트릭스 가격 계산·저장 중…`;
-    const calculation=await materializeHubPrices(skus,{reason:`filter-tag:${tagId}`,onProgress:progress=>{status.textContent=`‘${tag.tag_name}’ 적용 가격 저장 중 · ${formatNumber(progress.persistedRows)}개 값 저장`;}});
+    const calculation=await materializeHubPrices(skus,{reason:`filter-tag:${tagId}`,onProgress:progress=>{
+      const total=Number(progress.totalSkus||0),completed=Math.min(Number(progress.completedSkus||0),total),percent=total?Math.floor(completed/total*100):0;
+      const phase=progress.phase==='resolve'?'영향 SKU 확인':progress.phase==='complete'?'저장 완료':'가격 계산·저장';
+      status.textContent=`‘${tag.tag_name}’ ${phase} · ${formatNumber(completed)} / ${formatNumber(total)} SKU (${percent}%) · ${formatNumber(progress.persistedRows||0)}개 값 저장`;
+    }});
     const warning=materializationWarning(calculation);
     status.textContent=warning?`태그 적용 완료 · ${warning}`:`‘${tag.tag_name}’ 태그와 계산 가격을 ${formatNumber(calculation.totalSkus)}개 영향 SKU에 저장했습니다.`;
     matrixFilterTagState.skus=[];

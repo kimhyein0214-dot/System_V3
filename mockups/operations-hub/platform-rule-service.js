@@ -51,7 +51,7 @@
   }
   const discountKey=settings.source==='makeshop'?'period':'basic';
   const terms=effectiveDiscount?[...original.filter(t=>!t.is_baseline&&t.term_key!==discountKey),...(base===discounted?[]:[{term_key:discountKey,term_type:discountKey,title:effectiveDiscount.name,input_source:'manual',unit:'amount',value:base-discounted,is_baseline:true,rounding_mode:'nearest',rounding_unit:1}])]:original;
-  return rows.map((r,i)=>({...r,platformBase:base,platformOption:amounts[i]-anchor,platformDiscount:base-discounted,platformFinal:discounted+amounts[i]-anchor,platformTerms:terms,versions:[...(r.versions||[]),...[registrationRules[i],discount].filter(Boolean).map(x=>({id:x.id,version:x.version}))]}));
+  return rows.map((r,i)=>({...r,platformBase:base,platformOption:amounts[i]-anchor,platformDiscount:base-discounted,platformFinal:discounted+amounts[i]-anchor,platformTerms:terms,versions:[...(r.versions||[]),...[registrationRules[i],discount].filter(Boolean).map(x=>({id:x.id,name:x.name,version:x.version}))]}));
  }
  async function settings(source){const docs=await data().workDocument('list','formula');const found=docs.find(d=>d.title==='registry-platform:'+source);return found?await data().workDocument('get','formula',{id:found.id}):{title:'registry-platform:'+source,body:{source,mode:'reverse',anchor:'lowest',registration_rule_id:null,discount_rule_id:null}};}
  async function calculate(skus,source,context={}){

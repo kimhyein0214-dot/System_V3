@@ -33,6 +33,9 @@ test('matrix and drawer show effective result first but edit only original store
  assert.match(html,/<b>14,350<\/b>/);assert.match(html,/수식 결과 · 매입가 절반/);assert.match(html,/원본 저장값 22,400/);assert.match(html,/data-value="22400"/);assert.match(html,/원본 기준가격 저장값/);
  assert.match(context.internalBasePriceText(rows[0]),/수식 결과 14,350.*저장값 22,400/);
  assert.match(context.systemOperationalCell(rows[3],'system_base_price','기준가격',1000),/<b>계산 오류<\/b>/);
+ const storedOnly={...f.products[0],__hubInternalPrices:{calculated_base_price:{value:76600,versions:[{id:'half',version:1}]}}};
+ assert.match(context.systemOperationalCell(storedOnly,'system_base_price','기준가격',22400),/<b>76,600<\/b>/);
+ assert.match(context.internalBasePriceText(storedOnly),/저장된 수식.*저장값 22,400/);
 });
 test('calculation accepts supplied product and sibling context without another source fetch',async()=>{
  const f=fixture();f.products[0].__sellerPriceComponents={ably:{seller_product_code:'p',seller_option_code:'o',source_discount_terms:[]}};
