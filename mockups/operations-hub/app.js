@@ -1,5 +1,5 @@
 const sourceConfig = {
-  sellpia: {name:'셀피아 기준 원본', initial:'S', cls:'sellpia', guide:'행번호가 이어지는 셀피아 파일 3개를 올려주세요.', detail:'분할된 파일 3개 · XLSX 또는 CSV', files:3},
+  sellpia: {name:'셀피아 기준 원본', initial:'S', cls:'sellpia', guide:'행번호가 이어지는 셀피아 파일 3개를 올려주세요.', detail:'부분 갱신 1개 이상 / 전체 교체 3개 · XLSX 또는 CSV', files:3},
   smartstore: {name:'스마트스토어 상품 원본', initial:'N', cls:'smart', guide:'분할된 스마트스토어 상품 파일 2개를 올려주세요.', detail:'분할된 파일 2개 · XLSX', files:2},
   makeshop: {name:'메이크샵 상품 원본', initial:'M', cls:'make', guide:'메이크샵에서 내려받은 상품 파일 1개를 올려주세요.', detail:'파일 1개 · XLSX 또는 XLS', files:1},
   ably: {name:'에이블리 상품 원본', initial:'A', cls:'ably', guide:'에이블리 GOODS_LIST 파일 1개를 올려주세요.', detail:'파일 1개 · CSV', files:1},
@@ -11194,7 +11194,7 @@ function updateSource() {
   }
   fileGuide.textContent = isPatchableUploadSource()
     ? sourceSelect.value === 'sellpia'
-      ? '셀피아 전체 교체는 분할 원본 3개, 부분 갱신은 수정한 행이 든 파일 1개 이상이 필요합니다.'
+      ? '부분 갱신: 셀피아 파일 1개 이상으로 기준가격·매입가·재고를 각각 선택해 갱신합니다. 생략한 파일과 선택하지 않은 값은 유지합니다.'
       : '부분 갱신은 수정한 파일만 올리면 되고, 전체 교체는 판매처 전체 파일이 필요합니다.'
     : config.guide;
   renderFiles([]);
@@ -11372,6 +11372,8 @@ document.addEventListener('keydown', event => {
   if (event.key === 'Escape' && !document.getElementById('queue-event-panel').hidden) document.getElementById('queue-event-panel').hidden = true;
   if (event.key === 'Escape' && productDrawer.classList.contains('open')) closeProductDrawer();
 });
+
+updateSource();
 
 const startupPreset = findPreset(activePresetId);
 activePresetId = startupPreset.id;

@@ -1,6 +1,6 @@
 (function(global){
   'use strict';
-  function generate(products,{title,account='',code='',price='',option1='옵션1',option2='옵션2',option3='옵션3',size=2}={}){
+  function generate(products,{title,account='',code='',price='',option1='옵션1',option2='옵션2',option3='옵션3',size=2,autoDefaults=false}={}){
     if(!products.length)throw new Error('상품을 선택하세요.');
     if(products.length>100)throw new Error('한 번에 100개 상품까지 선택하세요.');
     if(!String(title||'').trim())throw new Error('온라인 상품명을 입력하세요.');
@@ -16,6 +16,12 @@
       row[8]='일반';row[9]='조합형';row[10]=option1;row[11]=label(first);
       row[12]=option2;row[13]=label(second);
       const components=[first,second,...(third?[third]:[])]; if(third){row[14]=option3;row[15]=label(third);}
+      if(autoDefaults){
+        row[1]='pink_rocket@naver.com';
+        const prefixes=[...new Set(components.map(p=>String(p.sellpia_sku_code).replace(/-[^-]+$/,'')))];
+        row[2]=prefixes.length===1?'sellpia_'+prefixes[0]:code;
+        row[5]=components.reduce((sum,p)=>{const price=p.system_base_price??p.sellpia_source_sale_price;if(price===null||price===undefined||String(price).trim()===''||!Number.isFinite(Number(price))||Number(price)<0)throw Error(p.sellpia_sku_code+' 기준가격 없음');return sum+Number(price);},0);
+      }
       row[16]=components.map(p=>`[${p.sellpia_sku_code}]`).join(',');
       row[17]=components.map(p=>p.sellpia_sku_code).join('+');
       row[21]=0;row[22]=Math.min(...components.map(p=>Number(p.system_stock)));row[23]=1;row[34]='Y';

@@ -13,3 +13,12 @@ assert.deepEqual([triples[0][10],triples[0][12],triples[0][14]],['첫 선택','�
 assert.equal(triples[728][16],'[1000-9],[1000-9],[1000-9]');assert.equal(triples[728][22],8);
 assert.throws(()=>globalThis.AblyPairGenerator.generate(Array.from({length:30},(_,i)=>({...products[0],sellpia_sku_code:String(i)})),{title:'too many',size:3}));
 console.log('PASS 9x9x9=729, editable option labels, three exact Q references and size limit');
+
+const generatedDefaults=globalThis.AblyPairGenerator.generate([
+ {sellpia_sku_code:'1000-1',system_stock:10,system_base_price:1200},
+ {sellpia_sku_code:'1000-2',system_stock:20,system_base_price:2300}
+],{title:'automatic',autoDefaults:true});
+assert.deepEqual(generatedDefaults.map(r=>r[5]),[2400,3500,3500,4600]);
+assert.ok(generatedDefaults.every(r=>r[1]==='pink_rocket@naver.com'&&r[2]==='sellpia_1000'));
+assert.throws(()=>globalThis.AblyPairGenerator.generate([{sellpia_sku_code:'1000-1',system_stock:1}],{title:'missing',autoDefaults:true}),/기준가격 없음/);
+console.log('PASS new-combination account, SKU prefix, per-option price sums and missing-price rejection');

@@ -2391,6 +2391,15 @@
     };
   }
 
+  async function loadSiblingOptions(sku){
+    requireOperationsHubSessionToken();
+    const {data:target,error}=await db.from('operations_hub_product_profiles').select('sellpia_product_code').eq('sellpia_sku_code',cleanText(sku)).maybeSingle();if(error)throw error;
+    if(!target?.sellpia_product_code)throw Error('해당 SKU의 셀피아 상품코드를 찾지 못했습니다.');
+    const {data:siblings,error:err}=await db.from('operations_hub_product_profiles').select('sellpia_sku_code').eq('sellpia_product_code',target.sellpia_product_code).order('sellpia_sku_code').limit(1000);if(err)throw err;
+    const codes=siblings.map(r=>r.sellpia_sku_code).filter(code=>code!==cleanText(sku));let rows=[];
+    for(let i=0;i<codes.length;i+=200){const {data:part,error:e}=await db.from(MATRIX_VIEW).select('sellpia_sku_code,sellpia_product_name,sellpia_option_name').in('sellpia_sku_code',codes.slice(i,i+200));if(e)throw e;rows.push(...part);}
+    return rows;
+  }
   async function loadFormulaProducts(skus) {
     requireOperationsHubSessionToken();let rows=[];
     for(let i=0;i<skus.length;i+=200){const {data,error}=await db.from(MATRIX_VIEW).select('sellpia_sku_code,display_name,sellpia_source_sale_price,system_base_price,smartstore_price,makeshop_price,ably_price').in('sellpia_sku_code',skus.slice(i,i+200));if(error)throw error;rows.push(...data);}
@@ -3039,7 +3048,7 @@
     const rows=[];
     for(let offset=0;offset<unique.length;offset+=100) {
       const {data,error}=await db.from('operations_hub_matrix_system_live')
-        .select('sellpia_sku_code,display_name,sellpia_option_name,system_stock,system_stock_updated_at')
+        .select('sellpia_sku_code,display_name,sellpia_option_name,system_stock,system_stock_updated_at,system_base_price,sellpia_source_sale_price')
         .in('sellpia_sku_code',unique.slice(offset,offset+100));
       if(error)throw error;
       rows.push(...(data||[]));
@@ -3086,6 +3095,7 @@
     loadTags,
     workDocument,
     loadFormulaProducts,
+    loadSiblingOptions,
     updateProductTag,
     ensureProductProfile,
     saveProductProfile,
