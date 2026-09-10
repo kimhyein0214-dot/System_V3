@@ -7,16 +7,16 @@
     <title>System V3 · 상품 운영 허브</title>
     <link rel="preconnect" href="https://cdnjs.cloudflare.com" crossorigin>
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/pretendard/1.3.9/static/pretendard.css">
-    <link rel="stylesheet" href="./style.css?v=20260910-ably-template-v90">
-    <link rel="stylesheet" href="./ably-combinations.css?v=20260910-ably-template-v90">
-    <link rel="stylesheet" href="./inventory.css?v=20260910-ably-template-v90">
-    <link rel="stylesheet" href="./price-rule-lab.css?v=20260910-ably-template-v90">
-    <link rel="stylesheet" href="./ui-scale-base.css?v=20260910-ably-template-v90">
-    <link rel="stylesheet" href="./ui-scale-matrix.css?v=20260910-ably-template-v90">
-    <link rel="stylesheet" href="./ui-scale-workspaces.css?v=20260910-ably-template-v90">
-    <link rel="stylesheet" href="./channels-page.css?v=20260910-ably-template-v90">
-    <link rel="stylesheet" href="./attributes-page.css?v=20260910-ably-template-v90">
-    <link rel="stylesheet" href="./operations-auth.css?v=20260910-ably-template-v90">
+    <link rel="stylesheet" href="./style.css?v=20260910-workspace-v91">
+    <link rel="stylesheet" href="./ably-combinations.css?v=20260910-workspace-v91">
+    <link rel="stylesheet" href="./workspaces-v91.css?v=20260910-workspace-v91">
+    <link rel="stylesheet" href="./price-rule-lab.css?v=20260910-workspace-v91">
+    <link rel="stylesheet" href="./ui-scale-base.css?v=20260910-workspace-v91">
+    <link rel="stylesheet" href="./ui-scale-matrix.css?v=20260910-workspace-v91">
+    <link rel="stylesheet" href="./ui-scale-workspaces.css?v=20260910-workspace-v91">
+    <link rel="stylesheet" href="./channels-page.css?v=20260910-workspace-v91">
+    <link rel="stylesheet" href="./attributes-page.css?v=20260910-workspace-v91">
+    <link rel="stylesheet" href="./operations-auth.css?v=20260910-workspace-v91">
   </head>
   <body class="operations-auth-locked">
     <section id="operations-auth-gate" class="operations-auth-gate" aria-labelledby="operations-auth-title">
@@ -65,9 +65,7 @@
             <button class="nav-item" data-page="matching"><i>03</i><span>통합 매트릭스</span><b class="warn-badge" id="matrix-unmatched-badge">-</b></button>
             <button class="nav-item" data-page="multi-links"><i>04</i><span>다중·조합 연결</span><b id="multi-link-badge">-</b></button>
             <button class="nav-item" data-page="ably-combinations"><i>05</i><span>에이블리 조합관리</span></button>
-            <button class="nav-item" data-page="inventory"><i>06</i><span>재고조사 <small>방식 검토 중</small></span></button>
-            <button class="nav-item" data-page="channels"><i>07</i><span>판매처 동기화</span></button>
-            <button class="nav-item" data-page="attributes"><i>08</i><span>상품 속성·태그</span></button>
+            <button class="nav-item" data-page="attributes"><i>08</i><span>상품 태그</span></button>
             <button class="nav-item" data-page="price-rules"><i>09</i><span>가격 규칙</span></button>
             <button class="nav-item" data-page="jobs"><i>10</i><span>내보내기·로그</span><b id="jobs-error-badge">-</b></button>
           </nav>
@@ -110,13 +108,12 @@
                 <div class="quick-grid">
                   <button data-page="upload"><span class="quick-icon upload">↑</span><b>원본 파일 업로드</b><em>판매처를 선택해 새 원본 등록</em></button>
                   <button data-page="matching"><span class="quick-icon match">↔</span><b>통합 매트릭스</b><em>상품 연결·재고·가격 통합 관리</em></button>
-                  <button data-page="inventory" class="review-only"><span class="quick-icon count">#</span><b>재고조사 설계 검토</b><em>계산·운영 방식 미확정 · 참고 조회만 제공</em></button>
-                  <button data-page="channels"><span class="quick-icon sync">↻</span><b>판매처 상태 확인</b><em>원본·내보내기 준비 현황 조회</em></button>
+                  <button data-page="dashboard"><span class="quick-icon sync">↻</span><b>판매처 상태 확인</b><em>원본·내보내기 준비 현황 조회</em></button>
                 </div>
               </section>
 
               <section class="panel sync-panel">
-                <div class="panel-title"><div><h3>판매처 동기화 상태</h3><p>마지막 정상 반영 시각을 표시합니다.</p></div><button class="text-btn" data-page="channels">상세 보기</button></div>
+                <div class="panel-title"><div><h3>판매처 동기화 상태</h3><p>마지막 정상 반영 시각을 표시합니다.</p></div><button class="text-btn" data-page="dashboard">상세 보기</button></div>
                 <div class="sync-list">
                   <div><span class="channel-logo smart">N</span><p><b>스마트스토어</b><em>DB 확인 중</em></p><time>-</time><strong class="status wait">조회 중</strong></div>
                   <div><span class="channel-logo make">M</span><p><b>메이크샵</b><em>DB 확인 중</em></p><time>-</time><strong class="status wait">조회 중</strong></div>
@@ -133,12 +130,12 @@
                 <div class="panel-title"><div><h3>확인할 항목</h3><p>업무 우선순위가 높은 항목입니다.</p></div></div>
                 <div class="alert-list">
                   <button data-page="matching"><span class="alert-dot red">!</span><p><b id="dashboard-unmatched-alert">미매칭 집계 중</b><em>현재 매트릭스 미연결 SKU</em></p><strong>검토</strong></button>
-                  <button data-page="inventory"><span class="alert-dot amber">!</span><p><b id="dashboard-inventory-alert">재고 차이 집계 중</b><em>셀피아와 판매처 수량 불일치</em></p><strong>확인</strong></button>
+                  <button data-page="matching"><span class="alert-dot amber">!</span><p><b id="dashboard-inventory-alert">재고 차이 집계 중</b><em>셀피아와 판매처 수량 불일치</em></p><strong>확인</strong></button>
                   <button data-page="jobs"><span class="alert-dot blue">i</span><p><b id="dashboard-failed-alert">실패 작업 확인 중</b><em>최근 30일 실행 로그 기준</em></p><strong>보기</strong></button>
                 </div>
               </section>
             </div>
-          </div>
+          <section id="channels" class="channels-page"></section></div>
 
           <div id="upload" class="page">
             <div class="page-head">
@@ -149,13 +146,13 @@
               <section class="panel upload-card">
                 <div class="step-head"><span>1</span><div><h3>원본 종류 선택</h3><p>등록하려는 판매처 또는 기준 원본을 선택하세요.</p></div></div>
                 <label class="select-label" for="source-select">원본 종류</label>
-                <div class="select-wrap"><select id="source-select"><option value="sellpia">셀피아 기준 원본</option><option value="smartstore">스마트스토어 상품 원본</option><option value="makeshop">메이크샵 상품 원본</option><option value="ably">에이블리 상품 원본</option><option value="survey" disabled>재고조사 완료 파일 · 방식 검토 중</option></select></div>
+                <div class="select-wrap"><select id="source-select"><option value="sellpia">셀피아 기준 원본</option><option value="smartstore">스마트스토어 상품 원본</option><option value="makeshop">메이크샵 상품 원본</option><option value="ably">에이블리 상품 원본</option></select></div>
                 <div id="source-info" class="source-info"><span class="channel-logo sellpia">S</span><div><b>셀피아 기준 원본</b><p>분할된 파일 3개 · XLSX 또는 CSV</p></div><em>필수</em></div>
 
                 <div id="seller-upload-mode" class="seller-upload-mode">
                   <p><b>원본 반영 방식</b><small>일부 행만 수정했다면 부분 갱신, 상품 목록 자체가 바뀌었다면 전체 교체를 사용하세요.</small></p>
-                  <label><input type="radio" name="seller-upload-mode" value="patch"><span><b>부분 갱신 <em>권장</em></b><small>파일에 있는 상품·옵션만 바꾸고 나머지는 유지</small></span></label>
-                  <label><input type="radio" name="seller-upload-mode" value="full" checked><span><b>전체 교체</b><small>파일에 없는 상품·옵션은 최신 원본에서 제외</small></span></label>
+                  <label><input type="radio" name="seller-upload-mode" value="patch" checked><span><b>부분 갱신 <em>권장</em></b><small>파일에 있는 상품·옵션만 바꾸고 나머지는 유지</small></span></label>
+                  <label><input type="radio" name="seller-upload-mode" value="full"><span><b>전체 교체</b><small>파일에 없는 상품·옵션은 최신 원본에서 제외</small></span></label>
                 </div>
 
                 <div class="step-head second"><span>2</span><div><h3>파일 등록</h3><p id="file-guide">행번호가 이어지는 셀피아 파일 3개를 올려주세요.</p></div></div>
@@ -170,8 +167,8 @@
                 </div>
                 <section id="sellpia-preflight-panel" class="sellpia-preflight-panel" aria-live="polite" hidden></section>
                 <div class="upload-options">
-                  <p><b>갱신할 항목</b><small>필요한 데이터만 선택하면 처리시간을 줄일 수 있습니다.</small></p>
-                  <label><input id="upload-field-inventory" type="checkbox" checked> 재고</label><label><input id="upload-field-price" type="checkbox" checked> 가격</label><label><input id="upload-field-discount" type="checkbox" checked> 할인정보</label><label><input id="upload-field-basic" type="checkbox"> 상품 기본정보</label><label><input id="upload-field-status" type="checkbox"> 판매상태</label>
+                  <p><b>부분 갱신할 항목</b><small>필요한 데이터만 선택하면 처리시간을 줄일 수 있습니다.</small></p>
+                  <label><input id="upload-field-inventory" type="checkbox" checked> 재고</label><label><input id="upload-field-price" type="checkbox" checked> <span id="upload-price-label">가격</span></label><label id="upload-purchase-label" hidden><input id="upload-field-purchase" type="checkbox" checked> 매입가</label><label><input id="upload-field-discount" type="checkbox" checked> 할인정보</label><label><input id="upload-field-basic" type="checkbox"> 상품 기본정보</label><label><input id="upload-field-status" type="checkbox"> 판매상태</label>
                 </div>
                 <div class="upload-footer"><p><span>✓</span> 원본 파일은 보관·비교용으로 갱신하고 시스템 기준값은 그대로 유지합니다.</p><button id="mock-upload-btn" class="btn primary large" type="button">업로드 작업 시작</button></div>
                 <div id="upload-progress" class="upload-progress" hidden><div><b id="upload-progress-title">파일 확인 중</b><span id="upload-progress-percent">0%</span></div><div class="progress"><i id="upload-progress-bar" style="width:0%"></i></div><p id="upload-progress-detail">원본 헤더와 행번호를 검사합니다.</p></div>
@@ -496,40 +493,12 @@
           <div id="ably-combinations" class="page">
             <div id="ably-products-home">
               <div class="page-head"><div><h2>에이블리 조합관리</h2><p>온라인 상품명을 선택하면 해당 상품의 조합 옵션을 확인할 수 있습니다.</p></div></div>
-              <section class="panel ably-combination-panel"><h3>상품 목록</h3><div class="ably-home-toolbar"><div><label>옵션기본 엑셀 <input id="ably-combination-file" type="file" accept=".xlsx" aria-label="에이블리 조합 엑셀 파일"></label><p id="ably-combination-file-status" role="status">D열 온라인 상품명을 목록 제목으로 표시합니다. 전체 갱신은 선택한 파일의 모든 상품에 적용합니다.</p></div><button id="ably-all-stock-download" class="btn primary" type="button">전체 조합 재고갱신 파일</button><button id="ably-virtual-product-open" class="btn primary" type="button">상품 불러오기 · 조합등록 엑셀 생성</button></div><div id="ably-imported-products"><p>엑셀을 불러오면 상품 목록이 표시됩니다.</p></div></section>
+              <section class="panel ably-combination-panel"><h3>상품 목록</h3><div class="ably-home-toolbar"><div><label>옵션기본 엑셀 <input id="ably-combination-file" type="file" accept=".xlsx" aria-label="에이블리 조합 엑셀 파일"></label><p id="ably-combination-file-status" role="status">D열 온라인 상품명을 목록 제목으로 표시합니다. 불러온 상품은 저장 버튼으로 보관하세요. 전체 재고갱신은 저장된 모든 상품을 대상으로 합니다.</p></div><button id="ably-all-stock-download" class="btn primary" type="button">전체 조합 재고갱신 파일</button><button id="ably-virtual-product-open" class="btn primary" type="button">상품 불러오기 · 조합등록 엑셀 생성</button></div><div id="ably-imported-products"><p>엑셀을 불러오면 상품 목록이 표시됩니다.</p></div></section>
               <section class="panel ably-combination-panel"><details><summary>재고 계산과 Q열 입력 기준</summary><p>주문수집 → 개별 SKU 재고 갱신 → 연결된 개별 SKU의 최솟값으로 조합 재고 갱신.</p><p>Q열 옵션관리코드: SKU1/SKU2 또는 [SKU1],[SKU2]. R열은 조합 SKU, W열은 조합 재고입니다. 기존 조합 재고는 계산에서 제외합니다.</p><p>개별 SKU의 시스템 현재재고를 조회하고 계산한 결과를 플랫폼 엑셀로 받습니다. 시스템 재고 자체는 변경하지 않습니다.</p></details></section>
             </div>
             <section id="ably-combination-lab" class="panel ably-combination-panel" hidden></section>
             <section id="ably-imported-detail" class="panel ably-combination-panel" hidden><button id="ably-product-back" class="btn" type="button">← 상품 목록</button><h2 id="ably-product-title"></h2><p id="ably-product-row-count"></p><p id="ably-stock-export-note"></p><div class="ably-lab-head"><button id="ably-stock-refresh" class="btn" type="button">재고 새로고침</button><button id="ably-stock-download" class="btn primary" type="button">수정 재고 엑셀 다운로드</button></div><p id="ably-stock-status" role="status"></p><details><summary>연결된 개별 SKU · 시스템 현재재고</summary><div id="ably-stock-components" class="ably-lab-stock-grid"></div></details><div class="ably-combination-table"><table class="data-table"><thead><tr><th>엑셀 행</th><th>옵션</th><th>조합 SKU (R)</th><th>연결 메모 (Q)</th><th>개별 SKU 재고</th><th>기존 재고 (W)</th><th>수정 재고 (W)</th><th>확인 결과</th></tr></thead><tbody id="ably-combination-preview"></tbody></table></div><button id="ably-product-more" class="btn" type="button" hidden>다음 200개 더 보기</button></section>
           </div>
-          <div id="inventory" class="page">
-            <div class="page-head">
-              <div><h2>재고조사 <small class="inventory-review-label">방식 검토 중</small></h2><p>계산식과 운영 반영 방식이 확정되지 않아 기존 데이터는 참고용으로만 조회합니다.</p></div>
-              <div id="inventory-live-status" class="mock-badge review">검토용 참고 조회</div>
-            </div>
-            <div class="inventory-review-notice" role="status"><b>재고조사 방식 미확정</b><span>조사수량·피킹완료·미송서랍 수량의 합산 기준과 반영 시점을 확정한 뒤 운영 기능을 연결합니다. 현재 화면의 계산값은 저장·내보내기·판매처 재고에 반영되지 않습니다.</span></div>
-            <section class="panel inventory-summary-panel">
-              <div class="inventory-summary-head">
-                <div><span>사용 중인 조사파일</span><b id="inventory-snapshot-name">업로드된 조사파일 없음</b><em id="inventory-snapshot-time">원본 업로드에서 재고조사 파일을 등록하세요.</em></div>
-                <div class="inventory-summary-actions"><button id="inventory-upload-open" class="btn" type="button" disabled title="재고조사 방식 확정 후 제공합니다.">조사파일 업로드 준비 중</button><button id="inventory-refresh" class="btn" type="button">참고 데이터 새로고침</button></div>
-              </div>
-              <div class="inventory-metrics">
-                <article><span>조사 SKU</span><strong id="inventory-metric-skus">-</strong></article>
-                <article><span>조사수량 합계</span><strong id="inventory-metric-counted">-</strong></article>
-                <article><span>오늘 피킹완료</span><strong id="inventory-metric-picked">-</strong></article>
-                <article><span>미송서랍 완료</span><strong id="inventory-metric-drawer">-</strong></article>
-                <article class="accent review"><span>참고 계산값 합계</span><strong id="inventory-metric-actual">-</strong></article>
-              </div>
-            </section>
-            <section class="panel inventory-table-panel">
-              <div class="inventory-toolbar"><input id="inventory-search" class="search-box" placeholder="셀피아 SKU / 자사코드 검색"><select id="inventory-activity-filter"><option value="all">전체</option><option value="changed">피킹·미송 있음</option><option value="none">추가수량 없음</option></select><span id="inventory-row-count">0행</span></div>
-              <div class="inventory-table-wrap">
-                <table class="data-table inventory-table"><thead><tr><th>셀피아 SKU</th><th>자사코드</th><th>조사수량</th><th>오늘 피킹완료</th><th>미송서랍 내 수량</th><th>참고 계산값</th><th>마지막 이벤트</th></tr></thead><tbody id="inventory-body"><tr><td colspan="7" class="inventory-empty">검토용 재고 데이터를 불러오는 중입니다.</td></tr></tbody></table>
-              </div>
-              <div class="inventory-foot"><span>자동 갱신과 운영 반영은 중지되어 있습니다. 필요할 때 참고 데이터만 직접 새로고침합니다.</span><b id="inventory-last-refresh">마지막 참고 조회 -</b></div>
-            </section>
-          </div>
-          <div id="channels" class="page channels-page"></div>
           <div id="attributes" class="page attributes-page"></div>
           <div id="price-rules" class="page price-rule-page">
             <div class="page-head">
@@ -986,24 +955,26 @@
     <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.112.3/dist/umd/supabase.js"></script>
-    <script src="./seller-source-parsers.js?v=20260910-ably-template-v90"></script>
-    <script src="./seller-export-adapter.js?v=20260910-ably-template-v90"></script>
-    <script src="./matrix-csv-export.js?v=20260910-ably-template-v90"></script>
-    <script src="./discount-price-math.js?v=20260910-ably-template-v90"></script>
-    <script src="./source-refresh-verifier.js?v=20260910-ably-template-v90"></script>
-    <script src="./relation-import-parser.js?v=20260910-ably-template-v90"></script>
-    <script src="./bundle-import-parser.js?v=20260910-ably-template-v90"></script>
-    <script src="./seller-bundle-import-parser.js?v=20260910-ably-template-v90"></script>
-    <script src="./sellpia-source-parser.js?v=20260910-ably-template-v90"></script>
-    <script src="./data-service.js?v=20260910-ably-template-v90"></script>
-    <script src="./channels-page.js?v=20260910-ably-template-v90"></script>
-    <script src="./app.js?v=20260910-ably-template-v90"></script>
-    <script src="./mapping-import.js?v=20260910-ably-template-v90"></script>
-    <script src="./attributes-page.js?v=20260910-ably-template-v90"></script>
-    <script src="./price-rule-lab.js?v=20260910-ably-template-v90"></script>
-    <script src="./ably-stock-export.js?v=20260910-ably-template-v90"></script>
-    <script src="./ably-combinations.js?v=20260910-ably-template-v90"></script>
-    <script src="./ably-combination-lab.js?v=20260910-ably-template-v90"></script>
-    <script src="./ably-pair-generator.js?v=20260910-ably-template-v90"></script>
+    <script src="./seller-source-parsers.js?v=20260910-workspace-v91"></script>
+    <script src="./seller-export-adapter.js?v=20260910-workspace-v91"></script>
+    <script src="./matrix-csv-export.js?v=20260910-workspace-v91"></script>
+    <script src="./discount-price-math.js?v=20260910-workspace-v91"></script>
+    <script src="./source-refresh-verifier.js?v=20260910-workspace-v91"></script>
+    <script src="./relation-import-parser.js?v=20260910-workspace-v91"></script>
+    <script src="./bundle-import-parser.js?v=20260910-workspace-v91"></script>
+    <script src="./seller-bundle-import-parser.js?v=20260910-workspace-v91"></script>
+    <script src="./sellpia-source-parser.js?v=20260910-workspace-v91"></script>
+    <script src="./data-service.js?v=20260910-workspace-v91"></script>
+    <script src="./channels-page.js?v=20260910-workspace-v91"></script>
+    <script src="./app.js?v=20260910-workspace-v91"></script>
+    <script src="./mapping-import.js?v=20260910-workspace-v91"></script>
+    <script src="./attributes-page.js?v=20260910-workspace-v91"></script>
+    <script src="./price-rule-lab.js?v=20260910-workspace-v91"></script>
+    <script src="./ably-stock-export.js?v=20260910-workspace-v91"></script>
+    <script src="./ably-combinations.js?v=20260910-workspace-v91"></script>
+    <script src="./ably-combination-lab.js?v=20260910-workspace-v91"></script>
+    <script src="./ably-pair-generator.js?v=20260910-workspace-v91"></script>
+<script src="./ably-workspace.js?v=20260910-workspace-v91"></script>
+<script src="./tag-price-workspace.js?v=20260910-workspace-v91"></script>
   </body>
 </html>

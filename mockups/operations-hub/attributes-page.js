@@ -87,7 +87,7 @@
     host.classList.remove('table-page');
     host.classList.add('attributes-live-page');
     host.innerHTML = `<div class="page-title attributes-title">
-      <div><h2>상품 속성·태그</h2><p>셀피아 SKU의 저장된 상품 프로필과 운영 태그를 조회하고, 선택한 SKU만 명시적으로 저장합니다.</p></div>
+      <div><h2>상품 태그</h2><p>태그를 만들고 선택한 SKU에 직접 붙입니다. 가격 계산은 태그 설정에서 선택할 수 있습니다.</p></div>
       <span class="attributes-live-badge"><i></i>실제 DB 연결</span>
     </div>
     <section class="attributes-toolbar" aria-label="상품 속성 검색">
@@ -99,19 +99,19 @@
     <div class="attributes-layout">
       <section class="attributes-list-panel">
         <div class="attributes-selection-head"><label><input id="attributes-select-page" type="checkbox">현재 페이지 전체 선택</label><b id="attributes-selected-count">0개 선택</b><button class="btn" id="attributes-clear-selection" type="button">선택 해제</button></div>
-        <div class="attributes-table-wrap"><table class="attributes-table"><thead><tr><th class="check">선택</th><th>SKU / 자사코드</th><th>상품명 / 옵션명</th><th>소재</th><th>상품군</th><th>형태</th><th>태그</th></tr></thead><tbody id="attributes-rows"></tbody></table></div>
+        <div class="attributes-table-wrap"><table class="attributes-table"><thead><tr><th class="check">선택</th><th>SKU / 자사코드</th><th>상품명 / 옵션명</th><th>태그</th></tr></thead><tbody id="attributes-rows"></tbody></table></div>
         <nav class="attributes-pagination" aria-label="속성 목록 페이지"><button class="btn" id="attributes-prev" type="button">이전</button><span id="attributes-page-label">1 / 1</span><button class="btn" id="attributes-next" type="button">다음</button></nav>
       </section>
       <aside class="attributes-editor" aria-label="선택 SKU 속성 편집">
         <div class="attributes-editor-head"><div><span>선택 SKU 일괄 편집</span><h3 id="attributes-editor-count">0개 SKU</h3></div><small>최대 ${MAX_SELECTED}개</small></div>
         <p class="attributes-editor-guide">체크한 항목만 기존 값에서 교체됩니다. 저장 전에는 DB를 변경하지 않습니다.</p>
-        <fieldset class="attributes-fieldset"><legend>분류 속성</legend>
+        <fieldset class="attributes-fieldset" hidden><legend>분류 속성</legend>
           <label class="attributes-apply"><input type="checkbox" data-attributes-apply="material"><span>소재 적용</span><select id="attributes-material" disabled>${selectOptions(ATTRIBUTE_OPTIONS.material)}</select></label>
           <label class="attributes-apply"><input type="checkbox" data-attributes-apply="productGroup"><span>상품군 적용</span><select id="attributes-product-group" disabled>${selectOptions(ATTRIBUTE_OPTIONS.productGroup)}</select></label>
           <label class="attributes-apply"><input type="checkbox" data-attributes-apply="shape"><span>형태 적용</span><select id="attributes-shape" disabled>${selectOptions(ATTRIBUTE_OPTIONS.shape)}</select></label>
         </fieldset>
-        <fieldset class="attributes-fieldset"><legend><label><input type="checkbox" data-attributes-apply="productTags">상품 공통 태그 교체</label></legend><div class="attributes-tag-grid" data-attributes-tags="product" aria-disabled="true">${renderTagChoices('product')}</div></fieldset>
-        <fieldset class="attributes-fieldset"><legend><label><input type="checkbox" data-attributes-apply="skuTags">SKU 예외 태그 교체</label></legend><div class="attributes-tag-grid" data-attributes-tags="sku" aria-disabled="true">${renderTagChoices('sku')}</div></fieldset>
+        <fieldset class="attributes-fieldset" hidden><legend><label><input type="checkbox" data-attributes-apply="productTags">상품 공통 태그 교체</label></legend><div class="attributes-tag-grid" data-attributes-tags="product" aria-disabled="true">${renderTagChoices('product')}</div></fieldset>
+        <fieldset class="attributes-fieldset"><legend><label><input type="checkbox" data-attributes-apply="skuTags">선택 SKU 태그 교체</label></legend><div class="attributes-tag-grid" data-attributes-tags="sku" aria-disabled="true">${renderTagChoices('sku')}</div></fieldset>
         <details class="attributes-new-tag"><summary>새 운영 태그 만들기</summary><div><input id="attributes-new-tag-name" maxlength="32" placeholder="태그 이름"><input id="attributes-new-tag-color" type="color" value="#dbeafe"><button class="btn" id="attributes-create-tag" type="button">태그 생성(DB 저장)</button></div></details>
         <div id="attributes-save-progress" class="attributes-save-progress" hidden><div><b>저장 준비</b><span>0/0</span></div><i><em></em></i></div>
         <button class="btn primary attributes-save" id="attributes-save" type="button" disabled>선택 SKU에 저장</button>
@@ -123,7 +123,7 @@
     const body = document.getElementById('attributes-rows');
     if (!body) return;
     if (!state.rows.length) {
-      body.innerHTML = '<tr><td colspan="7" class="attributes-empty">조건에 맞는 SKU가 없습니다.</td></tr>';
+      body.innerHTML = '<tr><td colspan="4" class="attributes-empty">조건에 맞는 SKU가 없습니다.</td></tr>';
     } else {
       body.innerHTML = state.rows.map(row => {
         const sku = String(row.sellpia_sku_code || '');
@@ -134,7 +134,6 @@
           <td class="check"><input type="checkbox" data-attributes-select="${escapeHtml(sku)}" ${state.selected.has(sku) ? 'checked' : ''} aria-label="${escapeHtml(sku)} 선택"></td>
           <td><b>${escapeHtml(sku || '-')}</b><span>${escapeHtml(row.sellpia_own_code || row.own_code || '-')}</span></td>
           <td class="product"><b>${escapeHtml(row.sellpia_product_name || row.display_name || '상품명 없음')}</b><span>${escapeHtml(row.sellpia_option_name || '옵션명 없음')}</span></td>
-          <td>${escapeHtml(profile.material || '미설정')}</td><td>${escapeHtml(profile.product_group || '미설정')}</td><td>${escapeHtml(profile.shape || '미설정')}</td>
           <td class="tags">${tagNames.length ? tagNames.slice(0, 3).map(name => `<i>${escapeHtml(name)}</i>`).join('') + (tagNames.length > 3 ? `<em>+${tagNames.length - 3}</em>` : '') : '<span>태그 없음</span>'}</td>
         </tr>`;
       }).join('');
@@ -189,7 +188,7 @@
     try {
       const [result, tags] = await Promise.all([
         global.SystemV3Data.loadProducts({page:state.page, pageSize:PAGE_SIZE, search:state.search, searchSources:['sellpia'], status:'all', sort:'sku_asc'}),
-        state.tags.length ? Promise.resolve(state.tags) : global.SystemV3Data.loadTags()
+        global.SystemV3Data.loadTags()
       ]);
       if (requestId !== state.requestId) return;
       state.rows = result.rows || [];
@@ -286,6 +285,7 @@
     try {
       const created = await global.SystemV3Data.createProductTag({name, color, group:'운영'});
       state.tags = await global.SystemV3Data.loadTags();
+      void global.TagPriceWorkspace?.refresh();
       document.querySelectorAll('[data-attributes-tags]').forEach(host => { host.innerHTML = renderTagChoices(host.dataset.attributesTags); });
       document.querySelectorAll('[data-attributes-tag="product"]').forEach(item => { item.checked = checkedProductTags.has(item.value); });
       document.querySelectorAll('[data-attributes-tag="sku"]').forEach(item => { item.checked = checkedSkuTags.has(item.value); });

@@ -73,7 +73,6 @@ const drawerState = {
   priceRulePreviews:{}, priceRuleSelections:{}, priceComposers:{}, discountTerms:{}
 };
 const discountEditorState = {source:'', productCode:'', sku:'', terms:[], product:null, basePrice:null, anchorDiscountedBase:null, anchorFinalPrice:null, anchorOptionPrice:null, anchorSource:'', priceRuleSetId:null, priceRuleSetName:'', autoAdjustBase:false, preview:null};
-const inventoryState = {loaded:false, loading:false, rows:[], snapshot:null, activityRefreshedAt:'', requestId:0};
 const inboundCostState = {tags:[], loaded:false, editingTagId:null, product:null};
 const ATTRIBUTE_OPTIONS = Object.freeze({
   material:['14K','925 실버','써지컬','티타늄','아크릴/투명','실버','기타'],
@@ -1697,6 +1696,7 @@ async function loadLiveDashboardMetrics() {
 }
 
 async function refreshLiveData(options = {}) {
+  if(document.getElementById('dashboard')?.classList.contains('active-page'))window.SystemV3ChannelsPage?.show();
   beginSystemRefresh();
   let result = {matrix:false, source:false, metrics:false, mapping:false};
   try {
@@ -2089,7 +2089,7 @@ async function renderDrawerAttributes(product) {
   content.innerHTML = '<div class="drawer-empty-state loading"><b>속성·태그를 불러오는 중입니다.</b><span>상품 공통값과 현재 SKU 예외값을 확인합니다.</span></div>';
   try {
     const [tags, profile] = await Promise.all([
-      drawerState.tags ? Promise.resolve(drawerState.tags) : liveData.loadTags(),
+      liveData.loadTags(),
       product.__profile ? Promise.resolve(product.__profile) : liveData.ensureProductProfile(product.sellpia_sku_code)
     ]);
     if (requestId !== drawerState.attributeRequestId || productDrawer.dataset.sku !== product.sellpia_sku_code) return;
@@ -10744,80 +10744,6 @@ document.getElementById('multi-link-refresh').addEventListener('click', async ev
   finally { event.target.disabled = false; event.target.textContent = '새로고침'; }
 });
 
-function inventoryFilteredRows() {
-  const query = document.getElementById('inventory-search').value.trim().toLowerCase();
-  const activityFilter = document.getElementById('inventory-activity-filter').value;
-  return inventoryState.rows.filter(row => {
-    const matchesSearch = !query || `${row.sellpia_sku_code || ''} ${row.own_code || ''}`.toLowerCase().includes(query);
-    const added = Number(row.picked_qty || 0) + Number(row.shortage_drawer_qty || 0);
-    const matchesActivity = activityFilter === 'all' || (activityFilter === 'changed' ? added > 0 : added === 0);
-    return matchesSearch && matchesActivity;
-  });
-}
-
-function renderInventorySurvey() {
-  const rows = inventoryFilteredRows();
-  const allRows = inventoryState.rows;
-  const snapshot = inventoryState.snapshot;
-  document.getElementById('inventory-snapshot-name').textContent = snapshot?.source_file_name || '업로드된 조사파일 없음';
-  document.getElementById('inventory-snapshot-time').textContent = snapshot
-    ? `${snapshot.survey_date || '-'} 조사 · ${formatLiveTime(snapshot.completed_at)} 업로드`
-    : '원본 업로드에서 재고조사 파일을 등록하세요.';
-  document.getElementById('inventory-metric-skus').textContent = formatNumber(allRows.length);
-  document.getElementById('inventory-metric-counted').textContent = formatNumber(allRows.reduce((sum, row) => sum + Number(row.counted_qty || 0), 0));
-  document.getElementById('inventory-metric-picked').textContent = formatNumber(allRows.reduce((sum, row) => sum + Number(row.picked_qty || 0), 0));
-  document.getElementById('inventory-metric-drawer').textContent = formatNumber(allRows.reduce((sum, row) => sum + Number(row.shortage_drawer_qty || 0), 0));
-  document.getElementById('inventory-metric-actual').textContent = formatNumber(allRows.reduce((sum, row) => sum + Number(row.actual_stock || 0), 0));
-  document.getElementById('inventory-row-count').textContent = `${formatNumber(rows.length)}행 / 전체 ${formatNumber(allRows.length)}행`;
-  document.getElementById('inventory-last-refresh').textContent = `마지막 참고 조회 ${formatLiveTime(inventoryState.activityRefreshedAt)}`;
-  const liveBadge = document.getElementById('inventory-live-status');
-  liveBadge.textContent = inventoryState.activityRefreshedAt ? '검토용 참고 데이터 조회됨' : '검토용 참고 데이터 대기';
-  document.getElementById('inventory-body').innerHTML = rows.length
-    ? rows.map(row => {
-      const picked = Number(row.picked_qty || 0);
-      const drawer = Number(row.shortage_drawer_qty || 0);
-      return `<tr>
-        <td class="code-cell">${escapeHtml(row.sellpia_sku_code)}</td>
-        <td>${escapeHtml(row.own_code || '-')}</td>
-        <td>${formatNumber(row.counted_qty)}</td>
-        <td class="${picked ? 'inventory-added' : 'inventory-zero'}">${formatNumber(picked)}</td>
-        <td class="${drawer ? 'inventory-added' : 'inventory-zero'}">${formatNumber(drawer)}</td>
-        <td class="inventory-actual">${formatNumber(row.actual_stock)}</td>
-        <td class="inventory-event">${formatLiveTime(row.last_event_at)}</td>
-      </tr>`;
-    }).join('')
-    : `<tr><td colspan="7" class="inventory-empty">${snapshot ? '조건에 맞는 SKU가 없습니다.' : '재고조사 파일을 먼저 업로드해주세요.'}</td></tr>`;
-}
-
-async function loadInventorySurvey({silent = false} = {}) {
-  if (inventoryState.loading || !liveData?.loadInventorySurveyData) return;
-  inventoryState.loading = true;
-  const requestId = ++inventoryState.requestId;
-  const panel = document.querySelector('.inventory-table-panel');
-  if (!silent) panel.classList.add('inventory-loading');
-  try {
-    const result = await liveData.loadInventorySurveyData();
-    if (requestId !== inventoryState.requestId) return;
-    inventoryState.rows = result.rows || [];
-    inventoryState.snapshot = result.snapshot || null;
-    inventoryState.activityRefreshedAt = result.activityRefreshedAt || '';
-    inventoryState.loaded = true;
-    renderInventorySurvey();
-  } catch (error) {
-    console.error('inventory survey load failed', error);
-    document.getElementById('inventory-live-status').textContent = '피킹 DB 연결 오류';
-    document.getElementById('inventory-body').innerHTML = `<tr><td colspan="7" class="inventory-empty">${escapeHtml(error?.message || '재고조사 데이터를 불러오지 못했습니다.')}</td></tr>`;
-    if (!silent) showToast('재고조사 데이터를 불러오지 못했습니다.');
-  } finally {
-    inventoryState.loading = false;
-    panel.classList.remove('inventory-loading');
-  }
-}
-
-document.getElementById('inventory-search').addEventListener('input', renderInventorySurvey);
-document.getElementById('inventory-activity-filter').addEventListener('change', renderInventorySurvey);
-document.getElementById('inventory-refresh').addEventListener('click', () => loadInventorySurvey());
-
 function inboundCostFormulaLabel(tag) {
   const multiply = Number(tag?.multiply_value || 1);
   const divide = Number(tag?.divide_value || 1);
@@ -11067,16 +10993,19 @@ sidebarToggle.addEventListener('click', () => {
 setSidebarCollapsed(localStorage.getItem(SIDEBAR_COLLAPSED_KEY) === 'true', {persist:false});
 
 function showPage(pageId) {
+  if(pageId==='channels')pageId='dashboard';
   document.querySelectorAll('.page').forEach(page => page.classList.remove('active-page'));
   document.querySelectorAll('.nav-item').forEach(item => item.classList.toggle('active', item.dataset.page === pageId));
   const target = document.getElementById(pageId);
   if (target) target.classList.add('active-page');
   if (pageId === 'jobs') loadChangeQueue();
-  if (pageId === 'channels') window.SystemV3ChannelsPage?.show();
+  if (pageId === 'dashboard') window.SystemV3ChannelsPage?.show();
+  if (pageId === 'ably-combinations') window.AblyWorkspace?.refresh();
+  if (pageId === 'attributes') window.TagPriceWorkspace?.refresh();
   if (pageId === 'attributes') window.SystemV3AttributesPage?.show();
   if (pageId === 'multi-links' && multiLinkWorkspaceState.tab === 'all' && !multiLinkWorkspaceState.allLoaded) loadManagedConnections();
-  if (pageId === 'inventory') loadInventorySurvey({silent:inventoryState.loaded});
   if (pageId === 'price-rules') {
+    window.TagPriceWorkspace?.refresh();
     window.SystemV3PriceRuleLab?.refresh();
     loadInboundCostTags({silent:inboundCostState.loaded});
   }
@@ -11252,6 +11181,8 @@ function setUploadCapability() {
 }
 
 function updateSource() {
+  document.getElementById('upload-purchase-label').hidden=sourceSelect.value!=='sellpia';
+  document.getElementById('upload-price-label').textContent=sourceSelect.value==='sellpia'?'기준가격':'가격';
   const config = sourceConfig[sourceSelect.value];
   invalidateSellpiaPreflight();
   selectedFiles = [];
@@ -11259,7 +11190,7 @@ function updateSource() {
   sourceInfo.innerHTML = `<span class="channel-logo ${config.cls}">${config.initial}</span><div><b>${config.name}</b><p>${config.detail}</p></div><em>필수</em>`;
   sellerUploadMode.hidden = !isPatchableUploadSource();
   if (isPatchableUploadSource()) {
-    sellerUploadMode.querySelector(`input[value="${sourceSelect.value === 'sellpia' ? 'full' : 'patch'}"]`).checked = true;
+    sellerUploadMode.querySelector(`input[value="patch"]`).checked = true;
   }
   fileGuide.textContent = isPatchableUploadSource()
     ? sourceSelect.value === 'sellpia'
@@ -11337,9 +11268,7 @@ uploadButton.addEventListener('click', async () => {
   }
   const uploadMethod = sourceSelect.value === 'sellpia'
     ? liveData?.uploadSellpiaSnapshot
-    : sourceSelect.value === 'survey'
-      ? liveData?.uploadInventorySurvey
-      : liveData?.uploadSellerSnapshot;
+    : liveData?.uploadSellerSnapshot;
   if (!uploadMethod) {
     showToast('업로드 모듈을 불러오지 못했습니다. 새로고침 후 다시 시도해주세요.');
     return;
@@ -11347,12 +11276,14 @@ uploadButton.addEventListener('click', async () => {
   const fields = {
     inventory: document.getElementById('upload-field-inventory').checked,
     price: document.getElementById('upload-field-price').checked,
+    basePrice: document.getElementById('upload-field-price').checked,
+    purchasePrice: sourceSelect.value === 'sellpia' && document.getElementById('upload-field-purchase').checked,
     discount: document.getElementById('upload-field-discount').checked,
     basic: document.getElementById('upload-field-basic').checked,
     status: document.getElementById('upload-field-status').checked,
     mode: isPatchableUploadSource() ? currentUploadMode() : 'full'
   };
-  if (sourceSelect.value !== 'survey' && ![fields.inventory, fields.price, fields.discount, fields.basic, fields.status].some(Boolean)) {
+  if (sourceSelect.value !== 'survey' && ![fields.inventory, fields.price, fields.purchasePrice, fields.discount, fields.basic, fields.status].some(Boolean)) {
     showToast('갱신할 항목을 하나 이상 선택해주세요.');
     return;
   }
@@ -11408,14 +11339,8 @@ uploadButton.addEventListener('click', async () => {
     showToast(result.uploadMode === 'patch'
       ? `${config.name} ${formatNumber(result.uploadedRowCount)}개 부분 갱신 완료`
       : `${config.name} ${formatNumber(result.rowCount)}개 ${rowLabel} 업로드 완료`);
-    if (sourceSelect.value === 'survey') {
-      inventoryState.loaded = false;
-      await loadInventorySurvey();
-      window.setTimeout(() => showPage('inventory'), 350);
-    } else {
-      await refreshLiveData({resetPage:true});
-      window.setTimeout(() => showPage('matching'), 500);
-    }
+    await refreshLiveData({resetPage:true});
+    window.setTimeout(() => showPage('matching'), 500);
   } catch (error) {
     console.error(`${sourceSelect.value} snapshot upload failed`, error);
     showUploadProgress({percent:0, title:'업로드 실패', detail:error?.message || '원본 파일을 다시 확인해주세요.'});
