@@ -46,7 +46,7 @@ const result = (more = true) => ({processed_count:100, total_count:300, staged_c
   h.state.selectedSkus = [];
   const running = h.runSellerExport();
   assert.equal(h.node('cancel').disabled, false);
-  assert.equal(h.node('close').disabled, false);
+  assert.equal(h.node('close').disabled, true);
   h.closeSellerExport();
   h.closeSellerExport();
   assert.equal(h.state.cancelRequested, true);

@@ -107,6 +107,7 @@ for (const allExcluded of [false,true]) {
       return {manifest:[],blob:new Blob(),appliedItems:items,skippedItems:initial};
     },downloadBlob:()=>calls.push('download')},
     loadChangeQueue:async()=>{},loadLiveMatrix:async()=>{}};
+  context.document.getElementById('seller-export-include-stock').checked=true;
   context.HubCurrentPriceExport={refreshItems:async(items,files,options)=>{calls.push('refresh-current');assert.equal(options.includeRules,true);return {items,excludedItems:[]};},buildArchive:async(...args)=>{calls.push('build-current');return context.sellerExport.buildExportArchive(...args);}};
   vm.createContext(context);
   vm.runInContext(app.slice(app.indexOf('async function runSellerExport()'),app.indexOf("document.getElementById('matrix-match-stock-btn').addEventListener"))+'\nthis.run=runSellerExport;',context);
@@ -135,6 +136,7 @@ for(const scenario of ['rule-only','explicit-rows','missing-module']){
  const refresh=calls.find(c=>c.name==='refresh');assert.ok(refresh,'controller must call current-price refresh');assert.equal(refresh.options.includeRules,!explicit);
  assert.equal(refresh.inputCount,explicit?1:0);assert.deepEqual(refresh.options.skus===null?null:Array.from(refresh.options.skus),explicit?null:['1014-1']);
  assert.equal(calls.some(c=>c.name==='prepare'),explicit);assert.equal(calls.some(c=>c.name==='complete'),explicit);
+ if(!explicit)assert.equal(calls.some(c=>c.name==='review'),false,'default latest-price export must skip stored inventory draft validation');
  assert.deepEqual(Array.from(calls.find(c=>c.name==='build').items),[price]);assert.equal(calls.some(c=>c.name==='download'),true);
 }
 console.log('Partial export: mixed safety, selection, pagination, validation failure, stale IDs, original server error, ZIP report and app export controller passed');

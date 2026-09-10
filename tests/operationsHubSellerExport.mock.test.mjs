@@ -36,7 +36,7 @@ assert.match(lifecycleMigration, /queue\.status = 'validated'[\s\S]*?item\.statu
 assert.match(migration, /else[\s\S]*?sellpia_current_stock is distinct from t\.seller_stock/, 'inventory reconciliation must export only stock differences');
 assert.match(partialMigration, /blocking_reason is null[\s\S]*?then 'exported' else 'failed'/, 'valid rows must export while unresolved original rows remain failed');
 
-for (const id of ['matrix-match-stock-btn','matrix-export-btn','queue-export','queue-confirm-applied','seller-export-modal','seller-export-run','seller-export-scope','seller-export-preview','seller-export-selected-scope']) {
+for (const id of ['matrix-match-stock-btn','matrix-export-btn','queue-export','queue-confirm-applied','seller-export-modal','seller-export-run','seller-export-scope','seller-export-preview','seller-export-selected-scope','seller-export-include-stock']) {
   assert.match(html, new RegExp(`id="${id}"`), `export UI must include ${id}`);
 }
 assert.match(html, /seller-source-parsers\.js[\s\S]*?seller-export-adapter\.js[\s\S]*?data-service\.js/, 'the export adapter must load before application startup');
@@ -62,12 +62,14 @@ assert.match(data, /sellpia_sku_code,status,field_key[^]*?selectedSkus\.has\(cle
 assert.match(app, /matrixHasActiveExportFilter\(\)[^]*?defaultScope = matrixHasActiveExportFilter\(\) \? 'filtered'/, 'an active matrix filter must become the default export scope');
 assert.match(app, /scope === 'selected'[^]*?scope === 'filtered'[^]*?collectSellerExportFilteredSkus/, 'checked and filtered SKU scopes must resolve separately');
 assert.match(app, /let firstChunk = true[^]*?while \(firstChunk \|\| offset < filter\.total\)/, 'filtered export must query once even when the matrix total is still loading');
-assert.match(app, /reviewSellerDraftsForExport\(\{sources, skus:scopeSkus\}\)/, 'export validation must receive the resolved SKU scope');
+assert.match(app, /includeStockDrafts\) review = await liveData\.reviewSellerDraftsForExport\(\{sources, skus:scopeSkus,onProgress:reviewProgress\}\)/, 'inventory draft validation must be opt-in and receive the resolved SKU scope');
+assert.match(app, /includeStockDrafts \? '재고 수정안 확인 중' : '최신 가격 계산 준비'/, 'matrix export must default to latest-price calculation without inventory draft review');
 assert.match(app, /stageSellerInventoryDraftBatch[^]*?loadLiveMatrix/, 'inventory matching must stop at a reviewable matrix draft');
 assert.match(data, /stageSellerInventoryDraftBatch[^]*?p_after_sku:[^]*?p_batch_size:/, 'the frontend must stage large inventory matches through cursor batches');
 assert.match(app, /stageSellerInventoryDraftBatch\(\{sources, skus, batchId, afterSku, batchSize:100\}\)/, 'inventory drafts must use smaller transactions for reliable matrix-wide staging');
-assert.match(app, /isDraftAction && !liveData\?\.stageSellerInventoryDraftBatch[\s\S]*?!isDraftAction && \(!sellerExport \|\| !liveData\?\.prepareSellerExport\)/, 'draft creation must not depend on the ZIP export adapter or original-file export RPC');
-assert.match(app, /isDraftAction \? '수정안 생성 실패' : '내보내기 중단'[\s\S]*?isDraftAction \? '수정안 생성' : '원본 내보내기'/, 'draft failures must not be mislabeled as original-file export failures');
+assert.match(app, /isDraftAction && !liveData\?\.stageSellerInventoryDraftBatch[\s\S]*?!isDraftAction && \(!sellerExport \|\| !globalThis\.HubCurrentPriceExport/, 'draft creation must not depend on the ZIP export adapter or original-file export RPC');
+assert.match(app, /includeStockDrafts && \(!liveData\?\.prepareSellerExport \|\| !liveData\?\.reviewSellerDraftsForExport\)/, 'price-only export must not require inventory queue APIs');
+assert.match(app, /isDraftAction \? '수정안 생성 실패' : '내보내기 실패'[\s\S]*?isDraftAction \? '수정안 생성' : '원본 내보내기'/, 'draft failures and export failures must keep distinct labels');
 assert.match(app, /while \(hasMore\)[^]*?processed \/ total[^]*?수정안 생성 중/, 'bulk inventory matching must show real SKU progress for each committed batch');
 assert.match(inventoryBatchMigration, /operations_hub_change_queue_inventory_active_idx[^]*?field_key = 'sellpia_current_stock'/, 'active inventory drafts need a focused replacement index');
 assert.match(inventoryBatchMigration, /with candidates as materialized[^]*?sku_page as materialized[^]*?limit v_batch_size/, 'inventory staging must bound each database transaction');

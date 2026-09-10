@@ -6586,6 +6586,7 @@ const sellerExportState = {
   filter:null,
   filteredSkus:null,
   filteredSkusPromise:null,
+  includeStockDrafts:false,
   previewRequestId:0
 };
 
@@ -6809,13 +6810,21 @@ async function refreshSellerExportPreview() {
   const sources = selectedExportSources();
   const countNode = document.getElementById('seller-export-preview-count');
   const detailNode = document.getElementById('seller-export-preview-detail');
+  const includeStockDrafts = Boolean(sellerExportState.rows?.length || document.getElementById('seller-export-include-stock')?.checked);
   if (!sources.length) {
     countNode.textContent = '0건';
     detailNode.textContent = '판매처를 하나 이상 선택해주세요.';
     return;
   }
-  countNode.textContent = '확인 중';
-  detailNode.textContent = sellerExportState.rows.length ? '선택한 내보내기 준비 항목을 확인합니다.' : '선택한 범위의 저장된 수정안을 확인합니다.';
+  if (!includeStockDrafts) {
+    const scope = selectedSellerExportScope();
+    const scopeLabels = {filtered:'현재 검색·필터 결과', selected:'선택한 셀 범위의 SKU', all:'전체 상품'};
+    countNode.textContent = '최신 가격 수식 계산';
+    detailNode.textContent = `${scopeLabels[scope]} · ${sources.map(source => CHANNEL_LABELS[source] || source).join('·')} · 재고 수정안 검증 없음`;
+    return;
+  }
+  countNode.textContent = '재고 수정안 확인 중';
+  detailNode.textContent = sellerExportState.rows.length ? '선택한 내보내기 준비 항목을 확인합니다.' : '선택 범위의 저장된 재고 수정안을 확인합니다.';
   try {
     let count;
     if (sellerExportState.rows.length) {
@@ -6829,7 +6838,7 @@ async function refreshSellerExportPreview() {
       const scopeLabels = {filtered:'현재 검색·필터 결과', selected:'선택한 셀 범위의 SKU', all:'전체 상품'};
       detailNode.textContent = `${scopeLabels[scope]} · ${sources.map(source => CHANNEL_LABELS[source] || source).join('·')}`;
     }
-    countNode.textContent = `${formatNumber(count)}건 · 가격 수식 별도 계산`;
+    countNode.textContent = `${formatNumber(count)}건 재고 수정안 · 가격 수식 별도 계산`;
     if (sellerExportState.rows.length) detailNode.textContent = `내보내기 준비에서 선택한 항목 · ${sources.map(source => CHANNEL_LABELS[source] || source).join('·')}`;
   } catch (error) {
     if (requestId !== sellerExportState.previewRequestId) return;
@@ -7322,6 +7331,7 @@ function openSellerExport({action = 'export', rows = []} = {}) {
   sellerExportState.filter = snapshotMatrixExportFilter();
   sellerExportState.filteredSkus = null;
   sellerExportState.filteredSkusPromise = null;
+  sellerExportState.includeStockDrafts = false;
   sellerExportState.previewRequestId += 1;
   const rowSources = new Set(rows.flatMap(row => row.source_channel ? [row.source_channel] : (row.target_channels || [])));
   sellerExportModal.querySelectorAll('.seller-export-source-check').forEach(input => {
@@ -7331,9 +7341,14 @@ function openSellerExport({action = 'export', rows = []} = {}) {
   const skus = sellerExportState.selectedSkus;
   const scopePanel = document.getElementById('seller-export-scope');
   const previewPanel = document.getElementById('seller-export-preview');
+  const stockOption = document.getElementById('seller-export-stock-option');
+  const stockInput = document.getElementById('seller-export-include-stock');
   const showScope = action === 'export' && !rows.length;
   scopePanel.hidden = !showScope;
   previewPanel.hidden = action === 'draft';
+  stockOption.hidden = action === 'draft' || Boolean(rows.length);
+  stockInput.checked = Boolean(rows.length);
+  stockInput.disabled = action === 'draft' || Boolean(rows.length);
   const filteredCount = sellerExportState.filter.codeListSkus.length
     ? sellerExportState.filter.codeListSkus.length
     : sellerExportState.filter.total;
@@ -7350,11 +7365,11 @@ function openSellerExport({action = 'export', rows = []} = {}) {
   document.getElementById('seller-export-kicker').textContent = action === 'draft' ? '매트릭스 수정안 생성' : '판매처 원본 파일 생성';
   document.getElementById('seller-export-guide-title').textContent = action === 'draft'
     ? `셀피아 재고와 다른 판매처 값을 수정안으로 만듭니다.${skus.length ? ` · 선택 ${formatNumber(skus.length)}개 SKU` : ' · 전체 매트릭스'}`
-    : '최신 보관 원본에 최신 수식 가격과 저장된 수정값을 함께 반영합니다.';
+    : rows.length ? '선택한 저장 수정안을 최신 보관 원본에 반영합니다.' : '최신 태그·수식 가격을 최신 보관 원본 양식에 다시 계산해 반영합니다.';
   document.getElementById('seller-export-guide-detail').textContent = action === 'draft'
     ? '원본 파일은 아직 바뀌지 않습니다. 생성 후 파란 수정 가능 셀에서 값을 확인하거나 다시 고칠 수 있습니다.'
-    : '선택 범위의 최신 태그·수식으로 가격을 다시 계산하고 수동 수정값을 함께 반영합니다. 상품 공통가격 계산에 필요한 다른 옵션도 함께 확인합니다. 변경 셀은 노랑·굵은 글씨로 표시합니다.';
-  document.getElementById('seller-export-run').textContent = action === 'draft' ? '매트릭스에 수정안 만들기' : '현재 데이터 ZIP 만들기';
+    : rows.length ? '선택한 수정안을 검증하고 원본 양식에 반영합니다.' : '선택 범위의 최신 태그·수식으로 가격을 다시 계산합니다. 재고 수정안은 아래 선택 항목을 켠 경우에만 검증·반영합니다. 변경 셀은 노랑·굵은 글씨로 표시합니다.';
+  document.getElementById('seller-export-run').textContent = action === 'draft' ? '매트릭스에 수정안 만들기' : rows.length ? '선택 수정안 파일 만들기' : '최신 가격 파일 만들기';
   document.getElementById('seller-export-progress').hidden = true;
   sellerExportModal.hidden = false;
   refreshSellerExportPreview();
@@ -7387,11 +7402,12 @@ function stopCancelledSellerExport() {
 async function runSellerExport() {
   if (sellerExportState.running) return;
   const isDraftAction = sellerExportState.action === 'draft';
+  const includeStockDrafts = Boolean(sellerExportState.rows?.length || document.getElementById('seller-export-include-stock')?.checked);
   if (isDraftAction && !liveData?.stageSellerInventoryDraftBatch) {
     showToast('재고 수정안 생성 기능을 불러오지 못했습니다. 새로고침 후 다시 시도해주세요.');
     return;
   }
-  if (!isDraftAction && (!sellerExport || !liveData?.prepareSellerExport || !globalThis.HubCurrentPriceExport)) {
+  if (!isDraftAction && (!sellerExport || !globalThis.HubCurrentPriceExport || (includeStockDrafts && (!liveData?.prepareSellerExport || !liveData?.reviewSellerDraftsForExport)))) {
     showToast('최신 가격 내보내기 모듈을 불러오지 못했습니다. 새로고침 후 다시 시도해주세요.');
     return;
   }
@@ -7454,9 +7470,10 @@ async function runSellerExport() {
       return;
     }
 
-    showSellerExportProgress(4, '수정안 확인 중', '선택 범위의 저장된 수정값을 검증하고 파일 생성 대상을 확정합니다.');
+    sellerExportState.includeStockDrafts = includeStockDrafts;
+    showSellerExportProgress(4, includeStockDrafts ? '재고 수정안 확인 중' : '최신 가격 계산 준비', includeStockDrafts ? '선택 범위의 저장된 재고 수정값을 검증하고 파일 생성 대상을 확정합니다.' : '재고 수정안 검증을 건너뛰고 선택 범위의 최신 태그·수식 가격을 계산합니다.');
     const reviewProgress=(done,total)=>{showSellerExportProgress(4+(total?done/total*4:0),'저장 수정값 검증 중',`${formatNumber(done)} / ${formatNumber(total)}건 확인 · 최신 수식 가격은 다음 단계에서 계산합니다.`);stopCancelledSellerExport();};
-    let review, scopeSkusForRules=null;
+    let review={changeIds:[],excluded:[]}, scopeSkusForRules=null;
     if (sellerExportState.rows.length) {
       const scopedRows = sellerExportRowsForSources(sellerExportState.rows, sources);
       review = await liveData.reviewSellerDraftsForExport({sources, changeIds:scopedRows.map(row => Number(row.change_id)),onProgress:reviewProgress});
@@ -7465,7 +7482,7 @@ async function runSellerExport() {
       const scopeSkus = await resolveSellerExportScopeSkus();
       scopeSkusForRules=scopeSkus;
       if (scope !== 'all' && !scopeSkus.length) throw new Error(scope === 'selected' ? '선택한 셀 범위의 SKU가 없습니다.' : '현재 검색·필터 결과에 해당하는 SKU가 없습니다.');
-      review = await liveData.reviewSellerDraftsForExport({sources, skus:scopeSkus,onProgress:reviewProgress});
+      if (includeStockDrafts) review = await liveData.reviewSellerDraftsForExport({sources, skus:scopeSkus,onProgress:reviewProgress});
     }
     stopCancelledSellerExport();
     const {changeIds, excluded} = review;
@@ -7476,7 +7493,7 @@ async function runSellerExport() {
       showSellerExportProgress(9 + ratio * 8, '최신 원본 불러오는 중', progress.name ? `${progress.name} 다운로드 중` : '원본 다운로드 완료');
     });
     stopCancelledSellerExport();
-    showSellerExportProgress(18, 'DB 반영 계획 생성 중', `${formatNumber(changeIds.length)}건의 원본 위치를 판매처 코드로 확인하고 있습니다.`);
+    showSellerExportProgress(18, changeIds.length ? 'DB 반영 계획 생성 중' : '최신 수식 가격 계산 준비', changeIds.length ? `${formatNumber(changeIds.length)}건의 원본 위치를 판매처 코드로 확인하고 있습니다.` : '저장된 재고 수정안 없이 최신 가격 규칙만 원본 양식에 반영합니다.');
     const preparedExport = changeIds.length
       ? await liveData.prepareSellerExport({batchId, mode:'change_queue', changeIds, sources})
       : {items:[]};
@@ -7553,6 +7570,7 @@ document.getElementById('seller-export-exclusions-download').addEventListener('c
 document.getElementById('seller-export-run').addEventListener('click', runSellerExport);
 sellerExportModal.querySelectorAll('.seller-export-source-check').forEach(input => input.addEventListener('change', refreshSellerExportPreview));
 sellerExportModal.querySelectorAll('input[name="seller-export-scope"]').forEach(input => input.addEventListener('change', refreshSellerExportPreview));
+document.getElementById('seller-export-include-stock').addEventListener('change', refreshSellerExportPreview);
 
 const matrixCsvModal = document.getElementById('matrix-csv-modal');
 const matrixCsvState = {running:false, cancelRequested:false};
