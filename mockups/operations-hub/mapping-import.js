@@ -95,8 +95,12 @@
     try{
       button.textContent='미매칭 셀피아 SKU 조회 중…';
       const target=await global.SystemV3Data.loadAllFilteredSkus({status:'unmatched'});
-      button.textContent=`썸네일 조회 ${target.total.toLocaleString()}개 SKU`;
-      const products=await global.SystemV3Data.loadProductsBySkus(target.skus);
+      const products=[];
+      for(let offset=0;offset<target.skus.length;offset+=200){
+        const batch=target.skus.slice(offset,offset+200);
+        button.textContent=`썸네일 조회 ${Math.min(offset+batch.length,target.total).toLocaleString()} / ${target.total.toLocaleString()}개 SKU`;
+        products.push(...await global.SystemV3Data.loadProductsBySkus(batch));
+      }
       const bySku=new Map(products.map(product=>[text(product?.sellpia_sku_code),product]));
       const ordered=target.skus.map(sku=>bySku.get(text(sku))||{sellpia_sku_code:sku});
       const bytes=buildThumbnailTemplate(ordered);
