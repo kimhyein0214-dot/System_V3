@@ -2402,7 +2402,7 @@
   }
   async function loadFormulaProducts(skus) {
     requireOperationsHubSessionToken();let rows=[];
-    for(let i=0;i<skus.length;i+=200){const {data,error}=await db.from(MATRIX_VIEW).select('sellpia_sku_code,display_name,sellpia_source_sale_price,system_base_price,smartstore_price,makeshop_price,ably_price').in('sellpia_sku_code',skus.slice(i,i+200));if(error)throw error;rows.push(...data);}
+    for(let i=0;i<skus.length;i+=200){const {data,error}=await db.from(MATRIX_VIEW).select('sellpia_sku_code,display_name,sellpia_source_sale_price,system_base_price,smartstore_price,makeshop_price,ably_price,smartstore_product_code,makeshop_product_code,ably_product_code').in('sellpia_sku_code',skus.slice(i,i+200));if(error)throw error;rows.push(...data);}
     rows=await attachProductProfiles(rows);rows=await attachInboundCostDetails(rows);let enriched=[];for(let i=0;i<rows.length;i+=200)enriched.push(...await attachSellerPriceComponents(rows.slice(i,i+200)));return enriched;
   }
   async function updateProductTag({id,name,color}) {
