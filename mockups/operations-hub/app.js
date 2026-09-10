@@ -7363,16 +7363,25 @@ function openSellerExport({action = 'export', rows = []} = {}) {
 
 function closeSellerExport() {
   if (sellerExportState.running) {
-    if (sellerExportState.action !== 'draft' || !sellerExportState.draftCancellable || sellerExportState.cancelRequested) return;
+    if (!sellerExportState.draftCancellable || sellerExportState.cancelRequested) return;
     sellerExportState.cancelRequested = true;
     document.getElementById('seller-export-cancel').disabled = true;
     document.getElementById('seller-export-close').disabled = true;
     document.getElementById('seller-export-cancel').textContent = '중단 요청됨';
     document.getElementById('seller-export-progress-title').textContent = '중단 요청 · 현재 묶음 처리 대기';
-    document.getElementById('seller-export-progress-detail').textContent = '이미 요청한 최대 100개 SKU의 결과를 확인한 뒤 중단합니다. 이미 저장된 수정안은 유지됩니다.';
+    document.getElementById('seller-export-progress-detail').textContent = sellerExportState.action === 'draft'
+      ? '이미 요청한 최대 100개 SKU의 결과를 확인한 뒤 중단합니다. 이미 저장된 수정안은 유지됩니다.'
+      : '이미 시작된 조회·검증 묶음이 끝나는 즉시 중단합니다. ZIP과 완료 이력은 만들지 않습니다.';
     return;
   }
   sellerExportModal.hidden = true;
+}
+
+function stopCancelledSellerExport() {
+  if (!sellerExportState.cancelRequested) return;
+  const error = new Error('사용자가 내보내기를 중단했습니다. 완료된 검증 결과는 유지되며 ZIP과 완료 이력은 만들지 않았습니다.');
+  error.userCancelled = true;
+  throw error;
 }
 
 async function runSellerExport() {
@@ -7392,11 +7401,11 @@ async function runSellerExport() {
   const button = document.getElementById('seller-export-run');
   sellerExportState.running = true;
   sellerExportState.cancelRequested = false;
-  sellerExportState.draftCancellable = isDraftAction;
+  sellerExportState.draftCancellable = true;
   button.disabled = true;
-  document.getElementById('seller-export-cancel').disabled = !isDraftAction;
-  document.getElementById('seller-export-cancel').textContent = isDraftAction ? '생성 중단' : '취소';
-  document.getElementById('seller-export-close').disabled = !isDraftAction;
+  document.getElementById('seller-export-cancel').disabled = false;
+  document.getElementById('seller-export-cancel').textContent = isDraftAction ? '생성 중단' : '내보내기 중단';
+  document.getElementById('seller-export-close').disabled = true;
   let prepared = false;
   let draftProcessed = 0;
   let draftStaged = 0;
@@ -7446,7 +7455,7 @@ async function runSellerExport() {
     }
 
     showSellerExportProgress(4, '수정안 확인 중', '선택 범위의 저장된 수정값을 검증하고 파일 생성 대상을 확정합니다.');
-    const reviewProgress=(done,total)=>showSellerExportProgress(4+(total?done/total*4:0),'저장 수정값 검증 중',`${formatNumber(done)} / ${formatNumber(total)}건 확인 · 최신 수식 가격은 다음 단계에서 계산합니다.`);
+    const reviewProgress=(done,total)=>{showSellerExportProgress(4+(total?done/total*4:0),'저장 수정값 검증 중',`${formatNumber(done)} / ${formatNumber(total)}건 확인 · 최신 수식 가격은 다음 단계에서 계산합니다.`);stopCancelledSellerExport();};
     let review, scopeSkusForRules=null;
     if (sellerExportState.rows.length) {
       const scopedRows = sellerExportRowsForSources(sellerExportState.rows, sources);
@@ -7458,6 +7467,7 @@ async function runSellerExport() {
       if (scope !== 'all' && !scopeSkus.length) throw new Error(scope === 'selected' ? '선택한 셀 범위의 SKU가 없습니다.' : '현재 검색·필터 결과에 해당하는 SKU가 없습니다.');
       review = await liveData.reviewSellerDraftsForExport({sources, skus:scopeSkus,onProgress:reviewProgress});
     }
+    stopCancelledSellerExport();
     const {changeIds, excluded} = review;
     showSellerExportExclusions(excluded);
     showSellerExportProgress(9, '최신 원본 불러오는 중', '마지막 업로드 때 시스템에 보관한 원본 파일을 자동으로 가져옵니다.');
@@ -7465,21 +7475,29 @@ async function runSellerExport() {
       const ratio = progress.total ? progress.completed / progress.total : 0;
       showSellerExportProgress(9 + ratio * 8, '최신 원본 불러오는 중', progress.name ? `${progress.name} 다운로드 중` : '원본 다운로드 완료');
     });
+    stopCancelledSellerExport();
     showSellerExportProgress(18, 'DB 반영 계획 생성 중', `${formatNumber(changeIds.length)}건의 원본 위치를 판매처 코드로 확인하고 있습니다.`);
     const preparedExport = changeIds.length
       ? await liveData.prepareSellerExport({batchId, mode:'change_queue', changeIds, sources})
       : {items:[]};
     prepared = Boolean(changeIds.length);
+    stopCancelledSellerExport();
     const refreshed = globalThis.HubCurrentPriceExport
-      ? await globalThis.HubCurrentPriceExport.refreshItems(preparedExport.items,filesBySource,{sources,skus:scopeSkusForRules,includeRules:!sellerExportState.rows.length,onProgress:detail=>showSellerExportProgress(19,'최신 수식 가격 계산 중',detail)})
+      ? await globalThis.HubCurrentPriceExport.refreshItems(preparedExport.items,filesBySource,{sources,skus:scopeSkusForRules,includeRules:!sellerExportState.rows.length,onProgress:detail=>{showSellerExportProgress(19,'최신 수식 가격 계산 중',detail);stopCancelledSellerExport();}})
       : {items:globalThis.HubPlatformRules?await globalThis.HubPlatformRules.refreshExportItems(preparedExport.items,filesBySource):preparedExport.items,excludedItems:[]};
+    stopCancelledSellerExport();
     const items=refreshed.items;
     const blocked = items.filter(item => item.blocking_reason);
     const exportable = items.filter(item => !item.blocking_reason);
     const initialExcluded = [...excluded, ...refreshed.excludedItems, ...blocked.map(item => ({item, reason:item.blocking_reason, export_item_id:item.export_item_id}))];
     showSellerExportExclusions(initialExcluded);
     showSellerExportProgress(22, '원본 파일 검증 중', `${formatNumber(exportable.length)}건을 대조합니다.${blocked.length ? ` 위치 확인 실패 ${formatNumber(blocked.length)}건은 제외합니다.` : ''}`);
-    const result = await (globalThis.HubCurrentPriceExport?.buildArchive||sellerExport.buildExportArchive)(filesBySource, exportable, (percent, detail) => showSellerExportProgress(22 + percent * .74, '판매처 수정본 생성 중', detail), initialExcluded);
+    const result = await (globalThis.HubCurrentPriceExport?.buildArchive||sellerExport.buildExportArchive)(filesBySource, exportable, (percent, detail) => {showSellerExportProgress(22 + percent * .74, '판매처 수정본 생성 중', detail);stopCancelledSellerExport();}, initialExcluded);
+    stopCancelledSellerExport();
+    // The archive is complete. Keep the last audit + download step indivisible from this point.
+    sellerExportState.draftCancellable = false;
+    document.getElementById('seller-export-cancel').disabled = true;
+    document.getElementById('seller-export-cancel').textContent = '마무리 중';
     const calculatedRuleVersions = [...new Map(result.appliedItems.flatMap(item => item.rule_versions || []).map(version => [version.id,version])).values()];
     if (calculatedRuleVersions.length) result.manifest.forEach(file => { file.rule_versions = calculatedRuleVersions; });
     if (calculatedRuleVersions.length) await liveData.workDocument('save', 'formula', {
@@ -7499,19 +7517,19 @@ async function runSellerExport() {
     showToast(`판매처 원본 ${formatNumber(result.appliedItems.length)}건 내보내기 완료${skippedCount ? ` · 충돌 ${formatNumber(skippedCount)}건 제외` : ''}`);
     await Promise.all([loadChangeQueue({silent:true}), loadLiveMatrix()]);
   } catch (error) {
-    console.error(isDraftAction ? 'seller inventory draft staging failed' : 'seller export failed', error);
+    if (!error?.userCancelled) console.error(isDraftAction ? 'seller inventory draft staging failed' : 'seller export failed', error);
     if (Array.isArray(error?.excludedItems)) showSellerExportExclusions(error.excludedItems);
     if (prepared) {
       try { await liveData.completeSellerExport({batchId, success:false, errorMessage:error?.message || String(error)}); } catch (completeError) { console.error('seller export failure state update failed', completeError); }
     }
     showSellerExportProgress(
       0,
-      isDraftAction ? '수정안 생성 실패' : '내보내기 중단',
+      error?.userCancelled ? '내보내기 중단 완료' : isDraftAction ? '수정안 생성 실패' : '내보내기 중단',
       isDraftAction
         ? `${error?.message || 'DB 연결 상태를 확인해주세요.'} · 응답으로 확인한 ${formatNumber(draftProcessed)} SKU / 수정안 ${formatNumber(draftStaged)}건은 유지됩니다. 마지막 요청의 반영 여부는 DB 새로고침 후 확인해주세요.`
         : error?.message || '원본 파일을 확인해주세요.'
     );
-    showToast(`${isDraftAction ? '수정안 생성' : '원본 내보내기'} 실패: ${error?.message || error}`);
+    showToast(error?.userCancelled ? '내보내기를 중단했습니다. ZIP은 생성하지 않았습니다.' : `${isDraftAction ? '수정안 생성' : '원본 내보내기'} 실패: ${error?.message || error}`);
   } finally {
     sellerExportState.running = false;
     sellerExportState.cancelRequested = false;

@@ -96,7 +96,7 @@ for (const allExcluded of [false,true]) {
   const context={console:{error(){}},Blob,sellerExportState:state,
     document:{getElementById(id){if(!nodes.has(id))nodes.set(id,{style:{},disabled:false});return nodes.get(id);}},
     selectedExportSources:()=>['smartstore'],selectedSellerExportScope:()=> 'all',resolveSellerExportScopeSkus:async()=>[],
-    createRequestId:()=> 'fixture',formatNumber:String,showToast(){},
+    createRequestId:()=> 'fixture',formatNumber:String,showToast(){},stopCancelledSellerExport(){},
     showSellerExportProgress:(p,t,d)=>calls.push({p,t,d}),
     showSellerExportExclusions:items=>{state.excludedItems=items;},
     liveData:{reviewSellerDraftsForExport:async()=>({changeIds:allExcluded?[]:[1],excluded}),
@@ -125,7 +125,7 @@ for(const scenario of ['rule-only','explicit-rows','missing-module']){
  const state={action:'export',running:false,rows:explicit?[row(1)]:[],selectedSkus:[],excludedItems:[]};
  const context={console:{error(){}},Blob,sellerExportState:state,document:{getElementById(id){if(!nodes.has(id))nodes.set(id,{style:{},disabled:false});return nodes.get(id);}},
   selectedExportSources:()=>['smartstore'],selectedSellerExportScope:()=> 'filtered',resolveSellerExportScopeSkus:async()=>['1014-1'],sellerExportRowsForSources:rows=>rows,
-  createRequestId:()=> 'fixture',formatNumber:String,showToast:message=>toasts.push(message),showSellerExportProgress(){},showSellerExportExclusions:items=>{state.excludedItems=items;},
+  createRequestId:()=> 'fixture',formatNumber:String,showToast:message=>toasts.push(message),stopCancelledSellerExport(){},showSellerExportProgress(){},showSellerExportExclusions:items=>{state.excludedItems=items;},
   liveData:{reviewSellerDraftsForExport:async options=>{calls.push({name:'review',options});return {changeIds:explicit?[1]:[],excluded:[]};},downloadLatestSellerOriginals:async()=>new Map(),prepareSellerExport:async()=>{calls.push({name:'prepare'});return {items:[price]};},completeSellerExport:async()=>calls.push({name:'complete'})},
   sellerExport:{buildExportArchive:async()=>{throw Error('legacy archive fallback must not run');},downloadBlob:()=>calls.push({name:'download'})},loadChangeQueue:async()=>{},loadLiveMatrix:async()=>{}};
  if(!missing)context.HubCurrentPriceExport={refreshItems:async(items,files,options)=>{calls.push({name:'refresh',options,inputCount:items.length});return {items:explicit?items:[price],excludedItems:[]};},buildArchive:async(files,items)=>{calls.push({name:'build',items});return {manifest:[],blob:new Blob(),appliedItems:items,skippedItems:[]};}};
