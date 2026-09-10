@@ -4,7 +4,7 @@ import vm from 'node:vm';
 import {pathToFileURL} from 'node:url';
 const source=fs.readFileSync(new URL('../mockups/operations-hub/mapping-import.js',import.meta.url),'utf8');
 const c={};vm.createContext(c);vm.runInContext(source,c);
-const {parse,headers,templateHeaders,buildThumbnailTemplate}=c.SystemV3MappingImport;
+const {parse,headers,templateHeaders,sellerTemplateHeaders,buildThumbnailTemplate,buildSellerUnmatchedTemplate}=c.SystemV3MappingImport;
 let result=parse([headers,['sku1','001','0002','','','',''],['sku2','','','3','','4','5']]);
 assert.equal(result.entries.length,3);
 assert.equal(result.entries[0].productCode,'001');
@@ -22,16 +22,19 @@ assert.equal(parse([headers,['sku','1.2e+9','','','','','']]).errors.length,1);
 assert.throws(()=>parse([['wrong']]),/필수 헤더/);
 // Thumbnail column is presentation-only: B onward stays an ordinary mapping upload.
 assert.equal(parse([templateHeaders,['=IMAGE(...)','sku-thumb','001','0002','','','','']]).entries[0].sku,'sku-thumb');
-class MockCell { constructor(){this.value='';} }
+// Seller-side unmatched templates prefill a seller code and become a normal
+// mapping upload once the user writes the target Sellpia SKU in column B.
+assert.equal(parse([sellerTemplateHeaders,['셀피아 미연결','sku-seller','001','0002','','','','','스마트스토어','상품명','옵션명']]).entries[0].sku,'sku-seller');
+class MockCell { constructor(col){this.col=col;this.value='';} }
 class MockRow {
-  constructor(number){this.number=number;this.cells=Array.from({length:8},()=>new MockCell());}
+  constructor(number){this.number=number;this.cells=Array.from({length:11},(_,index)=>new MockCell(index+1));}
   getCell(index){return this.cells[index-1];}
   eachCell({includeEmpty},callback){if(includeEmpty)this.cells.forEach(callback);}
 }
 class MockSheet {
   constructor(){this.rows=[];this.images=[];}
   getRow(index){while(this.rows.length<index)this.rows.push(new MockRow(this.rows.length+1));return this.rows[index-1];}
-  addRow(values){const row=this.getRow(this.rows.length+1);row.getCell(2).value=values.sellpia;return row;}
+  addRow(values){const row=this.getRow(this.rows.length+1);this.columns.forEach((column,index)=>{row.getCell(index+1).value=values[column.key]||'';});return row;}
   addImage(id,range){this.images.push({id,range});}
 }
 let mockBook;
@@ -57,6 +60,14 @@ assert.equal(mockBook.sheet.images[0].range.ext.height,32);
 assert.equal(mockBook.sheet.getRow(2).height,76);
 assert.equal(mockBook.sheet.getRow(3).getCell(1).value,'이미지 없음');
 assert.equal(mockBook.sheet.autoFilter.to,'H3');
+const sellerBook=await buildSellerUnmatchedTemplate([{source_channel:'smartstore',product_code:'001',option_code:'0002',product_name:'판매처 상품',option_name:'판매처 옵션'}]);
+assert.equal(sellerBook,mockBook);
+assert.equal(mockBook.sheet.columns[8].header,'판매처');
+assert.equal(mockBook.sheet.getRow(2).getCell(2).value,'');
+assert.equal(mockBook.sheet.getRow(2).getCell(3).value,'001');
+assert.equal(mockBook.sheet.getRow(2).getCell(4).value,'0002');
+assert.equal(mockBook.sheet.getRow(2).getCell(9).value,'스마트스토어');
+assert.equal(mockBook.sheet.autoFilter.to,'K2');
 const {chromium}=await import(pathToFileURL('C:/Users/hihi0/.cache/codex-runtimes/codex-primary-runtime/dependencies/node/node_modules/playwright/index.mjs'));
 // Exercise the actual preview adapter with bounded fixture queries.
 const dataSource=fs.readFileSync(new URL('../mockups/operations-hub/data-service.js',import.meta.url),'utf8');

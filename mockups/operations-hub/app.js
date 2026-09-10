@@ -1675,7 +1675,20 @@ async function loadLiveDashboardMetrics() {
     const metrics = await liveData.loadDashboardMetrics();
     const total = Number(metrics.total_sku || 0);
     const connected = Number(metrics.connected_sku || 0);
-    const unmatched = Number(metrics.seller_unmatched_sku ?? metrics.unmatched_sku ?? 0);
+    const hasSellerBreakdown = ['seller_unmatched_smartstore','seller_unmatched_makeshop','seller_unmatched_ably']
+      .every(key => metrics[key] != null);
+    const sellerUnmatchedBySource = new Map([
+      ['smartstore', Number(metrics.seller_unmatched_smartstore || 0)],
+      ['makeshop', Number(metrics.seller_unmatched_makeshop || 0)],
+      ['ably', Number(metrics.seller_unmatched_ably || 0)]
+    ]);
+    const sellerUnmatchedTotal = [...sellerUnmatchedBySource.values()].reduce((sum, value) => sum + value, 0);
+    const unmatched = hasSellerBreakdown
+      ? sellerUnmatchedTotal
+      : Number(metrics.seller_unmatched_sku ?? metrics.unmatched_sku ?? 0);
+    const unmatchedDetail = ['smartstore','makeshop','ably']
+      .map(source => `${CHANNEL_LABELS[source]} ${formatNumber(sellerUnmatchedBySource.get(source) || 0)}`)
+      .join(' · ');
     const mismatched = Number(metrics.inventory_mismatch_sku || 0);
     const projectedMismatch = Number(metrics.projected_inventory_mismatch_sku ?? mismatched);
     const inventoryDraftCells = Number(metrics.inventory_draft_cells || 0);
@@ -1687,8 +1700,10 @@ async function loadLiveDashboardMetrics() {
     document.getElementById('live-inventory-mismatch').textContent = formatNumber(projectedMismatch);
     document.getElementById('live-inventory-mismatch-detail').textContent = `원본 ${formatNumber(mismatched)} · 수정안 ${formatNumber(inventoryDraftCells)}셀${inventoryFailedCells ? ` · 실패 ${formatNumber(inventoryFailedCells)}셀` : ''}`;
     document.getElementById('live-unmatched-sku').textContent = formatNumber(unmatched);
+    document.getElementById('live-unmatched-detail').textContent = hasSellerBreakdown ? unmatchedDetail : '셀피아 SKU 연결 없음';
     document.getElementById('matrix-unmatched-badge').textContent = formatNumber(unmatched);
     document.getElementById('dashboard-unmatched-alert').textContent = `판매처 미연결 SKU ${formatNumber(unmatched)}건`;
+    document.getElementById('dashboard-unmatched-detail').textContent = hasSellerBreakdown ? unmatchedDetail : '판매처별 셀피아 SKU 연결 없음';
     document.getElementById('dashboard-inventory-alert').textContent = `수정안 반영 후 재고 차이 ${formatNumber(projectedMismatch)}건 · 원본 ${formatNumber(mismatched)}건`;
     const picking = metrics.today_picked;
     const shortage = metrics.shortage_drawer_qty;

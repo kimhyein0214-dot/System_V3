@@ -889,10 +889,30 @@
   async function loadDashboardMetrics() {
     const {data, error} = await db
       .from('operations_hub_dashboard_metrics')
-      .select('total_sku,connected_sku,unmatched_sku,seller_sku_total,seller_connected_sku,seller_unmatched_sku,inventory_mismatch_sku,projected_inventory_mismatch_sku,inventory_draft_cells,inventory_failed_cells,latest_sync_at,today_picked,shortage_drawer_qty')
+      .select('total_sku,connected_sku,unmatched_sku,seller_sku_total,seller_connected_sku,seller_unmatched_sku,seller_unmatched_smartstore,seller_unmatched_makeshop,seller_unmatched_ably,inventory_mismatch_sku,projected_inventory_mismatch_sku,inventory_draft_cells,inventory_failed_cells,latest_sync_at,today_picked,shortage_drawer_qty')
       .single();
     if (error) throw error;
     return data;
+  }
+
+  async function loadAllSellerUnmatchedSkus({onProgress = null} = {}) {
+    const rows = [];
+    const pageSize = 1000;
+    onProgress?.({loaded:0, message:'판매처 미연결 SKU 조회 중'});
+    for (let from = 0; ; from += pageSize) {
+      const {data, error} = await db
+        .from('operations_hub_seller_unmatched_live')
+        .select('source_channel,product_code,option_code,product_name,option_name')
+        .order('source_channel')
+        .order('product_code')
+        .order('option_code')
+        .range(from, from + pageSize - 1);
+      if (error) throw error;
+      rows.push(...(data || []));
+      onProgress?.({loaded:rows.length, message:`판매처 미연결 SKU ${rows.length.toLocaleString()}개 조회`});
+      if (!data || data.length < pageSize) break;
+    }
+    return rows;
   }
 
   async function loadMappingSyncStatus() {
@@ -3305,6 +3325,7 @@
     savePlatformRuleGroup,
     filterRulePlatformSkus,
     loadAllFilteredSkus,
+    loadAllSellerUnmatchedSkus,
     applyTagToSkus,
     saveTagRule,
     loadAblyComponentStocks,

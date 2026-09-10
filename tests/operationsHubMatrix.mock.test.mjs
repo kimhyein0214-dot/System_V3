@@ -33,6 +33,10 @@ const binaryConnectionMigration = fs.readFileSync(
   new URL("../supabase/migrations/20260825070000_binary_connection_status_filters.sql", import.meta.url),
   "utf8",
 );
+const sellerUnmatchedCacheMigration = fs.readFileSync(
+  new URL("../supabase/migrations/20260910095000_hub_seller_unmatched_template_cache.sql", import.meta.url),
+  "utf8",
+);
 
 assert.match(html, /id="matrix-zoom-out"[\s\S]*?id="matrix-zoom-value"[\s\S]*?id="matrix-zoom-in"/, "matrix zoom controls must be visible together");
 assert.match(source, /MATRIX_ZOOM_MIN = 80;[\s\S]*?MATRIX_ZOOM_MAX = 140;[\s\S]*?localStorage\.setItem\(MATRIX_ZOOM_KEY/, "matrix-only zoom must be bounded and persisted");
@@ -69,6 +73,9 @@ assert.match(dataSource, /projected_inventory_mismatch_sku[\s\S]*?inventory_draf
 assert.match(dataSource, /seller_unmatched_sku/, "dashboard metrics must request the seller-side unmatched count");
 assert.match(source, /seller_unmatched_sku \?\? metrics\.unmatched_sku/, "the sidebar must prefer seller SKUs with no Sellpia connection");
 assert.match(html, /판매처 미연결[\s\S]*?셀피아 SKU 연결 없음/, "the sidebar label must state the seller-side unmatched definition");
+assert.match(dataSource, /seller_unmatched_smartstore[\s\S]*?seller_unmatched_makeshop[\s\S]*?seller_unmatched_ably/, "dashboard metrics must carry a per-channel seller unmatched breakdown");
+assert.match(source, /스마트스토어.*메이크샵.*에이블리/, "the sidebar detail must render each marketplace separately");
+assert.match(sellerUnmatchedCacheMigration, /operations_hub_seller_unmatched_cache[\s\S]*?refresh materialized view concurrently operations_private\.operations_hub_seller_unmatched_cache/, "seller unmatched template rows must use a refreshable cache");
 assert.match(source, /live-inventory-mismatch-detail[\s\S]*?원본 \$\{formatNumber\(mismatched\)\}/, "the metric loader must retain raw and draft-projected inventory counts");
 assert.match(dataSource, /\.from\('operations_hub_active_seller_drafts'\)/, "matrix draft colors must load from the de-duplicated active draft view");
 assert.doesNotMatch(dataSource, /operations_hub_active_seller_drafts'[\s\S]{0,500}?\.limit\(1000\)/, "active seller drafts must not be truncated at 1,000 history rows");

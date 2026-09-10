@@ -84,7 +84,7 @@
               <article class="side-metric"><span>전체 SKU</span><strong id="live-total-sku">-</strong><em id="live-catalog-state">조회 중</em></article>
               <article class="side-metric good"><span>판매처 연결</span><strong id="live-connected-sku">-</strong><em id="live-connected-rate">조회 중</em></article>
               <article class="side-metric danger"><span>재고 불일치</span><strong id="live-inventory-mismatch">-</strong><em id="live-inventory-mismatch-detail">조회 중</em></article>
-              <article class="side-metric warn"><span>판매처 미연결</span><strong id="live-unmatched-sku">-</strong><em>셀피아 SKU 연결 없음</em></article>
+              <article class="side-metric warn"><span>판매처 미연결</span><strong id="live-unmatched-sku">-</strong><em id="live-unmatched-detail">플랫폼별 집계 중</em></article>
               <article class="side-metric blue"><span>오늘 피킹</span><strong id="live-today-picked">-</strong><em id="live-shortage-drawer">조회 중</em></article>
               <article class="side-metric muted"><span>최근 동기화</span><strong id="live-latest-sync">-</strong><em id="live-latest-sync-detail">조회 중</em></article>
             </div>
@@ -130,7 +130,7 @@
               <section class="panel alert-panel">
                 <div class="panel-title"><div><h3>확인할 항목</h3><p>업무 우선순위가 높은 항목입니다.</p></div></div>
                 <div class="alert-list">
-                  <button data-page="matching"><span class="alert-dot red">!</span><p><b id="dashboard-unmatched-alert">미매칭 집계 중</b><em>판매처별 셀피아 SKU 연결 없음</em></p><strong>검토</strong></button>
+                  <button data-page="matching"><span class="alert-dot red">!</span><p><b id="dashboard-unmatched-alert">미매칭 집계 중</b><em id="dashboard-unmatched-detail">판매처별 셀피아 SKU 연결 없음</em></p><strong>검토</strong></button>
                   <button data-page="matching"><span class="alert-dot amber">!</span><p><b id="dashboard-inventory-alert">재고 차이 집계 중</b><em>셀피아와 판매처 수량 불일치</em></p><strong>확인</strong></button>
                   <button data-page="jobs"><span class="alert-dot blue">i</span><p><b id="dashboard-failed-alert">실패 작업 확인 중</b><em>최근 30일 실행 로그 기준</em></p><strong>보기</strong></button>
                 </div>
@@ -948,7 +948,8 @@
         <div style="padding:16px">
           <p>셀피아 SKU 기준으로 판매처 연결을 등록합니다. 빈 판매처 칸은 기존 연결 유지, 상품코드만 있고 옵션코드가 비어 있으면 옵션 없는 상품으로 검사합니다.</p>
           <p>엑셀 첫 시트 또는 CSV · 최대 20,000행 / 20MB · 코드는 텍스트 형식으로 입력해주세요. 기존 수동 연결과 같은 방식으로 등록하며 재고·가격 값은 변경하지 않습니다.</p>
-          <button id="mapping-import-template" class="btn" type="button">썸네일 포함 미매칭 양식 받기</button>
+          <div class="bundle-template-actions"><button id="mapping-import-template" class="btn" type="button">셀피아 SKU 미매칭 양식</button><button id="mapping-import-seller-template" class="btn" type="button">판매처 SKU 미매칭 양식</button></div>
+          <p>셀피아 SKU 양식은 셀피아 기준으로 비연결 SKU를, 판매처 SKU 양식은 판매처별로 셀피아 연결이 없는 상품·옵션을 채웁니다. 판매처 SKU 양식에서는 B열 셀피아 SKU를 채운 뒤 그대로 업로드하세요.</p>
           <input id="mapping-import-file" type="file" accept=".xlsx,.xls,.csv" aria-label="매칭값 파일 선택">
           <p id="mapping-import-status" role="status" aria-live="polite">파일을 선택해주세요.</p>
           <p>아래는 최대 100건입니다. 전체 검사·저장 결과는 CSV로 확인할 수 있습니다. 기존 연결 변경 건을 확인한 뒤 등록해주세요.</p>

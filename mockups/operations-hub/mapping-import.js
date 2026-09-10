@@ -2,6 +2,7 @@
   'use strict';
   const headers=['셀피아sku','스스 상품코드','스스 옵션코드','메이크샵 상품코드','메이크샵 옵션코드','에이블리 상품코드','에이블리 옵션코드'];
   const templateHeaders=['썸네일',...headers];
+  const sellerTemplateHeaders=[...templateHeaders,'판매처','판매처 상품명','판매처 옵션명'];
   const sources=['smartstore','makeshop','ably'];
   const labels={smartstore:'스마트스토어',makeshop:'메이크샵',ably:'에이블리'};
   const text=value=>String(value??'').trim();
@@ -110,7 +111,34 @@
     sheet.autoFilter={from:'A1',to:`H${Math.max(1,products.length+1)}`};
     return book.xlsx.writeBuffer();
   }
-  global.SystemV3MappingImport={parse,headers,templateHeaders,buildThumbnailTemplate};
+  async function buildSellerUnmatchedTemplate(items=[]) {
+    if(!global.ExcelJS?.Workbook)throw new Error('썸네일 XLSX 모듈을 불러오지 못했습니다. 새로고침 후 다시 시도해주세요.');
+    const book=new global.ExcelJS.Workbook();
+    book.creator='System V3';book.created=new Date();
+    const sheet=book.addWorksheet('판매처미매칭',{views:[{state:'frozen',xSplit:2,ySplit:1}]});
+    sheet.columns=[
+      {header:'썸네일',key:'thumbnail',width:16},{header:headers[0],key:'sellpia',width:18},
+      {header:headers[1],key:'smartstoreProduct',width:19},{header:headers[2],key:'smartstoreOption',width:19},
+      {header:headers[3],key:'makeshopProduct',width:21},{header:headers[4],key:'makeshopOption',width:21},
+      {header:headers[5],key:'ablyProduct',width:19},{header:headers[6],key:'ablyOption',width:19},
+      {header:'판매처',key:'source',width:15},{header:'판매처 상품명',key:'productName',width:44},{header:'판매처 옵션명',key:'optionName',width:44}
+    ];
+    const header=sheet.getRow(1);header.height=24;header.font={bold:true};header.alignment={vertical:'middle'};
+    header.eachCell(cell=>{cell.fill={type:'pattern',pattern:'solid',fgColor:{argb:'FFFFF1DC'}};cell.border={bottom:{style:'thin',color:{argb:'FFC89E55'}}};});
+    items.forEach(item=>{
+      const sourceIndex=sources.indexOf(text(item?.source_channel));
+      const row=sheet.addRow({thumbnail:'셀피아 미연결',source:labels[item?.source_channel]||text(item?.source_channel),productName:text(item?.product_name),optionName:text(item?.option_name)});
+      if(sourceIndex>=0){
+        row.getCell(3+sourceIndex*2).value=text(item?.product_code);
+        row.getCell(4+sourceIndex*2).value=text(item?.option_code);
+      }
+      row.height=32;row.eachCell({includeEmpty:true},cell=>{cell.alignment={vertical:'middle',wrapText:cell.col>=10};});
+      for(let col=2;col<=8;col++)row.getCell(col).numFmt='@';
+    });
+    sheet.autoFilter={from:'A1',to:`K${Math.max(1,items.length+1)}`};
+    return book.xlsx.writeBuffer();
+  }
+  global.SystemV3MappingImport={parse,headers,templateHeaders,sellerTemplateHeaders,buildThumbnailTemplate,buildSellerUnmatchedTemplate};
   if(!global.document)return;
   const byId=id=>document.getElementById('mapping-import-'+id);
   if(!byId('modal'))return;
@@ -155,6 +183,30 @@
     }catch(error){
       console.error('mapping thumbnail template download failed',error);
       byId('status').textContent=`썸네일 포함 양식을 만들지 못했습니다: ${error?.message||error}`;
+    }finally{
+      button.disabled=false;
+      button.textContent=original;
+    }
+  };
+  byId('seller-template').onclick=async()=>{
+    const button=byId('seller-template'),original=button.textContent;
+    if(!global.SystemV3Data?.loadAllSellerUnmatchedSkus){
+      download(csv([sellerTemplateHeaders]),'매칭값_일괄등록_판매처SKU미매칭.csv');
+      return;
+    }
+    button.disabled=true;
+    try{
+      button.textContent='판매처 미연결 SKU 조회 중…';
+      const items=await global.SystemV3Data.loadAllSellerUnmatchedSkus({onProgress:progress=>{
+        button.textContent=progress?.message||'판매처 미연결 SKU 조회 중…';
+      }});
+      const bytes=await buildSellerUnmatchedTemplate(items);
+      download(bytes,'매칭값_일괄등록_판매처SKU미매칭.xlsx','application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+      const counts=items.reduce((result,item)=>{const source=text(item?.source_channel);result[source]=(result[source]||0)+1;return result;},{});
+      byId('status').textContent=`판매처 미연결 SKU ${items.length.toLocaleString()}개를 채운 XLSX 양식을 받았습니다. 스마트스토어 ${(counts.smartstore||0).toLocaleString()}개 · 메이크샵 ${(counts.makeshop||0).toLocaleString()}개 · 에이블리 ${(counts.ably||0).toLocaleString()}개입니다. B열 셀피아 SKU를 채운 뒤 그대로 업로드하세요.`;
+    }catch(error){
+      console.error('seller unmatched mapping template download failed',error);
+      byId('status').textContent=`판매처 SKU 미매칭 양식을 만들지 못했습니다: ${error?.message||error}`;
     }finally{
       button.disabled=false;
       button.textContent=original;
