@@ -19,7 +19,8 @@
       if(autoDefaults){
         row[1]='pink_rocket@naver.com';
         const prefixes=[...new Set(components.map(p=>String(p.sellpia_sku_code).replace(/-[^-]+$/,'')))];
-        row[2]=prefixes.length===1?'sellpia_'+prefixes[0]:code;
+        if(prefixes.length!==1)throw Error('서로 다른 상품 접두부의 조합입니다: '+components.map(p=>p.sellpia_sku_code).join(', ')+' · 확인된 관리코드 규칙이 없어 자동 생성을 중단했습니다. 기존 엑셀의 행 코드는 그대로 사용할 수 있습니다.');
+        row[2]='sellpia_'+prefixes[0];
         row[5]=components.reduce((sum,p)=>{const price=p.system_base_price??p.sellpia_source_sale_price;if(price===null||price===undefined||String(price).trim()===''||!Number.isFinite(Number(price))||Number(price)<0)throw Error(p.sellpia_sku_code+' 기준가격 없음');return sum+Number(price);},0);
       }
       row[16]=components.map(p=>`[${p.sellpia_sku_code}]`).join(',');

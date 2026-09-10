@@ -2403,7 +2403,22 @@
   async function loadFormulaProducts(skus) {
     requireOperationsHubSessionToken();let rows=[];
     for(let i=0;i<skus.length;i+=200){const {data,error}=await db.from(MATRIX_VIEW).select('sellpia_sku_code,display_name,sellpia_source_sale_price,system_base_price,smartstore_price,makeshop_price,ably_price,smartstore_product_code,makeshop_product_code,ably_product_code').in('sellpia_sku_code',skus.slice(i,i+200));if(error)throw error;rows.push(...data);}
-    rows=await attachProductProfiles(rows);rows=await attachInboundCostDetails(rows);let enriched=[];for(let i=0;i<rows.length;i+=200)enriched.push(...await attachSellerPriceComponents(rows.slice(i,i+200)));return enriched;
+    rows=await attachProductProfiles(rows);rows=await attachInboundCostDetails(rows);rows=await attachSystemOperationalDetails(rows);let enriched=[];for(let i=0;i<rows.length;i+=200)enriched.push(...await attachSellerPriceComponents(rows.slice(i,i+200)));return enriched;
+  }
+  async function ruleRegistry(action, rule = null) {
+    const {data,error}=await db.rpc('hub_rule_registry_v1',{p_session_token:requireOperationsHubSessionToken(),p_action:action,p_rule:rule});
+    if(error)throw readableDatabaseError(error);return data;
+  }
+  async function assignRules(action, assignments, requestId = global.crypto.randomUUID()) {
+    const {data,error}=await db.rpc('hub_rule_assign_v1',{p_session_token:requireOperationsHubSessionToken(),p_action:action,p_assignments:assignments,p_request_id:requestId});
+    if(error)throw readableDatabaseError(error);return data;
+  }
+  async function loadRulePlatformSiblings(skus, source) {
+    requireOperationsHubSessionToken();if(!['ably','smartstore','makeshop'].includes(source))throw Error('판매처 오류');
+    const field=source+'_product_code',codes=new Set(),result=new Set(skus);
+    for(let i=0;i<skus.length;i+=200){const {data,error}=await db.from(MATRIX_VIEW).select(field).in('sellpia_sku_code',skus.slice(i,i+200));if(error)throw error;data.forEach(r=>{if(r[field])codes.add(r[field]);});}
+    for(const code of codes){for(let from=0;;from+=1000){const {data,error}=await db.from(MATRIX_VIEW).select('sellpia_sku_code').eq(field,code).range(from,from+999);if(error)throw error;data.forEach(r=>result.add(r.sellpia_sku_code));if(data.length<1000)break;}}
+    return [...result];
   }
   async function updateProductTag({id,name,color}) {
     requireOperationsHubSessionToken();const {data,error}=await db.from('product_tags').update({tag_name:cleanText(name),tag_color:color}).eq('tag_id',id).select().single();if(error)throw error;return data;
@@ -3094,6 +3109,9 @@
     loadSourceStatus,
     loadTags,
     workDocument,
+    ruleRegistry,
+    assignRules,
+    loadRulePlatformSiblings,
     loadFormulaProducts,
     loadSiblingOptions,
     updateProductTag,

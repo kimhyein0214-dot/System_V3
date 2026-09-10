@@ -7274,7 +7274,9 @@ async function runSellerExport() {
     const preparedExport = changeIds.length
       ? await liveData.prepareSellerExport({batchId, mode:'change_queue', changeIds, sources})
       : {items:[]};
-    const items = preparedExport.items;
+    const items = globalThis.HubPlatformRules
+      ? await globalThis.HubPlatformRules.refreshExportItems(preparedExport.items, filesBySource)
+      : preparedExport.items;
     prepared = Boolean(changeIds.length);
     const blocked = items.filter(item => item.blocking_reason);
     const exportable = items.filter(item => !item.blocking_reason);
@@ -7282,6 +7284,15 @@ async function runSellerExport() {
     showSellerExportExclusions(initialExcluded);
     showSellerExportProgress(22, '원본 파일 검증 중', `${formatNumber(exportable.length)}건을 대조합니다.${blocked.length ? ` 위치 확인 실패 ${formatNumber(blocked.length)}건은 제외합니다.` : ''}`);
     const result = await sellerExport.buildExportArchive(filesBySource, exportable, (percent, detail) => showSellerExportProgress(22 + percent * .74, '판매처 수정본 생성 중', detail), initialExcluded);
+    const calculatedRuleVersions = [...new Map(exportable.flatMap(item => item.rule_versions || []).map(version => [version.id,version])).values()];
+    if (calculatedRuleVersions.length) result.manifest.forEach(file => { file.rule_versions = calculatedRuleVersions; });
+    if (calculatedRuleVersions.length) await liveData.workDocument('save', 'formula', {
+      title:`registry-export:${batchId}`,
+      body:{created_at:new Date().toISOString(),source:sources.join(','),export_batch_id:batchId,
+        sku_count:new Set(result.appliedItems.map(item=>item.sellpia_sku_code)).size,
+        rule_versions:calculatedRuleVersions,actual_items:result.appliedItems,manifest:result.manifest,
+        skipped_count:result.skippedItems.length}
+    });
     showSellerExportExclusions(result.skippedItems);
     if (prepared) await liveData.completeSellerExport({batchId, success:result.appliedItems.length > 0, manifest:result.manifest, skippedItems:result.skippedItems, errorMessage:result.appliedItems.length ? '' : '수정값은 모두 제외되어 원본값으로 파일을 생성했습니다.'});
     prepared = false; // A later download/refresh failure must not overwrite a completed audit.

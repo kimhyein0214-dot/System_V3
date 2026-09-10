@@ -27,7 +27,9 @@
       const book=global.XLSX.utils.book_new();global.XLSX.utils.book_append_sheet(book,global.XLSX.utils.aoa_to_sheet([headers,...output]),'옵션기본');
       return new Blob([global.XLSX.write(book,{type:'array',bookType:'xlsx'})],{type:'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'});
     }
-    const zip=await global.JSZip.loadAsync(await file.arrayBuffer());
+    const bytes=await file.arrayBuffer();
+    const originalSheet=global.XLSX.read(bytes,{type:'array'}).Sheets['옵션기본'];
+    const zip=await global.JSZip.loadAsync(bytes);
     const parser=new DOMParser();
     const workbook=parser.parseFromString(await zip.file('xl/workbook.xml').async('string'),'application/xml');
     const sheet=[...workbook.getElementsByTagName('sheet')].find(el=>el.getAttribute('name')==='옵션기본');
@@ -38,7 +40,7 @@
     const entry=zip.file(path);if(!entry)throw new Error('원본 시트를 읽지 못했습니다.');
     let xml=await entry.async('string');
     items.forEach((item,index)=>{
-      if(item.memoText!==String(item.row[16]??''))xml=patchCell(xml,item.line,'Q',item.memoText);
+      item.row.forEach((value,column)=>{const letters=global.XLSX.utils.encode_col(column),next=column===16?item.memoText:value??'',original=originalSheet[letters+item.line]?.v??'';if(column!==22&&next!==original)xml=patchCell(xml,item.line,letters,next);});
       if(!results[index].error)xml=patchCell(xml,item.line,'W',results[index].value);
     });
     zip.file(path,xml,{createFolders:false});
@@ -62,7 +64,7 @@
     output=output.replace(/(<autoFilter\b[^>]*\bref=")[^"]+"/,`$1A1:AI${rows.length+1}"`);
     return output;
   }
-  async function buildFromTemplate(file,rows){
+  async function buildFromTemplate(file,rows,sourceLines=null){
     if(!file)throw new Error('서식을 사용할 원본 템플릿 파일을 선택하세요.');
     const bytes=await file.arrayBuffer();
     const parsed=global.XLSX.read(bytes,{type:'array'}),sheet=parsed.Sheets['옵션기본'];
@@ -76,7 +78,12 @@
     if(!target)throw new Error('템플릿 시트 연결을 찾지 못했습니다.');
     const path=target.startsWith('/')?target.slice(1):'xl/'+target.replace(/^\.\//,'');
     const xml=await zip.file(path).async('string');
-    zip.file(path,populateSheet(xml,rows),{createFolders:false});
+    let output=xml;
+    if(sourceLines){
+      if(sourceLines.length!==rows.length||new Set(sourceLines).size!==rows.length)throw Error('원본 행 위치가 일치하지 않습니다.');
+      rows.forEach((row,index)=>{const line=sourceLines[index];if(!Number.isInteger(line)||line<2)throw Error('원본 행 번호 오류');row.forEach((value,column)=>{const letters=global.XLSX.utils.encode_col(column),old=sheet[letters+line]?.v??'';if((value??'')!==old)output=patchCell(output,line,letters,value??'');});});
+    }else output=populateSheet(xml,rows);
+    zip.file(path,output,{createFolders:false});
     return zip.generateAsync({type:'blob',mimeType:'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',compression:'DEFLATE'});
   }
   global.AblyStockExport={headers,patchCell,build,populateSheet,buildFromTemplate};
