@@ -6,7 +6,9 @@
     const reference=column+line;
     const rowRe=new RegExp(`<row\\b[^>]*\\br="${line}"[^>]*>[\\s\\S]*?<\\/row>`);
     const row=xml.match(rowRe)?.[0];if(!row)throw new Error(`${line}행을 원본에서 찾지 못했습니다.`);
-    const cellRe=new RegExp(`<c\\b([^>]*\\br="${reference}"[^>]*)(?:\\/>|>[\\s\\S]*?<\\/c>)`);
+    // Keep the attribute tail lazy: a greedy tail consumes the slash in <c .../>
+    // and can then swallow neighbouring cells up to their next closing </c>.
+    const cellRe=new RegExp(`<c\\b([^>]*\\br="${reference}"[^>]*?)(?:\\/>|>[\\s\\S]*?<\\/c>)`);
     const old=row.match(cellRe);
     const style=old?.[1].match(/\bs="[^"]*"/)?.[0]||'';
     const cell=typeof value==='number'?`<c r="${reference}" ${style}><v>${value}</v></c>`:`<c r="${reference}" ${style} t="inlineStr"><is><t xml:space="preserve">${escape(value)}</t></is></c>`;
