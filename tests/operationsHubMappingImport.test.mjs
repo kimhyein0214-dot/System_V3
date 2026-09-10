@@ -22,17 +22,36 @@ assert.equal(parse([headers,['sku','1.2e+9','','','','','']]).errors.length,1);
 assert.throws(()=>parse([['wrong']]),/필수 헤더/);
 // Thumbnail column is presentation-only: B onward stays an ordinary mapping upload.
 assert.equal(parse([templateHeaders,['=IMAGE(...)','sku-thumb','001','0002','','','','']]).entries[0].sku,'sku-thumb');
-c.XLSX={utils:{
-  aoa_to_sheet(rows){return {'!data':rows};},
-  encode_cell({r,c}){return String.fromCharCode(65+c)+(r+1);},
-  book_new(){return {SheetNames:[],Sheets:{}};},
-  book_append_sheet(book,sheet,name){book.SheetNames.push(name);book.Sheets[name]=sheet;}
-},write(book){return book;}};
-const thumbnailBook=buildThumbnailTemplate([{sellpia_sku_code:'sku-thumb',image_url:'https://images.example/item.png'}]);
-assert.deepEqual(Array.from(thumbnailBook.Sheets.매칭값['!data'][0]),Array.from(templateHeaders));
-assert.equal(thumbnailBook.Sheets.매칭값.A2.f,'IMAGE("https://images.example/item.png","",3,48,48)');
-assert.equal(thumbnailBook.Sheets.매칭값.B2.v,'sku-thumb');
-assert.equal(thumbnailBook.Sheets.매칭값['!autofilter'].ref,'A1:H2');
+class MockCell { constructor(){this.value='';} }
+class MockRow {
+  constructor(number){this.number=number;this.cells=Array.from({length:8},()=>new MockCell());}
+  getCell(index){return this.cells[index-1];}
+  eachCell({includeEmpty},callback){if(includeEmpty)this.cells.forEach(callback);}
+}
+class MockSheet {
+  constructor(){this.rows=[];this.images=[];}
+  getRow(index){while(this.rows.length<index)this.rows.push(new MockRow(this.rows.length+1));return this.rows[index-1];}
+  addRow(values){const row=this.getRow(this.rows.length+1);row.getCell(2).value=values.sellpia;return row;}
+  addImage(id,range){this.images.push({id,range});}
+}
+let mockBook;
+c.ExcelJS={Workbook:class {
+  constructor(){mockBook=this;this.images=[];this.xlsx={writeBuffer:async()=>this};}
+  addWorksheet(){this.sheet=new MockSheet();return this.sheet;}
+  addImage(image){this.images.push(image);return this.images.length;}
+}};
+c.fetch=async()=>({ok:true,arrayBuffer:async()=>new Uint8Array([1,2,3]).buffer});
+const thumbnailBook=await buildThumbnailTemplate([
+  {sellpia_sku_code:'sku-thumb',image_url:'https://images.example/item.jpg'},
+  {sellpia_sku_code:'sku-empty'}
+]);
+assert.equal(thumbnailBook,mockBook);
+assert.equal(mockBook.sheet.columns[0].header,'썸네일');
+assert.equal(mockBook.sheet.getRow(2).getCell(2).value,'sku-thumb');
+assert.equal(mockBook.images[0].extension,'jpeg');
+assert.equal(mockBook.sheet.images.length,1);
+assert.equal(mockBook.sheet.getRow(3).getCell(1).value,'이미지 없음');
+assert.equal(mockBook.sheet.autoFilter.to,'H3');
 const {chromium}=await import(pathToFileURL('C:/Users/hihi0/.cache/codex-runtimes/codex-primary-runtime/dependencies/node/node_modules/playwright/index.mjs'));
 // Exercise the actual preview adapter with bounded fixture queries.
 const dataSource=fs.readFileSync(new URL('../mockups/operations-hub/data-service.js',import.meta.url),'utf8');

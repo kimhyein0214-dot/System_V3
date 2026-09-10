@@ -42,27 +42,55 @@
     for(const entry of entries.filter(entry=>entry.conflict))errors.push({...entry,status:'error',reason:'같은 SKU·판매처에 서로 다른 연결값이 입력됐습니다.'});
     return {entries:valid,errors};
   }
-  const excelFormulaText=value=>text(value).replaceAll('"','""');
-  function buildThumbnailTemplate(products=[]) {
-    if(!global.XLSX?.utils)throw new Error('XLSX 생성 모듈을 불러오지 못했습니다. 새로고침 후 다시 시도해주세요.');
-    const rows=[templateHeaders,...products.map(product=>[
-      '',text(product?.sellpia_sku_code),'','','','','',''
-    ])];
-    const sheet=global.XLSX.utils.aoa_to_sheet(rows);
+  const thumbnailUrl=product=>text(product?.sellpia_override_image_url||product?.image_url);
+  async function loadThumbnailImages(products,onProgress) {
+    const targets=products.map((product,index)=>({index,url:thumbnailUrl(product)})).filter(target=>target.url);
+    const images=new Map();let completed=0,next=0;
+    const report=()=>onProgress?.({completed,total:targets.length,missing:products.length-targets.length});
+    report();
+    const worker=async()=>{
+      while(next<targets.length){
+        const target=targets[next++];
+        try{
+          const response=await fetch(target.url);
+          if(!response.ok)throw new Error(`HTTP ${response.status}`);
+          const buffer=await response.arrayBuffer();
+          if(buffer.byteLength)images.set(target.index,buffer);
+        }catch(error){console.warn('thumbnail image download failed',target.url,error);}
+        completed++;report();
+      }
+    };
+    await Promise.all(Array.from({length:Math.min(8,targets.length)},worker));
+    return images;
+  }
+  async function buildThumbnailTemplate(products=[],{onProgress}={}) {
+    if(!global.ExcelJS?.Workbook)throw new Error('썸네일 XLSX 모듈을 불러오지 못했습니다. 새로고침 후 다시 시도해주세요.');
+    const images=await loadThumbnailImages(products,onProgress);
+    const book=new global.ExcelJS.Workbook();
+    book.creator='System V3';book.created=new Date();
+    const sheet=book.addWorksheet('매칭값',{views:[{state:'frozen',xSplit:2,ySplit:1}]});
+    sheet.columns=[
+      {header:'썸네일',key:'thumbnail',width:13},{header:headers[0],key:'sellpia',width:18},
+      {header:headers[1],key:'smartstoreProduct',width:19},{header:headers[2],key:'smartstoreOption',width:19},
+      {header:headers[3],key:'makeshopProduct',width:21},{header:headers[4],key:'makeshopOption',width:21},
+      {header:headers[5],key:'ablyProduct',width:19},{header:headers[6],key:'ablyOption',width:19}
+    ];
+    const header=sheet.getRow(1);header.height=24;header.font={bold:true};header.alignment={vertical:'middle'};
+    header.eachCell(cell=>{cell.fill={type:'pattern',pattern:'solid',fgColor:{argb:'FFE8EFF7'}};cell.border={bottom:{style:'thin',color:{argb:'FF9DAFC5'}}};});
     products.forEach((product,index)=>{
-      const row=index+2,imageUrl=text(product?.sellpia_override_image_url||product?.image_url);
-      if(imageUrl)sheet['A'+row]={t:'n',f:`IMAGE("${excelFormulaText(imageUrl)}","",3,48,48)`};
-      for(let col=1;col<templateHeaders.length;col++){
-        const ref=global.XLSX.utils.encode_cell({r:row-1,c:col});
-        sheet[ref]={t:'s',v:text(rows[row-1][col]),z:'@'};
+      const row=sheet.addRow({sellpia:text(product?.sellpia_sku_code)});row.height=42;
+      row.eachCell({includeEmpty:true},cell=>{cell.alignment={vertical:'middle'};});
+      for(let col=2;col<=8;col++)row.getCell(col).numFmt='@';
+      const image=images.get(index);
+      if(image){
+        const imageId=book.addImage({buffer:image,extension:'jpeg'});
+        sheet.addImage(imageId,{tl:{col:0,row:row.number-1},ext:{width:48,height:48}});
+      }else{
+        const cell=row.getCell(1);cell.value='이미지 없음';cell.font={color:{argb:'FF7A8796'},size:9};cell.alignment={horizontal:'center',vertical:'middle',wrapText:true};
       }
     });
-    sheet['!cols']=[{wch:13},{wch:18},{wch:19},{wch:19},{wch:21},{wch:21},{wch:19},{wch:19}];
-    sheet['!rows']=[{hpt:24},...products.map(()=>({hpt:42}))];
-    sheet['!autofilter']={ref:`A1:H${Math.max(1,rows.length)}`};
-    const book=global.XLSX.utils.book_new();
-    global.XLSX.utils.book_append_sheet(book,sheet,'매칭값');
-    return global.XLSX.write(book,{bookType:'xlsx',type:'array',cellStyles:true});
+    sheet.autoFilter={from:'A1',to:`H${Math.max(1,products.length+1)}`};
+    return book.xlsx.writeBuffer();
   }
   global.SystemV3MappingImport={parse,headers,templateHeaders,buildThumbnailTemplate};
   if(!global.document)return;
@@ -100,9 +128,12 @@
       }});
       const bySku=new Map(products.map(product=>[text(product?.sellpia_sku_code),product]));
       const ordered=target.skus.map(sku=>bySku.get(text(sku))||{sellpia_sku_code:sku});
-      const bytes=buildThumbnailTemplate(ordered);
+      const imageCount=ordered.filter(product=>thumbnailUrl(product)).length;
+      const bytes=await buildThumbnailTemplate(ordered,{onProgress:progress=>{
+        button.textContent=`사진 삽입 ${progress.completed.toLocaleString()} / ${progress.total.toLocaleString()}개 · 이미지 없음 ${progress.missing.toLocaleString()}개`;
+      }});
       download(bytes,'매칭값_일괄등록_미매칭셀피아SKU_썸네일포함.xlsx','application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
-      byId('status').textContent=`미매칭 셀피아 SKU ${ordered.length.toLocaleString()}개를 채운 XLSX 양식을 받았습니다. A열 썸네일은 확인용이며 B열 셀피아 SKU부터 매칭값을 입력하세요.`;
+      byId('status').textContent=`미매칭 셀피아 SKU ${ordered.length.toLocaleString()}개를 채운 XLSX 양식을 받았습니다. A열에는 실제 이미지 ${imageCount.toLocaleString()}개를 삽입했고, 원본 이미지가 없는 ${Math.max(0,ordered.length-imageCount).toLocaleString()}개는 ‘이미지 없음’으로 표시합니다. B열 셀피아 SKU부터 매칭값을 입력하세요.`;
     }catch(error){
       console.error('mapping thumbnail template download failed',error);
       byId('status').textContent=`썸네일 포함 양식을 만들지 못했습니다: ${error?.message||error}`;
