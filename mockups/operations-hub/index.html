@@ -7,16 +7,16 @@
     <title>System V3 · 상품 운영 허브</title>
     <link rel="preconnect" href="https://cdnjs.cloudflare.com" crossorigin>
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/pretendard/1.3.9/static/pretendard.css">
-    <link rel="stylesheet" href="./style.css?v=20260909-ably-exclude-v88">
-    <link rel="stylesheet" href="./ably-combinations.css?v=20260909-ably-exclude-v88">
-    <link rel="stylesheet" href="./inventory.css?v=20260909-ably-exclude-v88">
-    <link rel="stylesheet" href="./price-rule-lab.css?v=20260909-ably-exclude-v88">
-    <link rel="stylesheet" href="./ui-scale-base.css?v=20260909-ably-exclude-v88">
-    <link rel="stylesheet" href="./ui-scale-matrix.css?v=20260909-ably-exclude-v88">
-    <link rel="stylesheet" href="./ui-scale-workspaces.css?v=20260909-ably-exclude-v88">
-    <link rel="stylesheet" href="./channels-page.css?v=20260909-ably-exclude-v88">
-    <link rel="stylesheet" href="./attributes-page.css?v=20260909-ably-exclude-v88">
-    <link rel="stylesheet" href="./operations-auth.css?v=20260909-ably-exclude-v88">
+    <link rel="stylesheet" href="./style.css?v=20260910-ably-pairs-v89">
+    <link rel="stylesheet" href="./ably-combinations.css?v=20260910-ably-pairs-v89">
+    <link rel="stylesheet" href="./inventory.css?v=20260910-ably-pairs-v89">
+    <link rel="stylesheet" href="./price-rule-lab.css?v=20260910-ably-pairs-v89">
+    <link rel="stylesheet" href="./ui-scale-base.css?v=20260910-ably-pairs-v89">
+    <link rel="stylesheet" href="./ui-scale-matrix.css?v=20260910-ably-pairs-v89">
+    <link rel="stylesheet" href="./ui-scale-workspaces.css?v=20260910-ably-pairs-v89">
+    <link rel="stylesheet" href="./channels-page.css?v=20260910-ably-pairs-v89">
+    <link rel="stylesheet" href="./attributes-page.css?v=20260910-ably-pairs-v89">
+    <link rel="stylesheet" href="./operations-auth.css?v=20260910-ably-pairs-v89">
   </head>
   <body class="operations-auth-locked">
     <section id="operations-auth-gate" class="operations-auth-gate" aria-labelledby="operations-auth-title">
@@ -496,7 +496,7 @@
           <div id="ably-combinations" class="page">
             <div id="ably-products-home">
               <div class="page-head"><div><h2>에이블리 조합관리</h2><p>온라인 상품명을 선택하면 해당 상품의 조합 옵션을 확인할 수 있습니다.</p></div></div>
-              <section class="panel ably-combination-panel"><h3>상품 목록</h3><label>옵션기본 엑셀 <input id="ably-combination-file" type="file" accept=".xlsx" aria-label="에이블리 조합 엑셀 파일"></label><p id="ably-combination-file-status" role="status">D열 온라인 상품명을 목록 제목으로 표시합니다. 파일은 브라우저에서만 읽습니다.</p><div id="ably-imported-products"></div><button id="ably-virtual-product-open" type="button" class="ably-product-card"><span><b>실재고 연동 테스트 상품 1000</b><small>실제 개별 SKU 재고 조회 · 테스트 조합 4개</small></span><span>조합 보기 →</span></button></section>
+              <section class="panel ably-combination-panel"><h3>상품 목록</h3><div class="ably-home-toolbar"><div><label>옵션기본 엑셀 <input id="ably-combination-file" type="file" accept=".xlsx" aria-label="에이블리 조합 엑셀 파일"></label><p id="ably-combination-file-status" role="status">D열 온라인 상품명을 목록 제목으로 표시합니다. 전체 갱신은 선택한 파일의 모든 상품에 적용합니다.</p></div><button id="ably-all-stock-download" class="btn primary" type="button">전체 조합 재고갱신 파일</button><button id="ably-virtual-product-open" class="btn primary" type="button">상품 불러오기 · 조합등록 엑셀 생성</button></div><div id="ably-imported-products"><p>엑셀을 불러오면 상품 목록이 표시됩니다.</p></div></section>
               <section class="panel ably-combination-panel"><details><summary>재고 계산과 Q열 입력 기준</summary><p>주문수집 → 개별 SKU 재고 갱신 → 연결된 개별 SKU의 최솟값으로 조합 재고 갱신.</p><p>Q열 옵션관리코드: SKU1/SKU2 또는 [SKU1],[SKU2]. R열은 조합 SKU, W열은 조합 재고입니다. 기존 조합 재고는 계산에서 제외합니다.</p><p>개별 SKU의 시스템 현재재고를 조회하고 계산한 결과를 플랫폼 엑셀로 받습니다. 시스템 재고 자체는 변경하지 않습니다.</p></details></section>
             </div>
             <section id="ably-combination-lab" class="panel ably-combination-panel" hidden></section>
@@ -986,23 +986,24 @@
     <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.112.3/dist/umd/supabase.js"></script>
-    <script src="./seller-source-parsers.js?v=20260909-ably-exclude-v88"></script>
-    <script src="./seller-export-adapter.js?v=20260909-ably-exclude-v88"></script>
-    <script src="./matrix-csv-export.js?v=20260909-ably-exclude-v88"></script>
-    <script src="./discount-price-math.js?v=20260909-ably-exclude-v88"></script>
-    <script src="./source-refresh-verifier.js?v=20260909-ably-exclude-v88"></script>
-    <script src="./relation-import-parser.js?v=20260909-ably-exclude-v88"></script>
-    <script src="./bundle-import-parser.js?v=20260909-ably-exclude-v88"></script>
-    <script src="./seller-bundle-import-parser.js?v=20260909-ably-exclude-v88"></script>
-    <script src="./sellpia-source-parser.js?v=20260909-ably-exclude-v88"></script>
-    <script src="./data-service.js?v=20260909-ably-exclude-v88"></script>
-    <script src="./channels-page.js?v=20260909-ably-exclude-v88"></script>
-    <script src="./app.js?v=20260909-ably-exclude-v88"></script>
-    <script src="./mapping-import.js?v=20260909-ably-exclude-v88"></script>
-    <script src="./attributes-page.js?v=20260909-ably-exclude-v88"></script>
-    <script src="./price-rule-lab.js?v=20260909-ably-exclude-v88"></script>
-    <script src="./ably-stock-export.js?v=20260909-ably-exclude-v88"></script>
-    <script src="./ably-combinations.js?v=20260909-ably-exclude-v88"></script>
-    <script src="./ably-combination-lab.js?v=20260909-ably-exclude-v88"></script>
+    <script src="./seller-source-parsers.js?v=20260910-ably-pairs-v89"></script>
+    <script src="./seller-export-adapter.js?v=20260910-ably-pairs-v89"></script>
+    <script src="./matrix-csv-export.js?v=20260910-ably-pairs-v89"></script>
+    <script src="./discount-price-math.js?v=20260910-ably-pairs-v89"></script>
+    <script src="./source-refresh-verifier.js?v=20260910-ably-pairs-v89"></script>
+    <script src="./relation-import-parser.js?v=20260910-ably-pairs-v89"></script>
+    <script src="./bundle-import-parser.js?v=20260910-ably-pairs-v89"></script>
+    <script src="./seller-bundle-import-parser.js?v=20260910-ably-pairs-v89"></script>
+    <script src="./sellpia-source-parser.js?v=20260910-ably-pairs-v89"></script>
+    <script src="./data-service.js?v=20260910-ably-pairs-v89"></script>
+    <script src="./channels-page.js?v=20260910-ably-pairs-v89"></script>
+    <script src="./app.js?v=20260910-ably-pairs-v89"></script>
+    <script src="./mapping-import.js?v=20260910-ably-pairs-v89"></script>
+    <script src="./attributes-page.js?v=20260910-ably-pairs-v89"></script>
+    <script src="./price-rule-lab.js?v=20260910-ably-pairs-v89"></script>
+    <script src="./ably-stock-export.js?v=20260910-ably-pairs-v89"></script>
+    <script src="./ably-combinations.js?v=20260910-ably-pairs-v89"></script>
+    <script src="./ably-combination-lab.js?v=20260910-ably-pairs-v89"></script>
+    <script src="./ably-pair-generator.js?v=20260910-ably-pairs-v89"></script>
   </body>
 </html>

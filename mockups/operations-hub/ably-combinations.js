@@ -32,6 +32,24 @@
   const products=el('ably-imported-products'),home=el('ably-products-home'),detail=el('ably-imported-detail');
   const escape=value=>String(value??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
   let groups=[],activeGroup=null,shown=0,sourceFile=null,stockRows=[],busy=false,request=0;
+  el('ably-all-stock-download').onclick=async()=>{
+    if(busy)return;
+    if(!sourceFile||!groups.length){status.textContent='먼저 갱신할 옵션기본 엑셀을 선택하세요.';return;}
+    busy=true;home.querySelectorAll('button,input').forEach(control=>control.disabled=true);
+    status.textContent='전체 상품의 연결 SKU 재고를 조회하고 있습니다.';
+    try{
+      const items=groups.flatMap(group=>group.items);
+      const skus=[...new Set(items.flatMap(item=>parseSkuMemo(item.memoText).skus))];
+      const rows=await global.SystemV3Data.loadAblyComponentStocks(skus);
+      const stockMap=Object.fromEntries(rows.map(row=>[row.sellpia_sku_code,row.system_stock]));
+      const results=items.map(item=>global.AblyCombinationLabModel.calculate(item.memoText,stockMap));
+      const blob=await global.AblyStockExport.build({file:sourceFile,items,results});
+      global.SystemV3SellerExport.downloadBlob(blob,sourceFile.name.replace(/\.xlsx$/i,'')+'_전체조합_재고갱신.xlsx');
+      const valid=results.filter(result=>!result.error).length;
+      status.textContent=`전체 ${groups.length}개 상품 · ${items.length}개 조합 · 재고 갱신 ${valid}행 · 확인 필요 ${items.length-valid}행은 원본 재고 유지. 다운로드 완료.`;
+    }catch(error){status.textContent=`전체 재고 파일 생성 실패: ${error.message}`;}
+    finally{busy=false;home.querySelectorAll('button,input').forEach(control=>control.disabled=false);}
+  };
   const stocks=()=>Object.fromEntries(stockRows.map(row=>[row.sellpia_sku_code,row.system_stock]));
   const calculations=()=>activeGroup.items.map(item=>global.AblyCombinationLabModel.calculate(item.memoText,stocks()));
   function setBusy(value){busy=value;el('ably-product-back').disabled=value;el('ably-stock-refresh').disabled=value;el('ably-stock-download').disabled=value;body.querySelectorAll('input').forEach(input=>{input.disabled=value;});}
@@ -81,14 +99,6 @@
       el('ably-stock-status').textContent=`엑셀 다운로드 완료 · 재고 반영 ${valid}행 · 확인 필요 ${results.length-valid}행은 원본 재고 유지. Q열 수정값 포함. 시스템 재고는 변경하지 않았습니다.`;
     }catch(error){el('ably-stock-status').textContent=`다운로드 실패: ${error.message}`;}
     finally{setBusy(false);}
-  };
-  el('ably-virtual-product-open').onclick=()=>{
-    const definitions=global.AblyCombinationLabModel.initialState().combinations;
-    const items=definitions.map((combo,index)=>{
-      const row=Array(35).fill('');row[0]='에이블리';row[2]='TEST_1000';row[3]='실재고 연동 테스트 상품 1000';row[8]='일반';row[9]='조합형';row[10]='구성';row[11]=combo.name;row[16]=combo.memo;row[17]=combo.sku;row[21]=0;row[22]=999;row[23]=1;row[34]='Y';
-      return {row,line:index+2,memoText:combo.memo};
-    });
-    open({title:'실재고 연동 테스트 상품 1000',items,test:true});
   };
   input.addEventListener('change',async()=>{
     const file=input.files?.[0];products.innerHTML='';groups=[];sourceFile=null;if(!file)return;

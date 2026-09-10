@@ -3197,7 +3197,7 @@
     const rows=[];
     for(let offset=0;offset<unique.length;offset+=100) {
       const {data,error}=await db.from('operations_hub_matrix_system_live')
-        .select('sellpia_sku_code,display_name,system_stock,system_stock_updated_at')
+        .select('sellpia_sku_code,display_name,sellpia_option_name,system_stock,system_stock_updated_at')
         .in('sellpia_sku_code',unique.slice(offset,offset+100));
       if(error)throw error;
       rows.push(...(data||[]));
