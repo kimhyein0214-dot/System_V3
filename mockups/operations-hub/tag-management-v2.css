@@ -47,3 +47,14 @@
 .tag-manager-status{padding:9px 10px;border-radius:8px;background:#f2f6fb;color:#52647a;font-size:11px;line-height:1.4}
 .tag-manager-status.error{background:#fff1f1;color:#b42318}.tag-manager-status.success{background:#edf9f1;color:#17733a}
 @media(max-width:1250px){.tag-manager-v2{grid-template-columns:220px minmax(0,1fr)}.tag-manager-side{grid-column:1/-1}.tag-manager-side{display:grid;grid-template-columns:1fr 1fr 1fr}.tag-manager-actions{grid-column:1/-1}}
+
+
+/* tag type badges */
+.tag-catalog button{grid-template-columns:14px minmax(0,1fr) auto}
+.tag-catalog-name{display:flex;align-items:center;gap:6px;min-width:0}
+.tag-catalog-name>b{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.tag-kind{display:inline-flex;align-items:center;justify-content:center;flex:0 0 auto;padding:2px 6px;border-radius:999px;font-size:9px!important;font-weight:900!important;line-height:1.45;white-space:nowrap}
+.tag-kind.formula{background:#e9efff;color:#315cc9;border:1px solid #c9d6ff}
+.tag-kind.plain{background:#f3f5f7;color:#748094;border:1px solid #e0e5eb}
+.tag-selected-card h3{display:flex;align-items:center;gap:7px;flex-wrap:wrap}
+.tag-selected-card h3 .tag-kind{font-size:10px!important}

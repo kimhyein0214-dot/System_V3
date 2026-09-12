@@ -78,7 +78,7 @@
 
  function renderCatalog(){
   const box=document.getElementById('tag-catalog');if(!box)return;
-  box.innerHTML=state.catalog.map(tag=>`<button type="button" data-tag-id="${esc(tag.tag_id)}" class="${String(tag.tag_id)===String(state.selectedTagId)?'active':''}" style="--tag-color:${esc(tag.tag_color||'#dbeafe')}"><span class="tag-color-dot"></span><b>${esc(tag.tag_name)}</b><em>${n(tag.option_count)}</em></button>`).join('')||'<p class="tag-manager-empty">태그가 없습니다.</p>';
+  box.innerHTML=state.catalog.map(tag=>{const formula=Number(tag.rule_count||0)>0;return `<button type="button" data-tag-id="${esc(tag.tag_id)}" class="${String(tag.tag_id)===String(state.selectedTagId)?'active':''}" style="--tag-color:${esc(tag.tag_color||'#dbeafe')}"><span class="tag-color-dot"></span><span class="tag-catalog-name"><b>${esc(tag.tag_name)}</b><small class="tag-kind ${formula?'formula':'plain'}">${formula?'ƒ 수식':'일반'}</small></span><em>${n(tag.option_count)}</em></button>`;}).join('')||'<p class="tag-manager-empty">태그가 없습니다.</p>';
   box.querySelectorAll('[data-tag-id]').forEach(btn=>btn.onclick=()=>selectTag(btn.dataset.tagId));
  }
 
@@ -121,8 +121,8 @@
  function renderSelected(){
   const tag=currentTag();
   const name=document.getElementById('tag-selected-name'),group=document.getElementById('tag-selected-group');
-  if(name)name.textContent=tag?.tag_name||'태그 미선택';
-  if(group)group.textContent=tag?`${tag.tag_group||'운영'} · 저장 기준 option 태그`:'왼쪽에서 태그를 선택하세요.';
+  if(name)name.innerHTML=tag?`${esc(tag.tag_name)} <small class="tag-kind ${Number(tag.rule_count||0)>0?'formula':'plain'}">${Number(tag.rule_count||0)>0?'ƒ 수식 태그':'일반 태그'}</small>`:'태그 미선택';
+  if(group)group.textContent=tag?`${tag.tag_group||'운영'} · ${Number(tag.rule_count||0)>0?'가격/계산 Rule 연결됨':'분류·운영용 태그'} · 저장 기준 option 태그`:'왼쪽에서 태그를 선택하세요.';
   const title=document.getElementById('tag-member-title'),copy=document.getElementById('tag-member-copy');
   if(title)title.textContent=tag?tag.tag_name:'태그를 선택하세요';
   if(copy)copy.textContent=tag?`현재 DB에 저장된 ${n(tag.option_count)}개 SKU 적용 내역`:'저장된 태그 적용 내역을 조회·수정할 수 있습니다.';
