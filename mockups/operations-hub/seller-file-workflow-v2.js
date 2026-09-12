@@ -93,8 +93,8 @@
     <div><label id="export-scope-manual-wrap" class="export-scope-detail" hidden>SKU 목록<textarea id="export-scope-manual" placeholder="10000-1&#10;10000-2"></textarea></label><label id="export-scope-tag-wrap" class="export-scope-detail" hidden>태그<select id="export-scope-tag"><option value="">태그 선택</option></select></label></div>
    </div>
    <div class="export-channel-grid">
-    <article class="export-channel-card" data-standard-source="smartstore"><header><h4>스마트스토어</h4><span>원본 양식</span></header><p>최신 보관 원본 XLSX에 저장된 시스템 가격을 바로 반영합니다. 필요하면 저장된 재고 수정안도 함께 넣을 수 있습니다.</p><div class="export-role-status" data-standard-status="smartstore">원본 상태 확인 중…</div><label class="direct-stock-toggle"><input type="checkbox" data-standard-stock="smartstore"><span>저장된 재고 수정안도 포함</span></label><label class="direct-stock-toggle direct-blank-toggle"><input type="checkbox" data-standard-overwrite-blank="smartstore" disabled><span>원본의 빈 재고셀도 시스템 재고로 채우기<small>끄면 빈칸은 오류가 아니라 그대로 보존합니다.</small></span></label><div class="direct-export-actions"><button class="btn" type="button" data-standard-preview="smartstore">미리보기</button><button class="btn primary" type="button" data-standard-run="smartstore">파일 생성</button></div><div class="direct-export-preview" data-standard-result="smartstore">대상 범위를 위에서 선택한 뒤 미리보기하세요.</div></article>
-    <article class="export-channel-card" data-standard-source="makeshop"><header><h4>메이크샵</h4><span>원본 양식</span></header><p>최신 보관 원본 XLSX에 저장된 시스템 가격을 바로 반영합니다. 필요하면 저장된 재고 수정안도 함께 넣을 수 있습니다.</p><div class="export-role-status" data-standard-status="makeshop">원본 상태 확인 중…</div><label class="direct-stock-toggle"><input type="checkbox" data-standard-stock="makeshop"><span>저장된 재고 수정안도 포함</span></label><label class="direct-stock-toggle direct-blank-toggle"><input type="checkbox" data-standard-overwrite-blank="makeshop" disabled><span>원본의 빈 재고셀도 시스템 재고로 채우기<small>끄면 빈칸은 오류가 아니라 그대로 보존합니다.</small></span></label><div class="direct-export-actions"><button class="btn" type="button" data-standard-preview="makeshop">미리보기</button><button class="btn primary" type="button" data-standard-run="makeshop">파일 생성</button></div><div class="direct-export-preview" data-standard-result="makeshop">대상 범위를 위에서 선택한 뒤 미리보기하세요.</div></article>
+    <article class="export-channel-card" data-standard-source="smartstore"><header><h4>스마트스토어</h4><span>원본 양식</span></header><p>최신 보관 원본 XLSX에 저장된 시스템 가격을 바로 반영합니다. 필요하면 저장된 재고 수정안도 함께 넣을 수 있습니다.</p><div class="export-role-status" data-standard-status="smartstore">원본 상태 확인 중…</div><label class="direct-stock-toggle"><input type="checkbox" data-standard-stock="smartstore"><span>저장된 재고 수정안도 포함</span></label><label class="direct-stock-toggle direct-blank-toggle"><input type="checkbox" data-standard-overwrite-blank="smartstore" disabled><span>원본의 빈 재고셀도 시스템 재고로 채우기<small>끄면 빈칸은 오류가 아니라 그대로 보존합니다.</small></span></label><div class="direct-export-actions"><button class="btn" type="button" data-standard-preview="smartstore">미리보기</button><button class="btn primary" type="button" data-standard-run="smartstore">파일 생성</button></div><div class="direct-export-progress" data-standard-progress="smartstore" hidden><div class="direct-export-progress-head"><b data-progress-title>파일 생성 준비</b><span data-progress-percent>0%</span></div><div class="direct-export-progress-track"><i data-progress-bar style="width:0%"></i></div><small data-progress-detail>대상 범위와 원본을 확인합니다.</small></div><div class="direct-export-preview" data-standard-result="smartstore">대상 범위를 위에서 선택한 뒤 미리보기하세요.</div></article>
+    <article class="export-channel-card" data-standard-source="makeshop"><header><h4>메이크샵</h4><span>원본 양식</span></header><p>최신 보관 원본 XLSX에 저장된 시스템 가격을 바로 반영합니다. 필요하면 저장된 재고 수정안도 함께 넣을 수 있습니다.</p><div class="export-role-status" data-standard-status="makeshop">원본 상태 확인 중…</div><label class="direct-stock-toggle"><input type="checkbox" data-standard-stock="makeshop"><span>저장된 재고 수정안도 포함</span></label><label class="direct-stock-toggle direct-blank-toggle"><input type="checkbox" data-standard-overwrite-blank="makeshop" disabled><span>원본의 빈 재고셀도 시스템 재고로 채우기<small>끄면 빈칸은 오류가 아니라 그대로 보존합니다.</small></span></label><div class="direct-export-actions"><button class="btn" type="button" data-standard-preview="makeshop">미리보기</button><button class="btn primary" type="button" data-standard-run="makeshop">파일 생성</button></div><div class="direct-export-progress" data-standard-progress="makeshop" hidden><div class="direct-export-progress-head"><b data-progress-title>파일 생성 준비</b><span data-progress-percent>0%</span></div><div class="direct-export-progress-track"><i data-progress-bar style="width:0%"></i></div><small data-progress-detail>대상 범위와 원본을 확인합니다.</small></div><div class="direct-export-preview" data-standard-result="makeshop">대상 범위를 위에서 선택한 뒤 미리보기하세요.</div></article>
     <article class="export-channel-card"><header><h4>에이블리 · PlayAuto</h4><span>전용 양식</span></header><p>GOODS_LIST는 조회/매칭에만 사용합니다. 실제 수정 업로드 파일은 아래 PlayAuto 원본을 기준으로 만듭니다.</p>
       <div class="export-role-status" data-export-file="playauto_product"></div>
       <div class="export-role-status" data-export-file="playauto_option"></div>
@@ -108,6 +108,7 @@
   const mode=document.getElementById('export-scope-mode');
   mode.onchange=()=>{document.getElementById('export-scope-manual-wrap').hidden=mode.value!=='manual';document.getElementById('export-scope-tag-wrap').hidden=mode.value!=='tag';if(mode.value==='tag')void loadTags();};
   section.querySelectorAll('[data-standard-stock]').forEach(input=>input.onchange=()=>{const blank=section.querySelector(`[data-standard-overwrite-blank="${input.dataset.standardStock}"]`);if(blank){blank.disabled=!input.checked;if(!input.checked)blank.checked=false;}});
+  if(!section.dataset.progressBound){section.dataset.progressBound='1';global.addEventListener('system-v3-seller-export-progress',event=>{const d=event.detail||{};if(d.source)standardProgress(d.source,d.percent,d.title,d.detail,d.percent>=100?'done':'running');});}
   section.querySelectorAll('[data-standard-preview]').forEach(btn=>btn.onclick=()=>void previewStandard(btn.dataset.standardPreview));
   section.querySelectorAll('[data-standard-run]').forEach(btn=>btn.onclick=()=>void runStandard(btn.dataset.standardRun));
   section.querySelector('[data-page-upload-ably]').onclick=()=>{document.querySelector('.nav-item[data-page="upload"]')?.click();setTimeout(()=>{const source=document.getElementById('source-select');if(source){source.value='ably';source.dispatchEvent(new Event('change',{bubbles:true}));}},80);};
@@ -137,6 +138,17 @@
   el.className=`direct-export-preview ${kind}`.trim();el.textContent=text;
  }
 
+ function standardProgress(source,percent,title,detail,stateName='running'){
+  const box=document.querySelector(`[data-standard-progress="${source}"]`);if(!box)return;
+  const safe=Math.max(0,Math.min(100,Math.round(Number(percent)||0)));
+  box.hidden=false;box.dataset.state=stateName;
+  const titleNode=box.querySelector('[data-progress-title]'),percentNode=box.querySelector('[data-progress-percent]'),bar=box.querySelector('[data-progress-bar]'),detailNode=box.querySelector('[data-progress-detail]');
+  if(titleNode)titleNode.textContent=title||'파일 생성 중';
+  if(percentNode)percentNode.textContent=`${safe}%`;
+  if(bar)bar.style.width=`${safe}%`;
+  if(detailNode)detailNode.textContent=detail||'';
+ }
+
  async function previewStandard(source){
   const bridge=global.SystemV3SellerExportBridge;if(!bridge){setStatus('직접 내보내기 연결 모듈을 불러오지 못했습니다. 새로고침해주세요.','error');return;}
   const button=document.querySelector(`[data-standard-preview="${source}"]`),includeStock=Boolean(document.querySelector(`[data-standard-stock="${source}"]`)?.checked),overwriteBlank=includeStock&&Boolean(document.querySelector(`[data-standard-overwrite-blank="${source}"]`)?.checked);
@@ -152,13 +164,13 @@
  async function runStandard(source){
   const bridge=global.SystemV3SellerExportBridge;if(!bridge){setStatus('직접 내보내기 연결 모듈을 불러오지 못했습니다. 새로고침해주세요.','error');return;}
   const button=document.querySelector(`[data-standard-run="${source}"]`),includeStock=Boolean(document.querySelector(`[data-standard-stock="${source}"]`)?.checked),overwriteBlank=includeStock&&Boolean(document.querySelector(`[data-standard-overwrite-blank="${source}"]`)?.checked);
-  if(button)button.disabled=true;standardResult(source,'원본 검증 후 파일을 생성하는 중…');setStatus('판매처 파일 생성 중…');
+  if(button)button.disabled=true;standardProgress(source,2,'파일 생성 준비','대상 범위와 최신 원본을 확인하고 있습니다.');standardResult(source,'원본 검증 후 파일을 생성하는 중…');setStatus('판매처 파일 생성 중…');
   try{
    const skus=await directScopeSkus();let stockStage=null;if(includeStock)stockStage=await bridge.refreshInventoryDrafts({source,skus,overwriteBlank});const result=await bridge.run({source,skus,includeStock});if(stockStage)result.progressDetail=[result.progressDetail,overwriteBlank?`빈셀 덮어쓰기 ${n(stockStage.overwritten)}건`:`빈셀 보존 ${n(stockStage.preserved)}건`].filter(Boolean).join(' · ');
    const ok=/완료/.test(result.title||'')&&!/실패|중단/.test(result.title||'');
    standardResult(source,[result.title,result.progressDetail].filter(Boolean).join(' · ')||'파일 생성 완료',ok?'success':'');
    setStatus(ok?'파일 생성 완료':'파일 생성 작업이 끝났습니다. 결과를 확인하세요.',ok?'success':'');
-  }catch(error){standardResult(source,error?.message||String(error),'error');setStatus(`파일 생성 실패: ${error?.message||error}`,'error');}
+  }catch(error){standardProgress(source,100,'파일 생성 실패',error?.message||String(error),'error');standardResult(source,error?.message||String(error),'error');setStatus(`파일 생성 실패: ${error?.message||error}`,'error');}
   finally{if(button)button.disabled=false;}
  }
 
@@ -285,9 +297,12 @@
   const p=state.preview;if(!p)return;
   const readySet=new Set(p.output.filter(item=>item._status==='ready').map(item=>`${item.source_row_no}|${item.option_index??''}|${item.resolution.sku}`));
   const items=p.items.map(item=>readySet.has(`${item.source_row_no}|${item.option_index??''}|${item.resolution?.sku}`)?item:{...item,target_base_price:null,target_option_price:null,target_stock:null});
-  setStatus('PlayAuto XLSX 생성 중…');
+  const progressBox=document.getElementById('export-preview-v2');if(progressBox){progressBox.dataset.generating='1';}
+  setStatus('PlayAuto XLSX 생성 중 · 25% · 원본 템플릿 준비');
   try{
+   setStatus('PlayAuto XLSX 생성 중 · 55% · 수정 셀 반영');
    const blob=p.role==='playauto_product'?await A().buildProductPriceOption(p.file,items):await A().buildOptionPriceStock(p.file,items);
+   setStatus('PlayAuto XLSX 생성 중 · 90% · 파일 저장 준비');
    const suffix=p.role==='playauto_product'?'판매가_옵션가':'옵션가_실재고';
    global.SystemV3SellerExport.downloadBlob(blob,`에이블리_PlayAuto_${suffix}_${new Date().toISOString().slice(0,10)}.xlsx`);
    setStatus(`에이블리 ${roles[p.role].label} XLSX 생성 완료`,'success');

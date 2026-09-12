@@ -6941,6 +6941,12 @@ function showSellerExportProgress(percent, title, detail) {
   document.getElementById('seller-export-progress-percent').textContent = `${safePercent}%`;
   document.getElementById('seller-export-progress-bar').style.width = `${safePercent}%`;
   document.getElementById('seller-export-progress-detail').textContent = detail;
+  window.dispatchEvent(new CustomEvent('system-v3-seller-export-progress',{detail:{
+    source:sellerExportState.directSource||'',
+    percent:safePercent,
+    title:String(title||''),
+    detail:String(detail||'')
+  }}));
 }
 
 function showSellerExportExclusions(items = []) {
@@ -7721,15 +7727,20 @@ window.SystemV3SellerExportBridge={
     };
   },
   async run({source,skus=null,includeStock=false}={}){
-    const preview=await this.preview({source,skus,includeStock});
-    sellerExportModal.hidden=true;
-    await runSellerExport();
-    sellerExportModal.hidden=true;
-    return {
-      ...preview,
-      title:document.getElementById('seller-export-progress-title')?.textContent||'',
-      progressDetail:document.getElementById('seller-export-progress-detail')?.textContent||''
-    };
+    sellerExportState.directSource=source;
+    try{
+      const preview=await this.preview({source,skus,includeStock});
+      sellerExportModal.hidden=true;
+      await runSellerExport();
+      sellerExportModal.hidden=true;
+      return {
+        ...preview,
+        title:document.getElementById('seller-export-progress-title')?.textContent||'',
+        progressDetail:document.getElementById('seller-export-progress-detail')?.textContent||''
+      };
+    }finally{
+      sellerExportState.directSource='';
+    }
   }
 };
 document.getElementById('seller-export-exclusions-download').addEventListener('click', () => {
