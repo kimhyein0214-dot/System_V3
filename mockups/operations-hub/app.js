@@ -6520,7 +6520,7 @@ async function loadChangeQueue({silent = false} = {}) {
   }
   try {
     const scopeSources = queueScopeSources();
-    const [queue, stats, batches, targetIssues] = await Promise.all([
+    const [queue, stats, batches, targetIssues, dashboardMetrics] = await Promise.all([
       liveData.loadChangeQueue({
         status:document.getElementById('queue-status-filter').value,
         source:document.getElementById('queue-source-filter').value,
@@ -6528,7 +6528,10 @@ async function loadChangeQueue({silent = false} = {}) {
       }),
       liveData.loadChangeQueueStats(scopeSources),
       liveData.loadChangeBatchSummaries({sources:scopeSources, limit:20}),
-      liveData.previewChangeTargetSafety({sources:scopeSources, limit:100})
+      liveData.previewChangeTargetSafety({sources:scopeSources, limit:100}),
+      typeof liveData.loadDashboardMetrics==='function'
+        ? liveData.loadDashboardMetrics().catch(()=>null)
+        : Promise.resolve(null)
     ]);
     renderChangeQueue(queue.rows);
     renderQueueBatches(batches);
@@ -6541,8 +6544,22 @@ async function loadChangeQueue({silent = false} = {}) {
     document.getElementById('queue-applied-count').textContent = formatNumber(stats.applied || 0);
     document.getElementById('jobs-error-badge').dataset.queueErrors = Number(stats.failed || 0);
     updateJobsErrorBadge();
+    const totalSku=Number(dashboardMetrics?.total_sku||0);
+    const statusValue=document.getElementById('queue-status-filter').value;
+    const sourceValue=document.getElementById('queue-source-filter').value;
+    const statusLabel={active:'처리 대상 전체',pending:'검증 대기',validated:'검증 완료',failed:'실패',applied:'반영 완료',saved:'DB 내부 저장',cancelled:'취소',all:'전체 이력'}[statusValue]||statusValue;
+    const sourceLabel={operational:'스마트스토어·에이블리',all:'전체 판매처',smartstore:'스마트스토어',makeshop:'메이크샵',ably:'에이블리'}[sourceValue]||sourceValue;
+    const totalSkuNode=document.getElementById('queue-context-total-sku');
+    const currentCountNode=document.getElementById('queue-context-current-count');
+    const statusNode=document.getElementById('queue-context-status');
+    const sourceNode=document.getElementById('queue-context-source');
+    if(totalSkuNode)totalSkuNode.textContent=totalSku?formatNumber(totalSku)+' SKU':'-';
+    if(currentCountNode)currentCountNode.textContent=formatNumber(queue.count)+' 작업건';
+    if(statusNode)statusNode.textContent=(queueState.selectedBatchId?'선택 배치 · ':'')+statusLabel;
+    if(sourceNode)sourceNode.textContent=sourceLabel;
     badge.className = 'live-data-badge connected';
-    badge.textContent = `LIVE · ${formatNumber(queue.count)}건`;
+    badge.textContent = totalSku ? `DB LIVE · 전체 ${formatNumber(totalSku)} SKU` : 'DB LIVE';
+    badge.title='이 숫자는 작업 큐가 아니라 System V3 전체 SKU 수입니다.';
   } catch (error) {
     console.error('change queue load failed', error);
     badge.className = 'live-data-badge error';

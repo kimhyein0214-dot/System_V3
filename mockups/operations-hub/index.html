@@ -18,7 +18,7 @@
     <link rel="stylesheet" href="./attributes-page.css?v=20260910-rule-destination-v111">
     <link rel="stylesheet" href="./operations-auth.css?v=20260910-rule-destination-v111">
     <link rel="stylesheet" href="./rule-workspace.css?v=20260912-price-flow-v2">
-      <link rel="stylesheet" href="./ui-cleanup-v1.css?v=20260912-ui-cleanup-v1b">
+      <link rel="stylesheet" href="./ui-cleanup-v1.css?v=20260912-queue-count-clarity-v1">
       <link rel="stylesheet" href="./tag-management-v2.css?v=20260912-price-flow-v2">
       <link rel="stylesheet" href="./seller-file-workflow-v2.css?v=20260912-blank-stock-v1">
   </head>
@@ -572,10 +572,16 @@
               <div id="queue-target-safety" class="queue-target-safety"><b>판매처 대상 안전성 확인 중</b><span>중복 대상과 값 충돌을 배치와 함께 확인합니다.</span></div>
             </section>
             <section class="queue-summary" aria-label="내보내기 준비 상태 요약">
-              <article><span>처리 대상</span><b id="queue-active-count">-</b><em>대기·검증·실패</em></article>
-              <article class="blue"><span>검증 완료</span><b id="queue-validated-count">-</b><em>내보내기 가능</em></article>
-              <article class="danger"><span>실패</span><b id="queue-failed-count">-</b><em>재시도 필요</em></article>
-              <article class="good"><span>반영 완료</span><b id="queue-applied-count">-</b><em>감사이력 보존</em></article>
+              <article><span>처리 대상 작업</span><b id="queue-active-count">-</b><em>작업건 · 대기+검증+실패</em></article>
+              <article class="blue"><span>검증 완료 작업</span><b id="queue-validated-count">-</b><em>작업건 · 내보내기 가능</em></article>
+              <article class="danger"><span>실패 작업</span><b id="queue-failed-count">-</b><em>작업건 · 원인 확인 필요</em></article>
+              <article class="good"><span>반영 완료 이력</span><b id="queue-applied-count">-</b><em>작업건 · 감사이력 보존</em></article>
+            </section>
+            <section id="queue-context-strip" class="queue-context-strip" aria-label="작업 큐 집계 기준">
+              <article><span>전체 상품</span><b id="queue-context-total-sku">-</b><em>System V3 SKU 기준</em></article>
+              <article><span>현재 목록</span><b id="queue-context-current-count">-</b><em id="queue-context-status">선택 필터 · 작업건 기준</em></article>
+              <article><span>판매처 범위</span><b id="queue-context-source">-</b><em>현재 작업 큐 조회 범위</em></article>
+              <article class="unit-note"><span>집계 단위</span><b>작업건 ≠ SKU</b><em>같은 SKU가 판매처·필드별로 여러 건 존재할 수 있음</em></article>
             </section>
             <div class="queue-toolbar">
               <select id="queue-status-filter" aria-label="변경 상태 필터"><option value="active">처리 대상 전체</option><option value="pending">검증 대기</option><option value="validated">검증 완료</option><option value="failed">실패</option><option value="applied">반영 완료</option><option value="saved">DB 내부 저장</option><option value="cancelled">취소</option><option value="all">전체 이력</option></select>
@@ -976,7 +982,7 @@
     <script src="./sellpia-source-parser.js?v=20260910-rule-destination-v111"></script>
     <script src="./data-service.js?v=20260912-blank-stock-v1"></script>
     <script src="./channels-page.js?v=20260910-rule-destination-v111"></script>
-    <script src="./app.js?v=20260912-blank-stock-v1"></script>
+    <script src="./app.js?v=20260912-queue-count-clarity-v1"></script>
     <script src="./mapping-import.js?v=20260910-rule-destination-v111"></script>
     <script src="./attributes-page.js?v=20260910-rule-destination-v111"></script>
     <script src="./price-rule-lab.js?v=20260910-rule-destination-v111"></script>
