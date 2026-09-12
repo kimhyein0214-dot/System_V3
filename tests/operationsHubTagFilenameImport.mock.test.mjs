@@ -1,0 +1,10 @@
+import assert from 'node:assert/strict';
+import fs from 'node:fs';
+const source=fs.readFileSync('mockups/operations-hub/rule-workspace.js','utf8');
+assert.match(source,/function tagNameFromFilename\(fileName\)/);
+assert.match(source,/\^\(\.\+\)_일괄적용\\\.\(xlsx\|xls\|csv\)\$/i);
+assert.match(source,/mode:'filename_tag'/);
+assert.match(source,/A열만 SKU로 읽고 B열 이후는 메모용으로 무시/);
+assert.match(source,/previewTagImport\(await fileRows\(file\),\{fileName:file\.name\}\)/);
+assert.match(source,/data\?\.mode==='filename_tag'\?data\.resolvedTagId/);
+console.log('PASS filename tag import: <태그명>_일괄적용 file mode uses A only and reuses common tag RPC path.');
