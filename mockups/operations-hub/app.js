@@ -6511,6 +6511,7 @@ function updateQueueSelection() {
 
 async function loadChangeQueue({silent = false} = {}) {
   if (!liveData?.loadChangeQueue || queueState.loading) return;
+  if (silent && window.__systemV3DirectExportBusy) return;
   queueState.loading = true;
   const badge = document.getElementById('queue-live-status');
   if (!silent) {
@@ -6520,30 +6521,35 @@ async function loadChangeQueue({silent = false} = {}) {
   }
   try {
     const scopeSources = queueScopeSources();
-    const [queue, stats, batches, targetIssues, dashboardMetrics] = await Promise.all([
-      liveData.loadChangeQueue({
-        status:document.getElementById('queue-status-filter').value,
-        source:document.getElementById('queue-source-filter').value,
-        batchId:queueState.selectedBatchId
-      }),
+    const queue=await liveData.loadChangeQueue({
+      status:document.getElementById('queue-status-filter').value,
+      source:document.getElementById('queue-source-filter').value,
+      batchId:queueState.selectedBatchId
+    });
+    const secondary=await Promise.allSettled([
       liveData.loadChangeQueueStats(scopeSources),
       liveData.loadChangeBatchSummaries({sources:scopeSources, limit:20}),
       liveData.previewChangeTargetSafety({sources:scopeSources, limit:100}),
-      typeof liveData.loadDashboardMetrics==='function'
-        ? liveData.loadDashboardMetrics().catch(()=>null)
-        : Promise.resolve(null)
+      typeof liveData.loadDashboardMetrics==='function' ? liveData.loadDashboardMetrics() : Promise.resolve(null)
     ]);
+    const stats=secondary[0].status==='fulfilled'?secondary[0].value:null;
+    const batches=secondary[1].status==='fulfilled'?secondary[1].value:null;
+    const targetIssues=secondary[2].status==='fulfilled'?secondary[2].value:null;
+    const dashboardMetrics=secondary[3].status==='fulfilled'?secondary[3].value:null;
+    const secondaryFailed=secondary.filter(item=>item.status==='rejected').length;
     renderChangeQueue(queue.rows);
-    renderQueueBatches(batches);
-    renderQueueTargetSafety(targetIssues);
+    if(batches)renderQueueBatches(batches);
+    if(targetIssues)renderQueueTargetSafety(targetIssues);
     document.getElementById('queue-batch-clear').hidden = !queueState.selectedBatchId;
     document.getElementById('queue-result-count').textContent = `${formatNumber(queue.count)}건 중 ${formatNumber(queue.rows.length)}건 표시`;
-    document.getElementById('queue-active-count').textContent = formatNumber(stats.active || 0);
-    document.getElementById('queue-validated-count').textContent = formatNumber(stats.validated || 0);
-    document.getElementById('queue-failed-count').textContent = formatNumber(stats.failed || 0);
-    document.getElementById('queue-applied-count').textContent = formatNumber(stats.applied || 0);
-    document.getElementById('jobs-error-badge').dataset.queueErrors = Number(stats.failed || 0);
-    updateJobsErrorBadge();
+    if(stats){
+      document.getElementById('queue-active-count').textContent = formatNumber(stats.active || 0);
+      document.getElementById('queue-validated-count').textContent = formatNumber(stats.validated || 0);
+      document.getElementById('queue-failed-count').textContent = formatNumber(stats.failed || 0);
+      document.getElementById('queue-applied-count').textContent = formatNumber(stats.applied || 0);
+      document.getElementById('jobs-error-badge').dataset.queueErrors = Number(stats.failed || 0);
+      updateJobsErrorBadge();
+    }
     const totalSku=Number(dashboardMetrics?.total_sku||0);
     const statusValue=document.getElementById('queue-status-filter').value;
     const sourceValue=document.getElementById('queue-source-filter').value;
@@ -6557,9 +6563,11 @@ async function loadChangeQueue({silent = false} = {}) {
     if(currentCountNode)currentCountNode.textContent=formatNumber(queue.count)+' 작업건';
     if(statusNode)statusNode.textContent=(queueState.selectedBatchId?'선택 배치 · ':'')+statusLabel;
     if(sourceNode)sourceNode.textContent=sourceLabel;
-    badge.className = 'live-data-badge connected';
+    badge.className = secondaryFailed ? 'live-data-badge loading' : 'live-data-badge connected';
     badge.textContent = totalSku ? `DB LIVE · 전체 ${formatNumber(totalSku)} SKU` : 'DB LIVE';
-    badge.title='이 숫자는 작업 큐가 아니라 System V3 전체 SKU 수입니다.';
+    badge.title=secondaryFailed
+      ? `주 작업목록은 정상입니다. 부가 집계 ${secondaryFailed}개가 일시 지연되어 이전 값을 유지합니다.`
+      : '이 숫자는 작업 큐가 아니라 System V3 전체 SKU 수입니다.';
   } catch (error) {
     console.error('change queue load failed', error);
     badge.className = 'live-data-badge error';
@@ -7680,12 +7688,13 @@ document.getElementById('queue-export').addEventListener('click', () => openSell
 document.getElementById('seller-export-close').addEventListener('click', closeSellerExport);
 document.getElementById('seller-export-cancel').addEventListener('click', closeSellerExport);
 window.SystemV3SellerExportBridge={
-  async refreshInventoryDrafts({source,skus=null,overwriteBlank=false}={}){
+  async refreshInventoryDrafts({source,skus=null,overwriteBlank=false,onProgress=null}={}){
     if(!['smartstore','makeshop'].includes(source))throw Error('재고 수정안 새로 계산은 스마트스토어·메이크샵만 지원합니다.');
     if(!liveData?.stageSellerInventoryDraftBatch)throw Error('재고 수정안 생성 기능을 불러오지 못했습니다.');
     const selected=Array.isArray(skus)?[...new Set(skus.filter(Boolean))]:[];
     const batchId=crypto.randomUUID();
     let afterSku=null,hasMore=true,processed=0,total=selected.length||0,staged=0,preserved=0,overwritten=0;
+    onProgress?.({processed:0,total,percent:0,title:'재고 수정안 계산 준비',detail:'판매처 원본과 시스템 재고를 비교합니다.'});
     while(hasMore){
       const result=await liveData.stageSellerInventoryDraftBatch({
         sources:[source],skus:selected,batchId,afterSku,batchSize:100,overwriteBlank
@@ -7698,6 +7707,12 @@ window.SystemV3SellerExportBridge={
       afterSku=result?.next_cursor||null;
       hasMore=Boolean(result?.has_more);
       if(hasMore&&!afterSku)throw Error('재고 수정안 페이지 커서를 확인하지 못했습니다.');
+      const percent=total?Math.min(100,Math.round((processed/total)*100)):(hasMore?0:100);
+      onProgress?.({
+        processed,total,percent,
+        title:'재고 수정안 계산',
+        detail:`${processed.toLocaleString('ko-KR')} / ${total.toLocaleString('ko-KR')} SKU 확인 · 적용 ${staged.toLocaleString('ko-KR')}건 · 빈셀 보존 ${preserved.toLocaleString('ko-KR')}건`
+      });
     }
     return {batchId,processed,total,staged,preserved,overwritten,overwriteBlank};
   },
