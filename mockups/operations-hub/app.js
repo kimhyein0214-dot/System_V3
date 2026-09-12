@@ -7656,6 +7656,44 @@ document.getElementById('matrix-export-btn').addEventListener('click', () => ope
 document.getElementById('queue-export').addEventListener('click', () => openSellerExport({action:'export', rows:selectedQueueRows()}));
 document.getElementById('seller-export-close').addEventListener('click', closeSellerExport);
 document.getElementById('seller-export-cancel').addEventListener('click', closeSellerExport);
+window.SystemV3SellerExportBridge={
+  async preview({source,skus=null,includeStock=false}={}){
+    if(!['smartstore','makeshop'].includes(source))throw Error('직접 내보내기는 스마트스토어·메이크샵만 지원합니다.');
+    if(sellerExportState.running)throw Error('다른 내보내기 작업이 진행 중입니다.');
+    sellerExportState.cancelRequested=false;
+    sellerExportState.rows=[];
+    sellerExportState.action='export';
+    sellerExportState.selectedSkus=Array.isArray(skus)?[...new Set(skus.filter(Boolean))]:[];
+    sellerExportState.filter=snapshotMatrixExportFilter();
+    sellerExportState.filteredSkus=null;sellerExportState.filteredSkusPromise=null;
+    sellerExportState.includeStockDrafts=Boolean(includeStock);
+    sellerExportModal.querySelectorAll('.seller-export-source-check').forEach(input=>{input.checked=input.value===source;input.disabled=false;});
+    const scope=sellerExportState.selectedSkus.length?'selected':'all';
+    sellerExportModal.querySelectorAll('input[name="seller-export-scope"]').forEach(input=>{input.checked=input.value===scope;});
+    const stock=document.getElementById('seller-export-include-stock');if(stock)stock.checked=Boolean(includeStock);
+    await refreshSellerOriginalStates();
+    const sourceInput=sellerExportModal.querySelector(`.seller-export-source-check[value="${source}"]`);
+    if(!sourceInput||sourceInput.disabled||!sourceInput.checked)throw Error((CHANNEL_LABELS[source]||source)+' 최신 보관 원본이 없습니다.');
+    await refreshSellerExportPreview();
+    return {
+      source,
+      count:document.getElementById('seller-export-preview-count')?.textContent||'',
+      detail:document.getElementById('seller-export-preview-detail')?.textContent||'',
+      selectedSkus:[...sellerExportState.selectedSkus]
+    };
+  },
+  async run({source,skus=null,includeStock=false}={}){
+    const preview=await this.preview({source,skus,includeStock});
+    sellerExportModal.hidden=true;
+    await runSellerExport();
+    sellerExportModal.hidden=true;
+    return {
+      ...preview,
+      title:document.getElementById('seller-export-progress-title')?.textContent||'',
+      progressDetail:document.getElementById('seller-export-progress-detail')?.textContent||''
+    };
+  }
+};
 document.getElementById('seller-export-exclusions-download').addEventListener('click', () => {
   if (!sellerExportState.excludedItems.length) return;
   sellerExport.downloadBlob(new Blob([sellerExport.conflictCsv(sellerExportState.excludedItems)], {type:'text/csv;charset=utf-8'}), 'SystemV3_내보내기_제외목록.csv');
