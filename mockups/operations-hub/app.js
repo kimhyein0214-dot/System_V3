@@ -2,7 +2,7 @@ const sourceConfig = {
   sellpia: {name:'셀피아 기준 원본', initial:'S', cls:'sellpia', guide:'행번호가 이어지는 셀피아 파일 3개를 올려주세요.', detail:'부분 갱신 1개 이상 / 전체 교체 3개 · XLSX 또는 CSV', files:3},
   smartstore: {name:'스마트스토어 상품 원본', initial:'N', cls:'smart', guide:'분할된 스마트스토어 상품 파일 2개를 올려주세요.', detail:'분할된 파일 2개 · XLSX', files:2},
   makeshop: {name:'메이크샵 상품 원본', initial:'M', cls:'make', guide:'메이크샵에서 내려받은 상품 파일 1개를 올려주세요.', detail:'파일 1개 · XLSX 또는 XLS', files:1},
-  ably: {name:'에이블리 상품 원본', initial:'A', cls:'ably', guide:'에이블리 GOODS_LIST 파일 1개를 올려주세요.', detail:'파일 1개 · CSV', files:1},
+  ably: {name:'에이블리 전체 원본 (GOODS_LIST)', initial:'A', cls:'ably', guide:'조회·매칭용 GOODS_LIST CSV를 올려주세요. PlayAuto 수정용 파일은 아래 에이블리 파일 세트에서 별도로 등록합니다.', detail:'조회·매칭 원본 1개 · CSV · 수정파일 내보내기에는 사용하지 않음', files:1},
   survey: {name:'재고조사 완료 파일', initial:'#', cls:'sellpia', guide:'담당자가 조사 완료한 재고 파일 1개를 올려주세요.', detail:'파일 1개 · 셀피아 SKU 포함', files:1}
 };
 

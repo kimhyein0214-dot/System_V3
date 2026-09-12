@@ -3362,6 +3362,61 @@
     return data||{};
   }
 
+  async function uploadAuxiliarySellerFile({sourceChannel='ably',sourceRole,file,rowCount=null,matchedCount=null,unresolvedCount=null,metadata={}}={}) {
+    if(sourceChannel!=='ably'||!['playauto_product','playauto_option'].includes(sourceRole))throw new Error('지원하지 않는 판매처 파일 역할입니다.');
+    if(!file||typeof file.arrayBuffer!=='function')throw new Error('업로드할 파일을 선택해주세요.');
+    const baseName=cleanText(file.name)||'playauto.xlsx';
+    const safeName=baseName.replace(/[^0-9A-Za-z가-힣._-]+/g,'_').slice(0,120)||'playauto.xlsx';
+    const id=global.crypto?.randomUUID?.()||String(Date.now());
+    const storagePath=`ably/aux/${sourceRole}/${id}/${safeName}`;
+    const uploaded=await db.storage.from('seller-originals').upload(storagePath,file,{upsert:false,contentType:file.type||'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',cacheControl:'3600'});
+    if(uploaded.error)throw uploaded.error;
+    const {data:registered,error}=await db.rpc('hub_channel_file_register_v1',{
+      p_session_token:requireOperationsHubSessionToken(),p_source_channel:sourceChannel,p_source_role:sourceRole,
+      p_file_name:baseName,p_storage_path:storagePath,p_mime_type:file.type||null,p_file_size:Number(file.size||0),
+      p_row_count:rowCount,p_matched_count:matchedCount,p_unresolved_count:unresolvedCount,p_metadata:metadata||{}
+    });
+    if(error)throw readableDatabaseError(error);
+    return registered||{};
+  }
+
+  async function loadAuxiliarySellerFiles(sourceChannel='ably') {
+    const {data,error}=await db.rpc('hub_channel_file_status_v1',{p_session_token:requireOperationsHubSessionToken(),p_source_channel:sourceChannel});
+    if(error)throw readableDatabaseError(error);
+    return data||{source_channel:sourceChannel,rows:[]};
+  }
+
+  async function downloadAuxiliarySellerFile(storagePath) {
+    const safePath=cleanText(storagePath);if(!safePath)throw new Error('다운로드할 보관 파일 경로가 없습니다.');
+    const {data,error}=await db.storage.from('seller-originals').download(safePath);
+    if(error)throw error;
+    return data;
+  }
+
+  async function loadPlayautoSellpiaCatalog() {
+    const rows=[];const size=1000;
+    for(let from=0;;from+=size){
+      const {data,error}=await db.from('sellpia_stock_latest')
+        .select('sellpia_sku_code,sellpia_product_code,sellpia_product_name,sellpia_option_name,own_sku')
+        .order('sellpia_sku_code',{ascending:true}).range(from,from+size-1);
+      if(error)throw error;
+      rows.push(...(data||[]));
+      if(!data||data.length<size)break;
+      if(rows.length>100000)throw new Error('셀피아 카탈로그 행 수가 안전 한도를 넘었습니다.');
+    }
+    return rows;
+  }
+
+  async function loadSystemStocks(skus=[]) {
+    const codes=[...new Set((skus||[]).map(cleanText).filter(Boolean))],rows=[];
+    for(let offset=0;offset<codes.length;offset+=500){
+      const {data,error}=await db.from(MATRIX_VIEW).select('sellpia_sku_code,system_stock').in('sellpia_sku_code',codes.slice(offset,offset+500));
+      if(error)throw error;
+      rows.push(...(data||[]));
+    }
+    return rows;
+  }
+
   async function loadAblyComponentStocks(skus) {
     requireOperationsHubSessionToken();
     const unique=[...new Set(skus.map(cleanText).filter(Boolean))];
@@ -3386,6 +3441,11 @@
     loadTagCatalog,
     loadTagMembers,
     removeTagMembers,
+    uploadAuxiliarySellerFile,
+    loadAuxiliarySellerFiles,
+    downloadAuxiliarySellerFile,
+    loadPlayautoSellpiaCatalog,
+    loadSystemStocks,
     saveTagRule,
     loadAblyComponentStocks,
     pageSize: PAGE_SIZE,
