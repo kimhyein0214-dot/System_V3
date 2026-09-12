@@ -7657,6 +7657,27 @@ document.getElementById('queue-export').addEventListener('click', () => openSell
 document.getElementById('seller-export-close').addEventListener('click', closeSellerExport);
 document.getElementById('seller-export-cancel').addEventListener('click', closeSellerExport);
 window.SystemV3SellerExportBridge={
+  async refreshInventoryDrafts({source,skus=null,overwriteBlank=false}={}){
+    if(!['smartstore','makeshop'].includes(source))throw Error('재고 수정안 새로 계산은 스마트스토어·메이크샵만 지원합니다.');
+    if(!liveData?.stageSellerInventoryDraftBatch)throw Error('재고 수정안 생성 기능을 불러오지 못했습니다.');
+    const selected=Array.isArray(skus)?[...new Set(skus.filter(Boolean))]:[];
+    const batchId=crypto.randomUUID();
+    let afterSku=null,hasMore=true,processed=0,total=selected.length||0,staged=0,preserved=0,overwritten=0;
+    while(hasMore){
+      const result=await liveData.stageSellerInventoryDraftBatch({
+        sources:[source],skus:selected,batchId,afterSku,batchSize:100,overwriteBlank
+      });
+      processed+=Number(result?.processed_count||0);
+      if(!total)total=Number(result?.total_count||0);
+      staged+=Number(result?.staged_count||0);
+      preserved+=Number(result?.blank_preserved_count||0);
+      overwritten+=Number(result?.blank_overwrite_count||0);
+      afterSku=result?.next_cursor||null;
+      hasMore=Boolean(result?.has_more);
+      if(hasMore&&!afterSku)throw Error('재고 수정안 페이지 커서를 확인하지 못했습니다.');
+    }
+    return {batchId,processed,total,staged,preserved,overwritten,overwriteBlank};
+  },
   async preview({source,skus=null,includeStock=false}={}){
     if(!['smartstore','makeshop'].includes(source))throw Error('직접 내보내기는 스마트스토어·메이크샵만 지원합니다.');
     if(sellerExportState.running)throw Error('다른 내보내기 작업이 진행 중입니다.');

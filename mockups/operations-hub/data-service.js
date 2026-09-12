@@ -2196,49 +2196,18 @@
     return Array.isArray(data) ? data[0] : data;
   }
 
-  async function stageSellerInventoryDraftBatch({sources = [], skus = [], batchId = null, afterSku = null, batchSize = 100} = {}) {
-    const {data, error} = await db.rpc('stage_operations_hub_seller_inventory_match_batch', {
+  async function stageSellerInventoryDraftBatch({sources = [], skus = [], batchId = null, afterSku = null, batchSize = 100, overwriteBlank = false} = {}) {
+    const {data, error} = await db.rpc('stage_operations_hub_seller_inventory_match_batch_v2', {
       p_session_token:requireOperationsHubSessionToken(),
       p_sources:(sources || []).map(cleanText),
       p_skus:(skus || []).map(cleanText),
       p_batch_id:batchId,
-      p_after_sku:cleanText(afterSku) || null,
-      p_batch_size:Math.max(25, Math.min(Number(batchSize) || 100, 250))
+      p_after_sku:afterSku,
+      p_batch_size:Math.max(25, Math.min(Number(batchSize) || 100, 500)),
+      p_overwrite_blank:!!overwriteBlank
     });
     if (error) throw error;
     return Array.isArray(data) ? data[0] : data;
-  }
-
-  async function loadSellerDraftRows({sources = [], statuses = ['pending','validated','failed'], skus = null} = {}) {
-    const selectedSources = (sources || []).map(cleanText).filter(Boolean);
-    if (!selectedSources.length) return [];
-    const selectedSkus = Array.isArray(skus) ? new Set(skus.map(cleanText).filter(Boolean)) : null;
-    if (selectedSkus && !selectedSkus.size) return [];
-    const rows = [];
-    const pageSize = 500;
-    const skuList = selectedSkus ? [...selectedSkus] : null;
-    const batches = skuList ? Array.from({length:Math.ceil(skuList.length / 200)}, (_, index) => skuList.slice(index * 200, index * 200 + 200)) : [null];
-    for (const skuBatch of batches) {
-      let afterId = null;
-      for (;;) {
-        let query = db
-        .from('operations_hub_change_queue')
-        .select('change_id,source_channel,sellpia_sku_code,status,field_key,seller_product_code,seller_option_code,target_channels,target_component_skus,target_safety_state,target_safety_details,error_message,validation_errors')
-        .in('source_channel', selectedSources)
-        .in('status', statuses)
-        .order('change_id', {ascending:true});
-        if (skuBatch) query = query.in('sellpia_sku_code', skuBatch);
-        if (afterId !== null) query = query.gt('change_id', afterId);
-        const {data, error} = await query.limit(pageSize);
-        if (error) throw error;
-        rows.push(...(data || []).filter(row => !selectedSkus || selectedSkus.has(cleanText(row.sellpia_sku_code))));
-        if (!data || data.length < pageSize) break;
-        const nextId = Number(data[data.length - 1].change_id);
-        if (!Number.isSafeInteger(nextId) || nextId <= (afterId ?? -1)) throw new Error('수정안 조회 위치가 진행되지 않았습니다. 다시 시도해주세요.');
-        afterId = nextId;
-      }
-    }
-    return [...new Map(rows.map(row => [Number(row.change_id), row])).values()].sort((a, b) => Number(a.change_id) - Number(b.change_id));
   }
 
   async function countSellerDraftsForExport(sources = [], skus = null) {

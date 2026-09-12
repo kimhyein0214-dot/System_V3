@@ -54,3 +54,10 @@
 .direct-export-preview{padding:7px 8px;border-radius:8px;background:#f3f6fa;color:#52647a;font-size:10px;line-height:1.45}
 .direct-export-preview.success{background:#edf9f1;color:#17733a}
 .direct-export-preview.error{background:#fff1f1;color:#a12727}
+
+
+/* blank stock policy */
+.direct-blank-toggle{align-items:flex-start!important;background:#fafcff!important}
+.direct-blank-toggle span{display:grid;gap:2px}
+.direct-blank-toggle small{font-size:9px;font-weight:500;color:#7a899a;line-height:1.35}
+.direct-blank-toggle input:disabled+span{opacity:.45}
