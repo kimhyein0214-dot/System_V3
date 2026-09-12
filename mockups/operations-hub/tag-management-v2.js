@@ -5,6 +5,15 @@
  const esc=v=>String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
  const n=v=>Number(v||0).toLocaleString('ko-KR');
  const safeName=v=>String(v||'태그').replace(/[\\/:*?"<>|]+/g,'_').trim().slice(0,80)||'태그';
+ const sellerNames={smartstore:'스마트스토어',makeshop:'메이크샵',ably:'에이블리'};
+ function ruleDisplay(rule){
+  const M=global.HubRuleRegistry||{},labels=M.fields||{};
+  const sourceLabel=labels[rule.source_field]||rule.source_field||'시작값';
+  const targetLabel=labels[rule.target_field]||rule.target_field||'저장값';
+  const sourceSeller=M.isPlatform?.(rule.source_field)?(sellerNames[rule.source_scope||rule.scope]||'저장 판매처와 동일'):'';
+  const destination=M.isPlatform?.(rule.target_field)?(sellerNames[rule.scope]||'전체 판매처'):'공통';
+  return {source:`${sourceSeller?sourceSeller+' · ':''}${sourceLabel}`,target:targetLabel,destination};
+ }
  function host(){return document.getElementById('attributes');}
  function pageCount(){return Math.max(1,Math.ceil(state.count/state.pageSize));}
  function setStatus(text,kind=''){const el=document.getElementById('tag-manager-status');if(!el)return;el.className=`tag-manager-status ${kind}`.trim();el.textContent=text;}
@@ -129,7 +138,7 @@
   document.getElementById('tag-stat-count').textContent=tag?n(tag.option_count):'-';
   document.getElementById('tag-stat-rules').textContent=tag?n(state.rules.length||tag.rule_count):'-';
   const ruleList=document.getElementById('tag-rule-list');
-  if(ruleList)ruleList.innerHTML=tag?(state.rules.length?state.rules.map(rule=>`<i>${esc(rule.name)} · ${esc(rule.target_field)}${rule.scope?' · '+esc(rule.scope):''}</i>`).join(''):'<i>연결된 공통 Rule 없음</i>'):'<i>태그를 선택하면 표시됩니다.</i>';
+  if(ruleList)ruleList.innerHTML=tag?(state.rules.length?state.rules.map(rule=>{const view=ruleDisplay(rule);return `<i class="tag-rule-item"><b class="tag-rule-destination">${esc(view.destination)} 저장</b><span>${esc(rule.name)} · ${esc(view.source)} → ${esc(view.target)}</span></i>`;}).join(''):'<i>연결된 공통 Rule 없음</i>'):'<i>태그를 선택하면 표시됩니다.</i>';
   for(const id of ['tag-download-current','tag-download-blank','tag-upload-sync','tag-edit-rule','tag-clear-all'])document.getElementById(id).disabled=!tag;
   document.getElementById('tag-remove-selected').disabled=!tag||!state.selected.size;
  }

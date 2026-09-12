@@ -1,6 +1,6 @@
 (function(g){
  'use strict';
- const fields={purchase_price:'셀피아 매입가',source_base_price:'셀피아 원본 기준가격',actual_inbound_cost:'실입고가',basis_sku_price:'기준 SKU 가격',calculated_base_price:'SKU 계산 기준가격',system_stock:'시스템 현재재고',calculated_stock:'계산 재고',platform_registration_price:'플랫폼 등록가',platform_option_price:'플랫폼 옵션가',platform_discount_price:'플랫폼 할인 적용가',platform_final_price:'플랫폼 최종가',platform_price:'플랫폼 가격',platform_option_input:'플랫폼 옵션 계산 입력값',platform_final_input:'플랫폼 최종 계산 입력값'};
+ const fields={purchase_price:'셀피아 매입가',source_base_price:'셀피아 원본 판매가',actual_inbound_cost:'실입고가',basis_sku_price:'이전 계산 결과',calculated_base_price:'시스템 기준가격',system_stock:'시스템 현재재고',calculated_stock:'계산 재고',platform_registration_price:'판매처 등록가',platform_option_price:'판매처 옵션가',platform_discount_price:'할인 적용 후 등록가',platform_final_price:'판매처 최종가',platform_price:'판매처 가격 · 구형 호환',platform_option_input:'옵션가 계산 입력값 · 고급',platform_final_input:'최종가 계산 입력값 · 고급'};
  const platformTargets=['platform_registration_price','platform_option_price','platform_discount_price','platform_final_price','platform_price'];
  const platformFields=[...platformTargets,'platform_option_input','platform_final_input'];
  const targets=['actual_inbound_cost','basis_sku_price','calculated_base_price','calculated_stock',...platformTargets];

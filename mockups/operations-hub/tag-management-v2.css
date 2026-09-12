@@ -58,3 +58,9 @@
 .tag-kind.plain{background:#f3f5f7;color:#748094;border:1px solid #e0e5eb}
 .tag-selected-card h3{display:flex;align-items:center;gap:7px;flex-wrap:wrap}
 .tag-selected-card h3 .tag-kind{font-size:10px!important}
+
+
+/* rule destination clarity */
+.tag-rule-item{display:grid!important;grid-template-columns:max-content minmax(0,1fr);align-items:start;gap:6px;padding:7px!important}
+.tag-rule-destination{display:inline-flex;align-items:center;padding:2px 6px;border-radius:999px;background:#eaf2ff;color:#315eaf;font-size:9px;white-space:nowrap}
+.tag-rule-item>span{min-width:0;color:#35516f;line-height:1.4}
