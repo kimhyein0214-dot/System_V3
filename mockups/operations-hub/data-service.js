@@ -3327,6 +3327,41 @@
     return data||{};
   }
 
+  async function loadTagCatalog({search=''} = {}) {
+    const {data,error}=await db.rpc('hub_tag_catalog_v1',{
+      p_session_token:requireOperationsHubSessionToken(),
+      p_search:cleanText(search)
+    });
+    if(error)throw readableDatabaseError(error);
+    return data||{rows:[]};
+  }
+
+  async function loadTagMembers({tagId,search='',page=1,pageSize=100} = {}) {
+    if(!tagId)throw new Error('조회할 태그를 선택해주세요.');
+    const {data,error}=await db.rpc('hub_tag_members_v1',{
+      p_session_token:requireOperationsHubSessionToken(),
+      p_tag_id:tagId,
+      p_search:cleanText(search),
+      p_page:Math.max(1,Number(page)||1),
+      p_page_size:Math.max(1,Math.min(Number(pageSize)||100,1000))
+    });
+    if(error)throw readableDatabaseError(error);
+    return data||{rows:[],count:0,page:1,page_size:pageSize};
+  }
+
+  async function removeTagMembers({tagId,skus=[]} = {}) {
+    const codes=[...new Set((skus||[]).map(cleanText).filter(Boolean))];
+    if(!tagId)throw new Error('해제할 태그를 선택해주세요.');
+    if(!codes.length)throw new Error('해제할 SKU가 없습니다.');
+    const {data,error}=await db.rpc('hub_tag_members_remove_v1',{
+      p_session_token:requireOperationsHubSessionToken(),
+      p_tag_id:tagId,
+      p_skus:codes
+    });
+    if(error)throw readableDatabaseError(error);
+    return data||{};
+  }
+
   async function loadAblyComponentStocks(skus) {
     requireOperationsHubSessionToken();
     const unique=[...new Set(skus.map(cleanText).filter(Boolean))];
@@ -3348,6 +3383,9 @@
     applyTagToSkus,
     bulkImportTags,
     syncTagAssignments,
+    loadTagCatalog,
+    loadTagMembers,
+    removeTagMembers,
     saveTagRule,
     loadAblyComponentStocks,
     pageSize: PAGE_SIZE,
