@@ -3313,6 +3313,20 @@
     throw new Error('셀피아 업로드는 완료됐지만 매트릭스 재구성이 아직 대기 중입니다. 잠시 후 DB 새로고침을 눌러주세요.');
   }
 
+  async function syncTagAssignments({tagId, skus = [], preview = true} = {}) {
+    const codes=[...new Set((skus||[]).map(cleanText).filter(Boolean))];
+    if(!tagId)throw new Error('동기화할 태그를 확인해주세요.');
+    if(codes.length>50000)throw new Error('태그 동기화는 한 번에 최대 50,000 SKU까지 가능합니다.');
+    const {data,error}=await db.rpc('hub_tag_bulk_sync_v1',{
+      p_session_token:requireOperationsHubSessionToken(),
+      p_tag_id:tagId,
+      p_skus:codes,
+      p_preview:preview!==false
+    });
+    if(error)throw readableDatabaseError(error);
+    return data||{};
+  }
+
   async function loadAblyComponentStocks(skus) {
     requireOperationsHubSessionToken();
     const unique=[...new Set(skus.map(cleanText).filter(Boolean))];
@@ -3333,6 +3347,7 @@
     loadAllSellerUnmatchedSkus,
     applyTagToSkus,
     bulkImportTags,
+    syncTagAssignments,
     saveTagRule,
     loadAblyComponentStocks,
     pageSize: PAGE_SIZE,

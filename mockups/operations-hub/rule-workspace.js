@@ -13,6 +13,7 @@
  const legacyBackdrop=document.createElement('div');legacyBackdrop.id='rw-legacy-backdrop';legacyBackdrop.className='rw-legacy-backdrop';legacyBackdrop.hidden=true;
  legacyBackdrop.innerHTML=`<section class="rw-legacy-dialog" role="dialog" aria-modal="true" aria-labelledby="rw-legacy-title"><header class="rw-legacy-header"><div><h2 id="rw-legacy-title">기존 저장 규칙 관리</h2><p>기존 계산 태그·할인 태그·가격 조합·실입고가 수식을 원래 편집 화면에서 관리합니다.</p></div><button class="btn" id="rw-legacy-close" type="button">닫기</button></header><p id="rw-legacy-status" class="rw-legacy-status" role="status"></p><div class="rw-legacy-body"></div></section>`;
  legacyBackdrop.querySelector('.rw-legacy-body').append(legacy);host.append(legacyBackdrop);
+ document.body.appendChild($('backdrop'));
  let legacyLoaded=false,legacyLoading=false;
  function closeLegacy(){legacyBackdrop.hidden=true;legacy.hidden=true;$('legacy-open').focus();}
  async function openLegacy(){
@@ -235,7 +236,7 @@
   $('tag-import-apply').disabled=!data.rows.length||!data.server||totalErrors>0||Number(server.valid_count||0)<1;
  }
  async function previewTagImport(sourceRows,{fileName=''}={}){
-  const parsed=parseTagImportRows(sourceRows,{fileName});if(!parsed.rows.length)throw Error('등록할 SKU 행이 없습니다.');if(parsed.rows.length>50000)throw Error('한 번에 최대 50,000행까지 등록할 수 있습니다.');
+  const parsed=parseTagImportRows(sourceRows,{fileName});if(!parsed.rows.length&&parsed.mode!=='filename_tag')throw Error('등록할 SKU 행이 없습니다.');if(parsed.rows.length>50000)throw Error('한 번에 최대 50,000행까지 등록할 수 있습니다.');
   let selectedTagId=null;
   if(parsed.mode==='filename_tag'){
    const tag=importTagByName(parsed.filenameTagName);if(!tag)throw Error(`파일명에서 감지한 태그 '${parsed.filenameTagName}'를 활성 태그 이름에서 하나로 찾지 못했습니다.`);
@@ -244,7 +245,7 @@
   state.tagImport={...parsed,server:null,localErrors:new Map()};renderTagImport();
   if(parsed.mode==='single_tag'&&!selectedTagId){$('drawer-status').textContent='A열만 사용한 파일입니다. 위에서 전체 행에 적용할 태그를 선택하세요.';return;}
   $('drawer-status').textContent=`전체 ${parsed.rows.length.toLocaleString('ko-KR')}행 검사 중…`;
-  state.tagImport.server=await D.bulkImportTags({rows:parsed.rows,tagId:selectedTagId,preview:true});state.tagImport.localErrors=analyzeTagImport(parsed.rows,selectedTagId);renderTagImport();
+  state.tagImport.server=parsed.rows.length?await D.bulkImportTags({rows:parsed.rows,tagId:selectedTagId,preview:true}):{row_count:0,valid_count:0,error_count:0,duplicate_count:0,sku_count:0,tag_count:1,preview_rows:[]};state.tagImport.localErrors=analyzeTagImport(parsed.rows,selectedTagId);renderTagImport();
   $('drawer-status').textContent=Number(state.tagImport.server.error_count||0)+state.tagImport.localErrors.size?'오류 행을 수정한 파일로 다시 검사하세요.':'검사 완료. 아래 버튼은 미리보기 200행이 아니라 파일 전체에 적용합니다.';
  } async function openTagImport(){
   state.tagImport=null;drawer('엑셀 태그 일괄등록',`<div class="rw-import-guide"><b>세 형식을 지원합니다.</b><span><strong>파일명 자동</strong> &lt;태그명&gt;_일괄적용.xlsx → A열만 SKU로 읽고 B열 이후는 메모용으로 무시</span><span><strong>형식 1</strong> A열에 셀피아 SKU만 입력 → 화면에서 공통 태그 선택</span><span><strong>형식 2</strong> A열 셀피아 SKU + B열 태그명 → 행마다 지정한 태그 적용</span><small>파일명 자동 모드는 활성 태그 이름과 대소문자 무시 정확 일치합니다. 첫 행의 ‘셀피아 SKU / 태그명’ 헤더는 선택 사항이며 오류가 있으면 전체 저장을 취소합니다.</small></div><div class="rw-config rw-import-controls"><label>엑셀 파일<input id="rw-tag-import-file" type="file" accept=".xlsx,.xls,.csv" aria-label="태그 일괄등록 엑셀 업로드"></label><label id="rw-tag-import-tag-wrap">A열 전체에 적용할 공통 태그<select id="rw-tag-import-tag"><option value="">태그 선택</option>${option(Object.fromEntries(state.tags.map(tag=>[tag.tag_id,tag.tag_name])),'')}</select></label><div><b>판별된 형식</b><p id="rw-tag-import-mode" class="rw-import-mode">파일을 선택하면 형식을 자동 판별합니다.</p></div></div><details class="rw-import-paste"><summary>엑셀 두 열을 복사해서 붙여넣기</summary><textarea id="rw-tag-import-paste" placeholder="셀피아 SKU&#9;태그명"></textarea><button class="btn" id="rw-tag-import-parse" type="button">붙여넣은 내용 검사</button></details><div id="rw-tag-import-summary" class="rw-rule-summary">아직 읽은 행이 없습니다.</div><div class="rw-scroll"><table><thead><tr><th>행</th><th>셀피아 SKU</th><th>적용 태그</th><th>검사 결과</th></tr></thead><tbody id="rw-tag-import-rows"></tbody></table></div><div class="rw-bar"><span class="rw-muted">표시는 최대 200행 · 저장은 검사한 파일 전체</span><button class="btn primary" id="rw-tag-import-apply" disabled>검사된 전체 행에 태그 적용</button></div>`);
@@ -324,5 +325,5 @@
  async function loadOriginals(){const files=await D.loadLatestSellerOriginalStatus();const source=$('platform-source').value;const entry=files.find(r=>r.source===source);$('export-file').innerHTML='<option value="">최신 보관 원본 전체</option>'+option(Object.fromEntries((entry?.files||[]).map(f=>[f.name,f.name])), '');}
  async function loadHistory(){const docs=(await D.workDocument('list','formula')).filter(d=>d.title.startsWith('registry-export:')).slice(0,20);const history=await Promise.all(docs.map(d=>D.workDocument('get','formula',{id:d.id})));if(!$('history'))return;$('history').innerHTML=history.map(d=>`<tr><td>${esc(d.body.created_at)}</td><td>${esc(sources[d.body.source])}</td><td>${d.body.sku_count}</td><td>${esc((d.body.rule_versions||[]).map(r=>name(r.id)+' v'+r.version).join(', '))}</td></tr>`).join('');}
  $('new').onclick=()=>{readTagContext();state.selected=null;state.tab='rules';renderTab();};$('refresh').onclick=()=>run(refresh);$('close').onclick=()=>{$('backdrop').hidden=true;};$('backdrop').onclick=e=>{if(e.target===$('backdrop'))$('backdrop').hidden=true;};document.addEventListener('keydown',e=>{if(e.key==='Escape')$('backdrop').hidden=true;});document.querySelectorAll('.rw-tabs button').forEach(b=>b.onclick=()=>{if(b.dataset.tab==='bulk'){void run(openTagImport);return;}state.tab=b.dataset.tab;renderTab();});
- g.HubPriceWorkspace={refresh:()=>run(refresh),openForTag,state,parseTagImportRows,tagNameFromFilename};g.TagPriceWorkspace=g.HubPriceWorkspace;renderTab();
+ g.HubPriceWorkspace={refresh:()=>run(refresh),openForTag,state,parseTagImportRows,tagNameFromFilename,openTagImport:()=>run(openTagImport)};g.TagPriceWorkspace=g.HubPriceWorkspace;renderTab();
 })(window);
