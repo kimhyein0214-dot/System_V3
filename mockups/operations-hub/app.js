@@ -6684,6 +6684,7 @@ const sellerExportState = {
   filteredSkus:null,
   filteredSkusPromise:null,
   includeStockDrafts:false,
+  directMatrixStock:false,
   previewRequestId:0
 };
 
@@ -7630,7 +7631,7 @@ async function runSellerExport() {
       : {items:[]};
     prepared = Boolean(changeIds.length);
     stopCancelledSellerExport();
-    const refreshed = await globalThis.HubCurrentPriceExport.refreshItems(preparedExport.items,filesBySource,{sources,skus:scopeSkusForRules,includeRules:!sellerExportState.rows.length,onProgress:detail=>{showSellerExportProgress(19,'매트릭스 저장 가격 조회 중',detail);stopCancelledSellerExport();}});
+    const refreshed = await globalThis.HubCurrentPriceExport.refreshItems(preparedExport.items,filesBySource,{sources,skus:scopeSkusForRules,includeRules:!sellerExportState.rows.length,includeMatrixStock:Boolean(sellerExportState.directMatrixStock),onProgress:detail=>{showSellerExportProgress(19,'매트릭스 값 조회 중',detail);stopCancelledSellerExport();}});
     stopCancelledSellerExport();
     const items=refreshed.items;
     const blocked = items.filter(item => item.blocking_reason);
@@ -7752,7 +7753,8 @@ window.SystemV3SellerExportBridge={
     sellerExportState.selectedSkus=Array.isArray(skus)?[...new Set(skus.filter(Boolean))]:[];
     sellerExportState.filter=snapshotMatrixExportFilter();
     sellerExportState.filteredSkus=null;sellerExportState.filteredSkusPromise=null;
-    sellerExportState.includeStockDrafts=Boolean(includeStock);
+    sellerExportState.includeStockDrafts=false;
+    sellerExportState.directMatrixStock=true;
     sellerExportModal.querySelectorAll('.seller-export-source-check').forEach(input=>{input.checked=input.value===source;input.disabled=false;});
     const scope=sellerExportState.selectedSkus.length?'selected':'all';
     sellerExportModal.querySelectorAll('input[name="seller-export-scope"]').forEach(input=>{input.checked=input.value===scope;});
@@ -7782,6 +7784,7 @@ window.SystemV3SellerExportBridge={
       };
     }finally{
       sellerExportState.directSource='';
+      sellerExportState.directMatrixStock=false;
     }
   }
 };

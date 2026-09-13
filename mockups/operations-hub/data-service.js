@@ -2301,6 +2301,21 @@
     return total;
   }
 
+  async function loadSellerDraftRows({sources = [], skus = null} = {}) {
+    const ss=[...new Set((sources||[]).map(cleanText).filter(Boolean))];
+    const ks=Array.isArray(skus)?[...new Set(skus.map(cleanText).filter(Boolean))]:null;
+    if(!ss.length||(ks&&!ks.length))return [];
+    const fields='change_id,source_channel,sellpia_sku_code,status,field_key,seller_product_code,seller_option_code,target_channels,target_component_skus,target_safety_state,target_safety_details,error_message,validation_errors';
+    const rows=[], batches=ks?Array.from({length:Math.ceil(ks.length/200)},(_,i)=>ks.slice(i*200,i*200+200)):[null];
+    for(const batch of batches)for(let from=0;;from+=1000){
+      let q=db.from('operations_hub_change_queue').select(fields).in('status',['pending','validated','failed']).in('source_channel',ss).order('change_id',{ascending:true}).range(from,from+999);
+      if(batch)q=q.in('sellpia_sku_code',batch);
+      const {data,error}=await q;if(error)throw readableDatabaseError(error);
+      rows.push(...(data||[]));if(!data||data.length<1000)break;
+    }
+    return rows;
+  }
+
   async function validateSellerDraftsForExport(sources = [], skus = null) {
     return (await reviewSellerDraftsForExport({sources, skus})).changeIds;
   }
@@ -3459,6 +3474,25 @@
     return rows;
   }
 
+  async function loadMatrixStocksForExport({source,skus=null}={}) {
+    const s=cleanText(source);if(!['smartstore','makeshop'].includes(s))throw Error('지원하지 않는 판매처입니다.');
+    const ks=Array.isArray(skus)?[...new Set(skus.map(cleanText).filter(Boolean))]:null;
+    const fields=['sellpia_sku_code','system_stock',s+'_stock',s+'_product_code',s+'_option_code'].join(',');
+    const rows=[];
+    if(ks){
+      for(let i=0;i<ks.length;i+=500){const {data,error}=await db.from(MATRIX_VIEW).select(fields).in('sellpia_sku_code',ks.slice(i,i+500));if(error)throw readableDatabaseError(error);rows.push(...(data||[]));}
+    }else{
+      for(let from=0;;from+=1000){const {data,error}=await db.from(MATRIX_VIEW).select(fields).order('sellpia_sku_code',{ascending:true}).range(from,from+999);if(error)throw readableDatabaseError(error);rows.push(...(data||[]));if(!data||data.length<1000)break;}
+    }
+    return rows.filter(r=>cleanText(r?.[s+'_product_code']));
+  }
+
+  async function summarizeMatrixStocksForExport({source,skus=null}={}) {
+    const rows=await loadMatrixStocksForExport({source,skus});let same=0,needs=0,missing=0;
+    for(const r of rows){const a=Number(r.system_stock),raw=r[source+'_stock'],b=raw==null||raw===''?null:Number(raw);if(!Number.isFinite(a))missing++;else if(b!==null&&Number.isFinite(b)&&a===b)same++;else needs++;}
+    return {total:rows.length,same,needs,missing};
+  }
+
   async function loadAblyComponentStocks(skus) {
     requireOperationsHubSessionToken();
     const unique=[...new Set(skus.map(cleanText).filter(Boolean))];
@@ -3488,6 +3522,8 @@
     downloadAuxiliarySellerFile,
     loadPlayautoSellpiaCatalog,
     loadSystemStocks,
+    loadMatrixStocksForExport,
+    summarizeMatrixStocksForExport,
     saveTagRule,
     loadAblyComponentStocks,
     pageSize: PAGE_SIZE,

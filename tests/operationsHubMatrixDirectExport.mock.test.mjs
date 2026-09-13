@@ -1,0 +1,3 @@
+import assert from 'node:assert/strict';import fs from 'node:fs';import test from 'node:test';
+const d=fs.readFileSync('mockups/operations-hub/data-service.js','utf8'),a=fs.readFileSync('mockups/operations-hub/app.js','utf8'),f=fs.readFileSync('mockups/operations-hub/seller-file-workflow-v2.js','utf8'),c=fs.readFileSync('mockups/operations-hub/current-price-export.js','utf8');
+test('matrix direct export',()=>{assert.ok(d.includes('loadSellerDraftRows'));assert.ok(d.includes('loadMatrixStocksForExport'));assert.ok(a.includes('directMatrixStock'));assert.ok(c.includes('includeMatrixStock'));assert.ok(f.includes('재고 수정안은 새로 만들지 않음'));assert.ok(!f.includes('data-standard-stock="smartstore"'));});
