@@ -2196,18 +2196,91 @@
     return Array.isArray(data) ? data[0] : data;
   }
 
-  async function stageSellerInventoryDraftBatch({sources = [], skus = [], batchId = null, afterSku = null, batchSize = 100, overwriteBlank = false} = {}) {
-    const {data, error} = await db.rpc('stage_operations_hub_seller_inventory_match_batch_v2', {
-      p_session_token:requireOperationsHubSessionToken(),
-      p_sources:(sources || []).map(cleanText),
-      p_skus:(skus || []).map(cleanText),
-      p_batch_id:batchId,
-      p_after_sku:afterSku,
-      p_batch_size:Math.max(25, Math.min(Number(batchSize) || 100, 500)),
-      p_overwrite_blank:!!overwriteBlank
+  function isTransientDbError(error) {
+    const code=String(error?.code||'').toUpperCase();
+    const message=String(error?.message||error||'').toLowerCase();
+    if(['57014','55P03','40001','40P01','PGRST003'].includes(code))return true;
+    return /timeout|timed out|fetch failed|network|connection reset|connection closed|failed to fetch|temporarily unavailable|gateway|502|503|504/.test(message);
+  }
+
+  async function withTransientDbRetry(task,{attempts=4,onRetry=null}={}) {
+    const delays=[1200,3500,8000];
+    let lastError=null;
+    for(let attempt=1;attempt<=Math.max(1,attempts);attempt+=1){
+      try{return await task(attempt);}
+      catch(error){
+        lastError=error;
+        if(attempt>=attempts||!isTransientDbError(error))throw error;
+        const delay=delays[Math.min(attempt-1,delays.length-1)];
+        onRetry?.({attempt,nextAttempt:attempt+1,delay,error});
+        await new Promise(resolve=>setTimeout(resolve,delay));
+      }
+    }
+    throw lastError;
+  }
+
+  async function stageSellerInventoryDraftBatch({sources = [], skus = [], batchId = null, afterSku = null, batchSize = 100, overwriteBlank = false, onRetry = null} = {}) {
+    return withTransientDbRetry(async()=>{
+      const {data, error} = await db.rpc('stage_operations_hub_seller_inventory_match_batch_v2', {
+        p_session_token:requireOperationsHubSessionToken(),
+        p_sources:(sources || []).map(cleanText),
+        p_skus:(skus || []).map(cleanText),
+        p_batch_id:batchId,
+        p_after_sku:afterSku,
+        p_batch_size:Math.max(25, Math.min(Number(batchSize) || 100, 500)),
+        p_overwrite_blank:!!overwriteBlank
+      });
+      if (error) throw error;
+      return Array.isArray(data) ? data[0] : data;
+    },{attempts:4,onRetry});
+  }
+
+  async function beginReliableExportJob({source,skus=[],includeStock=false,overwriteBlank=false}={}) {
+    return withTransientDbRetry(async()=>{
+      const {data,error}=await db.rpc('hub_export_job_begin_v1',{
+        p_session_token:requireOperationsHubSessionToken(),
+        p_source_channel:cleanText(source),
+        p_skus:[...new Set((skus||[]).map(cleanText).filter(Boolean))],
+        p_include_stock:!!includeStock,
+        p_overwrite_blank:!!overwriteBlank
+      });
+      if(error)throw readableDatabaseError(error);
+      return data||{};
     });
-    if (error) throw error;
-    return Array.isArray(data) ? data[0] : data;
+  }
+
+  async function checkpointReliableExportJob({jobId,status,phase,processedCount=null,totalCount=null,stagedCount=null,blankPreservedCount=null,blankOverwriteCount=null,afterCursor=null,changeBatchId=null,lastError=null}={}) {
+    if(!jobId)throw new Error('저장할 내보내기 작업 ID가 없습니다.');
+    return withTransientDbRetry(async()=>{
+      const {data,error}=await db.rpc('hub_export_job_checkpoint_v1',{
+        p_session_token:requireOperationsHubSessionToken(),
+        p_job_id:jobId,
+        p_status:cleanText(status),
+        p_phase:cleanText(phase),
+        p_processed_count:processedCount,
+        p_total_count:totalCount,
+        p_staged_count:stagedCount,
+        p_blank_preserved_count:blankPreservedCount,
+        p_blank_overwrite_count:blankOverwriteCount,
+        p_after_cursor:afterCursor,
+        p_change_batch_id:changeBatchId,
+        p_last_error:lastError==null?null:String(lastError).slice(0,1800)
+      });
+      if(error)throw readableDatabaseError(error);
+      return data||{};
+    });
+  }
+
+  async function getReliableExportJob({jobId=null,source=null}={}) {
+    return withTransientDbRetry(async()=>{
+      const {data,error}=await db.rpc('hub_export_job_get_v1',{
+        p_session_token:requireOperationsHubSessionToken(),
+        p_job_id:jobId||null,
+        p_source_channel:source?cleanText(source):null
+      });
+      if(error)throw readableDatabaseError(error);
+      return data||null;
+    });
   }
 
   async function countSellerDraftsForExport(sources = [], skus = null) {
@@ -3529,6 +3602,9 @@
     stageAssignedPriceDraftsBulk,
     stageSellerInventoryDrafts,
     stageSellerInventoryDraftBatch,
+    beginReliableExportJob,
+    checkpointReliableExportJob,
+    getReliableExportJob,
     countSellerDraftsForExport,
     validateSellerDraftsForExport,
     reviewSellerDraftsForExport,

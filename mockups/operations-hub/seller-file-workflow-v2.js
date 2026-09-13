@@ -149,29 +149,133 @@
   if(detailNode)detailNode.textContent=detail||'';
  }
 
+ async function prepareReliableInventory(source,skus,overwriteBlank,onProgress){
+  if(!D()?.beginReliableExportJob||!D()?.checkpointReliableExportJob)throw Error('Reliability V1 모듈을 불러오지 못했습니다. 새로고침해주세요.');
+  let job=await D().beginReliableExportJob({source,skus:skus||[],includeStock:true,overwriteBlank});
+  const alreadyReady=['inventory_ready','file_generation','complete'].includes(job.phase)||['inventory_ready','ready'].includes(job.status);
+  if(alreadyReady){
+   onProgress?.({percent:100,title:'저장된 재고 계산 재사용',detail:`작업 ${String(job.job_id).slice(0,8)} · 이전 계산 체크포인트를 그대로 사용합니다.`});
+   return {job,stockStage:{batchId:job.change_batch_id,processed:Number(job.processed_count||0),total:Number(job.total_count||0),staged:Number(job.staged_count||0),preserved:Number(job.blank_preserved_count||0),overwritten:Number(job.blank_overwrite_count||0),resumed:true}};
+  }
+  job=await D().checkpointReliableExportJob({
+   jobId:job.job_id,status:'running',phase:'inventory_staging',
+   processedCount:Number(job.processed_count||0),totalCount:Number(job.total_count||0),
+   stagedCount:Number(job.staged_count||0),blankPreservedCount:Number(job.blank_preserved_count||0),
+   blankOverwriteCount:Number(job.blank_overwrite_count||0),afterCursor:job.after_cursor||null,
+   changeBatchId:job.change_batch_id||null,lastError:null
+  });
+  try{
+   const stockStage=await global.SystemV3SellerExportBridge.refreshInventoryDrafts({
+    source,skus,overwriteBlank,job,
+    onProgress,
+    onCheckpoint:async checkpoint=>{
+      job=await D().checkpointReliableExportJob({
+       jobId:job.job_id,status:'running',phase:'inventory_staging',
+       processedCount:checkpoint.processed,totalCount:checkpoint.total,stagedCount:checkpoint.staged,
+       blankPreservedCount:checkpoint.preserved,blankOverwriteCount:checkpoint.overwritten,
+       afterCursor:checkpoint.afterSku,changeBatchId:checkpoint.batchId,lastError:null
+      });
+    }
+   });
+   job=await D().checkpointReliableExportJob({
+    jobId:job.job_id,status:'inventory_ready',phase:'inventory_ready',
+    processedCount:stockStage.processed,totalCount:stockStage.total,stagedCount:stockStage.staged,
+    blankPreservedCount:stockStage.preserved,blankOverwriteCount:stockStage.overwritten,
+    afterCursor:stockStage.afterSku,changeBatchId:stockStage.batchId,lastError:null
+   });
+   return {job,stockStage};
+  }catch(error){
+   try{
+    await D().checkpointReliableExportJob({
+     jobId:job.job_id,status:'failed',phase:'inventory_staging',
+     processedCount:Number(job.processed_count||0),totalCount:Number(job.total_count||0),
+     stagedCount:Number(job.staged_count||0),blankPreservedCount:Number(job.blank_preserved_count||0),
+     blankOverwriteCount:Number(job.blank_overwrite_count||0),afterCursor:job.after_cursor||null,
+     changeBatchId:job.change_batch_id||null,lastError:error?.message||String(error)
+    });
+   }catch(checkpointError){console.warn('reliability checkpoint failed',checkpointError);}
+   throw error;
+  }
+ }
+
  async function previewStandard(source){
   const bridge=global.SystemV3SellerExportBridge;if(!bridge){setStatus('직접 내보내기 연결 모듈을 불러오지 못했습니다. 새로고침해주세요.','error');return;}
   const button=document.querySelector(`[data-standard-preview="${source}"]`),includeStock=Boolean(document.querySelector(`[data-standard-stock="${source}"]`)?.checked),overwriteBlank=includeStock&&Boolean(document.querySelector(`[data-standard-overwrite-blank="${source}"]`)?.checked);
-  if(button)button.disabled=true;standardResult(source,'저장된 가격·원본 위치를 검증하는 중…');
+  if(button)button.disabled=true;global.__systemV3DirectExportBusy=true;standardResult(source,'저장된 가격·원본 위치를 검증하는 중…');
   try{
-   const skus=await directScopeSkus();let stockStage=null;if(includeStock)stockStage=await bridge.refreshInventoryDrafts({source,skus,overwriteBlank});const result=await bridge.preview({source,skus,includeStock});if(stockStage)result.detail=[result.detail,overwriteBlank?`빈셀 덮어쓰기 ${n(stockStage.overwritten)}건`:`빈셀 보존 ${n(stockStage.preserved)}건`].filter(Boolean).join(' · ');
+   const skus=await directScopeSkus();let stockStage=null;
+   if(includeStock){
+    const reliable=await prepareReliableInventory(source,skus,overwriteBlank,p=>{
+      const mapped=3+Math.round((Number(p.percent||0)/100)*70);
+      standardProgress(source,mapped,p.title,p.detail,'running');
+    });
+    stockStage=reliable.stockStage;
+   }
+   standardProgress(source,78,'내보내기 대상 검증','저장된 체크포인트와 최신 원본 위치를 확인합니다.','running');
+   const result=await bridge.preview({source,skus,includeStock});
+   if(stockStage)result.detail=[result.detail,overwriteBlank?`빈셀 덮어쓰기 ${n(stockStage.overwritten)}건`:`빈셀 보존 ${n(stockStage.preserved)}건`,'작업 저장됨'].filter(Boolean).join(' · ');
+   standardProgress(source,100,'미리보기 완료','작업 상태가 DB에 저장되었습니다. 파일 생성 시 같은 체크포인트를 재사용합니다.','done');
    standardResult(source,[result.count,result.detail].filter(Boolean).join(' · ')||'미리보기 완료','success');
    setStatus(`${source==='smartstore'?'스마트스토어':'메이크샵'} 미리보기 완료`,'success');
-  }catch(error){standardResult(source,error?.message||String(error),'error');setStatus(`미리보기 실패: ${error?.message||error}`,'error');}
-  finally{if(button)button.disabled=false;}
+  }catch(error){standardProgress(source,100,'미리보기 실패',`${error?.message||error} · 다시 실행하면 저장된 체크포인트부터 이어갑니다.`,'error');standardResult(source,error?.message||String(error),'error');setStatus(`미리보기 실패: ${error?.message||error}`,'error');}
+  finally{global.__systemV3DirectExportBusy=false;if(button)button.disabled=false;}
  }
 
  async function runStandard(source){
   const bridge=global.SystemV3SellerExportBridge;if(!bridge){setStatus('직접 내보내기 연결 모듈을 불러오지 못했습니다. 새로고침해주세요.','error');return;}
+  if(!D()?.beginReliableExportJob||!D()?.checkpointReliableExportJob){setStatus('Reliability V1 모듈을 불러오지 못했습니다. 새로고침해주세요.','error');return;}
   const button=document.querySelector(`[data-standard-run="${source}"]`),includeStock=Boolean(document.querySelector(`[data-standard-stock="${source}"]`)?.checked),overwriteBlank=includeStock&&Boolean(document.querySelector(`[data-standard-overwrite-blank="${source}"]`)?.checked);
-  if(button)button.disabled=true;standardProgress(source,2,'파일 생성 준비','대상 범위와 최신 원본을 확인하고 있습니다.');standardResult(source,'원본 검증 후 파일을 생성하는 중…');setStatus('판매처 파일 생성 중…');
+  if(button)button.disabled=true;global.__systemV3DirectExportBusy=true;standardProgress(source,2,'파일 생성 준비','작업 ID를 만들고 이전 체크포인트가 있는지 확인합니다.');standardResult(source,'안전한 작업 단위로 파일 생성을 준비하는 중…');setStatus('판매처 파일 생성 중…');
+  let job=null,stockStage=null;
   try{
-   const skus=await directScopeSkus();let stockStage=null;if(includeStock)stockStage=await bridge.refreshInventoryDrafts({source,skus,overwriteBlank});const result=await bridge.run({source,skus,includeStock});if(stockStage)result.progressDetail=[result.progressDetail,overwriteBlank?`빈셀 덮어쓰기 ${n(stockStage.overwritten)}건`:`빈셀 보존 ${n(stockStage.preserved)}건`].filter(Boolean).join(' · ');
+   const skus=await directScopeSkus();
+   if(includeStock){
+    const reliable=await prepareReliableInventory(source,skus,overwriteBlank,p=>{
+      const mapped=3+Math.round((Number(p.percent||0)/100)*29);
+      standardProgress(source,mapped,p.title,p.detail,'running');
+    });
+    job=reliable.job;stockStage=reliable.stockStage;
+   }else{
+    job=await D().beginReliableExportJob({source,skus:skus||[],includeStock:false,overwriteBlank:false});
+   }
+   job=await D().checkpointReliableExportJob({
+    jobId:job.job_id,status:'running',phase:'file_generation',
+    processedCount:Number(job.processed_count||0),totalCount:Number(job.total_count||0),
+    stagedCount:Number(job.staged_count||0),blankPreservedCount:Number(job.blank_preserved_count||0),
+    blankOverwriteCount:Number(job.blank_overwrite_count||0),afterCursor:job.after_cursor||null,
+    changeBatchId:job.change_batch_id||null,lastError:null
+   });
+   const progressBox=document.querySelector(`[data-standard-progress="${source}"]`);if(progressBox)progressBox.dataset.stageBase=includeStock?'32':'0';
+   standardProgress(source,includeStock?32:4,'파일 생성 단계','재고 계산 체크포인트가 저장되었습니다. 원본 검증과 XLSX 생성을 시작합니다.','running');
+   const result=await bridge.run({source,skus,includeStock});
+   if(stockStage)result.progressDetail=[result.progressDetail,overwriteBlank?`빈셀 덮어쓰기 ${n(stockStage.overwritten)}건`:`빈셀 보존 ${n(stockStage.preserved)}건`].filter(Boolean).join(' · ');
    const ok=/완료/.test(result.title||'')&&!/실패|중단/.test(result.title||'');
-   standardResult(source,[result.title,result.progressDetail].filter(Boolean).join(' · ')||'파일 생성 완료',ok?'success':'');
-   setStatus(ok?'파일 생성 완료':'파일 생성 작업이 끝났습니다. 결과를 확인하세요.',ok?'success':'');
-  }catch(error){standardProgress(source,100,'파일 생성 실패',error?.message||String(error),'error');standardResult(source,error?.message||String(error),'error');setStatus(`파일 생성 실패: ${error?.message||error}`,'error');}
-  finally{if(button)button.disabled=false;}
+   if(!ok)throw Error(result.progressDetail||result.title||'파일 생성 결과를 확인하지 못했습니다.');
+   job=await D().checkpointReliableExportJob({
+    jobId:job.job_id,status:'ready',phase:'complete',
+    processedCount:Number(job.processed_count||0),totalCount:Number(job.total_count||0),
+    stagedCount:Number(job.staged_count||0),blankPreservedCount:Number(job.blank_preserved_count||0),
+    blankOverwriteCount:Number(job.blank_overwrite_count||0),afterCursor:job.after_cursor||null,
+    changeBatchId:job.change_batch_id||null,lastError:null
+   });
+   standardProgress(source,100,'파일 생성 완료',`작업 ${String(job.job_id).slice(0,8)} · 완료 상태가 DB에 저장되었습니다.`,'done');
+   standardResult(source,[result.title,result.progressDetail].filter(Boolean).join(' · ')||'파일 생성 완료','success');
+   setStatus('파일 생성 완료','success');
+  }catch(error){
+   if(job?.job_id){
+    try{await D().checkpointReliableExportJob({
+     jobId:job.job_id,status:'failed',phase:job.phase||'file_generation',
+     processedCount:Number(job.processed_count||0),totalCount:Number(job.total_count||0),
+     stagedCount:Number(job.staged_count||0),blankPreservedCount:Number(job.blank_preserved_count||0),
+     blankOverwriteCount:Number(job.blank_overwrite_count||0),afterCursor:job.after_cursor||null,
+     changeBatchId:job.change_batch_id||null,lastError:error?.message||String(error)
+    });}catch(checkpointError){console.warn('reliability failure checkpoint failed',checkpointError);}
+   }
+   standardProgress(source,100,'파일 생성 중단',`${error?.message||error} · 다시 누르면 완료된 체크포인트부터 자동으로 이어갑니다.`,'error');standardResult(source,error?.message||String(error),'error');setStatus(`파일 생성 실패: ${error?.message||error}`,'error');
+  }finally{
+   const progressBox=document.querySelector(`[data-standard-progress="${source}"]`);if(progressBox)delete progressBox.dataset.stageBase;
+   global.__systemV3DirectExportBusy=false;if(button)button.disabled=false;
+  }
  }
 
  function renderExportStatuses(){

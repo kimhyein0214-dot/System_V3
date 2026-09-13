@@ -297,7 +297,7 @@ function startAuthenticatedOperationsHubData() {
   }, MAPPING_SYNC_POLL_INTERVAL_MS));
   operationsAuthState.intervals.push(window.setInterval(() => {
     if (document.getElementById('jobs').classList.contains('active-page')) loadChangeQueue({silent:true});
-  }, 30000));
+  }, 120000));
 }
 
 function openAuthenticatedOperationsHub(session) {
@@ -6526,6 +6526,15 @@ async function loadChangeQueue({silent = false} = {}) {
       source:document.getElementById('queue-source-filter').value,
       batchId:queueState.selectedBatchId
     });
+    if(silent){
+      renderChangeQueue(queue.rows);
+      document.getElementById('queue-result-count').textContent = `${formatNumber(queue.count)}건 중 ${formatNumber(queue.rows.length)}건 표시`;
+      const currentCountNode=document.getElementById('queue-context-current-count');
+      if(currentCountNode)currentCountNode.textContent=formatNumber(queue.count)+' 작업건';
+      badge.className='live-data-badge connected';
+      if(!/^DB LIVE/.test(badge.textContent||''))badge.textContent='DB LIVE';
+      return;
+    }
     const secondary=await Promise.allSettled([
       liveData.loadChangeQueueStats(scopeSources),
       liveData.loadChangeBatchSummaries({sources:scopeSources, limit:20}),
@@ -7688,33 +7697,51 @@ document.getElementById('queue-export').addEventListener('click', () => openSell
 document.getElementById('seller-export-close').addEventListener('click', closeSellerExport);
 document.getElementById('seller-export-cancel').addEventListener('click', closeSellerExport);
 window.SystemV3SellerExportBridge={
-  async refreshInventoryDrafts({source,skus=null,overwriteBlank=false,onProgress=null}={}){
+  async refreshInventoryDrafts({source,skus=null,overwriteBlank=false,job=null,onProgress=null,onCheckpoint=null}={}){
     if(!['smartstore','makeshop'].includes(source))throw Error('재고 수정안 새로 계산은 스마트스토어·메이크샵만 지원합니다.');
     if(!liveData?.stageSellerInventoryDraftBatch)throw Error('재고 수정안 생성 기능을 불러오지 못했습니다.');
     const selected=Array.isArray(skus)?[...new Set(skus.filter(Boolean))]:[];
-    const batchId=crypto.randomUUID();
-    let afterSku=null,hasMore=true,processed=0,total=selected.length||0,staged=0,preserved=0,overwritten=0;
-    onProgress?.({processed:0,total,percent:0,title:'재고 수정안 계산 준비',detail:'판매처 원본과 시스템 재고를 비교합니다.'});
+    const batchId=job?.change_batch_id||crypto.randomUUID();
+    let afterSku=job?.after_cursor||null;
+    let hasMore=true;
+    let processed=Number(job?.processed_count||0);
+    let total=Number(job?.total_count||0);
+    let staged=Number(job?.staged_count||0);
+    let preserved=Number(job?.blank_preserved_count||0);
+    let overwritten=Number(job?.blank_overwrite_count||0);
+    if(job?.phase==='inventory_ready'||job?.status==='inventory_ready'||job?.status==='ready'){
+      return {batchId,processed,total,staged,preserved,overwritten,overwriteBlank,resumed:true,afterSku};
+    }
+    onProgress?.({processed,total,percent:total?Math.min(100,Math.round(processed/total*100)):0,title:job?.resumed?'저장된 작업 이어서 진행':'재고 수정안 계산 준비',detail:job?.resumed?'이전 체크포인트부터 다시 시작합니다.':'판매처 원본과 시스템 재고를 비교합니다.'});
     while(hasMore){
       const result=await liveData.stageSellerInventoryDraftBatch({
-        sources:[source],skus:selected,batchId,afterSku,batchSize:100,overwriteBlank
+        sources:[source],skus:selected,batchId,afterSku,batchSize:100,overwriteBlank,
+        onRetry:retry=>onProgress?.({
+          processed,total,percent:total?Math.min(100,Math.round(processed/total*100)):0,
+          title:'DB 응답 지연 · 자동 재시도',
+          detail:`${Math.round(retry.delay/100)/10}초 후 ${retry.nextAttempt}/4회차 재시도 · 완료한 체크포인트는 유지됩니다.`
+        })
       });
-      processed+=Number(result?.processed_count||0);
-      if(!total)total=Number(result?.total_count||0);
+      const batchProcessed=Number(result?.processed_count||0);
+      const reportedTotal=Number(result?.total_count||0);
+      if(reportedTotal>0)total=reportedTotal;
+      processed+=batchProcessed;
       staged+=Number(result?.staged_count||0);
       preserved+=Number(result?.blank_preserved_count||0);
       overwritten+=Number(result?.blank_overwrite_count||0);
-      afterSku=result?.next_cursor||null;
+      afterSku=result?.next_cursor||afterSku;
       hasMore=Boolean(result?.has_more);
       if(hasMore&&!afterSku)throw Error('재고 수정안 페이지 커서를 확인하지 못했습니다.');
+      const checkpoint={batchId,processed,total,staged,preserved,overwritten,overwriteBlank,afterSku,hasMore};
+      await onCheckpoint?.(checkpoint);
       const percent=total?Math.min(100,Math.round((processed/total)*100)):(hasMore?0:100);
       onProgress?.({
-        processed,total,percent,
-        title:'재고 수정안 계산',
-        detail:`${processed.toLocaleString('ko-KR')} / ${total.toLocaleString('ko-KR')} SKU 확인 · 적용 ${staged.toLocaleString('ko-KR')}건 · 빈셀 보존 ${preserved.toLocaleString('ko-KR')}건`
+        processed,total,percent,title:'재고 수정안 계산',
+        detail:`${processed.toLocaleString('ko-KR')} / ${(total||processed).toLocaleString('ko-KR')} 대상 확인 · 적용 ${staged.toLocaleString('ko-KR')}건 · 빈셀 보존 ${preserved.toLocaleString('ko-KR')}건 · 체크포인트 저장됨`
       });
+      if(hasMore&&batchProcessed<=0)throw Error('재고 수정안 작업이 진행되지 않아 안전하게 중단했습니다. 같은 작업을 다시 실행하면 저장된 지점부터 이어갑니다.');
     }
-    return {batchId,processed,total,staged,preserved,overwritten,overwriteBlank};
+    return {batchId,processed,total,staged,preserved,overwritten,overwriteBlank,resumed:Boolean(job?.resumed),afterSku};
   },
   async preview({source,skus=null,includeStock=false}={}){
     if(!['smartstore','makeshop'].includes(source))throw Error('직접 내보내기는 스마트스토어·메이크샵만 지원합니다.');
