@@ -31,7 +31,7 @@ const result = buildInventorySurveyExport({
     { sellpia_sku_code: "1001-1", picked_qty: 2, shortage_drawer_qty: 0, calculated_at: "2026-08-12T03:30:00Z" },
     { sellpia_sku_code: "1001-1", picked_qty: 1, shortage_drawer_qty: 2, calculated_at: "2026-08-12T03:30:00Z" },
     { sellpia_sku_code: "9999-1", picked_qty: 0, shortage_drawer_qty: 0, calculated_at: "2026-08-12T03:30:00Z" },
-    { sellpia_sku_code: "20000-1", picked_qty: 1, shortage_drawer_qty: 0, calculated_at: "2026-08-12T03:30:00Z" },
+    { sellpia_sku_code: "20000-1", own_code: "[SERVER-OWN]", picked_qty: 1, shortage_drawer_qty: 0, calculated_at: "2026-08-12T03:30:00Z" },
   ],
 });
 
@@ -39,12 +39,12 @@ assert.deepEqual(result.rows[0], INVENTORY_SURVEY_EXPORT_HEADER);
 assert.deepEqual(result.rows.slice(1).map((row) => row.slice(0, 5)), [
   ["1001-1", "[BA-01]", 3, 2, 5],
   ["10005-1", "[CA-02]", 0, 1, 1],
-  ["20000-1", "", 1, 0, 1],
+  ["20000-1", "[SERVER-OWN]", 1, 0, 1],
 ]);
 assert.equal(result.itemCount, 3);
 assert.equal(result.pickedTotal, 4);
 assert.equal(result.shortageDrawerTotal, 3);
-assert.equal(result.missingOwnCodeCount, 1);
+assert.equal(result.missingOwnCodeCount, 0);
 assert.match(result.rows[1][5], /^2026-08-12 12:30:00$/);
 
 const shortageResult = buildCurrentShortageExport([
