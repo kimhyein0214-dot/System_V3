@@ -15,9 +15,10 @@ test('Reliability V1 has durable job checkpoints and transient retries',()=>{
   assert.ok(data.includes('stage_operations_hub_seller_inventory_match_batch_v2'));
   assert.ok(app.includes('after_cursor'));
   assert.ok(app.includes('onCheckpoint'));
-  assert.ok(flow.includes('prepareReliableInventory'));
-  assert.ok(flow.includes('작업 저장됨'));
-  assert.ok(flow.includes('beginReliableExportJob'));
+  assert.ok(data.includes('checkpointReliableExportJob'));
+  assert.ok(!flow.includes('prepareReliableInventory'));
+  assert.ok(!flow.includes('beginReliableExportJob'));
+  assert.ok(!flow.includes('stageSellerInventoryDraftBatch'));
   assert.ok(migration.includes('operations_hub_export_jobs'));
   assert.ok(migration.includes('background_managed'));
   assert.ok(migration.includes('cron.schedule'));

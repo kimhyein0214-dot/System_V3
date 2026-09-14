@@ -92,10 +92,10 @@ const app=fs.readFileSync(new URL('../mockups/operations-hub/app.js',import.meta
 for (const allExcluded of [false,true]) {
   const nodes=new Map(), completed=[], calls=[];
   const excluded=[{item:row(2),reason:'사전 제외'}], good={export_item_id:11,source_channel:'smartstore'}, blocked={export_item_id:12,source_channel:'smartstore',blocking_reason:'원본행 누락'};
-  const state={action:'export',running:false,rows:[],selectedSkus:[],excludedItems:[]};
+  const state={action:'export',running:false,rows:[row(1)],selectedSkus:[],excludedItems:[]};
   const context={console:{error(){}},Blob,sellerExportState:state,
     document:{getElementById(id){if(!nodes.has(id))nodes.set(id,{style:{},disabled:false});return nodes.get(id);}},
-    selectedExportSources:()=>['smartstore'],selectedSellerExportScope:()=> 'all',resolveSellerExportScopeSkus:async()=>[],
+    selectedExportSources:()=>['smartstore'],selectedSellerExportScope:()=> 'all',resolveSellerExportScopeSkus:async()=>[],sellerExportRowsForSources:rows=>rows,
     createRequestId:()=> 'fixture',formatNumber:String,showToast(){},stopCancelledSellerExport(){},
     showSellerExportProgress:(p,t,d)=>calls.push({p,t,d}),
     showSellerExportExclusions:items=>{state.excludedItems=items;},
@@ -107,8 +107,7 @@ for (const allExcluded of [false,true]) {
       return {manifest:[],blob:new Blob(),appliedItems:items,skippedItems:initial};
     },downloadBlob:()=>calls.push('download')},
     loadChangeQueue:async()=>{},loadLiveMatrix:async()=>{}};
-  context.document.getElementById('seller-export-include-stock').checked=true;
-  context.HubCurrentPriceExport={refreshItems:async(items,files,options)=>{calls.push('refresh-current');assert.equal(options.includeRules,true);return {items,excludedItems:[]};},buildArchive:async(...args)=>{calls.push('build-current');return context.sellerExport.buildExportArchive(...args);}};
+  context.HubCurrentPriceExport={refreshItems:async(items,files,options)=>{calls.push('refresh-current');assert.equal(options.includeRules,false);return {items,excludedItems:[]};},buildArchive:async(...args)=>{calls.push('build-current');return context.sellerExport.buildExportArchive(...args);}};
   vm.createContext(context);
   vm.runInContext(app.slice(app.indexOf('async function runSellerExport()'),app.indexOf("document.getElementById('matrix-match-stock-btn').addEventListener"))+'\nthis.run=runSellerExport;',context);
   await context.run();

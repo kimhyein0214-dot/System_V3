@@ -48,5 +48,48 @@
     };
   }
 
-  global.SystemV3DiscountPriceMath = Object.freeze({discountedBase, grossBaseForTarget});
+  function matrixVisibleValues({
+    stock = null,
+    stockDraft = null,
+    sourceBasePrice = null,
+    sourceDiscountedBasePrice = null,
+    sourceOptionPrice = 0,
+    sourceFinalPrice = null,
+    sourceDiscountTerms = [],
+    priceDraft = null,
+    draftBasePrice = null,
+    draftDiscountedBasePrice = null,
+    draftOptionPrice = null,
+    draftFinalPrice = null,
+    draftDiscountTerms = null,
+    calculatedPrice = null
+  } = {}) {
+    const calculated = calculatedPrice && !calculatedPrice.error ? calculatedPrice : null;
+    const hasStockDraft = Boolean(stockDraft);
+    const hasPriceDraft = Boolean(priceDraft);
+    const effectiveBasePrice = hasPriceDraft
+      ? draftBasePrice
+      : calculated?.platformBase ?? sourceBasePrice;
+    const effectiveDiscountTerms = hasPriceDraft
+      ? (Array.isArray(draftDiscountTerms) ? draftDiscountTerms : sourceDiscountTerms)
+      : calculated?.platformTerms ?? sourceDiscountTerms;
+    const effectiveDiscountedBasePrice = hasPriceDraft
+      ? (draftDiscountedBasePrice ?? discountedBase(effectiveBasePrice, effectiveDiscountTerms))
+      : calculated
+        ? calculated.platformBase - calculated.platformDiscount
+        : sourceDiscountedBasePrice ?? discountedBase(sourceBasePrice, sourceDiscountTerms);
+    return {
+      stockDisplay:hasStockDraft ? stockDraft.after_value : stock,
+      stockVisible:stock !== null && stock !== undefined,
+      priceVisible:hasPriceDraft || Boolean(calculated) || (sourceFinalPrice !== null && sourceFinalPrice !== undefined),
+      priceOrigin:hasPriceDraft ? 'draft' : calculated ? 'calculated' : 'source',
+      effectiveBasePrice,
+      effectiveDiscountTerms,
+      effectiveDiscountedBasePrice,
+      effectiveOptionPrice:hasPriceDraft ? draftOptionPrice : calculated?.platformOption ?? sourceOptionPrice,
+      effectiveFinalPrice:hasPriceDraft ? draftFinalPrice : calculated?.platformFinal ?? sourceFinalPrice
+    };
+  }
+
+  global.SystemV3DiscountPriceMath = Object.freeze({discountedBase, grossBaseForTarget, matrixVisibleValues});
 })(typeof window !== 'undefined' ? window : globalThis);

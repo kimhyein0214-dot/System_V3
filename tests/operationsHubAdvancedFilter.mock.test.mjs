@@ -42,6 +42,7 @@ assert.match(css, /\.advanced-filter-chip[\s\S]*?\.advanced-filter-modal[\s\S]*?
 assert.match(css, /\.matrix-page\.active-page \.matrix-toolbar\{[^}]*overflow-x:auto/, "the permanent action panel must not cover trailing matrix filters");
 
 const assetVersions = [...html.matchAll(/(?:style\.css|seller-source-parsers\.js|seller-export-adapter\.js|data-service\.js|app\.js)\?v=([^"']+)/g)].map(match => match[1]);
-assert.equal(new Set(assetVersions).size, 1, "all local assets must share one cache-busting version");
+assert.equal(assetVersions.length,5,"all critical local assets must remain cache-busted");
+assert.match(html,/data-service\.js\?v=20260914-matrix-visible-export-v2[\s\S]*?app\.js\?v=20260914-matrix-visible-export-v2/,"the coupled data and app changes must deploy together");
 
 console.log("Operations hub advanced server-side matrix filter contract: passed");

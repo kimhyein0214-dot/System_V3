@@ -3,13 +3,14 @@ import fs from 'node:fs';
 import vm from 'node:vm';
 import {test} from 'node:test';
 const source=fs.readFileSync(new URL('../mockups/operations-hub/data-service.js',import.meta.url),'utf8');
-const helper=source.slice(source.indexOf('  async function loadSellerDraftRows('),source.indexOf('  async function loadLatestSellerOriginalStatus('));
+const helper=source.slice(source.indexOf('  async function countSellerDraftsForExport('),source.indexOf('  async function loadLatestSellerOriginalStatus('));
 function setup(size=1201){
  const rows=Array.from({length:size},(_,i)=>({change_id:i+1,sellpia_sku_code:'sku-'+(i+1),source_channel:'ably',seller_product_code:'product-'+(i+1),status:'pending',field_key:'sellpia_current_stock',target_safety_state:'ready'})),calls=[],validations=[];
- const db={from(table){const q={table,filters:[],head:false,max:null,after:null,select(fields,options){this.head=options?.head===true;this.count=options?.count;return this;},in(field,values){this.filters.push([field,Array.from(values)]);return this;},gt(field,value){assert.equal(field,'change_id');this.after=value;return this;},order(){return this;},limit(value){this.max=value;return this;},then(resolve,reject){
-  calls.push({head:this.head,count:this.count,max:this.max,after:this.after,filters:this.filters});
+ const db={from(table){const q={table,filters:[],head:false,max:null,after:null,from:null,to:null,select(fields,options){this.head=options?.head===true;this.count=options?.count;return this;},in(field,values){this.filters.push([field,Array.from(values)]);return this;},gt(field,value){assert.equal(field,'change_id');this.after=value;return this;},order(){return this;},limit(value){this.max=value;return this;},range(from,to){this.from=from;this.to=to;return this;},then(resolve,reject){
+  calls.push({head:this.head,count:this.count,max:this.max,after:this.after,from:this.from,to:this.to,filters:this.filters});
   const all=rows.filter(r=>this.filters.every(([field,values])=>values.includes(r[field]))&&(this.after===null||r.change_id>this.after));
-  return Promise.resolve({data:this.head?null:all.slice(0,this.max??all.length).map(r=>({...r})),count:this.head?all.length:null,error:null}).then(resolve,reject);
+  const selected=this.from===null?all.slice(0,this.max??all.length):all.slice(this.from,this.to+1);
+  return Promise.resolve({data:this.head?null:selected.map(r=>({...r})),count:this.head?all.length:null,error:null}).then(resolve,reject);
  }};return q;}};
  const context={db,cleanText:v=>String(v??'').trim(),validateChangeQueue:async ids=>{validations.push(Array.from(ids));for(const row of rows)if(ids.includes(row.change_id))row.status='validated';}};
  vm.createContext(context);vm.runInContext(helper+'\nthis.api={loadSellerDraftRows,countSellerDraftsForExport,reviewSellerDraftsForExport};',context);
@@ -21,9 +22,9 @@ test('count uses exact HEAD server filtering, deduplicated200-SKU chunks, and ze
  assert.ok(h.calls.every(c=>c.head&&c.filters.find(([f])=>f==='sellpia_sku_code')[1].length<=200));
  h.calls.length=0;assert.equal(await h.countSellerDraftsForExport(['ably'],[]),0);assert.equal(h.calls.length,0);
 });
-test('all rows use bounded keyset paging without offset rescans',async()=>{
+test('all saved-change rows use bounded 1000-row pages',async()=>{
  const h=setup();const rows=await h.loadSellerDraftRows({sources:['ably']});assert.equal(rows.length,1201);assert.equal(new Set(rows.map(r=>r.change_id)).size,1201);
- assert.deepEqual(h.calls.map(c=>[c.after,c.max]),[[null,500],[500,500],[1000,500]]);assert.equal(h.validations.length,0);
+ assert.deepEqual(h.calls.map(c=>[c.from,c.to]),[[0,999],[1000,1999]]);assert.equal(h.validations.length,0);
 });
 test('scoped rows are filtered on server and retain deterministic ordering across chunks',async()=>{
  const h=setup();const skus=Array.from({length:450},(_,i)=>'sku-'+(900-i));

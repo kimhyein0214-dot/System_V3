@@ -795,10 +795,6 @@
             <label><input id="seller-export-selected-scope" type="radio" name="seller-export-scope" value="selected"><span><b>선택한 셀 범위의 SKU</b><em id="seller-export-selected-count">선택한 SKU 없음</em></span></label>
             <label><input type="radio" name="seller-export-scope" value="all"><span><b>전체 상품</b><em>검색·필터와 관계없이 전체 SKU의 저장된 가격 반영</em></span></label>
           </fieldset>
-          <label id="seller-export-stock-option" class="seller-export-option">
-            <input id="seller-export-include-stock" type="checkbox">
-            <span><b>저장된 재고 수정안도 함께 반영</b><em>기본은 최신 태그·수식 가격만 원본 양식에 반영합니다. 이 항목을 선택하면 저장된 재고 수정안을 추가로 검증하고 반영합니다.</em></span>
-          </label>
           <div id="seller-export-preview" class="seller-export-preview"><span id="seller-export-preview-label">대상 수정안 · 실행 시 안전검사</span><b id="seller-export-preview-count">확인 중</b><em id="seller-export-preview-detail">선택한 판매처와 범위를 확인합니다.</em></div>
           <div id="seller-export-progress" class="seller-export-progress" hidden><div><b id="seller-export-progress-title">준비 중</b><span id="seller-export-progress-percent">0%</span></div><i><span id="seller-export-progress-bar"></span></i><p id="seller-export-progress-detail">원본을 확인합니다.</p></div>
           <details id="seller-export-exclusions" class="seller-export-progress" hidden>
@@ -974,15 +970,15 @@
     <script src="./seller-source-parsers.js?v=20260910-rule-destination-v111"></script>
     <script src="./seller-export-adapter.js?v=20260910-rule-destination-v111"></script>
     <script src="./matrix-csv-export.js?v=20260910-rule-destination-v111"></script>
-    <script src="./discount-price-math.js?v=20260910-rule-destination-v111"></script>
+    <script src="./discount-price-math.js?v=20260914-matrix-visible-export-v2"></script>
     <script src="./source-refresh-verifier.js?v=20260910-rule-destination-v111"></script>
     <script src="./relation-import-parser.js?v=20260910-rule-destination-v111"></script>
     <script src="./bundle-import-parser.js?v=20260910-rule-destination-v111"></script>
     <script src="./seller-bundle-import-parser.js?v=20260910-rule-destination-v111"></script>
     <script src="./sellpia-source-parser.js?v=20260910-rule-destination-v111"></script>
-    <script src="./data-service.js?v=20260913-matrix-direct-v1"></script>
+    <script src="./data-service.js?v=20260914-matrix-visible-export-v2"></script>
     <script src="./channels-page.js?v=20260910-rule-destination-v111"></script>
-    <script src="./app.js?v=20260913-matrix-direct-v1"></script>
+    <script src="./app.js?v=20260914-matrix-visible-export-v2"></script>
     <script src="./mapping-import.js?v=20260910-rule-destination-v111"></script>
     <script src="./attributes-page.js?v=20260910-rule-destination-v111"></script>
     <script src="./price-rule-lab.js?v=20260910-rule-destination-v111"></script>
@@ -998,10 +994,10 @@
 <script src="./rule-registry.js?v=20260912-price-flow-v2"></script>
 <script src="./platform-rule-service.js?v=20260910-rule-destination-v111"></script>
 <script src="./price-result-materializer.js?v=20260910-rule-destination-v111"></script>
-<script src="./current-price-export.js?v=20260913-matrix-direct-v1"></script>
+<script src="./current-price-export.js?v=20260914-matrix-visible-export-v2"></script>
 <script src="./rule-workspace.js?v=20260912-price-flow-v2"></script>
       <script src="./ui-cleanup-v1.js?v=20260912-direct-export-v3"></script>
       <script src="./tag-management-v2.js?v=20260912-price-flow-v2"></script>
-      <script src="./seller-file-workflow-v2.js?v=20260913-matrix-direct-v1"></script>
+      <script src="./seller-file-workflow-v2.js?v=20260914-matrix-visible-export-v2"></script>
   </body>
 </html>

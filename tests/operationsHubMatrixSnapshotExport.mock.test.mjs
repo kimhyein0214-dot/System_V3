@@ -1,0 +1,132 @@
+import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import test from 'node:test';
+import vm from 'node:vm';
+
+const mathSource=fs.readFileSync('mockups/operations-hub/discount-price-math.js','utf8');
+const exportSource=fs.readFileSync('mockups/operations-hub/current-price-export.js','utf8');
+const dataSource=fs.readFileSync('mockups/operations-hub/data-service.js','utf8');
+const appSource=fs.readFileSync('mockups/operations-hub/app.js','utf8');
+const flowSource=fs.readFileSync('mockups/operations-hub/seller-file-workflow-v2.js','utf8');
+const migration=fs.readFileSync('supabase/migrations/20260914032904_matrix_export_snapshot_v4_live_drafts.sql','utf8');
+
+function exportHarness(rows){
+  const calls=[];
+  const context={console,SystemV3Data:{
+    loadMatrixExportSnapshot:async options=>{calls.push(options);return {snapshotId:'snapshot-1',rows:structuredClone(rows)};},
+    loadStoredMatrixPrices(){throw Error('legacy price read must not run');},
+    loadMatrixStocksForExport(){throw Error('system-stock export must not run');}
+  },SystemV3SellerParsers:{parseSellerFiles:async()=>({normalizedRows:rows.filter(row=>row.source_row_no).map(row=>({
+    product_code:row.product_code,option_code:row.option_code,source_row_no:row.source_row_no,
+    base_price:row.source_base_price,discounted_base_price:row.source_discounted_base_price,
+    option_price:row.source_option_price,final_price:row.source_final_price,
+    discount_terms:row.source_discount_terms,raw_payload:{source_file_name:row.source_file_name}
+  }))})}};
+  vm.createContext(context);
+  vm.runInContext(mathSource,context);
+  vm.runInContext(exportSource,context);
+  return {api:context.HubCurrentPriceExport,calls};
+}
+
+function row(extra={}){
+  return {
+    sku:'SKU-1',product_code:'P-1',option_code:'O-1',source_file_name:'smart.xlsx',source_row_no:3,
+    system_stock:99,source_stock:8,source_base_price:5000,source_discounted_base_price:5000,
+    source_option_price:0,source_final_price:5000,source_discount_terms:[],stock_draft:null,price_draft:null,
+    registration_price:null,registration_status:null,registration_generation_id:null,
+    discount_price:null,discount_status:null,discount_generation_id:null,
+    option_price:null,option_status:null,option_generation_id:null,
+    final_price:null,final_status:null,final_generation_id:null,rule_versions:[],...extra
+  };
+}
+
+const files=new Map([['smartstore',[{name:'smart.xlsx'}]]]);
+const plain=value=>JSON.parse(JSON.stringify(value));
+
+test('matrix and direct export share draft-first visible values',async()=>{
+  const draft={after_value:5500,price_base_after:5200,price_discounted_base_after:5000,price_option_after:500,price_final_after:5500,price_discount_terms_after:[{term_key:'basic',is_baseline:true,value:200,unit:'amount'}]};
+  const calculated={registration_price:9000,registration_status:'calculated',registration_generation_id:4,discount_price:9000,discount_status:'calculated',discount_generation_id:4,option_price:0,option_status:'calculated',option_generation_id:4,final_price:9000,final_status:'calculated',final_generation_id:4};
+  const h=exportHarness([row({...calculated,price_draft:draft,stock_draft:{after_value:12}})]);
+  const resolved=h.api.matrixPriceTarget(row({...calculated,price_draft:draft}));
+  assert.deepEqual([resolved.origin,resolved.base,resolved.discounted,resolved.option,resolved.final],['draft',5200,5000,500,5500]);
+  const result=await h.api.refreshItems([],files,{sources:['smartstore'],includeMatrixStock:true});
+  assert.deepEqual(plain(result.items.map(item=>[item.field_key,item.after_value])),[['sellpia_current_stock',12],['sellpia_sale_price',5500]]);
+  assert.equal(result.items[0].source_file_name,'smart.xlsx');
+  assert.equal(result.items[0].source_row_no,3);
+  assert.equal(result.excludedItems.length,0);
+  assert.equal(h.calls.length,1);
+  assert.match(appSource,/matrixVisibleValues\(\{/);
+});
+
+test('no stock draft preserves seller stock even when system stock differs',async()=>{
+  const h=exportHarness([row({system_stock:100,source_stock:8})]);
+  const result=await h.api.refreshItems([],files,{sources:['smartstore'],includeMatrixStock:true});
+  assert.deepEqual(plain(result.items),[]);
+  assert.deepEqual(plain(result.excludedItems),[]);
+});
+
+test('stock draft zero is exported, while a blank source cell stays untouched',async()=>{
+  const h=exportHarness([
+    row({sku:'ZERO',stock_draft:{after_value:0}}),
+    row({sku:'BLANK',source_stock:null,stock_draft:{after_value:7},source_row_no:4})
+  ]);
+  const result=await h.api.refreshItems([],files,{sources:['smartstore'],includeMatrixStock:true});
+  assert.equal(result.items.length,1);
+  assert.equal(result.items[0].sellpia_sku_code,'ZERO');
+  assert.equal(result.items[0].after_value,0);
+  assert.deepEqual(plain(result.excludedItems),[]);
+});
+
+test('timeout, error and mixed-generation calculated tuples preserve original price',async()=>{
+  const timeout=row({registration_status:'error',registration_error:'canceling statement due to statement timeout',discount_status:'error',option_status:'error',final_status:'error'});
+  const mixed=row({sku:'MIXED',registration_price:5100,registration_status:'calculated',registration_generation_id:1,discount_price:5100,discount_status:'calculated',discount_generation_id:1,option_price:0,option_status:'calculated',option_generation_id:2,final_price:5100,final_status:'calculated',final_generation_id:2});
+  const h=exportHarness([timeout,mixed]);
+  const result=await h.api.refreshItems([],files,{sources:['smartstore'],includeMatrixStock:true});
+  assert.deepEqual(plain(result.items),[]);
+  assert.deepEqual(plain(result.excludedItems),[]);
+});
+
+test('location is required only for an actual visible write',async()=>{
+  const h=exportHarness([
+    row({sku:'NOOP',source_file_name:null,source_row_no:null,stock_draft:{after_value:8}}),
+    row({sku:'WRITE',source_file_name:null,source_row_no:null,stock_draft:{after_value:9}}),
+    row({sku:'ROWZERO',source_file_name:'smart.xlsx',source_row_no:0,stock_draft:{after_value:9}})
+  ]);
+  const result=await h.api.refreshItems([],files,{sources:['smartstore'],includeMatrixStock:true});
+  assert.equal(result.items.length,0);
+  assert.deepEqual(plain(result.excludedItems.map(item=>item.item.sellpia_sku_code)),['WRITE','ROWZERO']);
+  assert.equal(h.api.validSourceLocation({source_file_name:'a.xlsx',source_row_no:null}),false);
+  assert.equal(h.api.validSourceLocation({source_file_name:'a.xlsx',source_row_no:1}),true);
+});
+
+test('direct export fails closed when snapshot RPC support is unavailable',async()=>{
+  const context={console,SystemV3Data:{loadStoredMatrixPrices(){throw Error('must not run');}}};
+  vm.createContext(context);vm.runInContext(mathSource,context);vm.runInContext(exportSource,context);
+  await assert.rejects(context.HubCurrentPriceExport.refreshItems([],new Map(),{sources:['smartstore'],includeMatrixStock:true}),/스냅샷/);
+});
+
+test('snapshot reader paginates 14000 rows without legacy reads or staging',async()=>{
+  const functionSource=dataSource.slice(dataSource.indexOf('  async function loadMatrixExportSnapshot('),dataSource.indexOf('  async function summarizeMatrixStocksForExport('));
+  const calls=[];
+  const context={cleanText:value=>String(value??'').trim(),requireOperationsHubSessionToken:()=> 'session',readableDatabaseError:error=>error,db:{rpc:async(name,args)=>{
+    assert.equal(name,'hub_matrix_export_snapshot_v1');calls.push(args);
+    const start=calls.length-1,from=start*1000,count=Math.min(1000,14000-from);
+    const rows=Array.from({length:count},(_,index)=>({sku:`SKU-${String(from+index).padStart(5,'0')}`}));
+    return {data:{snapshot_id:'same-snapshot',rows,next_cursor:rows.at(-1)?.sku||null,has_more:from+count<14000},error:null};
+  }}};
+  vm.createContext(context);vm.runInContext(functionSource+'\nthis.load=loadMatrixExportSnapshot;',context);
+  const result=await context.load({source:'smartstore'});
+  assert.equal(result.rows.length,14000);
+  assert.equal(calls.length,14);
+  assert.equal(calls.every(call=>call.p_limit===1000),true);
+  assert.equal(calls[0].p_after_sku,null);
+  assert.equal(calls[13].p_after_sku,'SKU-12999');
+});
+
+test('UI is display-only and RPC reads live drafts with same-generation metadata',()=>{
+  for(const marker of ['판매처 반영','수정안 있음','미반영','기준재고 없음','원본 위치 없음'])assert.ok(flowSource.includes(marker),marker);
+  assert.doesNotMatch(flowSource,/prepareReliableInventory|beginReliableExportJob|stageSellerInventoryDraftBatch/);
+  assert.match(migration,/operations_hub_active_seller_drafts sd/);
+  assert.match(migration,/operations_hub_active_seller_drafts pd/);
+  for(const marker of ['registration_generation_id','discount_generation_id','option_generation_id','final_generation_id'])assert.ok(migration.includes(marker),marker);
+});

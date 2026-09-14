@@ -2313,7 +2313,7 @@
       const {data,error}=await q;if(error)throw readableDatabaseError(error);
       rows.push(...(data||[]));if(!data||data.length<1000)break;
     }
-    return rows;
+    return rows.sort((left,right)=>Number(left.change_id||0)-Number(right.change_id||0));
   }
 
   async function validateSellerDraftsForExport(sources = [], skus = null) {
@@ -3487,10 +3487,51 @@
     return rows.filter(r=>cleanText(r?.[s+'_product_code']));
   }
 
+  async function loadMatrixExportSnapshot({source,skus=null,onProgress=null}={}) {
+    const safeSource=cleanText(source);
+    if(!['smartstore','makeshop'].includes(safeSource))throw new Error('매트릭스 직접 내보내기는 스마트스토어·메이크샵만 지원합니다.');
+    const codes=Array.isArray(skus)?[...new Set(skus.map(cleanText).filter(Boolean))]:null;
+    const rows=[];let afterSku=null,snapshotId=null,page=0;
+    while(true){
+      const {data,error}=await db.rpc('hub_matrix_export_snapshot_v1',{
+        p_session_token:requireOperationsHubSessionToken(),
+        p_source_channel:safeSource,
+        p_skus:codes,
+        p_after_sku:afterSku,
+        p_limit:1000
+      });
+      if(error)throw readableDatabaseError(error);
+      const result=data||{},chunk=Array.isArray(result.rows)?result.rows:[];
+      if(snapshotId&&result.snapshot_id&&result.snapshot_id!==snapshotId)throw new Error('내보내기 도중 최신 판매처 원본이 바뀌었습니다. 새 원본 기준으로 다시 생성해주세요.');
+      rows.push(...chunk);snapshotId=result.snapshot_id||snapshotId;page+=1;
+      onProgress?.({source:safeSource,loaded:rows.length,page});
+      if(!result.has_more||!result.next_cursor||!chunk.length)break;
+      if(result.next_cursor===afterSku)throw new Error('매트릭스 내보내기 커서가 진행되지 않았습니다.');
+      afterSku=result.next_cursor;
+      if(page>100)throw new Error('매트릭스 내보내기 페이지 수가 안전 한도를 넘었습니다.');
+    }
+    return {source:safeSource,snapshotId,rows};
+  }
+
   async function summarizeMatrixStocksForExport({source,skus=null}={}) {
-    const rows=await loadMatrixStocksForExport({source,skus});let same=0,needs=0,missing=0;
-    for(const r of rows){const a=Number(r.system_stock),raw=r[source+'_stock'],b=raw==null||raw===''?null:Number(raw);if(!Number.isFinite(a))missing++;else if(b!==null&&Number.isFinite(b)&&a===b)same++;else needs++;}
-    return {total:rows.length,same,needs,missing};
+    const snapshot=await loadMatrixExportSnapshot({source,skus});
+    let applied=0,draft=0,unapplied=0,missing=0,sourceMissing=0;
+    for(const row of snapshot.rows){
+      const systemRaw=row.system_stock;
+      const systemMissing=systemRaw===null||systemRaw===undefined||systemRaw===''||!Number.isFinite(Number(systemRaw));
+      const system=systemMissing?null:Number(systemRaw);
+      const sellerRaw=row.source_stock??row.seller_stock;
+      const seller=sellerRaw===null||sellerRaw===undefined||sellerRaw===''?null:Number(sellerRaw);
+      const draftRaw=row.stock_draft?.after_value;
+      const draftValue=draftRaw===null||draftRaw===undefined||draftRaw===''?null:Number(draftRaw);
+      const validLocation=Boolean(cleanText(row.source_file_name))&&row.source_row_no!==null&&row.source_row_no!==undefined&&row.source_row_no!==''&&Number.isInteger(Number(row.source_row_no))&&Number(row.source_row_no)>0;
+      if(!validLocation)sourceMissing+=1;
+      else if(systemMissing)missing+=1;
+      else if(seller!==null&&Number.isFinite(seller)&&draftValue!==null&&Number.isFinite(draftValue))draft+=1;
+      else if(seller!==null&&Number.isFinite(seller)&&seller===system)applied+=1;
+      else unapplied+=1;
+    }
+    return {total:snapshot.rows.length,applied,draft,unapplied,missing,sourceMissing,same:applied,needs:unapplied};
   }
 
   async function loadAblyComponentStocks(skus) {
@@ -3523,6 +3564,7 @@
     loadPlayautoSellpiaCatalog,
     loadSystemStocks,
     loadMatrixStocksForExport,
+    loadMatrixExportSnapshot,
     summarizeMatrixStocksForExport,
     saveTagRule,
     loadAblyComponentStocks,

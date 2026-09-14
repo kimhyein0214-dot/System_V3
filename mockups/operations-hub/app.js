@@ -1039,19 +1039,34 @@ function channelInventoryCells(product, prefix, label, baseMerge = null, identit
   const priceDiff = price !== null && price !== undefined && sellpiaPrice !== null && sellpiaPrice !== undefined && Number(price) !== Number(sellpiaPrice);
   const stockDraft = product.__sellerDrafts?.[`${prefix}:sellpia_current_stock`];
   const priceDraft = product.__sellerDrafts?.[`${prefix}:sellpia_sale_price`];
-  const stockDisplay = stockDraft ? stockDraft.after_value : stock;
   const draftBasePrice = priceComponent.draft_base_price ?? priceDraft?.price_base_after ?? null;
   const draftDiscountedBasePrice = priceComponent.draft_discounted_base_price ?? priceDraft?.price_discounted_base_after ?? null;
   const draftDiscountTerms = priceComponent.draft_discount_terms ?? priceDraft?.price_discount_terms_after ?? null;
   const draftOptionPrice = priceComponent.draft_option_price ?? priceDraft?.price_option_after ?? null;
   const draftFinalPrice = priceComponent.draft_final_price ?? priceDraft?.price_final_after ?? priceDraft?.after_value ?? null;
-  const effectiveBasePrice = calculatedPrice?.platformBase ?? (priceDraft ? draftBasePrice : basePrice);
-  const effectiveDiscountTerms = calculatedPrice?.platformTerms ?? (priceDraft && Array.isArray(draftDiscountTerms) ? draftDiscountTerms : discountTerms);
-  const effectiveDiscountedBasePrice = calculatedPrice ? calculatedPrice.platformBase-calculatedPrice.platformDiscount : priceDraft
-    ? (draftDiscountedBasePrice ?? calculateNativeDiscountedBase(effectiveBasePrice, effectiveDiscountTerms))
-    : discountedBasePrice;
-  const effectiveOptionPrice = calculatedPrice?.platformOption ?? (priceDraft ? draftOptionPrice : optionPrice);
-  const effectiveFinalPrice = calculatedPrice?.platformFinal ?? (priceDraft ? draftFinalPrice : finalPrice);
+  const visibleValues = discountPriceMath.matrixVisibleValues({
+    stock, stockDraft,
+    sourceBasePrice:basePrice,
+    sourceDiscountedBasePrice:discountedBasePrice,
+    sourceOptionPrice:optionPrice,
+    sourceFinalPrice:finalPrice,
+    sourceDiscountTerms:discountTerms,
+    priceDraft,
+    draftBasePrice,
+    draftDiscountedBasePrice,
+    draftOptionPrice,
+    draftFinalPrice,
+    draftDiscountTerms,
+    calculatedPrice
+  });
+  const {
+    stockDisplay,
+    effectiveBasePrice,
+    effectiveDiscountTerms,
+    effectiveDiscountedBasePrice,
+    effectiveOptionPrice,
+    effectiveFinalPrice
+  } = visibleValues;
   const priceRuleAssignment = rulePrice ? {set_name:rulePrice.error || (rulePrice.ruleNames||[]).join(' · '),color:rulePrice.error?'#dc2626':'#1558c0'} : product.__priceRuleAssignments?.[prefix];
   const priceRuleName = String(priceRuleAssignment?.set_name || '').trim();
   const priceRuleColor = String(priceRuleAssignment?.color || '#1558c0').trim();
@@ -1065,7 +1080,7 @@ function channelInventoryCells(product, prefix, label, baseMerge = null, identit
     <span class="price-rule-badge ${priceRuleAssignment ? 'assigned' : 'none'}${priceDraft ? ' pending' : ''}"${priceRuleAssignment ? ` style="--price-rule-color:${escapeHtml(priceRuleColor)}"` : ''}>fx ${escapeHtml(priceRuleName || '규칙 없음')}${priceDraft ? ' · 내보내기 준비' : ''}</span>
     <span class="price-rule-final">${discountView.hasDiscount ? escapeHtml(discountView.summary) : '할인 없음'} → 최종 ${formatNullableNumber(effectiveFinalPrice)}원</span>
   </span>`;
-  const noPrice = !calculatedPrice && (finalPrice === null || finalPrice === undefined);
+  const noPrice = !visibleValues.priceVisible;
   const mergeHidden = Boolean(baseMerge?.hidden);
   const mergeRowspan = Math.max(1, Number(baseMerge?.rowspan) || 1);
   const mergeAttributes = mergeRowspan > 1
@@ -2044,17 +2059,32 @@ function renderDrawerInventoryChannel(source, label, product) {
   const priceDraft = product?.__sellerDrafts?.[`${source}:sellpia_sale_price`];
   const sourceBasePrice = component.source_base_price ?? product?.[`${source}_base_price`] ?? product?.[`${source}_price`];
   const sourceDiscountTerms = component.source_discount_terms ?? product?.[`${source}_discount_terms`] ?? [];
-  const savedDiscountTerms = calculated?.platformTerms ?? priceDraft?.price_discount_terms_after ?? sourceDiscountTerms;
-  drawerState.discountTerms[source] = structuredClone(Array.isArray(savedDiscountTerms) ? savedDiscountTerms : []);
   const sourceDiscountedBasePrice = component.source_discounted_base_price ?? product?.[`${source}_discounted_base_price`] ?? calculateNativeDiscountedBase(sourceBasePrice, sourceDiscountTerms);
   const sourceOptionPrice = component.source_option_price ?? product?.[`${source}_option_price`] ?? 0;
   const sourceFinalPrice = component.source_final_price ?? product?.[`${source}_final_price`] ?? product?.[`${source}_price`];
   const draftState = state.key === 'unmatched' ? state : drawerDraftState([stockDraft, priceDraft]);
-  const stockValue = stockDraft?.after_value ?? stock ?? '';
-  const basePriceValue = calculated?.platformBase ?? component.draft_base_price ?? priceDraft?.price_base_after ?? sourceBasePrice ?? '';
-  const discountedBasePriceValue = calculated && !calculated.error ? calculated.platformBase-calculated.platformDiscount : component.draft_discounted_base_price ?? priceDraft?.price_discounted_base_after ?? sourceDiscountedBasePrice ?? '';
-  const optionPriceValue = calculated?.platformOption ?? component.draft_option_price ?? priceDraft?.price_option_after ?? sourceOptionPrice ?? 0;
-  const finalPriceValue = calculated?.platformFinal ?? component.draft_final_price ?? priceDraft?.price_final_after ?? priceDraft?.after_value ?? sourceFinalPrice ?? '';
+  const visibleValues = discountPriceMath.matrixVisibleValues({
+    stock, stockDraft,
+    sourceBasePrice,
+    sourceDiscountedBasePrice,
+    sourceOptionPrice,
+    sourceFinalPrice,
+    sourceDiscountTerms,
+    priceDraft,
+    draftBasePrice:component.draft_base_price ?? priceDraft?.price_base_after ?? null,
+    draftDiscountedBasePrice:component.draft_discounted_base_price ?? priceDraft?.price_discounted_base_after ?? null,
+    draftOptionPrice:component.draft_option_price ?? priceDraft?.price_option_after ?? null,
+    draftFinalPrice:component.draft_final_price ?? priceDraft?.price_final_after ?? priceDraft?.after_value ?? null,
+    draftDiscountTerms:component.draft_discount_terms ?? priceDraft?.price_discount_terms_after ?? null,
+    calculatedPrice:calculated
+  });
+  const savedDiscountTerms = visibleValues.effectiveDiscountTerms;
+  drawerState.discountTerms[source] = structuredClone(Array.isArray(savedDiscountTerms) ? savedDiscountTerms : []);
+  const stockValue = visibleValues.stockDisplay ?? '';
+  const basePriceValue = visibleValues.effectiveBasePrice ?? '';
+  const discountedBasePriceValue = visibleValues.effectiveDiscountedBasePrice ?? '';
+  const optionPriceValue = visibleValues.effectiveOptionPrice ?? '';
+  const finalPriceValue = visibleValues.effectiveFinalPrice ?? '';
   const stockDisabled = state.key === 'unmatched' || stock === null || stock === undefined;
   const priceDisabled = state.key === 'unmatched' || Boolean(calculated?.error) || (finalPriceValue === '' || finalPriceValue === null || finalPriceValue === undefined);
   return `<section class="drawer-section drawer-inventory-channel" data-source="${source}" data-saved-discount-terms="${escapeHtml(JSON.stringify(savedDiscountTerms))}">
@@ -6914,7 +6944,7 @@ async function refreshSellerExportPreview() {
   const sources = selectedExportSources();
   const countNode = document.getElementById('seller-export-preview-count');
   const detailNode = document.getElementById('seller-export-preview-detail');
-  const includeStockDrafts = Boolean(sellerExportState.rows?.length || document.getElementById('seller-export-include-stock')?.checked);
+  const includeStockDrafts = Boolean(sellerExportState.rows?.length);
   if (!sources.length) {
     countNode.textContent = '0건';
     detailNode.textContent = '판매처를 하나 이상 선택해주세요.';
@@ -7464,6 +7494,7 @@ function openSellerExport({action = 'export', rows = []} = {}) {
   sellerExportState.filteredSkus = null;
   sellerExportState.filteredSkusPromise = null;
   sellerExportState.includeStockDrafts = false;
+  sellerExportState.directMatrixStock = false;
   sellerExportState.previewRequestId += 1;
   const rowSources = new Set(rows.flatMap(row => row.source_channel ? [row.source_channel] : (row.target_channels || [])));
   sellerExportModal.querySelectorAll('.seller-export-source-check').forEach(input => {
@@ -7473,14 +7504,9 @@ function openSellerExport({action = 'export', rows = []} = {}) {
   const skus = sellerExportState.selectedSkus;
   const scopePanel = document.getElementById('seller-export-scope');
   const previewPanel = document.getElementById('seller-export-preview');
-  const stockOption = document.getElementById('seller-export-stock-option');
-  const stockInput = document.getElementById('seller-export-include-stock');
   const showScope = action === 'export' && !rows.length;
   scopePanel.hidden = !showScope;
   previewPanel.hidden = action === 'draft';
-  stockOption.hidden = action === 'draft' || Boolean(rows.length);
-  stockInput.checked = Boolean(rows.length);
-  stockInput.disabled = action === 'draft' || Boolean(rows.length);
   const filteredCount = sellerExportState.filter.codeListSkus.length
     ? sellerExportState.filter.codeListSkus.length
     : sellerExportState.filter.total;
@@ -7497,10 +7523,10 @@ function openSellerExport({action = 'export', rows = []} = {}) {
   document.getElementById('seller-export-kicker').textContent = action === 'draft' ? '매트릭스 수정안 생성' : '판매처 원본 파일 생성';
   document.getElementById('seller-export-guide-title').textContent = action === 'draft'
     ? `셀피아 재고와 다른 판매처 값을 수정안으로 만듭니다.${skus.length ? ` · 선택 ${formatNumber(skus.length)}개 SKU` : ' · 전체 매트릭스'}`
-    : rows.length ? '선택한 저장 수정안을 최신 보관 원본에 반영합니다.' : '매트릭스에 저장된 가격을 최신 보관 원본 양식에 반영합니다.';
+    : rows.length ? '선택한 저장 수정안을 최신 보관 원본에 반영합니다.' : '매트릭스에 표시된 가격을 최신 보관 원본 양식에 반영합니다.';
   document.getElementById('seller-export-guide-detail').textContent = action === 'draft'
     ? '원본 파일은 아직 바뀌지 않습니다. 생성 후 파란 수정 가능 셀에서 값을 확인하거나 다시 고칠 수 있습니다.'
-    : rows.length ? '선택한 수정안을 검증하고 원본 양식에 반영합니다.' : '가격 수식은 여기서 다시 계산하지 않습니다. 현재 매트릭스에 저장된 판매처 가격만 원본의 연결 행에 기록합니다. 재고 수정안은 아래 선택 항목을 켠 경우에만 검증·반영합니다.';
+    : rows.length ? '선택한 수정안을 검증하고 원본 양식에 반영합니다.' : '가격 수식이나 재고 수정안을 새로 만들지 않습니다. 현재 매트릭스에 표시된 판매처 가격을 사용하며, 재고는 판매처별 직접 내보내기에서 화면에 보이는 기존 수정안만 반영합니다.';
   document.getElementById('seller-export-run').textContent = action === 'draft' ? '매트릭스에 수정안 만들기' : rows.length ? '선택 수정안 파일 만들기' : '최신 가격 파일 만들기';
   document.getElementById('seller-export-progress').hidden = true;
   sellerExportModal.hidden = false;
@@ -7534,7 +7560,7 @@ function stopCancelledSellerExport() {
 async function runSellerExport() {
   if (sellerExportState.running) return;
   const isDraftAction = sellerExportState.action === 'draft';
-  const includeStockDrafts = Boolean(sellerExportState.rows?.length || document.getElementById('seller-export-include-stock')?.checked);
+  const includeStockDrafts = Boolean(sellerExportState.rows?.length);
   if (isDraftAction && !liveData?.stageSellerInventoryDraftBatch) {
     showToast('재고 수정안 생성 기능을 불러오지 못했습니다. 새로고침 후 다시 시도해주세요.');
     return;
@@ -7758,7 +7784,6 @@ window.SystemV3SellerExportBridge={
     sellerExportModal.querySelectorAll('.seller-export-source-check').forEach(input=>{input.checked=input.value===source;input.disabled=false;});
     const scope=sellerExportState.selectedSkus.length?'selected':'all';
     sellerExportModal.querySelectorAll('input[name="seller-export-scope"]').forEach(input=>{input.checked=input.value===scope;});
-    const stock=document.getElementById('seller-export-include-stock');if(stock)stock.checked=Boolean(includeStock);
     await refreshSellerOriginalStates();
     const sourceInput=sellerExportModal.querySelector(`.seller-export-source-check[value="${source}"]`);
     if(!sourceInput||sourceInput.disabled||!sourceInput.checked)throw Error((CHANNEL_LABELS[source]||source)+' 최신 보관 원본이 없습니다.');
@@ -7795,7 +7820,6 @@ document.getElementById('seller-export-exclusions-download').addEventListener('c
 document.getElementById('seller-export-run').addEventListener('click', runSellerExport);
 sellerExportModal.querySelectorAll('.seller-export-source-check').forEach(input => input.addEventListener('change', refreshSellerExportPreview));
 sellerExportModal.querySelectorAll('input[name="seller-export-scope"]').forEach(input => input.addEventListener('change', refreshSellerExportPreview));
-document.getElementById('seller-export-include-stock').addEventListener('change', refreshSellerExportPreview);
 
 const matrixCsvModal = document.getElementById('matrix-csv-modal');
 const matrixCsvState = {running:false, cancelRequested:false};

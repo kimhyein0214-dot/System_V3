@@ -1,10 +1,13 @@
 import assert from 'node:assert/strict';
 import {createRequire} from 'node:module';
+import {existsSync} from 'node:fs';
 import {readFile} from 'node:fs/promises';
 import vm from 'node:vm';
-import JSZip from 'jszip';
+import '../mockups/operations-hub/discount-price-math.js';
 import '../mockups/operations-hub/seller-export-adapter.js';
 import '../mockups/operations-hub/current-price-export.js';
+let JSZip=null;
+try { ({default:JSZip}=await import('jszip')); } catch {}
 const api=globalThis.HubCurrentPriceExport,clone=value=>structuredClone(value),sources=['smartstore','makeshop','ably'];
 const forbidden=name=>()=>{throw Error('Export must not call '+name);};
 globalThis.HubPlatformRules=new Proxy({}, {get:(_,name)=>forbidden('HubPlatformRules.'+String(name))});
@@ -56,8 +59,9 @@ function fixture(){
 
 // Real serializer integration: one bad option rolls its entire price group back,
 // while the original stock change and another product remain in the final ZIP.
-{
- const source=await readFile(process.env.XLSX_BROWSER_SCRIPT||new URL('../../xlsx.full.min.js',import.meta.url),'utf8');const sandbox={module:{exports:{}},exports:{},require:createRequire(import.meta.url)};sandbox.exports=sandbox.module.exports;vm.runInNewContext(source,sandbox);globalThis.XLSX=sandbox.module.exports;
+const xlsxPath=process.env.XLSX_BROWSER_SCRIPT||new URL('../../xlsx.full.min.js',import.meta.url);
+if(JSZip&&existsSync(xlsxPath)){
+ const source=await readFile(xlsxPath,'utf8');const sandbox={module:{exports:{}},exports:{},require:createRequire(import.meta.url)};sandbox.exports=sandbox.module.exports;vm.runInNewContext(source,sandbox);globalThis.XLSX=sandbox.module.exports;
  // JSZip's Node runtime cannot read Blob directly; adapt transport only, retaining its real ZIP implementation.
  class NodeZip extends JSZip{file(name,value,...args){return super.file(name,value instanceof Blob?value.arrayBuffer().then(b=>new Uint8Array(b)):value,...args);}}
  globalThis.JSZip=NodeZip;

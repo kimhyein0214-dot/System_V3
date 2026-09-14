@@ -93,8 +93,8 @@
     <div><label id="export-scope-manual-wrap" class="export-scope-detail" hidden>SKU 목록<textarea id="export-scope-manual" placeholder="10000-1&#10;10000-2"></textarea></label><label id="export-scope-tag-wrap" class="export-scope-detail" hidden>태그<select id="export-scope-tag"><option value="">태그 선택</option></select></label></div>
    </div>
    <div class="export-channel-grid">
-    <article class="export-channel-card" data-standard-source="smartstore"><header><h4>스마트스토어</h4><span>원본 양식</span></header><p>최신 보관 원본 XLSX에 저장된 시스템 가격을 바로 반영합니다. 필요하면 저장된 재고 수정안도 함께 넣을 수 있습니다.</p><div class="export-role-status" data-standard-status="smartstore">원본 상태 확인 중…</div><div class="export-role-status matrix-stock-state" data-matrix-stock-status="smartstore">재고 반영 상태 확인 전 · 파일에는 현재 매트릭스 기준재고를 사용합니다.</div><div class="direct-export-actions"><button class="btn" type="button" data-standard-preview="smartstore">미리보기</button><button class="btn primary" type="button" data-standard-run="smartstore">파일 생성</button></div><div class="direct-export-progress" data-standard-progress="smartstore" hidden><div class="direct-export-progress-head"><b data-progress-title>파일 생성 준비</b><span data-progress-percent>0%</span></div><div class="direct-export-progress-track"><i data-progress-bar style="width:0%"></i></div><small data-progress-detail>대상 범위와 원본을 확인합니다.</small></div><div class="direct-export-preview" data-standard-result="smartstore">대상 범위를 위에서 선택한 뒤 미리보기하세요.</div></article>
-    <article class="export-channel-card" data-standard-source="makeshop"><header><h4>메이크샵</h4><span>원본 양식</span></header><p>최신 보관 원본 XLSX에 저장된 시스템 가격을 바로 반영합니다. 필요하면 저장된 재고 수정안도 함께 넣을 수 있습니다.</p><div class="export-role-status" data-standard-status="makeshop">원본 상태 확인 중…</div><div class="export-role-status matrix-stock-state" data-matrix-stock-status="makeshop">재고 반영 상태 확인 전 · 파일에는 현재 매트릭스 기준재고를 사용합니다.</div><div class="direct-export-actions"><button class="btn" type="button" data-standard-preview="makeshop">미리보기</button><button class="btn primary" type="button" data-standard-run="makeshop">파일 생성</button></div><div class="direct-export-progress" data-standard-progress="makeshop" hidden><div class="direct-export-progress-head"><b data-progress-title>파일 생성 준비</b><span data-progress-percent>0%</span></div><div class="direct-export-progress-track"><i data-progress-bar style="width:0%"></i></div><small data-progress-detail>대상 범위와 원본을 확인합니다.</small></div><div class="direct-export-preview" data-standard-result="makeshop">대상 범위를 위에서 선택한 뒤 미리보기하세요.</div></article>
+    <article class="export-channel-card" data-standard-source="smartstore"><header><h4>스마트스토어</h4><span>원본 양식</span></header><p>최신 보관 원본 XLSX에 현재 매트릭스에 표시된 가격을 반영합니다. 재고는 화면에 보이는 기존 수정안만 반영하고 수정안이 없으면 원본을 유지합니다.</p><div class="export-role-status" data-standard-status="smartstore">원본 상태 확인 중…</div><div class="export-role-status matrix-stock-state" data-matrix-stock-status="smartstore">재고 상태 확인 전 · 새 수정안을 계산하지 않습니다.</div><div class="direct-export-actions"><button class="btn" type="button" data-standard-preview="smartstore">미리보기</button><button class="btn primary" type="button" data-standard-run="smartstore">파일 생성</button></div><div class="direct-export-progress" data-standard-progress="smartstore" hidden><div class="direct-export-progress-head"><b data-progress-title>파일 생성 준비</b><span data-progress-percent>0%</span></div><div class="direct-export-progress-track"><i data-progress-bar style="width:0%"></i></div><small data-progress-detail>대상 범위와 원본을 확인합니다.</small></div><div class="direct-export-preview" data-standard-result="smartstore">대상 범위를 위에서 선택한 뒤 미리보기하세요.</div></article>
+    <article class="export-channel-card" data-standard-source="makeshop"><header><h4>메이크샵</h4><span>원본 양식</span></header><p>최신 보관 원본 XLSX에 현재 매트릭스에 표시된 가격을 반영합니다. 재고는 화면에 보이는 기존 수정안만 반영하고 수정안이 없으면 원본을 유지합니다.</p><div class="export-role-status" data-standard-status="makeshop">원본 상태 확인 중…</div><div class="export-role-status matrix-stock-state" data-matrix-stock-status="makeshop">재고 상태 확인 전 · 새 수정안을 계산하지 않습니다.</div><div class="direct-export-actions"><button class="btn" type="button" data-standard-preview="makeshop">미리보기</button><button class="btn primary" type="button" data-standard-run="makeshop">파일 생성</button></div><div class="direct-export-progress" data-standard-progress="makeshop" hidden><div class="direct-export-progress-head"><b data-progress-title>파일 생성 준비</b><span data-progress-percent>0%</span></div><div class="direct-export-progress-track"><i data-progress-bar style="width:0%"></i></div><small data-progress-detail>대상 범위와 원본을 확인합니다.</small></div><div class="direct-export-preview" data-standard-result="makeshop">대상 범위를 위에서 선택한 뒤 미리보기하세요.</div></article>
     <article class="export-channel-card"><header><h4>에이블리 · PlayAuto</h4><span>전용 양식</span></header><p>GOODS_LIST는 조회/매칭에만 사용합니다. 실제 수정 업로드 파일은 아래 PlayAuto 원본을 기준으로 만듭니다.</p>
       <div class="export-role-status" data-export-file="playauto_product"></div>
       <div class="export-role-status" data-export-file="playauto_option"></div>
@@ -148,59 +148,10 @@
   if(detailNode)detailNode.textContent=detail||'';
  }
 
- async function prepareReliableInventory(source,skus,overwriteBlank,onProgress){
-  if(!D()?.beginReliableExportJob||!D()?.checkpointReliableExportJob)throw Error('Reliability V1 모듈을 불러오지 못했습니다. 새로고침해주세요.');
-  let job=await D().beginReliableExportJob({source,skus:skus||[],includeStock:true,overwriteBlank});
-  const alreadyReady=['inventory_ready','file_generation','complete'].includes(job.phase)||['inventory_ready','ready'].includes(job.status);
-  if(alreadyReady){
-   onProgress?.({percent:100,title:'저장된 재고 계산 재사용',detail:`작업 ${String(job.job_id).slice(0,8)} · 이전 계산 체크포인트를 그대로 사용합니다.`});
-   return {job,stockStage:{batchId:job.change_batch_id,processed:Number(job.processed_count||0),total:Number(job.total_count||0),staged:Number(job.staged_count||0),preserved:Number(job.blank_preserved_count||0),overwritten:Number(job.blank_overwrite_count||0),resumed:true}};
-  }
-  job=await D().checkpointReliableExportJob({
-   jobId:job.job_id,status:'running',phase:'inventory_staging',
-   processedCount:Number(job.processed_count||0),totalCount:Number(job.total_count||0),
-   stagedCount:Number(job.staged_count||0),blankPreservedCount:Number(job.blank_preserved_count||0),
-   blankOverwriteCount:Number(job.blank_overwrite_count||0),afterCursor:job.after_cursor||null,
-   changeBatchId:job.change_batch_id||null,lastError:null
-  });
-  try{
-   const stockStage=await global.SystemV3SellerExportBridge.refreshInventoryDrafts({
-    source,skus,overwriteBlank,job,
-    onProgress,
-    onCheckpoint:async checkpoint=>{
-      job=await D().checkpointReliableExportJob({
-       jobId:job.job_id,status:'running',phase:'inventory_staging',
-       processedCount:checkpoint.processed,totalCount:checkpoint.total,stagedCount:checkpoint.staged,
-       blankPreservedCount:checkpoint.preserved,blankOverwriteCount:checkpoint.overwritten,
-       afterCursor:checkpoint.afterSku,changeBatchId:checkpoint.batchId,lastError:null
-      });
-    }
-   });
-   job=await D().checkpointReliableExportJob({
-    jobId:job.job_id,status:'inventory_ready',phase:'inventory_ready',
-    processedCount:stockStage.processed,totalCount:stockStage.total,stagedCount:stockStage.staged,
-    blankPreservedCount:stockStage.preserved,blankOverwriteCount:stockStage.overwritten,
-    afterCursor:stockStage.afterSku,changeBatchId:stockStage.batchId,lastError:null
-   });
-   return {job,stockStage};
-  }catch(error){
-   try{
-    await D().checkpointReliableExportJob({
-     jobId:job.job_id,status:'failed',phase:'inventory_staging',
-     processedCount:Number(job.processed_count||0),totalCount:Number(job.total_count||0),
-     stagedCount:Number(job.staged_count||0),blankPreservedCount:Number(job.blank_preserved_count||0),
-     blankOverwriteCount:Number(job.blank_overwrite_count||0),afterCursor:job.after_cursor||null,
-     changeBatchId:job.change_batch_id||null,lastError:error?.message||String(error)
-    });
-   }catch(checkpointError){console.warn('reliability checkpoint failed',checkpointError);}
-   throw error;
-  }
- }
-
  async function refreshMatrixStockStatus(source,skus=null){
   const el=document.querySelector('[data-matrix-stock-status="'+source+'"]');if(!el)return null;
   el.textContent='매트릭스 재고 반영 상태 확인 중…';
-  try{const r=await D().summarizeMatrixStocksForExport({source,skus});el.className='export-role-status matrix-stock-state ready';el.textContent='재고 상태 · 반영 필요 '+n(r.needs)+'건 · 이미 동일 '+n(r.same)+'건 · 기준재고 없음 '+n(r.missing)+'건';return r;}
+  try{const r=await D().summarizeMatrixStocksForExport({source,skus});el.className='export-role-status matrix-stock-state ready';el.textContent='재고 상태 · 판매처 반영 '+n(r.applied)+'건 · 수정안 있음 '+n(r.draft)+'건 · 미반영 '+n(r.unapplied)+'건 · 기준재고 없음 '+n(r.missing)+'건'+(r.sourceMissing?' · 원본 위치 없음 '+n(r.sourceMissing)+'건':'');return r;}
   catch(error){el.className='export-role-status matrix-stock-state missing';el.textContent='재고 상태 조회 실패 · '+(error?.message||error);return null;}
  }
 
@@ -208,7 +159,7 @@
   const bridge=global.SystemV3SellerExportBridge;if(!bridge){setStatus('직접 내보내기 연결 모듈을 불러오지 못했습니다. 새로고침해주세요.','error');return;}
   const button=document.querySelector('[data-standard-preview="'+source+'"]');if(button)button.disabled=true;global.__systemV3DirectExportBusy=true;
   standardResult(source,'매트릭스 가격·재고와 원본 위치를 검증하는 중…');
-  try{const skus=await directScopeSkus();await refreshMatrixStockStatus(source,skus);const result=await bridge.preview({source,skus,includeStock:false});standardResult(source,[result.count,result.detail,'재고 수정안은 새로 만들지 않음'].filter(Boolean).join(' · '),'success');setStatus((source==='smartstore'?'스마트스토어':'메이크샵')+' 미리보기 완료','success');}
+  try{const skus=await directScopeSkus();await refreshMatrixStockStatus(source,skus);const result=await bridge.preview({source,skus,includeStock:false});standardResult(source,[result.count,result.detail,'재고는 현재 수정안/판매처 반영 상태만 사용'].filter(Boolean).join(' · '),'success');setStatus((source==='smartstore'?'스마트스토어':'메이크샵')+' 미리보기 완료','success');}
   catch(error){standardResult(source,error?.message||String(error),'error');setStatus('미리보기 실패: '+(error?.message||error),'error');}
   finally{global.__systemV3DirectExportBusy=false;if(button)button.disabled=false;}
  }
@@ -216,8 +167,8 @@
  async function runStandard(source){
   const bridge=global.SystemV3SellerExportBridge;if(!bridge){setStatus('직접 내보내기 연결 모듈을 불러오지 못했습니다. 새로고침해주세요.','error');return;}
   const button=document.querySelector('[data-standard-run="'+source+'"]');if(button)button.disabled=true;global.__systemV3DirectExportBusy=true;
-  standardProgress(source,3,'파일 생성 준비','현재 매트릭스 가격·기준재고와 최신 원본을 읽습니다.');standardResult(source,'매트릭스에 보이는 값으로 파일을 생성하는 중…');setStatus('판매처 파일 생성 중…');
-  try{const skus=await directScopeSkus();await refreshMatrixStockStatus(source,skus);const result=await bridge.run({source,skus,includeStock:false});const ok=/완료/.test(result.title||'')&&!/실패|중단/.test(result.title||'');if(!ok)throw Error(result.progressDetail||result.title||'파일 생성 결과를 확인하지 못했습니다.');standardProgress(source,100,'파일 생성 완료','현재 매트릭스 가격·기준재고를 최신 원본에 반영했습니다.','done');standardResult(source,[result.title,result.progressDetail].filter(Boolean).join(' · ')||'파일 생성 완료','success');setStatus('파일 생성 완료','success');}
+  standardProgress(source,3,'파일 생성 준비','현재 매트릭스 표시값과 최신 원본 위치를 읽습니다.');standardResult(source,'매트릭스에 보이는 값으로 파일을 생성하는 중…');setStatus('판매처 파일 생성 중…');
+  try{const skus=await directScopeSkus();await refreshMatrixStockStatus(source,skus);const result=await bridge.run({source,skus,includeStock:false});const ok=/완료/.test(result.title||'')&&!/실패|중단/.test(result.title||'');if(!ok)throw Error(result.progressDetail||result.title||'파일 생성 결과를 확인하지 못했습니다.');standardProgress(source,100,'파일 생성 완료','현재 매트릭스 가격과 기존 재고 수정안을 최신 원본에 반영했습니다.','done');standardResult(source,[result.title,result.progressDetail].filter(Boolean).join(' · ')||'파일 생성 완료','success');setStatus('파일 생성 완료','success');}
   catch(error){standardProgress(source,100,'파일 생성 중단',error?.message||String(error),'error');standardResult(source,error?.message||String(error),'error');setStatus('파일 생성 실패: '+(error?.message||error),'error');}
   finally{global.__systemV3DirectExportBusy=false;if(button)button.disabled=false;}
  }
