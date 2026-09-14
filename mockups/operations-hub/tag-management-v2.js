@@ -4,15 +4,27 @@
  const state={mode:'all',kind:'all',catalog:[],catalogSearch:'',selectedTagId:'',tag:null,page:1,pageSize:100,count:0,rows:[],memberSearch:'',selected:new Set(),rules:[],loading:false};
  const esc=v=>String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
  const n=v=>Number(v||0).toLocaleString('ko-KR');
+ const number=v=>Number.isFinite(Number(v))?Number(v).toLocaleString('ko-KR'):String(v??'—');
  const safeName=v=>String(v||'태그').replace(/[\\/:*?"<>|]+/g,'_').trim().slice(0,80)||'태그';
  const sellerNames={smartstore:'스마트스토어',makeshop:'메이크샵',ably:'에이블리'};
+ function formulaText(source,rule){
+  const operations={add:'+',subtract:'−',multiply:'×',divide:'÷',set:'='};
+  const rounding={nearest:'반올림',up:'올림',down:'내림'};
+  let text=source;
+  for(const step of rule.config?.steps||[]){
+   if(step.op==='round')text+=` → ${number(step.unit)} 단위 ${rounding[step.rounding]||'반올림'}`;
+   else text+=` ${operations[step.op]||step.op} ${number(step.value)}`;
+  }
+  return text+(rule.config?.steps?.length?'':' (변경 없음)');
+ }
  function ruleDisplay(rule){
   const M=global.HubRuleRegistry||{},labels=M.fields||{};
   const sourceLabel=labels[rule.source_field]||rule.source_field||'시작값';
   const targetLabel=labels[rule.target_field]||rule.target_field||'저장값';
   const sourceSeller=M.isPlatform?.(rule.source_field)?(sellerNames[rule.source_scope||rule.scope]||'저장 판매처와 동일'):'';
   const destination=M.isPlatform?.(rule.target_field)?(sellerNames[rule.scope]||'전체 판매처'):'공통';
-  return {source:`${sourceSeller?sourceSeller+' · ':''}${sourceLabel}`,target:targetLabel,destination};
+  const source=`${sourceSeller?sourceSeller+' · ':''}${sourceLabel}`;
+  return {source,target:targetLabel,destination,formula:formulaText(source,rule),code:rule.scope==='makeshop'&&rule.target_field==='platform_discount_price'?rule.config?.discount_rule_code||'':''};
  }
  function host(){return document.getElementById('attributes');}
  function pageCount(){return Math.max(1,Math.ceil(state.count/state.pageSize));}
@@ -146,7 +158,7 @@
   document.getElementById('tag-stat-count').textContent=tag?n(tag.option_count):'-';
   document.getElementById('tag-stat-rules').textContent=tag?n(state.rules.length||tag.rule_count):'-';
   const ruleList=document.getElementById('tag-rule-list');
-  if(ruleList)ruleList.innerHTML=tag?(state.rules.length?state.rules.map(rule=>{const view=ruleDisplay(rule);return `<i class="tag-rule-item"><b class="tag-rule-destination">${esc(view.destination)} 저장</b><span>${esc(rule.name)} · ${esc(view.source)} → ${esc(view.target)}</span></i>`;}).join(''):'<i>연결된 수식 없음</i>'):'<i>태그를 선택하면 표시됩니다.</i>';
+  if(ruleList)ruleList.innerHTML=tag?(state.rules.length?state.rules.map(rule=>{const view=ruleDisplay(rule);return `<i class="tag-rule-item"><span class="tag-rule-item-head"><b class="tag-rule-destination">${esc(view.destination)} 저장</b><small>${esc(rule.name)}${view.code?' · '+esc(view.code):''}</small></span><strong class="tag-rule-formula"><small>계산식</small>${esc(view.formula)}</strong><span class="tag-rule-result">결과 → ${esc(view.target)}</span></i>`;}).join(''):'<i>연결된 수식 없음</i>'):'<i>태그를 선택하면 표시됩니다.</i>';
   for(const id of ['tag-download-current','tag-download-blank','tag-upload-sync','tag-edit-rule','tag-clear-all'])document.getElementById(id).disabled=!tag;
   document.getElementById('tag-remove-selected').disabled=!tag||!state.selected.size;
  }

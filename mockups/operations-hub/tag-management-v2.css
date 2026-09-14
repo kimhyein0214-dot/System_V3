@@ -64,6 +64,8 @@
 
 
 /* rule destination clarity */
-.tag-rule-item{display:grid!important;grid-template-columns:max-content minmax(0,1fr);align-items:start;gap:6px;padding:7px!important}
+.tag-rule-item{display:flex!important;flex-direction:column;align-items:stretch;gap:7px;padding:9px!important}
+.tag-rule-item-head{display:flex;align-items:center;gap:7px;min-width:0}.tag-rule-item-head>small{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:#61748a;font-size:10px}
 .tag-rule-destination{display:inline-flex;align-items:center;padding:2px 6px;border-radius:999px;background:#eaf2ff;color:#315eaf;font-size:9px;white-space:nowrap}
-.tag-rule-item>span{min-width:0;color:#35516f;line-height:1.4}
+.tag-rule-formula{display:flex;flex-direction:column;gap:3px;padding:8px 9px;border:1px solid #cfe0f4;border-radius:7px;background:#f8fbff;color:#173d70;font-size:12px;line-height:1.45;overflow-wrap:anywhere}.tag-rule-formula>small{color:#6a7e96;font-size:9px;font-weight:800}
+.tag-rule-result{min-width:0;color:#52677f;font-size:10px;line-height:1.4}

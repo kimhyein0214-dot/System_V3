@@ -16,6 +16,9 @@ test('tag-centric manager exposes saved-assignment download and member editing',
   assert.match(js,/id="tag-new-open"[^>]*>새 태그/);
   assert.match(js,/id="tag-new-formula"[^>]*type="checkbox"/);
   assert.match(js,/가격 수식 사용/);
+  assert.match(js,/class="tag-rule-formula"/);
+  assert.match(js,/rule\.config\?\.steps/);
+  assert.match(js,/결과 →/);
   assert.match(js,/data-tag-kind="plain"[^>]*>일반 태그/);
   assert.match(js,/data-tag-kind="formula"[^>]*>수식 태그/);
   assert.match(js,/createProductTag\(\{name,color,group:'운영'\}\)/);
