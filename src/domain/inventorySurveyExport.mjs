@@ -79,10 +79,15 @@ export function buildInventorySurveyExport({ countRows = [], invoices = [] } = {
       sku,
       pickedQty: 0,
       shortageDrawerQty: 0,
+      ownCodes: new Set(),
       calculatedAt: "",
     };
     current.pickedQty += nonNegativeNumber(row?.picked_qty ?? row?.pickedQty);
     current.shortageDrawerQty += nonNegativeNumber(row?.shortage_drawer_qty ?? row?.shortageDrawerQty);
+    const serverOwnCode = text(row?.own_code || row?.ownCode);
+    if (serverOwnCode) {
+      for (const code of serverOwnCode.split(" / ").map((value) => text(value)).filter(Boolean)) current.ownCodes.add(code);
+    }
     current.calculatedAt = current.calculatedAt || text(row?.calculated_at || row?.calculatedAt);
     countsBySku.set(sku, current);
   }
@@ -93,7 +98,9 @@ export function buildInventorySurveyExport({ countRows = [], invoices = [] } = {
 
   let missingOwnCodeCount = 0;
   const rows = entries.map((row) => {
-    const ownCode = ownCodesBySku.get(row.sku) || "";
+    // The RPC derives this from the same persisted picking rows as the count.
+    // Loaded invoices remain a fallback for older RPC responses only.
+    const ownCode = [...row.ownCodes].sort().join(" / ") || ownCodesBySku.get(row.sku) || "";
     if (!ownCode) missingOwnCodeCount += 1;
     return [
       row.sku,
