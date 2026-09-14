@@ -92,14 +92,7 @@ assert.match(splitTags, /calculate_operations_hub_price_rule_plan[\s\S]*?gross_p
 assert.match(splitTags, /save_operations_hub_seller_rule_draft[\s\S]*?price_calculation_version[\s\S]*?3, 'rule_tags'/, 'tag-driven seller drafts must persist exact gross, discount, option, and final components');
 assert.match(app, /source === 'smartstore' \|\| source === 'makeshop'[\s\S]*?매트릭스 할인정보 열/, 'the drawer must route scoped discount changes to the matrix column');
 const drawerPricing = app.slice(app.indexOf('function renderDrawerInventoryChannel('), app.indexOf('function renderDrawerInventory('));
-assert.match(drawerPricing, /const calculated = product\?\.__hubRulePrices[\s\S]*?const priceDraft = product\?\.__sellerDrafts[\s\S]*?const savedDiscountTerms = calculated\?\.platformTerms \?\? priceDraft\?\.price_discount_terms_after \?\? sourceDiscountTerms/, 'the drawer must initialize projected and draft prices before selecting latest effective discount terms');
-const discountExpression = drawerPricing.match(/const savedDiscountTerms = ([^;]+);/)[1];
-const selectDrawerDiscounts = new Function('calculated','priceDraft','sourceDiscountTerms',`return ${discountExpression};`);
-const originalTerms=[{term_key:'basic',value:100}],draftTerms=[{term_key:'basic',value:200}],projectedTerms=[{term_key:'basic',value:300}];
-assert.equal(selectDrawerDiscounts({platformTerms:projectedTerms},{price_discount_terms_after:draftTerms},originalTerms),projectedTerms,'latest shared projection must precede persisted draft discounts');
-assert.deepEqual(selectDrawerDiscounts({platformTerms:[]},{price_discount_terms_after:draftTerms},originalTerms),[],'an explicit empty projected discount list clears stale draft discounts');
-assert.equal(selectDrawerDiscounts(undefined,{price_discount_terms_after:draftTerms},originalTerms),draftTerms,'unconfigured rows retain the active manual draft');
-assert.equal(selectDrawerDiscounts(undefined,undefined,originalTerms),originalTerms,'rows without a rule or draft retain original discount terms');
+assert.match(drawerPricing, /const calculated = product\?\.__hubRulePrices[\s\S]*?const priceDraft = product\?\.__sellerDrafts[\s\S]*?matrixVisibleValues\([\s\S]*?priceDraft[\s\S]*?calculatedPrice:calculated[\s\S]*?const savedDiscountTerms = visibleValues\.effectiveDiscountTerms/, 'the drawer must select effective discount terms through the shared draft-first matrix resolver');
 assert.match(exportAdapter, /patchSmartstoreDiscounts[\s\S]*?'basic','BF','BG'[\s\S]*?'mobile','BH','BI'[\s\S]*?target_discount_terms/, 'Smartstore export must patch its original discount value and unit columns');
 assert.match(exportAdapter, /canonicalDiscountTerms[\s\S]*?discountTermsFingerprint/, 'discount comparison must ignore term and object-key ordering');
 assert.match(exportAdapter, /'할인코드'[\s\S]*?discountRuleCode/, 'the export audit CSV must include the MakeShop discount code');

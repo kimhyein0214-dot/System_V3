@@ -3420,7 +3420,7 @@
   }
 
   async function uploadAuxiliarySellerFile({sourceChannel='ably',sourceRole,file,rowCount=null,matchedCount=null,unresolvedCount=null,metadata={}}={}) {
-    if(sourceChannel!=='ably'||!['playauto_product','playauto_option'].includes(sourceRole))throw new Error('지원하지 않는 판매처 파일 역할입니다.');
+    if(sourceChannel!=='ably'||sourceRole!=='playauto_product')throw new Error('옵션가·재고 carrier는 Storage에 저장하지 않습니다. 판매처 내보내기에서 로컬 파일을 선택해주세요.');
     if(!file||typeof file.arrayBuffer!=='function')throw new Error('업로드할 파일을 선택해주세요.');
     const baseName=cleanText(file.name)||'playauto.xlsx';
     const id=global.crypto?.randomUUID?.()||String(Date.now());
@@ -3512,6 +3512,54 @@
     return {source:safeSource,snapshotId,rows};
   }
 
+  async function loadCarrierMatrixTargets({source,skus=[]}={}) {
+    const safeSource=cleanText(source);
+    if(!['smartstore','makeshop','ably'].includes(safeSource))throw new Error('지원하지 않는 판매처입니다.');
+    const codes=[...new Set((skus||[]).map(cleanText).filter(Boolean))];
+    if(!codes.length)return {source:safeSource,rows:[]};
+    const fields=['platform_registration_price','platform_discount_price','platform_option_price','platform_final_price'];
+    const [calculated,drafts]=await Promise.all([
+      loadCalculatedResults({skus:codes,scope:safeSource,fields}),
+      (async()=>{
+        const rows=[];
+        for(let offset=0;offset<codes.length;offset+=500){
+          const {data,error}=await db.from('operations_hub_active_seller_drafts')
+            .select('change_id,sellpia_sku_code,source_channel,field_key,after_value,price_base_after,price_discounted_base_after,price_option_after,price_final_after,price_discount_terms_after,status,updated_at')
+            .eq('source_channel',safeSource).in('field_key',['sellpia_sale_price','sellpia_current_stock'])
+            .in('sellpia_sku_code',codes.slice(offset,offset+500)).order('updated_at',{ascending:false}).order('change_id',{ascending:false});
+          if(error)throw readableDatabaseError(error);rows.push(...(data||[]));
+        }
+        return rows;
+      })()
+    ]);
+    const calculatedBySku=new Map();
+    for(const row of calculated.rows||[]){
+      const sku=cleanText(row.sku);if(!sku)continue;
+      if(!calculatedBySku.has(sku))calculatedBySku.set(sku,new Map());
+      calculatedBySku.get(sku).set(cleanText(row.field),row);
+    }
+    const draftByKey=new Map();
+    for(const draft of drafts){
+      const key=JSON.stringify([cleanText(draft.sellpia_sku_code),cleanText(draft.field_key)]);
+      if(!draftByKey.has(key))draftByKey.set(key,draft);
+    }
+    const rows=codes.map(sku=>{
+      const grouped=calculatedBySku.get(sku)||new Map(),get=field=>grouped.get(field)||{};
+      const registration=get('platform_registration_price'),discount=get('platform_discount_price'),option=get('platform_option_price'),final=get('platform_final_price');
+      return {
+        sku,
+        stock_draft:draftByKey.get(JSON.stringify([sku,'sellpia_current_stock']))||null,
+        price_draft:draftByKey.get(JSON.stringify([sku,'sellpia_sale_price']))||null,
+        registration_price:registration.value??null,registration_status:registration.status??null,registration_error:registration.error??null,registration_details:registration.result_details??null,registration_generation_id:registration.generation_id??null,
+        discount_price:discount.value??null,discount_status:discount.status??null,discount_error:discount.error??null,discount_details:discount.result_details??null,discount_generation_id:discount.generation_id??null,
+        option_price:option.value??null,option_status:option.status??null,option_error:option.error??null,option_details:option.result_details??null,option_generation_id:option.generation_id??null,
+        final_price:final.value??null,final_status:final.status??null,final_error:final.error??null,final_details:final.result_details??null,final_generation_id:final.generation_id??null,
+        rule_versions:Array.isArray(final.rule_versions)?final.rule_versions:[]
+      };
+    });
+    return {source:safeSource,rows,missingSkus:calculated.missingSkus||[]};
+  }
+
   async function summarizeMatrixStocksForExport({source,skus=null}={}) {
     const snapshot=await loadMatrixExportSnapshot({source,skus});
     let applied=0,draft=0,unapplied=0,missing=0,sourceMissing=0;
@@ -3564,6 +3612,7 @@
     loadSystemStocks,
     loadMatrixStocksForExport,
     loadMatrixExportSnapshot,
+    loadCarrierMatrixTargets,
     summarizeMatrixStocksForExport,
     saveTagRule,
     loadAblyComponentStocks,

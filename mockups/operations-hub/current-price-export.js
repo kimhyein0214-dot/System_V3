@@ -153,6 +153,39 @@
   return {items:output,excludedItems};
  }
 
+ function prepareCarrierItems(source,fileName,carrierRows,snapshotRows){
+  const identity=row=>JSON.stringify([String(row?.product_code||'').trim(),String(row?.option_code||'').trim()]);
+  const snapshotByIdentity=new Map();
+  for(const row of snapshotRows||[]){const key=identity(row);if(!snapshotByIdentity.has(key))snapshotByIdentity.set(key,[]);snapshotByIdentity.get(key).push(row);}
+  const carrierCounts=new Map();for(const row of carrierRows||[]){const key=identity(row);carrierCounts.set(key,(carrierCounts.get(key)||0)+1);}
+  const items=[],excludedItems=[],preview=[];let nextId=-1;
+  const exclude=(row,reason)=>{const export_item_id=nextId--;const item={export_item_id,sellpia_sku_code:'',source_channel:source,seller_product_code:row.product_code||'',seller_option_code:row.option_code||'',field_key:'carrier_row',source_file_name:fileName,source_row_no:row.source_row_no};excludedItems.push({export_item_id,item,reason});preview.push({source_row_no:row.source_row_no,product_code:row.product_code,option_code:row.option_code,status:'blocked',reason});};
+  for(const original of carrierRows||[]){
+   const key=identity(original),matches=snapshotByIdentity.get(key)||[];
+   if(carrierCounts.get(key)!==1){exclude(original,'공식 수정파일 안에 같은 판매처 상품·옵션 행이 중복됩니다.');continue;}
+   if(matches.length!==1){exclude(original,matches.length?'판매처 상품·옵션이 여러 SKU에 연결되어 있어 자동으로 쓸 수 없습니다.':'현재 매트릭스에서 판매처 상품·옵션을 찾지 못했습니다.');continue;}
+   const row={...matches[0],source_file_name:fileName,source_row_no:Number(original.source_row_no),source_stock:original.stock,
+    source_base_price:original.base_price,source_discounted_base_price:original.discounted_base_price,
+    source_option_price:original.option_price,source_final_price:original.final_price,source_discount_terms:original.discount_terms||[]};
+   const changedFields=[],rowItems=[];
+   const stockDraft=row.stock_draft,stockTarget=stockDraft&&finite(stockDraft.after_value)?Number(stockDraft.after_value):null;
+   if(original.stock!==null&&original.stock!==undefined&&original.stock!==''&&stockTarget!==null&&Number(original.stock)!==stockTarget){
+    rowItems.push({export_item_id:nextId--,sellpia_sku_code:row.sku,source_channel:source,field_key:'sellpia_current_stock',seller_product_code:row.product_code,seller_option_code:row.option_code||'',source_file_name:fileName,source_row_no:Number(original.source_row_no),expected_source_value:original.stock,before_value:original.stock,after_value:stockTarget,matrix_visible_stock:true,target_component_skus:[row.sku]});changedFields.push('stock');
+   }
+   const target=matrixPriceTarget(row);
+   if(target?.invalid){exclude(original,target.reason);continue;}
+   if(target){
+    const current=[original.base_price,original.discounted_base_price,original.option_price,original.final_price];
+    if(current.every(finite)){
+     const changed=current.some((value,index)=>Number(value)!==[target.base,target.discounted,target.option,target.final][index])||termsKey(target.terms)!==termsKey(original.discount_terms||[]);
+     if(changed){rowItems.push({export_item_id:nextId--,sellpia_sku_code:row.sku,source_channel:source,field_key:'sellpia_sale_price',seller_product_code:row.product_code,seller_option_code:row.option_code||'',source_file_name:fileName,source_row_no:Number(original.source_row_no),expected_source_value:original.final_price,before_value:original.final_price,after_value:target.final,base_price:original.base_price,option_price:original.option_price,target_base_price:target.base,target_discounted_base_price:target.discounted,target_option_price:target.option,target_final_price:target.final,source_discount_terms:original.discount_terms||[],target_discount_terms:target.terms,stored_matrix_price:true,matrix_visible_price:true,rule_versions:target.ruleVersions,target_component_skus:[row.sku]});changedFields.push('price');}
+    }else{exclude(original,'공식 수정파일의 현재 가격 구성값이 완전하지 않아 안전하게 비교할 수 없습니다.');continue;}
+   }
+   items.push(...rowItems);preview.push({source_row_no:original.source_row_no,sku:row.sku,product_code:row.product_code,option_code:row.option_code,status:'ready',changed:changedFields.length>0,changed_fields:changedFields});
+  }
+  return {items,excludedItems,preview};
+ }
+
  async function refreshItems(items,filesBySource,{sources:selected=sources,skus=null,includeRules=true,includeMatrixStock=false,onProgress}={}){
   if(includeMatrixStock){
    if(!g.SystemV3Data?.loadMatrixExportSnapshot)throw Error('매트릭스 스냅샷 내보내기 기능을 불러오지 못했습니다. 새로고침 후 다시 시도해주세요.');
@@ -229,5 +262,5 @@
    remaining=remaining.filter(i=>!(price(i)&&blocked.has(group(i))));
   }
  }
- g.HubCurrentPriceExport={refreshItems,buildArchive,matrixPriceTarget,refreshMatrixSnapshotItems,validSourceLocation};
+ g.HubCurrentPriceExport={refreshItems,buildArchive,matrixPriceTarget,refreshMatrixSnapshotItems,prepareCarrierItems,validSourceLocation};
 })(typeof window==='undefined'?globalThis:window);

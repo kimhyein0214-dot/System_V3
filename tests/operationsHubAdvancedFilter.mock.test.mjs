@@ -43,6 +43,6 @@ assert.match(css, /\.matrix-page\.active-page \.matrix-toolbar\{[^}]*overflow-x:
 
 const assetVersions = [...html.matchAll(/(?:style\.css|seller-source-parsers\.js|seller-export-adapter\.js|data-service\.js|app\.js)\?v=([^"']+)/g)].map(match => match[1]);
 assert.equal(assetVersions.length,5,"all critical local assets must remain cache-busted");
-assert.match(html,/data-service\.js\?v=20260914-matrix-visible-export-v2[\s\S]*?app\.js\?v=20260914-matrix-visible-export-v2/,"the coupled data and app changes must deploy together");
+assert.match(html,/data-service\.js\?v=20260914-carrier-export-v1[\s\S]*?app\.js\?v=20260914-carrier-export-v1/,"the coupled data and app changes must deploy together");
 
 console.log("Operations hub advanced server-side matrix filter contract: passed");

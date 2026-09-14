@@ -7723,6 +7723,53 @@ document.getElementById('matrix-export-btn').addEventListener('click', () => ope
 document.getElementById('queue-export').addEventListener('click', () => openSellerExport({action:'export', rows:selectedQueueRows()}));
 document.getElementById('seller-export-close').addEventListener('click', closeSellerExport);
 document.getElementById('seller-export-cancel').addEventListener('click', closeSellerExport);
+
+async function prepareStandardCarrierExport(source,file){
+  if(!['smartstore','makeshop'].includes(source))throw Error('공식 수정파일 변환은 스마트스토어·메이크샵만 지원합니다.');
+  if(!file||typeof file.arrayBuffer!=='function')throw Error('공식 수정 XLSX를 선택해주세요.');
+  const parsed=await window.SystemV3SellerParsers.parseSellerFiles(source,[file],{price:true,discount:true});
+  const snapshot=await liveData.loadMatrixExportSnapshot({source});
+  const prepared=window.HubCurrentPriceExport.prepareCarrierItems(source,file.name,parsed.normalizedRows,snapshot.rows);
+  return {source,file,parsed,...prepared};
+}
+
+async function transformStandardCarrierExport(plan,{download=false}={}){
+  const transformed=await sellerExport.transformSellerFile(plan.file,plan.items);
+  const skipped=[...plan.excludedItems,...transformed.skippedItems];
+  if(download){
+    sellerExport.downloadBlob(transformed.blob,sellerExport.outputName(plan.file.name));
+    if(skipped.length)sellerExport.downloadBlob(new Blob([sellerExport.conflictCsv(skipped)],{type:'text/csv;charset=utf-8'}),`${plan.source}_수정파일_경고.csv`);
+  }
+  return {...plan,blob:transformed.blob,appliedItems:transformed.appliedItems,skippedItems:skipped};
+}
+
+async function prepareChangedOnlyExport(source,skus=null,{download=false}={}){
+  if(!['smartstore','makeshop'].includes(source))throw Error('변경분 내보내기는 스마트스토어·메이크샵만 지원합니다.');
+  const filesBySource=await liveData.downloadLatestSellerOriginals([source]);
+  const files=filesBySource.get(source)||[];if(!files.length)throw Error(`${CHANNEL_LABELS[source]||source} 최신 보관 원본이 없습니다.`);
+  const refreshed=await window.HubCurrentPriceExport.refreshItems([],filesBySource,{sources:[source],skus,includeMatrixStock:true});
+  const outputs=[],skipped=[...refreshed.excludedItems];
+  for(const file of files){
+    const parsed=await window.SystemV3SellerParsers.parseSellerFiles(source,[file],{price:true,discount:true});
+    const fileItems=refreshed.items.filter(item=>item.source_channel===source&&item.source_file_name===file.name);
+    if(!fileItems.length)continue;
+    const dataRows=new Set(parsed.normalizedRows.map(row=>Number(row.source_row_no))),initialItems=fileItems.map(item=>({...item}));
+    let transformed=await sellerExport.transformSellerFile(file,initialItems,{dataRowNumbers:dataRows,keepOnlyRows:new Set(initialItems.map(item=>Number(item.source_row_no)))});
+    if(transformed.skippedItems.length){
+      skipped.push(...transformed.skippedItems);
+      const blocked=new Set(transformed.skippedItems.map(entry=>Number(entry.item?.export_item_id))),safe=fileItems.filter(item=>!blocked.has(Number(item.export_item_id))).map(item=>({...item}));
+      if(!safe.length)continue;
+      transformed=await sellerExport.transformSellerFile(file,safe,{dataRowNumbers:dataRows,keepOnlyRows:new Set(safe.map(item=>Number(item.source_row_no)))});
+      skipped.push(...transformed.skippedItems);
+    }
+    if(!transformed.appliedItems.length)continue;
+    outputs.push({file,blob:transformed.blob,appliedItems:transformed.appliedItems});
+    if(download)sellerExport.downloadBlob(transformed.blob,sellerExport.outputName(file.name).replace('_SystemV3반영','_SystemV3변경분'));
+  }
+  if(download&&skipped.length)sellerExport.downloadBlob(new Blob([sellerExport.conflictCsv(skipped)],{type:'text/csv;charset=utf-8'}),`${source}_변경분_경고.csv`);
+  return {source,outputs,skippedItems:skipped,changedItems:outputs.flatMap(output=>output.appliedItems)};
+}
+
 window.SystemV3SellerExportBridge={
   async refreshInventoryDrafts({source,skus=null,overwriteBlank=false,job=null,onProgress=null,onCheckpoint=null}={}){
     if(!['smartstore','makeshop'].includes(source))throw Error('재고 수정안 새로 계산은 스마트스토어·메이크샵만 지원합니다.');
@@ -7794,6 +7841,23 @@ window.SystemV3SellerExportBridge={
       detail:document.getElementById('seller-export-preview-detail')?.textContent||'',
       selectedSkus:[...sellerExportState.selectedSkus]
     };
+  },
+  async previewChangedOnly({source,skus=null}={}){
+    const result=await prepareChangedOnlyExport(source,skus,{download:false});
+    return {source,count:`변경 ${formatNumber(result.changedItems.length)}건`,detail:`부분 XLSX ${formatNumber(result.outputs.length)}개 · 경고 ${formatNumber(result.skippedItems.length)}건`,...result};
+  },
+  async runChangedOnly({source,skus=null}={}){
+    const result=await prepareChangedOnlyExport(source,skus,{download:true});
+    if(!result.outputs.length)throw Error('현재 매트릭스와 다른 안전한 변경 행이 없습니다.');
+    return {source,title:'변경분 XLSX 생성 완료',progressDetail:`파일 ${formatNumber(result.outputs.length)}개 · 반영 ${formatNumber(result.changedItems.length)}건 · 경고 ${formatNumber(result.skippedItems.length)}건`,...result};
+  },
+  async previewCarrier({source,file}={}){
+    const plan=await prepareStandardCarrierExport(source,file);
+    return {source,count:`입력 ${formatNumber(plan.preview.length)}행`,detail:`변경 ${formatNumber(plan.preview.filter(row=>row.changed).length)}행 · 경고 ${formatNumber(plan.excludedItems.length)}행`,plan};
+  },
+  async runCarrier({source,file}={}){
+    const plan=await prepareStandardCarrierExport(source,file),result=await transformStandardCarrierExport(plan,{download:true});
+    return {source,title:'공식 수정파일 변환 완료',progressDetail:`입력 ${formatNumber(plan.preview.length)}행 · 반영 ${formatNumber(result.appliedItems.length)}건 · 경고 ${formatNumber(result.skippedItems.length)}행`,...result};
   },
   async run({source,skus=null,includeStock=false}={}){
     sellerExportState.directSource=source;

@@ -86,6 +86,29 @@ test('timeout, error and mixed-generation calculated tuples preserve original pr
   assert.deepEqual(plain(result.excludedItems),[]);
 });
 
+test('official carrier scope uses exact identity and only visible draft or calculated targets',()=>{
+  const h=exportHarness([]),draft={after_value:5500,price_base_after:5200,price_discounted_base_after:5000,price_option_after:500,price_final_after:5500,price_discount_terms_after:[]};
+  const carrier=[
+    {product_code:'P-1',option_code:'O-1',source_row_no:7,base_price:5000,discounted_base_price:5000,option_price:0,final_price:5000,stock:8,discount_terms:[]},
+    {product_code:'P-2',option_code:'O-2',source_row_no:8,base_price:6000,discounted_base_price:6000,option_price:0,final_price:6000,stock:null,discount_terms:[]}
+  ];
+  const snapshot=[
+    row({sku:'DRAFT',price_draft:draft,stock_draft:{after_value:0}}),
+    row({sku:'BLANK',product_code:'P-2',option_code:'O-2',source_row_no:4,system_stock:99,source_stock:3})
+  ];
+  const result=h.api.prepareCarrierItems('smartstore','carrier.xlsx',carrier,snapshot);
+  assert.deepEqual(plain(result.items.map(item=>[item.sellpia_sku_code,item.field_key,item.after_value,item.source_row_no])),[
+    ['DRAFT','sellpia_current_stock',0,7],['DRAFT','sellpia_sale_price',5500,7]
+  ]);
+  assert.equal(result.preview[0].changed,true);
+  assert.equal(result.preview[1].changed,false,'blank carrier stock and no visible price target must stay untouched');
+  assert.equal(result.excludedItems.length,0);
+
+  const duplicate=h.api.prepareCarrierItems('smartstore','carrier.xlsx',[carrier[0],{...carrier[0],source_row_no:9}],snapshot);
+  assert.equal(duplicate.items.length,0);
+  assert.equal(duplicate.excludedItems.length,2,'duplicate carrier identities must fail closed rather than fuzzy-write');
+});
+
 test('location is required only for an actual visible write',async()=>{
   const h=exportHarness([
     row({sku:'NOOP',source_file_name:null,source_row_no:null,stock_draft:{after_value:8}}),

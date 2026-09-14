@@ -421,7 +421,7 @@
     return {zip,sheetPath,sheetXml,shared,stylesPath,stylesXml};
   }
 
-  async function patchXlsxFile(file,items,onConflict,onApplied) {
+  async function patchXlsxFile(file,items,onConflict,onApplied,{dataRowNumbers=null,keepOnlyRows=null}={}) {
     const {zip,sheetPath,sheetXml,shared,stylesPath,stylesXml}=await xlsxParts(file);
     let workingSheetXml=sheetXml;
     if(items[0]?.source_channel==='makeshop') {
@@ -438,8 +438,22 @@
       const changes=byRow.get(Number(rowNo)); if(!changes) return rowXml;
       return items[0].source_channel==='smartstore'?patchSmartstoreRow(rowXml,changes,shared,onConflict,recordApplied):patchMakeshopRow(rowXml,changes,shared,onConflict,recordApplied);
     });
-    const highlighted=applyChangeHighlights(patched,stylesXml,appliedHighlights);
+    let scoped=patched;
+    if(dataRowNumbers&&keepOnlyRows)scoped=scopeWorksheetRows(scoped,dataRowNumbers,keepOnlyRows);
+    const highlighted=applyChangeHighlights(scoped,stylesXml,appliedHighlights);
     zip.file(sheetPath,highlighted.sheetXml); zip.file(stylesPath,highlighted.stylesXml); return zip.generateAsync({type:'blob',compression:'DEFLATE',compressionOptions:{level:6}});
+  }
+
+  function scopeWorksheetRows(sheetXml,dataRowNumbers,keepOnlyRows){
+    const dataRows=new Set([...(dataRowNumbers||[])].map(Number)),kept=new Set([...(keepOnlyRows||[])].map(Number));
+    return String(sheetXml).replace(/<row\b[^>]*\br="(\d+)"[^>]*>[\s\S]*?<\/row>/g,(rowXml,rowNo)=>dataRows.has(Number(rowNo))&&!kept.has(Number(rowNo))?'':rowXml);
+  }
+
+  async function transformSellerFile(file,items,options={}){
+    const skippedItems=[],appliedItems=[];
+    if(!Array.isArray(items)||!items.length)return {blob:new Blob([await file.arrayBuffer()],{type:file.type||'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'}),skippedItems,appliedItems};
+    const blob=await patchXlsxFile(file,items,entry=>skippedItems.push(entry),item=>appliedItems.push(item),options);
+    return {blob,skippedItems,appliedItems};
   }
 
   async function patchCsvFile(file,items,onConflict,onApplied) {
@@ -505,5 +519,5 @@
   }
   function downloadBlob(blob,name){const url=URL.createObjectURL(blob);const anchor=document.createElement('a');anchor.href=url;anchor.download=name;document.body.appendChild(anchor);anchor.click();anchor.remove();setTimeout(()=>URL.revokeObjectURL(url),30000);}
 
-  global.SystemV3SellerExport=Object.freeze({cellValue,setCellValue,applyChangeHighlights,preflightSharedPriceGroups,patchSmartstoreRow,patchMakeshopRow,patchCsvFile,buildExportArchive,downloadBlob,outputName,auditCsv,conflictCsv,discountTermsFingerprint});
+  global.SystemV3SellerExport=Object.freeze({cellValue,setCellValue,applyChangeHighlights,preflightSharedPriceGroups,patchSmartstoreRow,patchMakeshopRow,scopeWorksheetRows,patchXlsxFile,transformSellerFile,patchCsvFile,buildExportArchive,downloadBlob,outputName,auditCsv,conflictCsv,discountTermsFingerprint});
 })(typeof window!=='undefined'?window:globalThis);

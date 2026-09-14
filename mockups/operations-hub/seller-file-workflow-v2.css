@@ -10,6 +10,7 @@
 .ably-file-card-status{padding:7px 8px;border-radius:7px;background:#f3f6fa;color:#52647a;font-size:10px;line-height:1.45}
 .ably-file-card-status.ready{background:#edf9f1;color:#17733a}.ably-file-card-status.warn{background:#fff8e7;color:#8d6300}
 .ably-file-card .btn{margin-top:auto}.ably-file-card input[type=file]{display:none}
+[data-carrier-input],[data-standard-carrier-input]{display:none}
 
 .export-workflow-v2{margin:0 0 16px;padding:14px;border:1px solid #dfe6ef;border-radius:13px;background:#fff}
 .export-workflow-v2 h3{margin:0;font-size:17px}.export-workflow-v2>header p{margin:5px 0 0;color:#68778c;font-size:11px}
