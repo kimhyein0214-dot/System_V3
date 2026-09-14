@@ -1,7 +1,7 @@
 (function initTagManagementV2(global){
  'use strict';
  const D=()=>global.SystemV3Data;
- const state={mode:'all',catalog:[],catalogSearch:'',selectedTagId:'',tag:null,page:1,pageSize:100,count:0,rows:[],memberSearch:'',selected:new Set(),rules:[],loading:false};
+ const state={mode:'all',kind:'all',catalog:[],catalogSearch:'',selectedTagId:'',tag:null,page:1,pageSize:100,count:0,rows:[],memberSearch:'',selected:new Set(),rules:[],loading:false};
  const esc=v=>String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
  const n=v=>Number(v||0).toLocaleString('ko-KR');
  const safeName=v=>String(v||'태그').replace(/[\\/:*?"<>|]+/g,'_').trim().slice(0,80)||'태그';
@@ -33,7 +33,14 @@
   manager.hidden=true;
   manager.innerHTML=`
    <aside class="tag-manager-panel">
-    <div class="tag-manager-head"><div><h3>태그 목록</h3><p>태그를 선택하면 현재 저장된 적용 SKU만 표시합니다.</p></div></div>
+    <div class="tag-manager-head"><div><h3>태그 목록</h3><p>일반 태그와 수식 태그를 한곳에서 관리합니다.</p></div><button class="btn" id="tag-new-open" type="button">새 태그</button></div>
+    <form id="tag-new-form" class="tag-manager-new" hidden>
+      <label>태그 이름<input id="tag-new-name" maxlength="32" placeholder="예: 소스_2000"></label>
+      <label>색상<input id="tag-new-color" type="color" value="#dbeafe"></label>
+      <label class="tag-manager-formula-check"><input id="tag-new-formula" type="checkbox"> 가격 수식 사용</label>
+      <div><button class="btn primary" id="tag-new-save" type="submit">저장</button><button class="btn" id="tag-new-cancel" type="button">취소</button></div>
+    </form>
+    <nav class="tag-kind-tabs" aria-label="태그 종류"><button type="button" data-tag-kind="all" aria-selected="true">전체</button><button type="button" data-tag-kind="plain" aria-selected="false">일반 태그</button><button type="button" data-tag-kind="formula" aria-selected="false">수식 태그</button></nav>
     <form id="tag-catalog-search" class="tag-manager-search"><input id="tag-catalog-query" placeholder="태그 이름 검색"><button class="btn" type="submit">검색</button></form>
     <div id="tag-catalog" class="tag-catalog"></div>
    </aside>
@@ -45,7 +52,7 @@
    </section>
    <aside class="tag-manager-panel tag-manager-side">
     <div class="tag-selected-card"><h3 id="tag-selected-name">태그 미선택</h3><p id="tag-selected-group">왼쪽에서 태그를 선택하세요.</p></div>
-    <div class="tag-stat-grid"><div><span>적용 SKU</span><b id="tag-stat-count">-</b></div><div><span>연결 Rule</span><b id="tag-stat-rules">-</b></div></div>
+    <div class="tag-stat-grid"><div><span>적용 SKU</span><b id="tag-stat-count">-</b></div><div><span>연결 수식</span><b id="tag-stat-rules">-</b></div></div>
     <div class="tag-rule-summary"><span>연결 수식</span><div id="tag-rule-list"><i>태그를 선택하면 표시됩니다.</i></div></div>
     <div class="tag-manager-actions">
       <button class="btn wide" id="tag-download-current" type="button" disabled>현재 적용 목록 XLSX</button>
@@ -87,7 +94,8 @@
 
  function renderCatalog(){
   const box=document.getElementById('tag-catalog');if(!box)return;
-  box.innerHTML=state.catalog.map(tag=>{const formula=Number(tag.rule_count||0)>0;return `<button type="button" data-tag-id="${esc(tag.tag_id)}" class="${String(tag.tag_id)===String(state.selectedTagId)?'active':''}" style="--tag-color:${esc(tag.tag_color||'#dbeafe')}"><span class="tag-color-dot"></span><span class="tag-catalog-name"><b>${esc(tag.tag_name)}</b><small class="tag-kind ${formula?'formula':'plain'}">${formula?'ƒ 수식':'일반'}</small></span><em>${n(tag.option_count)}</em></button>`;}).join('')||'<p class="tag-manager-empty">태그가 없습니다.</p>';
+  const visible=state.catalog.filter(tag=>state.kind==='all'||(Number(tag.rule_count||0)>0?'formula':'plain')===state.kind);
+  box.innerHTML=visible.map(tag=>{const formula=Number(tag.rule_count||0)>0;return `<button type="button" data-tag-id="${esc(tag.tag_id)}" class="${String(tag.tag_id)===String(state.selectedTagId)?'active':''}" style="--tag-color:${esc(tag.tag_color||'#dbeafe')}"><span class="tag-color-dot"></span><span class="tag-catalog-name"><b>${esc(tag.tag_name)}</b><small class="tag-kind ${formula?'formula':'plain'}">${formula?'ƒ 수식':'일반'}</small></span><em>${n(tag.option_count)}</em></button>`;}).join('')||'<p class="tag-manager-empty">해당 종류의 태그가 없습니다.</p>';
   box.querySelectorAll('[data-tag-id]').forEach(btn=>btn.onclick=()=>selectTag(btn.dataset.tagId));
  }
 
@@ -131,14 +139,14 @@
   const tag=currentTag();
   const name=document.getElementById('tag-selected-name'),group=document.getElementById('tag-selected-group');
   if(name)name.innerHTML=tag?`${esc(tag.tag_name)} <small class="tag-kind ${Number(tag.rule_count||0)>0?'formula':'plain'}">${Number(tag.rule_count||0)>0?'ƒ 수식 태그':'일반 태그'}</small>`:'태그 미선택';
-  if(group)group.textContent=tag?`${tag.tag_group||'운영'} · ${Number(tag.rule_count||0)>0?'가격/계산 Rule 연결됨':'분류·운영용 태그'} · 저장 기준 option 태그`:'왼쪽에서 태그를 선택하세요.';
+  if(group)group.textContent=tag?`${tag.tag_group||'운영'} · ${Number(tag.rule_count||0)>0?'가격 수식 연결됨':'분류·운영용 태그'} · 저장 기준 option 태그`:'왼쪽에서 태그를 선택하세요.';
   const title=document.getElementById('tag-member-title'),copy=document.getElementById('tag-member-copy');
   if(title)title.textContent=tag?tag.tag_name:'태그를 선택하세요';
   if(copy)copy.textContent=tag?`현재 DB에 저장된 ${n(tag.option_count)}개 SKU 적용 내역`:'저장된 태그 적용 내역을 조회·수정할 수 있습니다.';
   document.getElementById('tag-stat-count').textContent=tag?n(tag.option_count):'-';
   document.getElementById('tag-stat-rules').textContent=tag?n(state.rules.length||tag.rule_count):'-';
   const ruleList=document.getElementById('tag-rule-list');
-  if(ruleList)ruleList.innerHTML=tag?(state.rules.length?state.rules.map(rule=>{const view=ruleDisplay(rule);return `<i class="tag-rule-item"><b class="tag-rule-destination">${esc(view.destination)} 저장</b><span>${esc(rule.name)} · ${esc(view.source)} → ${esc(view.target)}</span></i>`;}).join(''):'<i>연결된 공통 Rule 없음</i>'):'<i>태그를 선택하면 표시됩니다.</i>';
+  if(ruleList)ruleList.innerHTML=tag?(state.rules.length?state.rules.map(rule=>{const view=ruleDisplay(rule);return `<i class="tag-rule-item"><b class="tag-rule-destination">${esc(view.destination)} 저장</b><span>${esc(rule.name)} · ${esc(view.source)} → ${esc(view.target)}</span></i>`;}).join(''):'<i>연결된 수식 없음</i>'):'<i>태그를 선택하면 표시됩니다.</i>';
   for(const id of ['tag-download-current','tag-download-blank','tag-upload-sync','tag-edit-rule','tag-clear-all'])document.getElementById(id).disabled=!tag;
   document.getElementById('tag-remove-selected').disabled=!tag||!state.selected.size;
  }
@@ -191,6 +199,31 @@
   await global.HubPriceWorkspace.openForTag({id:tag.tag_id,name:tag.tag_name,color:tag.tag_color,group:tag.tag_group});
  }
 
+ function toggleNewTag(open){
+  const form=document.getElementById('tag-new-form');if(!form)return;
+  form.hidden=!open;
+  if(open)document.getElementById('tag-new-name').focus();
+ }
+
+ async function createTag(event){
+  event.preventDefault();
+  const name=document.getElementById('tag-new-name').value.trim(),color=document.getElementById('tag-new-color').value,formula=document.getElementById('tag-new-formula').checked;
+  if(!name){setStatus('새 태그 이름을 입력하세요.','error');document.getElementById('tag-new-name').focus();return;}
+  const button=document.getElementById('tag-new-save');button.disabled=true;
+  try{
+   if(formula){
+    if(!global.HubPriceWorkspace?.openForTag)throw Error('수식 편집기를 불러오지 못했습니다.');
+    toggleNewTag(false);await global.HubPriceWorkspace.openForTag({name,color,group:'가격 수식'});return;
+   }
+   const created=await D().createProductTag({name,color,group:'운영'});
+   state.catalogSearch='';state.selectedTagId=created.tag_id;state.kind='all';
+   const query=document.getElementById('tag-catalog-query');if(query)query.value='';
+   document.querySelectorAll('[data-tag-kind]').forEach(item=>item.setAttribute('aria-selected',String(item.dataset.tagKind==='all')));
+   toggleNewTag(false);await loadCatalog({keepSelection:true});await selectTag(created.tag_id);setStatus(`${created.tag_name} 일반 태그를 저장했습니다.`,'success');
+  }catch(error){setStatus(`태그 저장 실패: ${error?.message||error}`,'error');}
+  finally{button.disabled=false;}
+ }
+
  async function recalc(skus){
   if(!skus.length||!global.HubPriceMaterializer?.materialize)return;
   try{await global.HubPriceMaterializer.materialize({skus:[...new Set(skus)],sources:['smartstore','makeshop','ably'],reason:'tag-manager-remove'});}
@@ -210,7 +243,7 @@
   const preview=await D().syncTagAssignments({tagId:tag.tag_id,skus:[],preview:true});
   const count=Number(preview.remove_count||0);
   if(!count){setStatus('현재 해제할 SKU가 없습니다.');return;}
-  if(!global.confirm(`${tag.tag_name} 태그의 현재 적용 ${n(count)}개를 전부 해제할까요?\n태그 자체와 연결 수식 Rule은 삭제하지 않습니다.`))return;
+  if(!global.confirm(`${tag.tag_name} 태그의 현재 적용 ${n(count)}개를 전부 해제할까요?\n태그 자체와 연결 수식은 삭제하지 않습니다.`))return;
   setStatus(`${n(count)}개 전체 해제 중…`);
   try{
    const members=await allMembers();
@@ -225,6 +258,10 @@
   const h=host();
   h.querySelectorAll('[data-tag-view]').forEach(btn=>btn.onclick=()=>setMode(btn.dataset.tagView));
   document.getElementById('tag-catalog-search').onsubmit=e=>{e.preventDefault();state.catalogSearch=document.getElementById('tag-catalog-query').value.trim();void loadCatalog({keepSelection:false});};
+  document.querySelectorAll('[data-tag-kind]').forEach(btn=>btn.onclick=()=>{state.kind=btn.dataset.tagKind;document.querySelectorAll('[data-tag-kind]').forEach(item=>item.setAttribute('aria-selected',String(item===btn)));renderCatalog();});
+  document.getElementById('tag-new-open').onclick=()=>toggleNewTag(true);
+  document.getElementById('tag-new-cancel').onclick=()=>toggleNewTag(false);
+  document.getElementById('tag-new-form').onsubmit=createTag;
   document.getElementById('tag-member-search').onsubmit=e=>{e.preventDefault();state.memberSearch=document.getElementById('tag-member-query').value.trim();state.page=1;void loadMembers();};
   document.getElementById('tag-member-refresh').onclick=()=>void loadCatalog();
   document.getElementById('tag-member-prev').onclick=()=>{if(state.page>1){state.page--;void loadMembers();}};

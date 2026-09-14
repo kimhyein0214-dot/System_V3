@@ -13,6 +13,13 @@ test('tag-centric manager exposes saved-assignment download and member editing',
   assert.match(js,/현재 적용 목록 XLSX/);
   assert.match(js,/전체 적용 해제/);
   assert.match(js,/선택 해제/);
+  assert.match(js,/id="tag-new-open"[^>]*>새 태그/);
+  assert.match(js,/id="tag-new-formula"[^>]*type="checkbox"/);
+  assert.match(js,/가격 수식 사용/);
+  assert.match(js,/data-tag-kind="plain"[^>]*>일반 태그/);
+  assert.match(js,/data-tag-kind="formula"[^>]*>수식 태그/);
+  assert.match(js,/createProductTag\(\{name,color,group:'운영'\}\)/);
+  assert.match(js,/openForTag\(\{name,color,group:'가격 수식'\}\)/);
   assert.match(js,/loadTagMembers/);
   assert.match(js,/removeTagMembers/);
   assert.match(js,/syncTagAssignments/);
@@ -25,6 +32,11 @@ test('tag-centric manager exposes saved-assignment download and member editing',
   assert.match(js,/openTagImport\(\{openFilePicker:true\}\)/);
   assert.match(rules,/if\(openFilePicker\)fileInput\.click\(\)/);
   assert.match(rules,/fileInput\.onchange=.*previewTagImport/);
+  assert.match(rules,/id="rw-new">새 수식 태그/);
+  assert.match(rules,/const explicitTag=readTagContext\(\),tag=explicitTag\|\|linkedTagContext\(current\(\)\)/);
+  assert.match(rules,/state\.steps=structuredClone\(imported\.config\?\.steps\|\|\[\]\)/);
+  assert.doesNotMatch(rules,/개별 Rule/);
+  assert.doesNotMatch(rules,/D\.ruleRegistry\('save'/);
   assert.match(html,/tag-management-v2\.css/);
   assert.match(html,/tag-management-v2\.js/);
 });

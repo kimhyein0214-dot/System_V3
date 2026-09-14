@@ -15,11 +15,11 @@
     <link rel="stylesheet" href="./ui-scale-matrix.css?v=20260910-rule-destination-v111">
     <link rel="stylesheet" href="./ui-scale-workspaces.css?v=20260910-rule-destination-v111">
     <link rel="stylesheet" href="./channels-page.css?v=20260910-rule-destination-v111">
-    <link rel="stylesheet" href="./attributes-page.css?v=20260910-rule-destination-v111">
+    <link rel="stylesheet" href="./attributes-page.css?v=20260914-formula-tags-v1">
     <link rel="stylesheet" href="./operations-auth.css?v=20260910-rule-destination-v111">
-    <link rel="stylesheet" href="./rule-workspace.css?v=20260912-price-flow-v2">
+    <link rel="stylesheet" href="./rule-workspace.css?v=20260914-formula-tags-v1">
       <link rel="stylesheet" href="./ui-cleanup-v1.css?v=20260912-queue-count-clarity-v1">
-      <link rel="stylesheet" href="./tag-management-v2.css?v=20260912-price-flow-v2">
+      <link rel="stylesheet" href="./tag-management-v2.css?v=20260914-formula-tags-v1">
       <link rel="stylesheet" href="./seller-file-workflow-v2.css?v=20260912-export-progress-v1">
   </head>
   <body class="operations-auth-locked">
@@ -70,7 +70,7 @@
             <button class="nav-item" data-page="multi-links"><i>04</i><span>다중·조합 연결</span><b id="multi-link-badge">-</b></button>
             <button class="nav-item" data-page="ably-combinations"><i>05</i><span>에이블리 조합관리</span></button>
             <button class="nav-item" data-page="attributes"><i>08</i><span>상품 태그</span></button>
-            <button class="nav-item" data-page="price-rules"><i>09</i><span>가격 규칙</span></button>
+            <button class="nav-item" data-page="price-rules"><i>09</i><span>가격 수식</span></button>
             <button class="nav-item" data-page="jobs"><i>10</i><span>내보내기·로그</span><b id="jobs-error-badge">-</b></button>
           </nav>
 
@@ -213,7 +213,7 @@
               <label class="custom-preset-picker">내 프리셋<select id="custom-preset-select" aria-label="내 프리셋 선택"><option value="">선택</option></select></label>
               <button id="code-list-open" class="matrix-panel-action code-list-tab" type="button"><span>▦</span><b>엑셀 코드목록</b></button>
               <button id="mapping-import-open" class="matrix-panel-action" type="button"><span>⇧</span><b>매칭값 일괄 업로드</b></button>
-              <button id="price-rule-lab-open" class="matrix-panel-action" type="button"><span>ƒx</span><b>가격 규칙<br>태그 관리</b></button>
+              <button id="price-rule-lab-open" class="matrix-panel-action" type="button"><span>ƒx</span><b>가격 수식<br>태그 관리</b></button>
             </aside>
 
             <div class="matrix-view-tabs">
@@ -980,7 +980,7 @@
     <script src="./channels-page.js?v=20260910-rule-destination-v111"></script>
     <script src="./app.js?v=20260914-matrix-visible-export-v2"></script>
     <script src="./mapping-import.js?v=20260910-rule-destination-v111"></script>
-    <script src="./attributes-page.js?v=20260910-rule-destination-v111"></script>
+    <script src="./attributes-page.js?v=20260914-formula-tags-v1"></script>
     <script src="./price-rule-lab.js?v=20260910-rule-destination-v111"></script>
     <script src="./ably-stock-export.js?v=20260910-rule-destination-v111"></script>
     <script src="./ably-playauto-export.js?v=20260912-playauto-v113"></script>
@@ -995,9 +995,9 @@
 <script src="./platform-rule-service.js?v=20260910-rule-destination-v111"></script>
 <script src="./price-result-materializer.js?v=20260910-rule-destination-v111"></script>
 <script src="./current-price-export.js?v=20260914-matrix-visible-export-v2"></script>
-<script src="./rule-workspace.js?v=20260914-tag-upload-storage-v1"></script>
-      <script src="./ui-cleanup-v1.js?v=20260912-direct-export-v3"></script>
-      <script src="./tag-management-v2.js?v=20260914-tag-upload-storage-v1"></script>
+<script src="./rule-workspace.js?v=20260914-formula-tags-v1"></script>
+      <script src="./ui-cleanup-v1.js?v=20260914-formula-tags-v1"></script>
+      <script src="./tag-management-v2.js?v=20260914-formula-tags-v1"></script>
       <script src="./seller-file-workflow-v2.js?v=20260914-matrix-visible-export-v2"></script>
   </body>
 </html>

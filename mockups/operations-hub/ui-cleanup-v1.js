@@ -31,7 +31,7 @@
       'multi-links':'상품 관계·조합',
       'ably-combinations':'에이블리 조합',
       attributes:'상품 태그',
-      'price-rules':'가격 규칙',
+      'price-rules':'가격 수식',
       jobs:'판매처 내보내기'
     };
     for(const [page,label] of Object.entries(names)){

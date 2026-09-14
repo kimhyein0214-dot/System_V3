@@ -112,7 +112,7 @@
         </fieldset>
         <fieldset class="attributes-fieldset" hidden><legend><label><input type="checkbox" data-attributes-apply="productTags">상품 공통 태그 교체</label></legend><div class="attributes-tag-grid" data-attributes-tags="product" aria-disabled="true">${renderTagChoices('product')}</div></fieldset>
         <fieldset class="attributes-fieldset"><legend><label><input type="checkbox" data-attributes-apply="skuTags">선택 SKU 태그 교체</label></legend><div class="attributes-tag-grid" data-attributes-tags="sku" aria-disabled="true">${renderTagChoices('sku')}</div></fieldset>
-        <div class="attributes-tag-formula"><label>상품 태그의 수식 확인<select id="attributes-formula-tag" aria-label="수식을 확인하거나 편집할 상품 태그"></select></label><button class="btn" id="attributes-edit-tag-formula" type="button">연결 수식 확인·편집</button><small>태그를 선택하면 연결된 Rule, 입력값, 계산 순서와 적용 SKU 수를 확인합니다. 연결 수식이 없는 태그는 새 수식으로 열립니다.</small></div><details class="attributes-new-tag"><summary>새 운영 태그 만들기</summary><div><input id="attributes-new-tag-name" maxlength="32" placeholder="태그 이름"><input id="attributes-new-tag-color" type="color" value="#dbeafe"><button class="btn" id="attributes-create-tag" type="button">태그 생성(DB 저장)</button><button class="btn" id="attributes-create-tag-formula" type="button">태그 + 수식 설정</button></div></details>
+        <div class="attributes-tag-formula"><label>상품 태그의 수식 확인<select id="attributes-formula-tag" aria-label="수식을 확인하거나 편집할 상품 태그"></select></label><button class="btn" id="attributes-edit-tag-formula" type="button">연결 수식 확인·편집</button><small>수식 태그를 선택하면 입력값, 계산 순서와 적용 SKU 수를 확인합니다. 일반 태그도 필요할 때 수식을 연결할 수 있습니다.</small></div><details class="attributes-new-tag"><summary>새 태그</summary><div><input id="attributes-new-tag-name" maxlength="32" placeholder="태그 이름"><input id="attributes-new-tag-color" type="color" value="#dbeafe"><label><input id="attributes-new-tag-formula" type="checkbox"> 가격 수식 사용</label><button class="btn" id="attributes-create-tag" type="button">저장</button></div></details>
         <div id="attributes-save-progress" class="attributes-save-progress" hidden><div><b>저장 준비</b><span>0/0</span></div><i><em></em></i></div>
         <button class="btn primary attributes-save" id="attributes-save" type="button" disabled>선택 SKU에 저장</button>
       </aside>
@@ -279,6 +279,10 @@
       input.focus();
       return;
     }
+    if(document.getElementById('attributes-new-tag-formula').checked){
+      await openTagFormula({name,color,group:'가격 수식'});
+      return;
+    }
     const button = document.getElementById('attributes-create-tag');
     const checkedProductTags = new Set([...document.querySelectorAll('[data-attributes-tag="product"]:checked')].map(item => item.value));
     const checkedSkuTags = new Set([...document.querySelectorAll('[data-attributes-tag="sku"]:checked')].map(item => item.value));
@@ -354,7 +358,6 @@
     }));
     host.querySelector('#attributes-save').addEventListener('click', () => void saveSelected());
     host.querySelector('#attributes-create-tag').addEventListener('click', () => void createTag());
-    host.querySelector('#attributes-create-tag-formula').addEventListener('click', () => void openTagFormula({name:document.getElementById('attributes-new-tag-name').value.trim(),color:document.getElementById('attributes-new-tag-color').value,group:'운영'}));
     host.querySelector('#attributes-edit-tag-formula').addEventListener('click', () => {const tag=state.tags.find(t=>String(t.tag_id)===document.getElementById('attributes-formula-tag').value);void openTagFormula(tag?{id:tag.tag_id,name:tag.tag_name,color:tag.tag_color,group:tag.tag_group}:null);});
   }
 

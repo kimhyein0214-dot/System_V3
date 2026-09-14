@@ -14,5 +14,5 @@ test('filename tag sync supports explicit authoritative-list removal including e
   assert.match(data,/async function syncTagAssignments/);
   assert.match(data,/hub_tag_bulk_sync_v1/);
   assert.match(rule,/parsed\.mode!=='filename_tag'/);
-  assert.match(rule,/openTagImport:\(\)=>run\(openTagImport\)/);
+  assert.match(rule,/openTagImport:options=>run\(\(\)=>openTagImport\(options\)\)/);
 });

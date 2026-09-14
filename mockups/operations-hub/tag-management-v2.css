@@ -15,6 +15,9 @@
 .tag-manager-panel{border:1px solid var(--ui-line,#dfe6ef);border-radius:12px;background:#fff;overflow:hidden;min-width:0}
 .tag-manager-head{display:flex;align-items:flex-start;justify-content:space-between;gap:8px;padding:13px 14px;border-bottom:1px solid var(--ui-line,#dfe6ef);background:#fbfcfe}
 .tag-manager-head h3{margin:0;font-size:15px}.tag-manager-head p{margin:4px 0 0;color:#6b7b90;font-size:11px;line-height:1.4}
+.tag-manager-new{display:grid;grid-template-columns:minmax(0,1fr) 52px;gap:8px;padding:10px;border-bottom:1px solid #e8edf4;background:#f8fbff}
+.tag-manager-new[hidden]{display:none!important}.tag-manager-new label{display:flex;flex-direction:column;gap:4px;color:#29425f;font-size:10px;font-weight:800}.tag-manager-new input{min-width:0;height:34px;border:1px solid #cbd8e8;border-radius:7px;padding:0 8px;background:#fff}.tag-manager-new input[type="color"]{width:52px;padding:3px}.tag-manager-new .tag-manager-formula-check{grid-column:1/-1;display:flex;flex-direction:row;align-items:center;gap:6px;font-size:11px}.tag-manager-new .tag-manager-formula-check input{width:auto;height:auto}.tag-manager-new>div{grid-column:1/-1;display:flex;justify-content:flex-end;gap:6px}
+.tag-kind-tabs{display:flex;gap:5px;padding:8px 10px 0}.tag-kind-tabs button{border:1px solid #d7e1ec;border-radius:999px;background:#fff;padding:5px 9px;color:#64748b;font-size:10px;font-weight:800}.tag-kind-tabs button[aria-selected="true"]{border-color:#8fb3ed;background:#edf4ff;color:#1558c0}
 .tag-manager-search{display:flex;gap:6px;padding:10px;border-bottom:1px solid #e8edf4}
 .tag-manager-search input{width:100%;height:36px;border:1px solid #cbd8e8;border-radius:8px;padding:0 10px}
 .tag-catalog{max-height:630px;overflow:auto;padding:6px}
