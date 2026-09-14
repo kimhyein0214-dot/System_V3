@@ -100,13 +100,13 @@ try{
  await page.locator('.rw-tabs [data-tab="rules"]').click();await page.evaluate(()=>{HubPriceWorkspace.state.tagContext=null;return HubPriceWorkspace.refresh();});await idle();await page.locator('#rw-list [data-rule="base"]').click();await idle();
  const geometry=await page.evaluate(()=>{const box=document.querySelector('.rw').getBoundingClientRect();return {width:box.width,height:box.height,viewport:innerHeight,bodyWidth:document.body.scrollWidth};});
  assert.ok(geometry.bodyWidth<=1440,'workspace must fit desktop width');assert.ok(geometry.height<geometry.viewport,'workspace must fit desktop height');
- const beforeLegacyWrites=await page.evaluate(()=>qa.writes.length);
- const beforeLegacyTarget=await page.locator('#rw-target').inputValue();
- await page.locator('#rw-legacy-load').click();await idle();await page.locator('#rw-legacy-rules').selectOption('legacy:0');
- assert.equal(await page.locator('#rw-name').inputValue(),'base','importing formula steps must keep the current formula identity');
- assert.equal(await page.locator('#rw-target').inputValue(),beforeLegacyTarget,'loading a formula preset must preserve the separately selected destination');
- assert.deepEqual(await page.locator('.rw-op').locator('input').evaluateAll(inputs=>inputs.map(x=>x.value)),['3','2','100','100']);
- assert.equal(await page.evaluate(()=>qa.writes.length),beforeLegacyWrites,'loading saved legacy rule must not persist until save');
+ const beforeFormulaWrites=await page.evaluate(()=>qa.writes.length);
+ const beforeFormulaTarget=await page.locator('#rw-target').inputValue();
+ await page.locator('#rw-legacy-load').click();await idle();await page.locator('#rw-legacy-rules').selectOption('shared:register');
+ assert.equal(await page.locator('#rw-name').inputValue(),'base','importing formula-tag steps must keep the current formula identity');
+ assert.equal(await page.locator('#rw-target').inputValue(),beforeFormulaTarget,'loading formula-tag steps must preserve the separately selected destination');
+ assert.deepEqual(await page.locator('.rw-op').locator('input').evaluateAll(inputs=>inputs.map(x=>x.value)),['2000']);
+ assert.equal(await page.evaluate(()=>qa.writes.length),beforeFormulaWrites,'copying formula-tag steps must not persist until save');
  assert.deepEqual(await page.evaluate(()=>HubPriceWorkspace.parseTagImportRows([['셀피아 SKU'],['six'],['loose']])),{mode:'single_tag',rows:[{sku:'six',tag_name:''},{sku:'loose',tag_name:''}]});
  assert.deepEqual(await page.evaluate(()=>HubPriceWorkspace.parseTagImportRows([['셀피아 SKU','태그명'],['six','공통 태그'],['loose','행별 태그']])),{mode:'per_row',rows:[{sku:'six',tag_name:'공통 태그'},{sku:'loose',tag_name:'행별 태그'}]});
  await page.locator('.rw-tabs [data-tab="bulk"]').click();await idle();
@@ -119,5 +119,5 @@ try{
  assert.match(await page.locator('#rw-tag-import-mode').innerText(),/B열 태그명/);assert.equal(await page.locator('#rw-tag-import-tag').isDisabled(),true);assert.equal(await page.locator('#rw-tag-import-apply').isDisabled(),false);
  await page.locator('#rw-tag-import-apply').click();await idle();assert.equal(await page.evaluate(()=>qa.writes.filter(write=>write.action==='tag-excel-import').length),2);
  assert.deepEqual(errors,[]);
- console.log('PASS actual Rule workspace browser flow: ordered save/reload, selected Rule bulk action, one-column and two-column Excel tag import, dependency CSV validation/save, live calculation refresh, scoped platform settings, export file load, desktop density; fixture adapter only');
+ console.log('PASS formula-tag workspace browser flow: ordered save/reload, selected formula bulk action, one-column and two-column Excel tag import, dependency CSV validation/save, live calculation refresh, scoped platform settings, formula-step copy, export file load, desktop density; fixture adapter only');
 }finally{await browser.close();}

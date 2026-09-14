@@ -50,7 +50,12 @@
    discounted=g.SystemV3DiscountPriceMath.discountedBase(base,original);
   }
   const discountKey=settings.source==='makeshop'?'period':'basic';
-  const terms=effectiveDiscount?[...original.filter(t=>!t.is_baseline&&t.term_key!==discountKey),...(base===discounted?[]:[{term_key:discountKey,term_type:discountKey,title:effectiveDiscount.name,input_source:'manual',unit:'amount',value:base-discounted,is_baseline:true,rounding_mode:'nearest',rounding_unit:1}])]:original;
+  let replacement=[];
+  if(effectiveDiscount&&settings.source==='makeshop'){
+   const code=effectiveDiscount.config.discount_rule_code,percent={M10:10,M15:15,M20:20}[code];
+   if(code!=='NONE')replacement=[{term_key:'period',term_type:'period',title:effectiveDiscount.name,rule_code:code,input_source:'formula_tag',unit:'percent',value:percent,is_baseline:true,rounding_mode:'down',rounding_unit:code==='M20'?100:10}];
+  }else if(effectiveDiscount&&base!==discounted)replacement=[{term_key:discountKey,term_type:discountKey,title:effectiveDiscount.name,input_source:'formula_tag',unit:'amount',value:base-discounted,is_baseline:true,rounding_mode:'nearest',rounding_unit:1}];
+  const terms=effectiveDiscount?[...original.filter(t=>!t.is_baseline&&t.term_key!==discountKey),...replacement]:original;
   return rows.map((r,i)=>({...r,platformBase:base,platformOption:amounts[i]-anchor,platformDiscount:base-discounted,platformFinal:discounted+amounts[i]-anchor,platformTerms:terms,versions:[...(r.versions||[]),...[registrationRules[i],discount].filter(Boolean).map(x=>({id:x.id,version:x.version}))]}));
  }
  async function settings(source){const docs=await data().workDocument('list','formula');const found=docs.find(d=>d.title==='registry-platform:'+source);return found?await data().workDocument('get','formula',{id:found.id}):{title:'registry-platform:'+source,body:{source,mode:'reverse',anchor:'lowest',registration_rule_id:null,discount_rule_id:null}};}

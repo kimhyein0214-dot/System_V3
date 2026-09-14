@@ -1,6 +1,6 @@
 (function(g){
  'use strict';
- const fields={purchase_price:'셀피아 매입가',source_base_price:'셀피아 원본 판매가',actual_inbound_cost:'실입고가',basis_sku_price:'이전 계산 결과',calculated_base_price:'시스템 기준가격',system_stock:'시스템 현재재고',calculated_stock:'계산 재고',platform_registration_price:'판매처 등록가',platform_option_price:'판매처 옵션가',platform_discount_price:'할인 적용 후 등록가',platform_final_price:'판매처 최종가',platform_price:'판매처 가격 · 구형 호환',platform_option_input:'옵션가 계산 입력값 · 고급',platform_final_input:'최종가 계산 입력값 · 고급'};
+ const fields={purchase_price:'셀피아 매입가',source_base_price:'셀피아 기준가격',actual_inbound_cost:'실입고가',basis_sku_price:'이전 계산 결과',calculated_base_price:'시스템 기준가격',system_stock:'시스템 현재재고',calculated_stock:'계산 재고',platform_registration_price:'판매처 등록가',platform_option_price:'판매처 옵션가',platform_discount_price:'할인 적용 후 등록가',platform_final_price:'판매처 최종가',platform_price:'판매처 가격 · 구형 호환',platform_option_input:'옵션가 계산 입력값 · 고급',platform_final_input:'최종가 계산 입력값 · 고급'};
  const platformTargets=['platform_registration_price','platform_option_price','platform_discount_price','platform_final_price','platform_price'];
  const platformFields=[...platformTargets,'platform_option_input','platform_final_input'];
  const targets=['actual_inbound_cost','basis_sku_price','calculated_base_price','calculated_stock',...platformTargets];
@@ -8,6 +8,8 @@
  const key=(sku,field,scope='')=>JSON.stringify([sku,field,scope||'']);
  const isPlatform=field=>platformFields.includes(field);
  const validScope=scope=>['ably','smartstore','makeshop'].includes(scope);
+ const makeshopDiscountCatalog={NONE:{label:'기간할인 없음',steps:[]},M10:{label:'10% · 10원 절사',steps:[{op:'multiply',value:.9},{op:'round',unit:10,rounding:'down'}]},M15:{label:'15% · 10원 절사',steps:[{op:'multiply',value:.85},{op:'round',unit:10,rounding:'down'}]},M20:{label:'20% · 100원 절사',steps:[{op:'multiply',value:.8},{op:'round',unit:100,rounding:'down'}]}};
+ const makeshopDiscountConfig=code=>{const key=String(code||'').toUpperCase(),entry=makeshopDiscountCatalog[key];if(!entry)throw Error('메이크샵 할인코드는 NONE, M10, M15, M20 중 하나여야 합니다.');return {discount_mode:'makeshop_code',discount_rule_code:key,steps:structuredClone(entry.steps)};};
  function numeric(value,label){if(value===null||value===undefined||value===''||typeof value==='boolean'||!Number.isFinite(Number(value)))throw Error(label+' 없음');return Number(value);}
  function parseSteps(text){return String(text).split(/[\n;]/).map(s=>s.trim()).filter(Boolean).map(s=>{
   const round=s.match(/^round\s+(up|down|nearest)\s+(\d+)$/i);
@@ -36,6 +38,14 @@
   if(!['self','parent'].includes(rule.input_origin))throw Error('참조 위치를 선택하세요.');
   if(isPlatform(rule.target_field)?!validScope(rule.scope):!!rule.scope)throw Error('적용 판매처를 확인하세요.');
   if(isPlatform(rule.source_field)?!validScope(rule.source_scope||rule.scope):!!rule.source_scope)throw Error('참조 판매처를 확인하세요.');
+  if(rule.target_field==='platform_discount_price'){
+   if(!validScope(rule.scope))throw Error('할인 수식 태그의 저장 판매처를 선택하세요.');
+   if(rule.input_origin!=='self'||rule.source_field!=='platform_registration_price'||!['',rule.scope].includes(rule.source_scope||''))throw Error('할인 수식 태그는 같은 판매처의 등록가격에서 시작해야 합니다.');
+   if(rule.scope==='makeshop'){
+    const expected=makeshopDiscountConfig(rule.config?.discount_rule_code);
+    if(rule.config?.discount_mode!=='makeshop_code'||JSON.stringify(rule.config.steps)!==JSON.stringify(expected.steps)||['min','max','unit','rounding'].some(key=>rule.config[key]!==undefined&&rule.config[key]!==null&&rule.config[key]!==''))throw Error('메이크샵 할인은 저장된 할인코드와 해당 코드의 계산 방식으로만 설정할 수 있습니다.');
+   }else if(rule.config?.discount_rule_code!=null||!['',null,undefined,'numeric'].includes(rule.config?.discount_mode))throw Error('스마트스토어·에이블리 할인에는 메이크샵 할인코드를 사용할 수 없습니다.');
+  }
   validateConfig(rule.config);return rule;
  }
  function round(value,unit,mode){return ({up:Math.ceil,down:Math.floor,nearest:Math.round}[mode])(value/unit)*unit;}
@@ -113,5 +123,5 @@
  }
  function descendants(requested,dependencies){const all=new Set(requested);let changed=true;while(changed){changed=false;for(const d of dependencies)if(all.has(d.parent_sku)&&!all.has(d.child_sku)){all.add(d.child_sku);changed=true;}if(all.size>2000)throw Error('연결 SKU가 2,000개를 넘습니다.');}return [...all];}
  function validateGraph(input){const evaluator=createEvaluator(input);return {valid:true,results:(input.assignments||[]).map(a=>({sku:a.sku,target_field:a.target_field,scope:a.scope||'',result:evaluator.evaluate(a.sku,a.target_field,a.scope||'')}))};}
- g.HubRuleRegistry={fields,targets,platformFields,isPlatform,key,parseSteps,stepsText,validateRule,validateConfig,transform,inverse,inverseTransform:inverse,createEvaluator,validateGraph,expandSkus,descendants};
+ g.HubRuleRegistry={fields,targets,platformFields,makeshopDiscountCatalog,makeshopDiscountConfig,isPlatform,key,parseSteps,stepsText,validateRule,validateConfig,transform,inverse,inverseTransform:inverse,createEvaluator,validateGraph,expandSkus,descendants};
 })(typeof window==='undefined'?globalThis:window);
