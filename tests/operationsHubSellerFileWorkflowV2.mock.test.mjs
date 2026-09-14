@@ -18,6 +18,9 @@ test('Ably workflow separates catalog original from PlayAuto export templates',(
   assert.match(js,/W열 판매가능재고는 보존/);
   assert.match(js,/미리보기 실패/);
   assert.match(data,/async function uploadAuxiliarySellerFile/);
+  assert.match(data,/const storagePath=`ably\/aux\/\$\{sourceRole\}\/\$\{id\}\/source\.xlsx`/);
+  assert.match(data,/p_file_name:baseName,p_storage_path:storagePath/);
+  assert.doesNotMatch(data,/const safeName=baseName/);
   assert.match(data,/async function loadAuxiliarySellerFiles/);
   assert.match(data,/async function downloadAuxiliarySellerFile/);
   assert.match(data,/async function loadPlayautoSellpiaCatalog/);

@@ -3423,9 +3423,8 @@
     if(sourceChannel!=='ably'||!['playauto_product','playauto_option'].includes(sourceRole))throw new Error('지원하지 않는 판매처 파일 역할입니다.');
     if(!file||typeof file.arrayBuffer!=='function')throw new Error('업로드할 파일을 선택해주세요.');
     const baseName=cleanText(file.name)||'playauto.xlsx';
-    const safeName=baseName.replace(/[^0-9A-Za-z가-힣._-]+/g,'_').slice(0,120)||'playauto.xlsx';
     const id=global.crypto?.randomUUID?.()||String(Date.now());
-    const storagePath=`ably/aux/${sourceRole}/${id}/${safeName}`;
+    const storagePath=`ably/aux/${sourceRole}/${id}/source.xlsx`;
     const uploaded=await db.storage.from('seller-originals').upload(storagePath,file,{upsert:false,contentType:file.type||'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',cacheControl:'3600'});
     if(uploaded.error)throw uploaded.error;
     const {data:registered,error}=await db.rpc('hub_channel_file_register_v1',{

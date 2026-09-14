@@ -180,7 +180,9 @@
  function openUpload(){
   const tag=currentTag();if(!tag)return;
   setStatus(`업로드 파일명은 '${tag.tag_name}_일괄적용.xlsx'로 사용하세요. 파일명으로 태그를 자동 인식합니다.`);
-  global.HubPriceWorkspace?.openTagImport?.();
+  const openTagImport=global.HubPriceWorkspace?.openTagImport;
+  if(typeof openTagImport!=='function'){setStatus('엑셀 일괄등록 화면을 불러오지 못했습니다. 페이지를 새로고침해 주세요.','error');return;}
+  openTagImport({openFilePicker:true});
  }
 
  async function editRule(){

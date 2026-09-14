@@ -6,6 +6,7 @@ const js=fs.readFileSync('mockups/operations-hub/tag-management-v2.js','utf8');
 const css=fs.readFileSync('mockups/operations-hub/tag-management-v2.css','utf8');
 const data=fs.readFileSync('mockups/operations-hub/data-service.js','utf8');
 const html=fs.readFileSync('mockups/operations-hub/index.html','utf8');
+const rules=fs.readFileSync('mockups/operations-hub/rule-workspace.js','utf8');
 
 test('tag-centric manager exposes saved-assignment download and member editing',()=>{
   assert.match(js,/태그별 관리/);
@@ -21,6 +22,9 @@ test('tag-centric manager exposes saved-assignment download and member editing',
   assert.match(data,/async function loadTagCatalog/);
   assert.match(data,/async function loadTagMembers/);
   assert.match(data,/async function removeTagMembers/);
+  assert.match(js,/openTagImport\(\{openFilePicker:true\}\)/);
+  assert.match(rules,/if\(openFilePicker\)fileInput\.click\(\)/);
+  assert.match(rules,/fileInput\.onchange=.*previewTagImport/);
   assert.match(html,/tag-management-v2\.css/);
   assert.match(html,/tag-management-v2\.js/);
 });
