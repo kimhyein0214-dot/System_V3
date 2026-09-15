@@ -131,9 +131,10 @@
   async function refreshSyncPreview(panel){
     const workspace=global.HubPriceWorkspace,D=global.SystemV3Data,data=workspace?.state?.tagImport;
     if(!data||data.mode!=='filename_tag'||!data.resolvedTagId||typeof D?.syncTagAssignments!=='function'){
-      panel.hidden=true;return;
+      if(!panel.hidden)panel.hidden=true;
+      return;
     }
-    panel.hidden=false;
+    if(panel.hidden)panel.hidden=false;
     if(data._syncPreviewLoading)return;
     if(!data.syncPreview){
       data._syncPreviewLoading=true;
@@ -228,6 +229,9 @@
       body?.appendChild(panel);
       panel.querySelector('[data-sync-apply]').onclick=()=>applyTagSync(panel);
     }
+    const importState=global.HubPriceWorkspace?.state?.tagImport||null;
+    if(panel._systemV3TagImportState===importState)return;
+    panel._systemV3TagImportState=importState;
     void refreshSyncPreview(panel);
   }
 
