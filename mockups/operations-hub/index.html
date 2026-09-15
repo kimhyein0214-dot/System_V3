@@ -12,7 +12,7 @@
     <link rel="stylesheet" href="./workspaces-v91.css?v=20260910-rule-destination-v111">
     <link rel="stylesheet" href="./price-rule-lab.css?v=20260910-rule-destination-v111">
     <link rel="stylesheet" href="./ui-scale-base.css?v=20260910-rule-destination-v111">
-    <link rel="stylesheet" href="./ui-scale-matrix.css?v=20260910-rule-destination-v111">
+    <link rel="stylesheet" href="./ui-scale-matrix.css?v=20260915-bulk-progress-v1">
     <link rel="stylesheet" href="./ui-scale-workspaces.css?v=20260910-rule-destination-v111">
     <link rel="stylesheet" href="./channels-page.css?v=20260910-rule-destination-v111">
     <link rel="stylesheet" href="./attributes-page.css?v=20260914-formula-tags-v1">
@@ -20,7 +20,7 @@
     <link rel="stylesheet" href="./rule-workspace.css?v=20260914-legacy-formulas-v2">
       <link rel="stylesheet" href="./ui-cleanup-v1.css?v=20260912-queue-count-clarity-v1">
       <link rel="stylesheet" href="./tag-management-v2.css?v=20260914-formula-display-v2">
-      <link rel="stylesheet" href="./seller-file-workflow-v2.css?v=20260915-preview-filter-v1">
+      <link rel="stylesheet" href="./seller-file-workflow-v2.css?v=20260915-transformation-plan-v1">
   </head>
   <body class="operations-auth-locked">
     <section id="operations-auth-gate" class="operations-auth-gate" aria-labelledby="operations-auth-title">
@@ -680,6 +680,10 @@
             <label class="bulk-source-refresh-confirm-label">실행 확인<span>아래 문구를 그대로 입력해야 실제 갱신할 수 있습니다.</span><strong id="bulk-source-refresh-confirm-phrase">-</strong><input id="bulk-source-refresh-confirm" autocomplete="off" spellcheck="false" placeholder="확인 문구 입력"></label>
             <p class="bulk-source-refresh-execution-note">실입고가는 이 작업에서 제외됩니다. 미리보기 후 원본이 달라진 행만 저장하고, 완료 뒤 매트릭스를 다시 조회합니다.</p>
           </div>
+          <section id="bulk-source-refresh-progress" class="bulk-source-refresh-progress" aria-live="polite" hidden>
+            <div id="bulk-source-refresh-progress-summary" class="bulk-source-refresh-progress-summary"></div>
+            <ol id="bulk-source-refresh-progress-phases" class="bulk-source-refresh-progress-phases"></ol>
+          </section>
           <div id="bulk-source-refresh-error" class="bulk-source-refresh-error" hidden></div>
         </div>
         <div class="modal-foot"><button id="bulk-source-refresh-cancel" class="btn" type="button">취소</button><span></span><button id="bulk-source-refresh-preview-run" class="btn primary" type="button">영향 미리보기</button><button id="bulk-source-refresh-apply" class="btn danger" type="button" hidden disabled>전체 DB 갱신 실행</button></div>
@@ -978,7 +982,7 @@
     <script src="./sellpia-source-parser.js?v=20260910-rule-destination-v111"></script>
     <script src="./data-service.js?v=20260915-source-refresh-v1"></script>
     <script src="./channels-page.js?v=20260910-rule-destination-v111"></script>
-    <script src="./app.js?v=20260915-source-refresh-v1"></script>
+    <script src="./app.js?v=20260915-bulk-progress-v1"></script>
     <script src="./mapping-import.js?v=20260910-rule-destination-v111"></script>
     <script src="./attributes-page.js?v=20260914-formula-tags-v1"></script>
     <script src="./price-rule-lab.js?v=20260910-rule-destination-v111"></script>
@@ -994,10 +998,10 @@
 <script src="./rule-registry.js?v=20260914-legacy-formulas-v2"></script>
 <script src="./platform-rule-service.js?v=20260915-settings-direct-v1"></script>
 <script src="./price-result-materializer.js?v=20260910-rule-destination-v111"></script>
-<script src="./current-price-export.js?v=20260914-carrier-export-v1"></script>
+<script src="./current-price-export.js?v=20260915-transformation-plan-v1"></script>
 <script src="./rule-workspace.js?v=20260915-formula-timeout-v1"></script>
       <script src="./ui-cleanup-v1.js?v=20260915-tag-sync-loop-v1"></script>
       <script src="./tag-management-v2.js?v=20260915-tag-import-v2"></script>
-      <script src="./seller-file-workflow-v2.js?v=20260915-preview-filter-v1"></script>
+      <script src="./seller-file-workflow-v2.js?v=20260915-transformation-plan-v1"></script>
   </body>
 </html>

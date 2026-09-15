@@ -62,3 +62,13 @@ test('preview count chips filter only the visible rows and never mutate export o
   assert.match(js,/data-preview-filter/);
   assert.match(css,/\.export-preview-filter\.active/);
 });
+
+test('Smartstore carrier renders a preview-only TransformationPlan and keeps XLSX disconnected',()=>{
+  for(const marker of ['TransformationPlan','preview-only','transformation-plan-preview','transformation-plan-summary','transformation-plan-table','latest generation 미반영','timeout/error','원본 fallback','가격 계산 미완료/오류 · 원본 유지'])assert.ok(js.includes(marker),marker);
+  assert.match(js,/rows=.*\.slice\(0,150\)/);
+  assert.match(js,/button\.dataset\.planCanGenerate/);
+  assert.match(js,/source==='smartstore'.*renderTransformationPlan/);
+  assert.match(js,/source==='smartstore'.*preview-only 단계/);
+  assert.match(js,/data-standard-carrier-run="smartstore" disabled/);
+  assert.doesNotMatch(js,/source==='smartstore'.*bridge\.runCarrier/);
+});

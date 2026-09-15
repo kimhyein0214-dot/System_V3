@@ -32,6 +32,14 @@ assert.doesNotMatch(html.slice(html.indexOf('id="bulk-source-refresh-columns"'),
 assert.match(app, /previewBulkSourceRefresh[\s\S]*refreshMasterColumnFromSource\(\{fieldKey, actor:'operations-hub', requestId, dryRun:true\}\)/);
 assert.match(app, /applyBulkSourceRefresh[\s\S]*refreshMasterColumnFromSource\(\{[\s\S]*fieldKey:preview\.fieldKey[\s\S]*requestId:preview\.requestId[\s\S]*dryRun:false/);
 assert.match(app, /bulkSourceRefreshConfirmationPhrase[\s\S]*전체 원본값 갱신:/);
+assert.match(html, /id="bulk-source-refresh-progress"[\s\S]*id="bulk-source-refresh-progress-summary"[\s\S]*id="bulk-source-refresh-progress-phases"/, 'bulk refresh modal must provide the phase progress surface');
+assert.match(app, /const bulkSourceRefreshState = \{[\s\S]*startedAt:null[\s\S]*phase:'idle'[\s\S]*fieldStatuses:\{\}[\s\S]*priceProgress:[\s\S]*matrixStatus:'pending'[\s\S]*finalStatus:'idle'/, 'bulk refresh state must retain execution progress');
+assert.match(app, /function renderBulkSourceRefreshProgress\(\)[\s\S]*bulk-source-refresh-progress-summary[\s\S]*bulk-source-refresh-progress-phases/, 'bulk refresh progress must be rendered into the modal');
+assert.match(app, /materializeHubPrices\(target\.skus,\{[\s\S]*reason:'bulk-source-price-refresh'[\s\S]*onProgress:progress=>[\s\S]*completedSkus[\s\S]*totalSkus/, 'bulk refresh must reuse materializer progress callback');
+assert.match(app, /bulkSourceRefreshState\.finalStatus = warnings\.length \? 'completed_with_warning' : 'completed'/);
+assert.match(app, /bulkSourceRefreshState\.finalStatus = completed\.length \? 'completed_with_warning' : 'failed'/);
+const applyBody = app.slice(app.indexOf('async function applyBulkSourceRefresh()'), app.indexOf("document.getElementById('matrix-bulk-source-refresh-btn')"));
+assert.doesNotMatch(applyBody, /closeBulkSourceRefresh\(\)/, 'successful refresh must leave the completion summary open');
 assert.match(dataService, /async function refreshMasterColumnFromSource\(/, 'data service must expose the DB-owned bulk refresh RPC adapter');
 assert.match(dataService, /refresh_operations_hub_master_column_from_source_v1/);
 

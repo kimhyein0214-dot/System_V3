@@ -1,7 +1,7 @@
 (function initSellerFileWorkflowV2(global){
  'use strict';
  const D=()=>global.SystemV3Data,A=()=>global.AblyPlayautoExport;
- const state={files:[],catalog:null,preview:null,previewFilter:'all',role:null,loading:false,carrierFiles:new Map(),standardCarrierFiles:new Map()};
+ const state={files:[],catalog:null,preview:null,previewFilter:'all',role:null,loading:false,carrierFiles:new Map(),standardCarrierFiles:new Map(),standardCarrierPlans:new Map()};
  const roles={
   playauto_product:{label:'PlayAuto · 판매가 + 옵션가',type:'product_price_option',hint:'쇼핑몰상품 시트',fileLabel:'쇼핑몰상품.xlsx'},
   playauto_option:{label:'PlayAuto · 옵션가 + 재고',type:'option_price_stock',hint:'옵션기본 시트 · V 추가 금액 / W 판매가능재고 / X 원본 보존',fileLabel:'옵션기본.xlsx'}
@@ -93,7 +93,7 @@
     <div><label id="export-scope-manual-wrap" class="export-scope-detail" hidden>SKU 목록<textarea id="export-scope-manual" placeholder="10000-1&#10;10000-2"></textarea></label><label id="export-scope-tag-wrap" class="export-scope-detail" hidden>태그<select id="export-scope-tag"><option value="">태그 선택</option></select></label></div>
    </div>
    <div class="export-channel-grid">
-    <article class="export-channel-card" data-standard-source="smartstore"><header><h4>스마트스토어</h4><span>원본 양식</span></header><p>현재 매트릭스와 다른 안전 상품 묶음만 생성하거나, 직접 받은 공식 부분 수정 XLSX를 메모리에서 변환합니다.</p><div class="export-role-status" data-standard-status="smartstore">원본 상태 확인 중…</div><div class="export-role-status matrix-stock-state" data-matrix-stock-status="smartstore">재고 상태 확인 전 · 새 수정안을 계산하지 않습니다.</div><input type="file" data-standard-carrier-input="smartstore" accept=".xlsx,.xls"><div class="direct-export-actions"><button class="btn" type="button" data-standard-preview="smartstore">변경분 미리보기</button><button class="btn primary" type="button" data-standard-run="smartstore">변경분 XLSX 생성</button><button class="btn" type="button" data-standard-carrier-pick="smartstore">공식 수정파일 선택</button><button class="btn primary" type="button" data-standard-carrier-run="smartstore" disabled>선택 파일 변환</button></div><div class="direct-export-progress" data-standard-progress="smartstore" hidden><div class="direct-export-progress-head"><b data-progress-title>파일 생성 준비</b><span data-progress-percent>0%</span></div><div class="direct-export-progress-track"><i data-progress-bar style="width:0%"></i></div><small data-progress-detail>대상 범위와 원본을 확인합니다.</small></div><div class="direct-export-preview" data-standard-result="smartstore">변경분을 확인하거나 공식 수정파일을 선택하세요.</div></article>
+     <article class="export-channel-card" data-standard-source="smartstore"><header><h4>스마트스토어</h4><span>원본 양식</span></header><p>현재 매트릭스와 다른 안전 상품 묶음만 생성하거나, 직접 받은 공식 부분 수정 XLSX를 메모리에서 변환합니다.</p><div class="export-role-status" data-standard-status="smartstore">원본 상태 확인 중…</div><div class="export-role-status matrix-stock-state" data-matrix-stock-status="smartstore">재고 상태 확인 전 · 새 수정안을 계산하지 않습니다.</div><input type="file" data-standard-carrier-input="smartstore" accept=".xlsx,.xls"><div class="direct-export-actions"><button class="btn" type="button" data-standard-preview="smartstore">변경분 미리보기</button><button class="btn primary" type="button" data-standard-run="smartstore">변경분 XLSX 생성</button><button class="btn" type="button" data-standard-carrier-pick="smartstore">공식 수정파일 선택</button><button class="btn primary" type="button" data-standard-carrier-run="smartstore" disabled title="preview-only 단계에서는 XLSX 생성과 연결하지 않습니다.">XLSX 생성 연결 전</button></div><div class="direct-export-progress" data-standard-progress="smartstore" hidden><div class="direct-export-progress-head"><b data-progress-title>파일 생성 준비</b><span data-progress-percent>0%</span></div><div class="direct-export-progress-track"><i data-progress-bar style="width:0%"></i></div><small data-progress-detail>대상 범위와 원본을 확인합니다.</small></div><div class="direct-export-preview" data-standard-result="smartstore">변경분을 확인하거나 공식 수정파일을 선택하세요.</div></article>
     <article class="export-channel-card" data-standard-source="makeshop"><header><h4>메이크샵</h4><span>원본 양식</span></header><p>현재 매트릭스와 다른 안전 상품 묶음만 생성하거나, 직접 받은 공식 부분 수정 XLSX를 메모리에서 변환합니다.</p><div class="export-role-status" data-standard-status="makeshop">원본 상태 확인 중…</div><div class="export-role-status matrix-stock-state" data-matrix-stock-status="makeshop">재고 상태 확인 전 · 새 수정안을 계산하지 않습니다.</div><input type="file" data-standard-carrier-input="makeshop" accept=".xlsx,.xls"><div class="direct-export-actions"><button class="btn" type="button" data-standard-preview="makeshop">변경분 미리보기</button><button class="btn primary" type="button" data-standard-run="makeshop">변경분 XLSX 생성</button><button class="btn" type="button" data-standard-carrier-pick="makeshop">공식 수정파일 선택</button><button class="btn primary" type="button" data-standard-carrier-run="makeshop" disabled>선택 파일 변환</button></div><div class="direct-export-progress" data-standard-progress="makeshop" hidden><div class="direct-export-progress-head"><b data-progress-title>파일 생성 준비</b><span data-progress-percent>0%</span></div><div class="direct-export-progress-track"><i data-progress-bar style="width:0%"></i></div><small data-progress-detail>대상 범위와 원본을 확인합니다.</small></div><div class="direct-export-preview" data-standard-result="makeshop">변경분을 확인하거나 공식 수정파일을 선택하세요.</div></article>
     <article class="export-channel-card"><header><h4>에이블리 · PlayAuto</h4><span>전용 양식</span></header><p>GOODS_LIST는 조회/매칭에만 사용합니다. 판매가·옵션가 ALL은 장기 원본을, 옵션가·재고 부분파일은 선택한 로컬 파일을 기준으로 만듭니다.</p>
       <div class="export-role-status" data-export-file="playauto_product"></div>
@@ -142,6 +142,27 @@
   el.className=`direct-export-preview ${kind}`.trim();el.textContent=text;
  }
 
+ function carrierPriceTuple(value){
+  if(!value)return '가격 원본 정보 없음';
+  const show=number=>number===null||number===undefined||number===''?'—':n(number);
+  return `기준 ${show(value.base)} / 할인 ${show(value.discounted)} / 옵션 ${show(value.option)} / 최종 ${show(value.final)}`;
+ }
+
+ function renderTransformationPlan(source,file,result){
+  const plan=result?.plan,el=document.querySelector(`[data-standard-result="${source}"]`);if(!el)return;
+  if(!plan||plan.kind!=='TransformationPlan'){standardResult(source,'TransformationPlan을 만들지 못했습니다. 새로고침 후 다시 확인해주세요.','error');return;}
+  state.standardCarrierPlans.set(source,plan);
+  const c=plan.summary||{},states=c.price_states||{},rows=(plan.preview||[]).slice(0,150);
+  const stateClass=code=>code==='calculated_complete'?'complete':code==='latest_generation_unreflected'?'stale':code==='timeout_error'?'error':'fallback';
+  el.className='direct-export-preview transformation-plan-preview';
+  el.innerHTML=`<div class="transformation-plan-head"><b>${esc(file.name)} · TransformationPlan</b><span>preview-only · Storage 저장 안 함</span></div>
+   <div class="transformation-plan-summary"><span>입력 ${n(c.total)}</span><span>매칭 ${n(c.matched)}</span><span>안전 변경 ${n(c.changed)}</span><span>후보 변경 ${n(c.candidate_changed)}</span><span>차단 ${n(c.blocked)}</span><span>정상 완료 ${n(states.calculated_complete)}</span><span>latest generation 미반영 ${n(states.latest_generation_unreflected)}</span><span>timeout/error ${n(states.timeout_error)}</span><span>원본 fallback ${n(states.original_fallback)}</span></div>
+   <div class="transformation-plan-warning">${esc(plan.safety?.reason||'가격 계산 상태를 재검증해야 합니다.')} · 실제 XLSX 생성은 아직 연결하지 않았습니다.</div>
+   <div class="transformation-plan-table-wrap"><table class="transformation-plan-table"><thead><tr><th>행 / SKU</th><th>상품 · 옵션</th><th>현재값</th><th>preview 저장값</th><th>가격 상태</th></tr></thead><tbody>${rows.map(row=>{const diff=row.diff||{},stock=diff.stock||{},price=diff.price||{},priceState=row.price_state||{};return `<tr><td>${esc(row.source_row_no??'—')} / ${esc(row.sku||'—')}</td><td>${esc(row.product_code||'—')} · ${esc(row.option_code||'—')}</td><td>재고 ${esc(stock.before??'—')}<br>${esc(carrierPriceTuple(price.before))}</td><td>재고 ${esc(stock.after??stock.before??'—')}<br>${esc(carrierPriceTuple(price.after||price.before))}</td><td class="price-state ${stateClass(priceState.code)}"><b>${esc(priceState.label||'가격 계산 미완료/오류 · 원본 유지')}</b><br><small>${esc(row.reason||priceState.detail||'')}</small></td></tr>`;}).join('')||'<tr><td colspan="5">표시할 행이 없습니다.</td></tr>'}</tbody></table></div>
+   ${(plan.preview||[]).length>150?`<div class="transformation-plan-limit">상세 diff는 앞 150행만 표시합니다. 전체 ${n(plan.preview.length)}행</div>`:''}`;
+  const button=document.querySelector('[data-standard-carrier-run="'+source+'"]');if(button){button.disabled=true;button.dataset.planCanGenerate=String(Boolean(plan.canGenerate));button.title=plan.canGenerate?'재검증 결과는 안전하지만 preview-only 단계이므로 XLSX 생성은 아직 연결하지 않습니다.':'가격 결과가 완결되지 않았거나 stale이므로 XLSX 생성을 차단합니다.';}
+ }
+
  function standardProgress(source,percent,title,detail,stateName='running'){
   const box=document.querySelector(`[data-standard-progress="${source}"]`);if(!box)return;
   const safe=Math.max(0,Math.min(100,Math.round(Number(percent)||0)));
@@ -184,12 +205,13 @@
   if(!file){standardResult(source,'공식 수정 XLSX를 선택해주세요.','error');return;}
   if(button)button.disabled=true;
   standardResult(source,`${file.name} · 브라우저 메모리에서 매칭 확인 중…`);
-  try{const result=await bridge.previewCarrier({source,file});standardResult(source,[file.name,result.count,result.detail,'Storage 저장 안 함'].filter(Boolean).join(' · '),'success');if(button)button.disabled=false;setStatus((source==='smartstore'?'스마트스토어':'메이크샵')+' 공식 수정파일 미리보기 완료','success');}
+  try{const result=await bridge.previewCarrier({source,file});if(source==='smartstore')renderTransformationPlan(source,file,result);else{standardResult(source,[file.name,result.count,result.detail,'Storage 저장 안 함'].filter(Boolean).join(' · '),'success');if(button)button.disabled=false;}setStatus((source==='smartstore'?'스마트스토어 TransformationPlan':'메이크샵 공식 수정파일')+' 미리보기 완료','success');}
   catch(error){standardResult(source,'공식 수정파일 확인 실패: '+(error?.message||error),'error');setStatus('공식 수정파일 확인 실패: '+(error?.message||error),'error');}
  }
 
  async function runStandardCarrier(source){
   const bridge=global.SystemV3SellerExportBridge,file=state.standardCarrierFiles.get(source),button=document.querySelector('[data-standard-carrier-run="'+source+'"]');
+  if(source==='smartstore'){standardResult(source,'Smartstore carrier는 현재 preview-only 단계입니다. 실제 XLSX 생성은 가격 결과 재검증 연결 이후에만 허용됩니다.','error');return;}
   if(!bridge?.runCarrier||!file){standardResult(source,'먼저 공식 수정 XLSX를 선택해주세요.','error');return;}
   if(button)button.disabled=true;standardResult(source,`${file.name} · 현재 매트릭스 표시값으로 변환 중…`);
   try{const result=await bridge.runCarrier({source,file});standardResult(source,[result.title,result.progressDetail,'Storage 저장 안 함'].filter(Boolean).join(' · '),'success');setStatus('공식 수정파일 변환 완료','success');}

@@ -109,7 +109,19 @@ const BULK_SOURCE_REFRESH_FIELDS = Object.freeze({
   sellpia_order_unit:{label:'발주단위', sourceLabel:'셀피아 원본 발주단위'},
   sellpia_minimum_order_unit:{label:'최소발주단위', sourceLabel:'셀피아 원본 최소발주단위'}
 });
-const bulkSourceRefreshState = {previewed:false, running:false, fields:[], results:[]};
+const bulkSourceRefreshState = {
+  previewed:false,
+  running:false,
+  fields:[],
+  results:[],
+  startedAt:null,
+  phase:'idle',
+  fieldStatuses:{},
+  priceProgress:{status:'pending', completed:0, total:0, phase:''},
+  matrixStatus:'pending',
+  finalStatus:'idle',
+  finalMessage:''
+};
 let matrixContextTargets = [];
 let matrixContextProductCopyTargets = [];
 let matrixContextProductCopySkipped = 0;
@@ -4521,6 +4533,102 @@ const bulkSourceRefreshPreviewButton = document.getElementById('bulk-source-refr
 const bulkSourceRefreshApplyButton = document.getElementById('bulk-source-refresh-apply');
 const bulkSourceRefreshConfirm = document.getElementById('bulk-source-refresh-confirm');
 
+function bulkSourceRefreshProgressStatusText(status) {
+  return ({pending:'대기', running:'진행 중', completed:'완료', warning:'부분 실패', failed:'실패', skipped:'선택 안 함'})[status] || status;
+}
+
+function renderBulkSourceRefreshProgress() {
+  const progressBox = document.getElementById('bulk-source-refresh-progress');
+  const summary = document.getElementById('bulk-source-refresh-progress-summary');
+  const phases = document.getElementById('bulk-source-refresh-progress-phases');
+  if (!progressBox || !summary || !phases) return;
+  progressBox.hidden = !bulkSourceRefreshState.startedAt;
+  if (!bulkSourceRefreshState.startedAt) {
+    summary.textContent = '';
+    phases.innerHTML = '';
+    delete progressBox.dataset.phase;
+    delete progressBox.dataset.status;
+    return;
+  }
+  const startedAt = new Date(bulkSourceRefreshState.startedAt);
+  const startedLabel = Number.isNaN(startedAt.getTime()) ? '' : startedAt.toLocaleTimeString('ko-KR', {hour:'2-digit', minute:'2-digit', second:'2-digit'});
+  const finalLabels = {
+    running:'전체 DB 갱신 진행 중',
+    completed:'전체 DB 갱신 완료',
+    completed_with_warning:'전체 DB 갱신 부분 실패',
+    failed:'전체 DB 갱신 실패'
+  };
+  summary.textContent = `${finalLabels[bulkSourceRefreshState.finalStatus] || '전체 DB 갱신 준비'}${startedLabel ? ` · 시작 ${startedLabel}` : ''}${bulkSourceRefreshState.finalMessage ? ` · ${bulkSourceRefreshState.finalMessage}` : ''}`;
+  progressBox.dataset.phase = bulkSourceRefreshState.phase;
+  progressBox.dataset.status = bulkSourceRefreshState.finalStatus;
+
+  const fieldKeys = [...new Set(['system_stock', 'sellpia_purchase_price', ...bulkSourceRefreshState.fields])];
+  const rows = [{
+    key:'request_started',
+    label:'요청 시작',
+    status:'completed',
+    detail:startedLabel ? `${startedLabel}에 실행 요청을 시작했습니다.` : ''
+  }];
+  for (const fieldKey of fieldKeys) {
+    const selected = bulkSourceRefreshState.fields.includes(fieldKey);
+    const fieldStatus = bulkSourceRefreshState.fieldStatuses[fieldKey] || {status:selected ? 'pending' : 'skipped'};
+    const info = BULK_SOURCE_REFRESH_FIELDS[fieldKey] || {label:fieldKey};
+    rows.push({
+      key:`field_${fieldKey}`,
+      label:info.label,
+      status:fieldStatus.status,
+      detail:fieldStatus.status === 'completed'
+        ? `${formatNumber(fieldStatus.changedCount || 0)}건 저장`
+        : (fieldStatus.detail || '')
+    });
+  }
+  const price = bulkSourceRefreshState.priceProgress;
+  rows.push({
+    key:'price_calculation',
+    label:'가격 계산 진행률',
+    status:price.status,
+    detail:price.status === 'skipped'
+      ? '가격 관련 컬럼을 선택하지 않았습니다.'
+      : `${formatNumber(price.completed)} / ${formatNumber(price.total)} SKU${price.phase ? ` · ${price.phase}` : ''}`
+  });
+  rows.push({
+    key:'matrix_refresh',
+    label:'매트릭스 재조회',
+    status:bulkSourceRefreshState.matrixStatus,
+    detail:bulkSourceRefreshState.matrixStatus === 'completed' ? '최신 DB 값을 화면에 반영했습니다.' : ''
+  });
+  const finalUiStatus = bulkSourceRefreshState.finalStatus === 'completed'
+    ? 'completed'
+    : bulkSourceRefreshState.finalStatus === 'completed_with_warning'
+      ? 'warning'
+      : bulkSourceRefreshState.finalStatus === 'failed'
+        ? 'failed'
+        : 'pending';
+  rows.push({
+    key:'final',
+    label:bulkSourceRefreshState.finalStatus === 'completed_with_warning' ? '부분 실패' : (bulkSourceRefreshState.finalStatus === 'failed' ? '실패' : '완료'),
+    status:finalUiStatus,
+    detail:bulkSourceRefreshState.finalMessage
+  });
+  phases.innerHTML = rows.map(row => `<li class="bulk-source-refresh-phase is-${escapeHtml(row.status)}" data-bulk-refresh-phase="${escapeHtml(row.key)}" data-status="${escapeHtml(row.status)}"><b>${escapeHtml(row.label)}</b><span>${escapeHtml(bulkSourceRefreshProgressStatusText(row.status))}</span>${row.detail ? `<small class="bulk-source-refresh-phase-detail">${escapeHtml(row.detail)}</small>` : ''}</li>`).join('');
+}
+
+function beginBulkSourceRefreshProgress(fields) {
+  bulkSourceRefreshState.startedAt = new Date().toISOString();
+  bulkSourceRefreshState.phase = 'request_started';
+  bulkSourceRefreshState.fieldStatuses = Object.fromEntries(fields.map(fieldKey => [fieldKey, {status:'pending', changedCount:0, detail:''}]));
+  bulkSourceRefreshState.priceProgress = {
+    status:fields.some(fieldKey => ['system_base_price','sellpia_purchase_price'].includes(fieldKey)) ? 'pending' : 'skipped',
+    completed:0,
+    total:0,
+    phase:''
+  };
+  bulkSourceRefreshState.matrixStatus = 'pending';
+  bulkSourceRefreshState.finalStatus = 'running';
+  bulkSourceRefreshState.finalMessage = '';
+  renderBulkSourceRefreshProgress();
+}
+
 function selectedBulkSourceRefreshFields() {
   return [...bulkSourceRefreshColumns.querySelectorAll('input[type="checkbox"]:checked')]
     .map(input => input.value)
@@ -4553,7 +4661,7 @@ function setBulkSourceRefreshBusy(busy, label = '') {
   document.getElementById('bulk-source-refresh-preview-reset').disabled = busy;
   document.getElementById('bulk-source-refresh-cancel').disabled = busy;
   document.getElementById('bulk-source-refresh-close').disabled = busy;
-  bulkSourceRefreshApplyButton.disabled = busy || bulkSourceRefreshConfirm.value.trim() !== bulkSourceRefreshConfirmationPhrase();
+  bulkSourceRefreshApplyButton.disabled = busy || ['completed','completed_with_warning','failed'].includes(bulkSourceRefreshState.finalStatus) || bulkSourceRefreshConfirm.value.trim() !== bulkSourceRefreshConfirmationPhrase();
   if (label) (bulkSourceRefreshState.previewed ? bulkSourceRefreshApplyButton : bulkSourceRefreshPreviewButton).textContent = label;
 }
 
@@ -4562,6 +4670,13 @@ function resetBulkSourceRefresh({clearSelection = true} = {}) {
   bulkSourceRefreshState.running = false;
   bulkSourceRefreshState.fields = [];
   bulkSourceRefreshState.results = [];
+  bulkSourceRefreshState.startedAt = null;
+  bulkSourceRefreshState.phase = 'idle';
+  bulkSourceRefreshState.fieldStatuses = {};
+  bulkSourceRefreshState.priceProgress = {status:'pending', completed:0, total:0, phase:''};
+  bulkSourceRefreshState.matrixStatus = 'pending';
+  bulkSourceRefreshState.finalStatus = 'idle';
+  bulkSourceRefreshState.finalMessage = '';
   if (clearSelection) bulkSourceRefreshColumns.querySelectorAll('input').forEach(input => { input.checked = false; });
   bulkSourceRefreshColumns.querySelectorAll('input').forEach(input => { input.disabled = false; });
   bulkSourceRefreshPreview.hidden = true;
@@ -4573,6 +4688,7 @@ function resetBulkSourceRefresh({clearSelection = true} = {}) {
   bulkSourceRefreshApplyButton.textContent = '전체 DB 갱신 실행';
   bulkSourceRefreshConfirm.value = '';
   document.getElementById('bulk-source-refresh-error').hidden = true;
+  renderBulkSourceRefreshProgress();
 }
 
 function openBulkSourceRefresh() {
@@ -4652,10 +4768,18 @@ async function applyBulkSourceRefresh() {
   }
   const errorBox = document.getElementById('bulk-source-refresh-error');
   errorBox.hidden = true;
+  beginBulkSourceRefreshProgress(bulkSourceRefreshState.fields);
   setBulkSourceRefreshBusy(true, '전체 DB 갱신 중…');
   const completed = [];
+  let activeFieldKey = null;
+  let calculationWarning = '';
+  let matrixWarning = '';
   try {
     for (const preview of bulkSourceRefreshState.results) {
+      activeFieldKey = preview.fieldKey;
+      bulkSourceRefreshState.phase = `refreshing_${activeFieldKey}`;
+      bulkSourceRefreshState.fieldStatuses[activeFieldKey] = {status:'running', changedCount:0, detail:`${BULK_SOURCE_REFRESH_FIELDS[activeFieldKey]?.sourceLabel || '셀피아 원본'}을 DB에 반영하고 있습니다.`};
+      renderBulkSourceRefreshProgress();
       const result = await liveData.refreshMasterColumnFromSource({
         fieldKey:preview.fieldKey,
         actor:'operations-hub',
@@ -4665,28 +4789,82 @@ async function applyBulkSourceRefresh() {
       const normalized = normalizeBulkSourceRefreshResult(result, preview.fieldKey, preview.requestId, false);
       if (normalized.dryRun) throw new Error(`${BULK_SOURCE_REFRESH_FIELDS[preview.fieldKey].label}이 실제 갱신으로 처리되지 않았습니다.`);
       completed.push(normalized);
+      bulkSourceRefreshState.fieldStatuses[activeFieldKey] = {status:'completed', changedCount:normalized.changedCount, detail:''};
+      activeFieldKey = null;
+      renderBulkSourceRefreshProgress();
     }
     const changedCount = completed.reduce((sum, row) => sum + row.changedCount, 0);
-    let calculationWarning = '';
     if (completed.some(row => ['system_base_price','sellpia_purchase_price'].includes(row.fieldKey))) {
-      const target = await liveData.loadAllFilteredSkus({status:'all'});
-      try { calculationWarning = materializationWarning(await materializeHubPrices(target.skus,{reason:'bulk-source-price-refresh'})); }
-      catch (error) { calculationWarning = `원본값은 저장됐지만 가격 저장 실패: ${error?.message || error}`; }
+      bulkSourceRefreshState.phase = 'price_calculation';
+      bulkSourceRefreshState.priceProgress = {status:'running', completed:0, total:0, phase:'계산 대상 조회'};
+      renderBulkSourceRefreshProgress();
+      try {
+        const target = await liveData.loadAllFilteredSkus({status:'all'});
+        bulkSourceRefreshState.priceProgress.total = Number(target?.skus?.length || 0);
+        const calculation = await materializeHubPrices(target.skus,{
+          reason:'bulk-source-price-refresh',
+          onProgress:progress=>{
+            bulkSourceRefreshState.priceProgress.completed = Number(progress?.completed ?? progress?.completedSkus ?? 0);
+            bulkSourceRefreshState.priceProgress.total = Number(progress?.total ?? progress?.totalSkus ?? bulkSourceRefreshState.priceProgress.total ?? 0);
+            bulkSourceRefreshState.priceProgress.phase = String(progress?.phase || '');
+            renderBulkSourceRefreshProgress();
+          }
+        });
+        calculationWarning = materializationWarning(calculation);
+        bulkSourceRefreshState.priceProgress.completed = Number(calculation?.completedSkus ?? calculation?.totalSkus ?? bulkSourceRefreshState.priceProgress.completed);
+        bulkSourceRefreshState.priceProgress.total = Number(calculation?.totalSkus ?? bulkSourceRefreshState.priceProgress.total);
+        bulkSourceRefreshState.priceProgress.phase = calculation?.status === 'partial' ? '오류 행을 제외하고 완료' : '완료';
+        bulkSourceRefreshState.priceProgress.status = calculationWarning ? 'warning' : 'completed';
+      } catch (error) {
+        calculationWarning = `원본값은 저장됐지만 가격 저장 실패: ${error?.message || error}`;
+        bulkSourceRefreshState.priceProgress.status = 'failed';
+        bulkSourceRefreshState.priceProgress.phase = error?.message || String(error);
+      }
+      renderBulkSourceRefreshProgress();
     }
-    await loadLiveMatrix();
-    void loadLiveDashboardMetrics();
+    bulkSourceRefreshState.phase = 'matrix_refresh';
+    bulkSourceRefreshState.matrixStatus = 'running';
+    renderBulkSourceRefreshProgress();
+    try {
+      await loadLiveMatrix();
+      bulkSourceRefreshState.matrixStatus = 'completed';
+      void loadLiveDashboardMetrics();
+    } catch (error) {
+      bulkSourceRefreshState.matrixStatus = 'failed';
+      matrixWarning = `원본값은 저장됐지만 매트릭스 재조회 실패: ${error?.message || error}`;
+    }
     bulkSourceRefreshState.running = false;
-    closeBulkSourceRefresh();
-    showToast(calculationWarning || `컬럼 전체 원본값 갱신 완료 · ${completed.length}개 컬럼 · ${formatNumber(changedCount)}건 저장`);
+    bulkSourceRefreshState.phase = 'finished';
+    const warnings = [calculationWarning, matrixWarning].filter(Boolean);
+    bulkSourceRefreshState.finalStatus = warnings.length ? 'completed_with_warning' : 'completed';
+    bulkSourceRefreshState.finalMessage = warnings.join(' · ') || `${completed.length}개 컬럼 · ${formatNumber(changedCount)}건 저장`;
+    renderBulkSourceRefreshProgress();
+    showToast(warnings.join(' · ') || `컬럼 전체 원본값 갱신 완료 · ${completed.length}개 컬럼 · ${formatNumber(changedCount)}건 저장`);
   } catch (error) {
     console.error('bulk source refresh apply failed', error);
+    if (activeFieldKey && bulkSourceRefreshState.fieldStatuses[activeFieldKey]) {
+      bulkSourceRefreshState.fieldStatuses[activeFieldKey] = {status:'failed', changedCount:0, detail:error?.message || String(error)};
+    }
+    if (bulkSourceRefreshState.priceProgress.status === 'running') bulkSourceRefreshState.priceProgress.status = 'failed';
+    if (bulkSourceRefreshState.matrixStatus === 'running') bulkSourceRefreshState.matrixStatus = 'failed';
     const completedLabels = completed.map(row => BULK_SOURCE_REFRESH_FIELDS[row.fieldKey]?.label).filter(Boolean);
-    errorBox.textContent = `전체 갱신 실패: ${error?.message || error}${completedLabels.length ? ` · 완료된 컬럼: ${completedLabels.join(', ')}` : ''} · 처리 여부가 불확실할 수 있으니 DB 새로고침 후 다시 미리보기하세요.`;
+    bulkSourceRefreshState.phase = 'finished';
+    bulkSourceRefreshState.finalStatus = completed.length ? 'completed_with_warning' : 'failed';
+    bulkSourceRefreshState.finalMessage = `${error?.message || error}${completedLabels.length ? ` · 완료된 컬럼: ${completedLabels.join(', ')}` : ''} · 처리 여부가 불확실할 수 있으니 DB 새로고침 후 다시 미리보기하세요.`;
+    errorBox.textContent = `전체 갱신 실패: ${bulkSourceRefreshState.finalMessage}`;
     errorBox.hidden = false;
+    renderBulkSourceRefreshProgress();
   } finally {
     if (!bulkSourceRefreshModal.hidden) {
       setBulkSourceRefreshBusy(false);
-      bulkSourceRefreshApplyButton.textContent = '전체 DB 갱신 실행';
+      bulkSourceRefreshApplyButton.textContent = bulkSourceRefreshState.finalStatus === 'completed'
+        ? '갱신 완료'
+        : bulkSourceRefreshState.finalStatus === 'completed_with_warning'
+          ? '부분 실패'
+          : bulkSourceRefreshState.finalStatus === 'failed'
+            ? '갱신 실패'
+            : '전체 DB 갱신 실행';
+      renderBulkSourceRefreshProgress();
     }
   }
 }
@@ -4702,7 +4880,7 @@ document.getElementById('bulk-source-refresh-preview-reset').addEventListener('c
 document.getElementById('bulk-source-refresh-preview-run').addEventListener('click', previewBulkSourceRefresh);
 document.getElementById('bulk-source-refresh-apply').addEventListener('click', applyBulkSourceRefresh);
 bulkSourceRefreshConfirm.addEventListener('input', () => {
-  bulkSourceRefreshApplyButton.disabled = bulkSourceRefreshState.running || bulkSourceRefreshConfirm.value.trim() !== bulkSourceRefreshConfirmationPhrase();
+  bulkSourceRefreshApplyButton.disabled = bulkSourceRefreshState.running || ['completed','completed_with_warning','failed'].includes(bulkSourceRefreshState.finalStatus) || bulkSourceRefreshConfirm.value.trim() !== bulkSourceRefreshConfirmationPhrase();
 });
 bulkSourceRefreshModal.addEventListener('click', event => { if (event.target === bulkSourceRefreshModal) closeBulkSourceRefresh(); });
 
@@ -7729,7 +7907,7 @@ async function prepareStandardCarrierExport(source,file){
   if(!file||typeof file.arrayBuffer!=='function')throw Error('공식 수정 XLSX를 선택해주세요.');
   const parsed=await window.SystemV3SellerParsers.parseSellerFiles(source,[file],{price:true,discount:true});
   const snapshot=await liveData.loadMatrixExportSnapshot({source});
-  const prepared=window.HubCurrentPriceExport.prepareCarrierItems(source,file.name,parsed.normalizedRows,snapshot.rows);
+  const prepared=window.HubCurrentPriceExport.prepareCarrierItems(source,file.name,parsed.normalizedRows,snapshot.rows,{snapshotId:snapshot.snapshotId});
   return {source,file,parsed,...prepared};
 }
 

@@ -45,12 +45,12 @@ const localAssets = [...html.matchAll(/(?:href|src)="(\.\/[^\"]+)"/g)].map(match
 assert.ok(localAssets.length >= 18, 'the export page must retain its local asset bundle');
 assert.ok(localAssets.every(asset => /\?v=[^&\"]+$/.test(asset)), 'all local export assets must be versioned');
 assert.match(html,/discount-price-math\.js\?v=20260914-matrix-visible-export-v2/,'shared matrix display math keeps its deployed version');
-for (const asset of ['seller-export-adapter.js','app.js','current-price-export.js']) {
-  assert.match(html, new RegExp(`${asset.replaceAll('.','\\.')}\\?v=20260914-carrier-export-v1`), `${asset} must use the carrier export deployment version`);
-}
+assert.match(html,/seller-export-adapter\.js\?v=20260914-carrier-export-v1/,'unchanged serializer keeps its deployed carrier version');
+assert.match(html,/app\.js\?v=20260915-bulk-progress-v1/,'bulk refresh phase UI must use a fresh deployed app version');
+assert.match(html,/current-price-export\.js\?v=20260915-transformation-plan-v1/,'TransformationPlan resolver must use a fresh deployed version');
 assert.match(html,/ably-playauto-export\.js\?v=20260915-change-highlight-v1/,'Ably PlayAuto export must deploy changed-cell highlighting with a fresh asset version');
-assert.match(html,/seller-file-workflow-v2\.js\?v=20260915-preview-filter-v1/,'seller file workflow must retain the deployed preview-filter version');
-assert.match(html,/data-service\.js\?v=20260915-formula-timeout-v1/,'formula sibling lookup fix must use a fresh deployed data-service asset');
+assert.match(html,/seller-file-workflow-v2\.js\?v=20260915-transformation-plan-v1/,'seller file workflow must deploy the preview-only TransformationPlan UI');
+assert.match(html,/data-service\.js\?v=20260915-source-refresh-v1/,'data service must retain the deployed source-refresh version');
 assert.doesNotMatch(html, /class="seller-export-files"/, 'export must reuse the latest stored originals instead of asking for files again');
 for (const scope of ['filtered','selected','all']) assert.match(html, new RegExp(`name="seller-export-scope" value="${scope}"`), `export scope must include ${scope}`);
 assert.match(draftMigration, /source_storage_files jsonb[^]*?seller-originals/, 'seller snapshots must retain immutable original file references');

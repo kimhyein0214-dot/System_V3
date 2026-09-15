@@ -97,16 +97,64 @@ test('official carrier scope uses exact identity and only visible draft or calcu
     row({sku:'BLANK',product_code:'P-2',option_code:'O-2',source_row_no:4,system_stock:99,source_stock:3})
   ];
   const result=h.api.prepareCarrierItems('smartstore','carrier.xlsx',carrier,snapshot);
+  assert.equal(result.kind,'TransformationPlan');
+  assert.equal(result.preview_only,true);
+  assert.equal(result.xlsx_connected,false);
+  assert.equal(result.source_type,'carrier');
+  assert.equal(result.latest_generation_id,null);
+  assert.match(result.created_at,/^\d{4}-\d{2}-\d{2}T/);
   assert.deepEqual(plain(result.items.map(item=>[item.sellpia_sku_code,item.field_key,item.after_value,item.source_row_no])),[
     ['DRAFT','sellpia_current_stock',0,7],['DRAFT','sellpia_sale_price',5500,7]
   ]);
   assert.equal(result.preview[0].changed,true);
   assert.equal(result.preview[1].changed,false,'blank carrier stock and no visible price target must stay untouched');
   assert.equal(result.excludedItems.length,0);
+  assert.equal(result.preview[0].price_state.code,'calculated_complete','a complete visible draft is safe and takes priority over calculation state');
+  assert.equal(result.preview[1].price_state.code,'original_fallback');
+  assert.equal(result.canGenerate,false,'an incomplete price row blocks future XLSX eligibility');
+  assert.deepEqual(plain(result.summary.price_states),{calculated_complete:1,latest_generation_unreflected:0,timeout_error:0,original_fallback:1});
+  assert.equal(result.preview[0].diff.price.after.final,5500,'complete visible draft remains the safe preview target');
+  assert.equal(result.preview[0].diff.price.candidate_after.final,5500);
 
   const duplicate=h.api.prepareCarrierItems('smartstore','carrier.xlsx',[carrier[0],{...carrier[0],source_row_no:9}],snapshot);
   assert.equal(duplicate.items.length,0);
   assert.equal(duplicate.excludedItems.length,2,'duplicate carrier identities must fail closed rather than fuzzy-write');
+});
+
+test('carrier TransformationPlan distinguishes complete, stale, timeout and original fallback prices',()=>{
+  const calculated={registration_price:5100,registration_status:'calculated',registration_generation_id:12,discount_price:5000,discount_status:'calculated',discount_generation_id:12,option_price:100,option_status:'calculated',option_generation_id:12,final_price:5100,final_status:'calculated',final_generation_id:12};
+  const carrier=(product,rowNo)=>({product_code:product,option_code:'O-1',source_row_no:rowNo,base_price:5000,discounted_base_price:5000,option_price:0,final_price:5000,stock:8,discount_terms:[]});
+  const result=exportHarness([]).api.prepareCarrierItems('smartstore','carrier.xlsx',[carrier('OK',1),carrier('STALE',2),carrier('TIMEOUT',3),carrier('FALLBACK',4)],[
+    row({sku:'OK',product_code:'OK',...calculated}),
+    row({sku:'STALE',product_code:'STALE',...calculated,registration_generation_id:11,discount_generation_id:11,option_generation_id:11,final_generation_id:11}),
+    row({sku:'TIMEOUT',product_code:'TIMEOUT',registration_status:'error',registration_error:'canceling statement due to statement timeout'}),
+    row({sku:'FALLBACK',product_code:'FALLBACK'})
+  ]);
+  assert.deepEqual(plain(result.preview.map(item=>item.price_state.code)),['calculated_complete','latest_generation_unreflected','timeout_error','original_fallback']);
+  assert.equal(result.latest_generation_id,12);
+  assert.deepEqual(plain(result.summary.price_states),{calculated_complete:1,latest_generation_unreflected:1,timeout_error:1,original_fallback:1});
+  assert.equal(result.canGenerate,false);
+  assert.equal(result.safety.price_complete,false);
+  assert.equal(result.preview[1].diff.price.after.final,5000,'stale price keeps the carrier original');
+  assert.equal(result.preview[2].diff.price.after.final,5000,'timeout price keeps the carrier original');
+  assert.equal(result.items.filter(item=>['STALE','TIMEOUT','FALLBACK'].includes(item.sellpia_sku_code)&&item.field_key==='sellpia_sale_price').length,0,'unsafe price candidates must never enter serializer items');
+});
+
+test('complete price draft wins over stale or failed calculation metadata',()=>{
+  const draft={after_value:5500,price_base_after:5200,price_discounted_base_after:5000,price_option_after:500,price_final_after:5500,price_discount_terms_after:[]};
+  const result=exportHarness([]).api.prepareCarrierItems('smartstore','carrier.xlsx',[{product_code:'P-1',option_code:'O-1',source_row_no:7,base_price:5000,discounted_base_price:5000,option_price:0,final_price:5000,stock:8,discount_terms:[]}],[row({price_draft:draft,registration_status:'error',registration_error:'statement timeout',registration_generation_id:11,discount_generation_id:11,option_generation_id:11,final_generation_id:11})]);
+  assert.equal(result.preview[0].price_state.code,'calculated_complete');
+  assert.equal(result.preview[0].price_state.safe,true);
+  assert.equal(result.preview[0].diff.price.after.final,5500);
+  assert.equal(result.canGenerate,true);
+});
+
+test('fully calculated carrier plan records future generation eligibility without connecting XLSX',()=>{
+  const calculated={registration_price:5100,registration_status:'calculated',registration_generation_id:12,discount_price:5000,discount_status:'calculated',discount_generation_id:12,option_price:100,option_status:'calculated',option_generation_id:12,final_price:5100,final_status:'calculated',final_generation_id:12};
+  const result=exportHarness([]).api.prepareCarrierItems('smartstore','carrier.xlsx',[{product_code:'P-1',option_code:'O-1',source_row_no:7,base_price:5000,discounted_base_price:5000,option_price:0,final_price:5000,stock:8,discount_terms:[]}],[row(calculated)]);
+  assert.equal(result.canGenerate,true);
+  assert.equal(result.safety.can_generate_xlsx,true);
+  assert.equal(result.xlsx_connected,false);
 });
 
 test('location is required only for an actual visible write',async()=>{
