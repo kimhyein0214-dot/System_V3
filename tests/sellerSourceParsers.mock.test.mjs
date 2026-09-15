@@ -58,6 +58,42 @@ assert.equal(consolidated.length, 1);
 assert.equal(consolidated[0].stock, 2);
 assert.equal(consolidated[0].raw_payload.duplicate_source_rows, 2);
 
+const compactSharedStrings = Array.from({length:131}, (_, index) => index === 130 ? '작성 안내' : `shared-${index}`);
+compactSharedStrings[0] = '상품번호';
+compactSharedStrings[1] = '판매자 상품코드';
+compactSharedStrings[2] = '옵션 재고수량';
+const compactXml = {
+  'xl/workbook.xml':'<workbook xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><sheets><sheet name="일괄수정" sheetId="1" r:id="rId1"/></sheets></workbook>',
+  'xl/_rels/workbook.xml.rels':'<Relationships><Relationship Id="rId1" Target="worksheets/sheet1.xml"/></Relationships>',
+  'xl/sharedStrings.xml':`<sst>${compactSharedStrings.map(value => `<si><t>${value}</t></si>`).join('')}</sst>`,
+  'xl/worksheets/sheet1.xml':`<worksheet><sheetData>
+    <row r="1"><c r="A1" t="s"><v>0</v></c><c r="B1" t="s"><v>1</v></c><c r="S1" t="s"><v>2</v></c></row>
+    <row r="2"><c r="A2"/><c r="B2"/><c r="G2" t="s"><v>130</v></c><c r="P2"/><c r="R2" t="s"><v>130</v></c></row>
+    <row r="3"><c r="A3"><v>8097562125</v></c><c r="B3"><v>10000</v></c><c r="F3"><v>2800</v></c><c r="P3" t="inlineStr"><is><t>50906377246\n50906377247\n50906377248</t></is></c><c r="Q3" t="inlineStr"><is><t>별\n나비\n볼</t></is></c><c r="R3" t="inlineStr"><is><t>0\n0\n0</t></is></c><c r="S3" t="inlineStr"><is><t>3\n2\n1</t></is></c></row>
+  </sheetData></worksheet>`
+};
+const compactContext = {
+  console,
+  XLSX:{},
+  JSZip:{
+    loadAsync:async () => ({
+      file:name => compactXml[name] === undefined ? null : {async:async () => compactXml[name]}
+    })
+  }
+};
+vm.createContext(compactContext);
+vm.runInContext(parserSource, compactContext);
+const compactFile = {name:'smartstore-official.xlsx', arrayBuffer:async () => new ArrayBuffer(0)};
+const compactParsed = await compactContext.SystemV3SellerParsers.parseSellerFiles('smartstore', [compactFile], fields);
+const compactRows = JSON.parse(JSON.stringify(compactParsed.normalizedRows));
+assert.equal(compactRows.length, 3, 'self-closing guide cells must not create a synthetic Smartstore product row');
+assert.deepEqual(compactRows.map(row => [row.product_code, row.option_code, row.stock]), [
+  ['8097562125', '50906377246', 3],
+  ['8097562125', '50906377247', 2],
+  ['8097562125', '50906377248', 1]
+]);
+assert.equal(compactRows.some(row => row.product_code === '130' && row.option_code === ''), false);
+
 assert.match(html, /seller-source-parsers\.js[\s\S]*?data-service\.js/, 'seller parsers must load before the data service');
 assert.match(appSource, /\['sellpia','smartstore','makeshop','ably'\]\.includes/, 'all four operational source uploads must be enabled');
 assert.match(dataSource, /seller_inventory_snapshots[\s\S]*?finalize_seller_inventory_snapshot/, 'seller uploads must finalize an atomic database snapshot');

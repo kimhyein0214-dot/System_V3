@@ -171,7 +171,7 @@
     const rows = [];
     sheetXml.replace(/<row\b[^>]*>([\s\S]*?)<\/row>/g, (_, rowXml) => {
       const row = [];
-      rowXml.replace(/<c\b([^>]*)>([\s\S]*?)<\/c>/g, (__, attributeSource, cellXml) => {
+      rowXml.replace(/<c\b([^>]*?)(?:\/>|>([\s\S]*?)<\/c>)/g, (__, attributeSource, cellXml = '') => {
         const attributes = extractXmlAttributes(attributeSource);
         const index = columnIndex(attributes.r);
         if (index < 0 || index > maxColumn) return '';
