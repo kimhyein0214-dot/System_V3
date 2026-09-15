@@ -37,6 +37,10 @@ const sellerUnmatchedCacheMigration = fs.readFileSync(
   new URL("../supabase/migrations/20260910095000_hub_seller_unmatched_template_cache.sql", import.meta.url),
   "utf8",
 );
+const mappingSyncIndexMigration = fs.readFileSync(
+  new URL("../supabase/migrations/20260915134000_optimize_mapping_sync_status.sql", import.meta.url),
+  "utf8",
+);
 
 assert.match(html, /id="matrix-zoom-out"[\s\S]*?id="matrix-zoom-value"[\s\S]*?id="matrix-zoom-in"/, "matrix zoom controls must be visible together");
 assert.match(source, /MATRIX_ZOOM_MIN = 80;[\s\S]*?MATRIX_ZOOM_MAX = 140;[\s\S]*?localStorage\.setItem\(MATRIX_ZOOM_KEY/, "matrix-only zoom must be bounded and persisted");
@@ -113,6 +117,7 @@ assert.match(mappingSyncMigration, /operations_hub_manual_links_backup_20260818_
 assert.match(mappingSyncMigration, /save_operations_hub_mapping_batch[\s\S]*?jsonb_array_length\(p_items\)[\s\S]*?operations_hub_manual_links[\s\S]*?operations_hub_link_history/, "automatic and imported mappings must use the audited official overlay path in bounded batches");
 assert.match(mappingSyncMigration, /refresh materialized view concurrently operations_private\.operations_hub_matrix_core[\s\S]*?operations_hub_matrix_refresh_state/, "legacy mapping refreshes must record the completed matrix-core version");
 assert.match(mappingSyncMigration, /operations_hub_mapping_sync_status[\s\S]*?core_refresh_needed[\s\S]*?mapping_version/, "the database must expose saved, core-refreshed, and visible mapping state separately");
+assert.match(mappingSyncIndexMigration, /final_excel_mapping_import_imported_at_desc_idx[\s\S]*?final_excel_mapping_import \(imported_at desc\)/, "mapping status polls must use an index for the latest legacy import timestamp");
 assert.match(html, /id="matrix-mapping-sync"[\s\S]*?id="matrix-mapping-sync-state"[\s\S]*?id="matrix-mapping-sync-time"/, "the permanent action panel must show mapping synchronization state");
 assert.match(dataSource, /operations_hub_mapping_sync_status[\s\S]*?loadMappingSyncStatus/, "the frontend must read mapping synchronization state from Supabase");
 assert.match(source, /MAPPING_SYNC_POLL_INTERVAL_MS = 60000[\s\S]*?loadMappingSyncStatus\(\{autoRefresh:true\}\)/, "the matrix must detect external mapping changes without aggressive polling");

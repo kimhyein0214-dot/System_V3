@@ -40,3 +40,25 @@ test('Ably workflow separates catalog original from PlayAuto export templates',(
   assert.match(html,/seller-file-workflow-v2\.js/);
   assert.match(css,/export-preview-v2/);
 });
+
+test('preview count chips filter only the visible rows and never mutate export output',()=>{
+  const functionSource=js.slice(js.indexOf('function previewRowsForFilter('),js.indexOf('\n function previewFilterButton('));
+  const preview={output:[
+    {_status:'ready',_changed:true},
+    {_status:'ready',_changed:false,_blankStockPreserved:true},
+    {_status:'unresolved'},
+    {_status:'ambiguous'},
+    {_status:'conflict'}
+  ]};
+  const before=JSON.stringify(preview.output);
+  const previewRowsForFilter=Function(`${functionSource}; return previewRowsForFilter;`)();
+  assert.equal(previewRowsForFilter(preview,'all').length,5);
+  assert.equal(previewRowsForFilter(preview,'ready').length,2);
+  assert.equal(previewRowsForFilter(preview,'changed').length,1);
+  assert.equal(previewRowsForFilter(preview,'unresolved').length,2);
+  assert.equal(previewRowsForFilter(preview,'preserved').length,1);
+  assert.equal(previewRowsForFilter(preview,'blocked').length,3);
+  assert.equal(JSON.stringify(preview.output),before);
+  assert.match(js,/data-preview-filter/);
+  assert.match(css,/\.export-preview-filter\.active/);
+});

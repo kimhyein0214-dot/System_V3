@@ -1,7 +1,7 @@
 (function initSellerFileWorkflowV2(global){
  'use strict';
  const D=()=>global.SystemV3Data,A=()=>global.AblyPlayautoExport;
- const state={files:[],catalog:null,preview:null,role:null,loading:false,carrierFiles:new Map(),standardCarrierFiles:new Map()};
+ const state={files:[],catalog:null,preview:null,previewFilter:'all',role:null,loading:false,carrierFiles:new Map(),standardCarrierFiles:new Map()};
  const roles={
   playauto_product:{label:'PlayAuto · 판매가 + 옵션가',type:'product_price_option',hint:'쇼핑몰상품 시트',fileLabel:'쇼핑몰상품.xlsx'},
   playauto_option:{label:'PlayAuto · 옵션가 + 재고',type:'option_price_stock',hint:'옵션기본 시트 · V 추가 금액 / W 판매가능재고 / X 원본 보존',fileLabel:'옵션기본.xlsx'}
@@ -242,7 +242,7 @@
   const record=role==='playauto_option'?null:currentFile(role);
   const carrier=role==='playauto_option'?state.carrierFiles.get(role):null;
   if(!record&&!carrier){setStatus(`${roles[role].label} ${role==='playauto_option'?'공식 수정파일을 선택해주세요.':'원본을 먼저 업로드해주세요.'}`,'error');return;}
-  state.role=role;state.preview=null;setStatus(`${roles[role].label} 원본과 저장값을 비교하는 중…`);
+  state.role=role;state.preview=null;state.previewFilter='all';setStatus(`${roles[role].label} 원본과 저장값을 비교하는 중…`);
   try{
    const file=carrier||await blobFile(record),parsed=await A().readTemplate(file);
    if(parsed.type!==roles[role].type)throw Error('보관된 PlayAuto 원본 역할과 실제 양식이 다릅니다.');
@@ -315,18 +315,36 @@
       item._current=`추가 금액 ${n(item.option_price)} / 판매가능재고 ${item.available_stock==null?'빈칸':n(item.available_stock)}`;item._target=`추가 금액 ${Number.isFinite(Number(item.target_option_price))?n(item.target_option_price):'유지'} / 판매가능재고 ${item._blankStockPreserved?'빈셀 유지':Number.isFinite(Number(item.target_stock))?n(item.target_stock):'유지'}`;
     }
    }
-   const unresolved=resolved.filter(item=>!item.resolution?.sku).length,ready=output.filter(item=>item._status==='ready').length,changed=output.filter(item=>item._status==='ready'&&item._changed).length,preserved=output.filter(item=>item._blankStockPreserved).length,blocked=output.filter(item=>item._status!=='ready').length;
+   const unresolved=output.filter(item=>item._status==='unresolved'||item._status==='ambiguous').length,ready=output.filter(item=>item._status==='ready').length,changed=output.filter(item=>item._status==='ready'&&item._changed).length,preserved=output.filter(item=>item._blankStockPreserved).length,blocked=output.filter(item=>item._status!=='ready').length;
    state.preview={role,record,file,parsed,items:prepared,output,counts:{template:parsed.items.length,matched:resolvedWithSku.length,selected:output.length,ready,changed,blocked,unresolved,preserved}};
    renderPreview();setStatus(`${roles[role].label} 미리보기 완료 · 생성 가능 ${n(ready)}건 · 제외 ${n(blocked)}건`,'success');
   }catch(error){setStatus(`미리보기 실패: ${error?.message||error}`,'error');}
+ }
+
+ function previewRowsForFilter(preview,filter='all'){
+  const rows=Array.isArray(preview?.output)?preview.output:[];
+  if(filter==='ready')return rows.filter(item=>item._status==='ready');
+  if(filter==='changed')return rows.filter(item=>item._status==='ready'&&item._changed);
+  if(filter==='unresolved')return rows.filter(item=>item._status==='unresolved'||item._status==='ambiguous');
+  if(filter==='preserved')return rows.filter(item=>item._blankStockPreserved);
+  if(filter==='blocked')return rows.filter(item=>item._status!=='ready');
+  return rows;
+ }
+
+ function previewFilterButton(filter,label,count,tone=''){
+  const active=state.previewFilter===filter;
+  return `<button type="button" class="export-preview-filter ${tone} ${active?'active':''}" data-preview-filter="${filter}" aria-pressed="${active}" title="${esc(label)} 항목만 보기">${esc(label)} ${n(count)}</button>`;
  }
 
  function renderPreview(){
   const p=state.preview,box=document.getElementById('export-preview-v2');if(!p||!box)return;
   box.hidden=false;document.getElementById('export-preview-title').textContent=roles[p.role].label;
   document.getElementById('export-preview-copy').textContent=p.role==='playauto_product'?'PlayAuto 쇼핑몰상품 원본의 판매가·옵션가를 현재 매트릭스 표시값과 비교합니다.':'공식 옵션기본 파일을 Storage에 저장하지 않고 V 추가 금액과 W 판매가능재고만 현재 매트릭스 표시값으로 변환합니다. X *판매수량과 나머지 셀은 보존합니다.';
-  const c=p.counts;document.getElementById('export-preview-counts').innerHTML=`<span>원본 ${n(c.template)}</span><span>매칭 ${n(c.matched)}</span><span>선택 ${n(c.selected)}</span><span class="good">생성 가능 ${n(c.ready)}</span><span class="good">변경 ${n(c.changed)}</span><span class=\"warn\">미확정 ${n(c.unresolved)}</span>${c.preserved?'<span>원본 blank 유지 '+n(c.preserved)+'</span>':''}<span class=\"${c.blocked?'bad':''}\">제외 ${n(c.blocked)}</span>`;
-  document.getElementById('export-preview-rows').innerHTML=p.output.slice(0,150).map(item=>`<tr><td>${esc(item.resolution?.sku||'—')}</td><td>${esc(item._current||'—')}</td><td>${esc(item._target||'—')}</td><td class="${item._status==='ready'?'':'error'}">${item._status==='ready'?(item._changed?'변경':'동일'):esc(item._error||item._status)}</td></tr>`).join('')||'<tr><td colspan="4">표시할 항목이 없습니다.</td></tr>';
+  const c=p.counts,counts=document.getElementById('export-preview-counts');
+  counts.innerHTML=`<span>원본 ${n(c.template)}</span><span>매칭 ${n(c.matched)}</span>${previewFilterButton('all','선택',c.selected)}${previewFilterButton('ready','생성 가능',c.ready,'good')}${previewFilterButton('changed','변경',c.changed,'good')}${previewFilterButton('unresolved','미확정',c.unresolved,'warn')}${c.preserved?previewFilterButton('preserved','원본 blank 유지',c.preserved):''}${previewFilterButton('blocked','제외',c.blocked,c.blocked?'bad':'')}`;
+  counts.onclick=event=>{const button=event.target.closest?.('[data-preview-filter]');if(!button)return;const next=button.dataset.previewFilter;state.previewFilter=state.previewFilter===next&&next!=='all'?'all':next;renderPreview();};
+  const rows=previewRowsForFilter(p,state.previewFilter);
+  document.getElementById('export-preview-rows').innerHTML=rows.slice(0,150).map(item=>`<tr><td>${esc(item.resolution?.sku||'—')}</td><td>${esc(item._current||'—')}</td><td>${esc(item._target||'—')}</td><td class="${item._status==='ready'?'':'error'}">${item._status==='ready'?(item._changed?'변경':'동일'):esc(item._error||item._status)}</td></tr>`).join('')||'<tr><td colspan="4">이 조건에 해당하는 항목이 없습니다.</td></tr>';
   document.getElementById('export-preview-generate').disabled=!c.ready;
  }
 
