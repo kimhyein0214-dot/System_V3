@@ -31,12 +31,13 @@
  host.append(legacy);
  document.body.appendChild($('backdrop'));
  function status(text){$('status').textContent=text;}
+ function progressStatus(text){status(text);const drawerStatus=$('drawer-status');if(drawerStatus&&!$('backdrop').hidden)drawerStatus.textContent=text;}
  async function run(fn){if(state.busy)return;state.busy=true;try{await fn();}catch(e){status(e.message);$('drawer-status').textContent=e.message;}finally{state.busy=false;}}
  async function materialize(skus,{sources:targetSources=Object.keys(sources),reason='price-rule-change'}={}){
   const uniqueSkus=[...new Set((skus||[]).map(value=>String(value||'').trim()).filter(Boolean))];
   if(!uniqueSkus.length)return {totalSkus:0,persistedRows:0,errorRows:0,status:'complete'};
   if(typeof g.HubPriceMaterializer?.materialize!=='function')throw Error('가격 계산 결과 저장 모듈을 불러오지 못했습니다. 새로고침 후 다시 시도하세요.');
-  return g.HubPriceMaterializer.materialize({skus:uniqueSkus,sources:targetSources,reason,onProgress:progress=>status(`계산 결과 저장 중 · 영향 SKU ${Number(progress.totalSkus||0).toLocaleString('ko-KR')}개 · 저장값 ${Number(progress.persistedRows||0).toLocaleString('ko-KR')}개`)});
+  return g.HubPriceMaterializer.materialize({skus:uniqueSkus,sources:targetSources,reason,onProgress:progress=>progressStatus(`계산 결과 저장 중 · 영향 SKU ${Number(progress.totalSkus||0).toLocaleString('ko-KR')}개 · 저장값 ${Number(progress.persistedRows||0).toLocaleString('ko-KR')}개`)});
  }
  const calculationState=result=>result?.status==='partial'?`오류값 ${Number(result.errorRows||0).toLocaleString('ko-KR')}개 · 내보내기 제외`:`영향 ${Number(result?.totalSkus||0).toLocaleString('ko-KR')}개 SKU 가격 저장`;
  async function allSkus(){const result=await D.loadAllFilteredSkus({status:'all'},{onProgress:progress=>status(progress?.message||'전체 SKU 목록을 읽는 중…')});return result.skus||[];}
@@ -292,7 +293,22 @@
  }
  async function applyTagImport(){
   const data=state.tagImport,tagId=data?.mode==='single_tag'?$('tag-import-tag').value:data?.mode==='filename_tag'?data.resolvedTagId:null;if(!data?.rows.length||!data.server)throw Error('먼저 파일 전체 검사를 완료하세요.');if(Number(data.server.error_count||0)+(data.localErrors?.size||0)>0)throw Error('오류 행이 있어 저장할 수 없습니다.');
-  $('drawer-status').textContent=`전체 ${data.rows.length.toLocaleString('ko-KR')}행 태그 저장 중…`;const result=await D.bulkImportTags({rows:data.rows,tagId,preview:false});const skus=[...new Set(data.rows.map(row=>row.sku).filter(Boolean))];const importedTagIds=new Set(tagId?[tagId]:data.rows.map(row=>importTagByName(row.tag_name)?.tag_id).filter(Boolean));const rules=state.registry.rules.filter(rule=>importedTagIds.has(rule.tag_id));state.registry=await D.ruleRegistry('list');let calculation=null;if(rules.length)calculation=await materialize(skus,{sources:sourcesForRules(rules),reason:'tag-excel-import'});state.tagImport.server={...data.server,...result};renderTagImport();$('tag-import-apply').disabled=true;const message=`엑셀 전체 ${result.row_count.toLocaleString('ko-KR')}행 적용 완료 · SKU ${result.sku_count.toLocaleString('ko-KR')}개 · 태그 연결 ${result.inserted_tag_count.toLocaleString('ko-KR')}개${calculation?' · '+calculationState(calculation):''}`;status(message);$('drawer-status').textContent=message;g.dispatchEvent(new CustomEvent('hub-rules-changed',{detail:{persisted:true}}));
+  progressStatus(`1/3 · 전체 ${data.rows.length.toLocaleString('ko-KR')}행을 DB에 저장하는 중…`);
+  const result=await D.bulkImportTags({rows:data.rows,tagId,preview:false});
+  const skus=[...new Set(data.rows.map(row=>row.sku).filter(Boolean))];
+  const importedTagIds=new Set(tagId?[tagId]:data.rows.map(row=>importTagByName(row.tag_name)?.tag_id).filter(Boolean));
+  progressStatus(`2/3 · 태그 DB 저장 완료 · SKU ${result.sku_count.toLocaleString('ko-KR')}개 · 연결 ${result.inserted_tag_count.toLocaleString('ko-KR')}개`);
+  state.registry=await D.ruleRegistry('list');
+  const rules=state.registry.rules.filter(rule=>importedTagIds.has(rule.tag_id));
+  let calculation=null,calculationError=null;
+  if(rules.length){
+   progressStatus('3/3 · 수식 태그 가격을 다시 계산하는 중…');
+   try{calculation=await materialize(skus,{sources:sourcesForRules(rules),reason:'tag-excel-import'});}
+   catch(error){calculationError=error?.message||String(error);}
+  }
+  state.tagImport.server={...data.server,...result};renderTagImport();$('tag-import-apply').disabled=true;
+  const message=`태그 DB 저장 완료 · 전체 ${result.row_count.toLocaleString('ko-KR')}행 · SKU ${result.sku_count.toLocaleString('ko-KR')}개 · 태그 연결 ${result.inserted_tag_count.toLocaleString('ko-KR')}개${calculation?' · '+calculationState(calculation):''}${calculationError?` · 가격 재계산 실패(태그 적용은 유지됨): ${calculationError}`:''}`;
+  status(message);$('drawer-status').textContent=message;g.dispatchEvent(new CustomEvent('hub-rules-changed',{detail:{persisted:true}}));
  }
  async function openBulk(){if(!current())throw Error('먼저 저장된 수식을 선택하세요.');state.checks=new Set();drawer('SKU 일괄적용',`<div class="rw-rule-summary">${esc(current().name)} · ${esc(fieldLabels[current().target_field])}</div><div class="rw-bar"><input id="rw-search" placeholder="SKU 또는 상품명" aria-label="SKU 또는 상품 검색"><button class="btn" id="rw-search-go">검색</button><input type="file" id="rw-bulk-file" accept=".xlsx,.xls,.csv" aria-label="SKU 엑셀 업로드"></div><textarea id="rw-paste" placeholder="SKU 목록 붙여넣기" aria-label="SKU 목록 붙여넣기"></textarea><div class="rw-bar"><button class="btn" id="rw-paste-go">붙여넣기 조회</button><button class="btn" id="rw-select-all">전체 선택</button><span id="rw-selected-count">0개 선택</span></div><div class="rw-scroll"><table><thead><tr><th></th><th>SKU</th><th>상품 / 옵션</th><th>현재 수식</th><th>적용 후 수식</th><th>충돌</th></tr></thead><tbody id="rw-bulk-rows"></tbody></table></div><div class="rw-bar"><button class="btn" id="rw-remove">선택 수식만 제거</button><button class="btn primary" id="rw-apply">선택 SKU에 적용</button></div>`);
   $('search-go').onclick=()=>run(async()=>{const result=await D.loadProducts({search:$('search').value,pageSize:100});setBulk(result.rows);});$('paste-go').onclick=()=>run(async()=>{const skus=skuText($('paste').value);if(skus.length>1000)throw Error('한 번에 최대 1,000 SKU입니다.');const rows=await D.loadFormulaProducts(skus);const map=new Map(rows.map(p=>[p.sellpia_sku_code,p]));setBulk(skus.map(sku=>map.get(sku)||{sellpia_sku_code:sku,missing:true}));});$('bulk-file').onchange=()=>run(async()=>{$('paste').value=(await fileRows($('bulk-file').files[0])).map(r=>r[0]).join('\n');const skus=skuText($('paste').value);const rows=await D.loadFormulaProducts(skus);const found=new Map(rows.map(p=>[p.sellpia_sku_code,p]));setBulk(skus.map(sku=>found.get(sku)||{sellpia_sku_code:sku,missing:true}));});$('select-all').onclick=()=>{state.bulk.forEach(p=>state.checks.add(p.sellpia_sku_code));renderBulk();};$('apply').onclick=()=>run(()=>applyBulk('apply'));$('remove').onclick=()=>run(()=>applyBulk('remove'));

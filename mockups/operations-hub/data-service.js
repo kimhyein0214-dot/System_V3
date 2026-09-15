@@ -2728,8 +2728,8 @@
   async function loadRulePlatformSiblings(skus, source) {
     requireOperationsHubSessionToken();if(!['ably','smartstore','makeshop'].includes(source))throw Error('판매처 오류');
     const field=source+'_product_code',codes=new Set(),result=new Set(skus);
-    for(let i=0;i<skus.length;i+=200){const {data,error}=await db.from(MATRIX_VIEW).select(field).in('sellpia_sku_code',skus.slice(i,i+200));if(error)throw error;data.forEach(r=>{if(r[field])codes.add(r[field]);});}
-    const groupedCodes=[...codes];for(let i=0;i<groupedCodes.length;i+=100){for(let from=0;;from+=1000){const {data,error}=await db.from(MATRIX_VIEW).select('sellpia_sku_code').in(field,groupedCodes.slice(i,i+100)).order('sellpia_sku_code').range(from,from+999);if(error)throw error;data.forEach(r=>result.add(r.sellpia_sku_code));if(data.length<1000)break;}}
+    for(let i=0;i<skus.length;i+=200){const {data,error}=await db.from('operations_hub_matrix_cached').select(field).in('sellpia_sku_code',skus.slice(i,i+200));if(error)throw error;data.forEach(r=>{if(r[field])codes.add(r[field]);});}
+    const groupedCodes=[...codes];for(let i=0;i<groupedCodes.length;i+=100){for(let from=0;;from+=1000){const {data,error}=await db.from('operations_hub_matrix_cached').select('sellpia_sku_code').in(field,groupedCodes.slice(i,i+100)).order('sellpia_sku_code').range(from,from+999);if(error)throw error;data.forEach(r=>result.add(r.sellpia_sku_code));if(data.length<1000)break;}}
     return [...result];
   }
   async function updateProductTag({id,name,color}) {

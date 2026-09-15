@@ -25,6 +25,7 @@ assert.match(app, /function indexMatrixBodyColumns\(\)[\s\S]*?cell\.dataset\.mat
 assert.match(app, /function applyColumnVisibility\([\s\S]*?data-matrix-column/, 'column visibility must target logical column identities instead of DOM positions');
 assert.doesNotMatch(app, /td:nth-child\(\$\{index\}\)/, 'merged seller price rows must not shift columns through nth-child visibility rules');
 assert.match(data, /async function saveSellerProductBaseDrafts\([\s\S]*?operations_hub_matrix_cached[\s\S]*?saveSellerPriceDraft/, 'editing a merged seller base price must save every linked option while preserving option prices');
+assert.match(data, /async function loadRulePlatformSiblings\([\s\S]*?from\('operations_hub_matrix_cached'\)[\s\S]*?from\('operations_hub_matrix_cached'\)/, 'formula materialization must expand seller siblings from the fast matrix cache instead of the managed live view');
 assert.match(app, /saveSellerProductBaseDrafts\([\s\S]*?groupResult\.items[\s\S]*?applyLocalSellerPriceDraft/, 'bulk base-price results must update visible matrix rows without a manual refresh');
 
 console.log('Operations hub product grouping and seller base-price merge contract: passed');
