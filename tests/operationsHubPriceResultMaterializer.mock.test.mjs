@@ -22,6 +22,18 @@ function fixture(){
  assert.ok(rows.every(r=>r.status==='calculated'&&r.error===null&&!r.rule&&!r.config&&!r.assignments));assert.ok(at('C','calculated_base_price').rule_versions.some(v=>v.id==='child'&&v.assignmentVersion===4));assert.equal(f.qa.progress.at(-1).phase,'complete');
 }
 {
+ const f=fixture(),skus=['10000-1','10000-2','10000-3'];f.registry.dependencies=[];
+ for(const [index,sku] of skus.entries()){
+  f.products[sku]={sellpia_sku_code:sku,sellpia_source_purchase_price:1000+index*100,system_base_price:99999,__sellerPriceComponents:{smartstore:{seller_product_code:'P10000',seller_option_code:sku,source_base_price:2800,source_option_price:0,source_final_price:2800,source_discount_terms:[]}}};
+  f.registry.assignments.push({sku,rule_id:'half',target_field:'calculated_base_price',scope:'',version:4});
+ }
+ const result=await f.run({skus,sources:['smartstore']});const rows=f.rows();
+ assert.equal(result.totalSkus,3);assert.equal(result.persistedRows,15,'three internal values plus four Smartstore values per SKU');assert.equal(result.errorRows,0);
+ assert.equal(f.qa.siblings.length,1);assert.deepEqual(f.qa.siblings[0],{skus,source:'smartstore'});
+ assert.equal(f.qa.loads.length,1);assert.deepEqual(f.qa.loads[0],skus);
+ assert.equal(new Set(rows.map(row=>JSON.stringify([row.sku,row.field,row.scope]))).size,15);assert.ok(rows.every(row=>row.status==='calculated'));
+}
+{
  const f=fixture();f.products.B.sellpia_source_purchase_price=null;const result=await f.run({sources:['ably']});assert.equal(result.status,'partial');const rows=f.rows();for(const sku of ['A','B'])assert.ok(rows.filter(r=>r.sku===sku&&r.scope==='ably').every(r=>r.status==='error'&&r.value===null),'invalid sibling rejects whole platform product');assert.equal(rows.find(r=>r.sku==='D'&&r.field==='calculated_base_price').value,5100);
 }
 {

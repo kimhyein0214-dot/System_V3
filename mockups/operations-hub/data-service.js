@@ -2540,11 +2540,30 @@
     const codes=[...new Set(skus)],chunks=[];for(let i=0;i<codes.length;i+=100)chunks.push(codes.slice(i,i+100));
     const results=new Array(chunks.length);let next=0,completed=0;
     const timedOut=error=>/statement timeout|canceling statement/i.test(String(error?.message||error));
+    async function loadSellerComponents(chunk, retry=0) {
+      try {
+        const {data,error}=await db.rpc('load_operations_hub_seller_price_components',{p_skus:chunk});
+        if(error)throw readableDatabaseError(error);
+        return data||[];
+      } catch (error) {
+        if (!timedOut(error)) throw error;
+        if (chunk.length>25) {
+          const middle=Math.ceil(chunk.length/2);
+          return [...await loadSellerComponents(chunk.slice(0,middle)),...await loadSellerComponents(chunk.slice(middle))];
+        }
+        if (retry<1) {
+          await new Promise(resolve=>setTimeout(resolve,150));
+          return loadSellerComponents(chunk,retry+1);
+        }
+        throw error;
+      }
+    }
     async function loadChunk(chunk, retry=0) {
       try {
         const {data,error}=await db.from(MATRIX_VIEW).select('sellpia_sku_code,display_name,sellpia_source_sale_price,system_base_price,smartstore_price,makeshop_price,ably_price,smartstore_product_code,makeshop_product_code,ably_product_code').in('sellpia_sku_code',chunk);if(error)throw readableDatabaseError(error);
         let part=await attachProductProfiles(data||[]);part=await attachInboundCostDetails(part);part=await attachSystemOperationalDetails(part);
-        return await attachSellerDrafts(await attachSellerPriceComponents(part));
+        const components=await loadSellerComponents(chunk);
+        return await attachSellerDrafts(await attachSellerPriceComponents(part,undefined,components));
       } catch (error) {
         if (!timedOut(error)) throw error;
         if (chunk.length>25) {

@@ -21,6 +21,27 @@ assert.ok(rows.every(p=>p.__profile.sku_tags[0].tag_id==='catalog-test'),'no cat
 assert.ok(rows.every(p=>p.system_base_price===10000&&p.actual_inbound_cost===5000),'all original+operational basis values attached');
 assert.ok(calls.filter(c=>c.table==='matrix').every(c=>c.count<=200));
 assert.ok(calls.filter(c=>c.table==='operations_hub_product_profiles').every(c=>c.count<=500));
+
+{
+ const retrySkus=['10000-1','10000-2','10000-3'],retryCalls=[];let componentAttempts=0;
+ const retryDb={from(table){let ids=[];return {select(){return this;},in(field,values){ids=Array.from(values);return this;},order(){return this;},then(resolve,reject){
+  retryCalls.push({kind:'from',table,ids:[...ids]});
+  const data=ids.map(sku=>table==='matrix'?{sellpia_sku_code:sku,system_base_price:1}:table==='operations_hub_product_profiles'?{sellpia_sku_code:sku}:table==='operations_hub_sku_operational_live'?{sellpia_sku_code:sku,system_base_price:10000}:table==='operations_hub_inbound_cost_live'?{sellpia_sku_code:sku,actual_inbound_cost:5000}:null).filter(Boolean);
+  return Promise.resolve({data,error:null}).then(resolve,reject);
+ }};},async rpc(name,args){const ids=Array.from(args.p_skus);retryCalls.push({kind:'rpc',name,ids});componentAttempts+=1;if(componentAttempts===1)return {data:null,error:{message:'canceling statement due to statement timeout'}};return {data:ids.map(sku=>({sellpia_sku_code:sku,source_channel:'smartstore',seller_product_code:'P10000',seller_option_code:sku})),error:null};}};
+ const retryContext={db:retryDb,MATRIX_VIEW:'matrix',cleanText:v=>String(v??'').trim(),requireOperationsHubSessionToken:()=> 'fixture',withAbortSignal:q=>q,readableDatabaseError:e=>e,setTimeout:fn=>fn(),global:{}};
+ vm.createContext(retryContext);vm.runInContext(names.map(extract).join('\n')+'\nthis.load=loadFormulaProducts;',retryContext);
+ const retryRows=await retryContext.load(retrySkus);
+ assert.equal(retryRows.length,3);
+ assert.equal(retryCalls.filter(c=>c.table==='matrix').length,1,'component timeout must not repeat the matrix read');
+ assert.equal(retryCalls.filter(c=>c.table==='operations_hub_product_profiles').length,1,'component timeout must not repeat profile enrichment');
+ assert.equal(retryCalls.filter(c=>c.table==='operations_hub_inbound_cost_live').length,1,'component timeout must not repeat inbound enrichment');
+ assert.equal(retryCalls.filter(c=>c.table==='operations_hub_sku_operational_live').length,1,'component timeout must not repeat operational enrichment');
+ assert.equal(retryCalls.filter(c=>c.name==='load_operations_hub_seller_price_components').length,2,'only the timed-out component stage retries');
+ assert.equal(retryCalls.filter(c=>c.table==='operations_hub_active_seller_drafts').length,1,'draft enrichment runs once after component recovery');
+ assert.ok(retryCalls.every(c=>c.ids.length===3&&c.ids.every((sku,index)=>sku===retrySkus[index])),'every stage receives the same deduplicated three-SKU set');
+}
+
 const pipeline=[];
 const stageNames=['attachInboundCostDetails','attachSystemOperationalDetails','attachPriceBasis','attachProductLinkDrafts','attachManualLinks','attachProductProfiles','attachLinkBadges','attachSellerPriceComponents','attachSellerDrafts','attachPriceRuleAssignments','attachLinkSuppressions'];
 const metadataContext={cleanText:v=>String(v??'').trim(),throwIfAborted:signal=>{if(signal?.aborted)throw Error('abort fixture');},withAbortSignal:q=>q,db:{async rpc(name,args){assert.equal(name,'load_operations_hub_matrix_metadata_v1');assert.deepEqual(Array.from(args.p_skus),['one']);return {data:{},error:null};}},global:{},attachStoredCalculatedPrices:async rows=>{pipeline.push('stored-price-projection');assert.ok(rows[0].enriched.includes('attachSellerDrafts'),'manual drafts attach before stored prices');assert.ok(rows[0].enriched.includes('attachSystemOperationalDetails'),'latest operational base attaches before stored prices');return rows.map(r=>({...r,__hubRulePrices:{ably:{platformFinal:10300,platformOption:300}}}));}};
