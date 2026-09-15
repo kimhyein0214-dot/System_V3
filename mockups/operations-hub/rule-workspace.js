@@ -217,7 +217,19 @@
  function importFormulaSteps(){const value=$('legacy-rules').value;if(!value?.startsWith('shared:'))return;readOps();const imported=state.registry.rules.find(rule=>rule.id===value.slice(7));if(!imported)return;if(imported.scope==='makeshop'&&imported.target_field==='platform_discount_price'){status('메이크샵 할인코드는 메이크샵 할인 수식에서 직접 선택하세요. 숫자 계산 단계만 복사할 수 있습니다.');$('legacy-rules').value='';return;}state.steps=structuredClone(imported.config?.steps||[]);renderOps();updateRuleFlow();status(`${tagName(imported)}의 계산 단계 ${state.steps.length}개를 가져왔습니다. 현재 수식의 시작값과 저장 위치는 유지되며, 저장 전까지 DB는 변경되지 않습니다.`);}
  function drawer(title,html){$('drawer-title').textContent=title;$('drawer-body').innerHTML=html;$('drawer-status').textContent='';$('backdrop').hidden=false;$('close').focus();}
  const skuText=v=>[...new Set(String(v).split(/[\s,;]+/).map(s=>s.trim()).filter(s=>s&&!['SKU','sku','sellpia_sku_code'].includes(s)))];
- async function fileRows(file){if(!file)return[];const book=g.XLSX.read(await file.arrayBuffer(),{type:'array'});return g.XLSX.utils.sheet_to_json(book.Sheets[book.SheetNames[0]],{header:1,defval:''});}
+ const TAG_IMPORT_MAX_ROWS=50000,TAG_IMPORT_MAX_BYTES=20*1024*1024;
+ const nextPaint=()=>new Promise(resolve=>typeof g.requestAnimationFrame==='function'?g.requestAnimationFrame(()=>resolve()):g.setTimeout(resolve,0));
+ async function fileRows(file,{tagImport=false}={}){
+  if(!file)return[];
+  if(tagImport&&Number(file.size||0)>TAG_IMPORT_MAX_BYTES)throw Error('태그 파일은 최대 20MB까지 업로드할 수 있습니다. 필요한 A/B열만 남겨 다시 저장해 주세요.');
+  const book=g.XLSX.read(await file.arrayBuffer(),{type:'array',...(tagImport?{dense:true,sheetRows:TAG_IMPORT_MAX_ROWS+2}:{})}),sheet=book.Sheets[book.SheetNames[0]];
+  if(!sheet)return[];
+  if(!tagImport)return g.XLSX.utils.sheet_to_json(sheet,{header:1,defval:''});
+  const fullRange=g.XLSX.utils.decode_range(sheet['!fullref']||sheet['!ref']||'A1:A1');
+  if(fullRange.e.r+1>TAG_IMPORT_MAX_ROWS+1)throw Error(`한 번에 최대 ${TAG_IMPORT_MAX_ROWS.toLocaleString('ko-KR')}행까지 등록할 수 있습니다.`);
+  const endRow=Math.min(fullRange.e.r,TAG_IMPORT_MAX_ROWS),range={s:{r:0,c:0},e:{r:endRow,c:1}};
+  return g.XLSX.utils.sheet_to_json(sheet,{header:1,defval:'',range});
+ }
  function tagNameFromFilename(fileName){
   const name=String(fileName||'').split(/[\\/]/).pop()||'',match=name.match(/^(.+)_일괄적용\.(xlsx|xls|csv)$/i);
   return match?match[1].trim():'';
@@ -236,10 +248,13 @@
  } function importTagByName(value){const matches=state.tags.filter(tag=>String(tag.tag_name||'').trim().toLowerCase()===String(value||'').trim().toLowerCase());return matches.length===1?matches[0]:null;}
  function analyzeTagImport(rows,selectedTagId){
   const errors=new Map(),existing=new Map(state.registry.assignments.map(assignment=>[M.key(assignment.sku,assignment.target_field,assignment.scope),assignment])),proposed=new Map(),seen=new Set();
+  const selectedTag=selectedTagId?state.tags.find(item=>String(item.tag_id)===String(selectedTagId)):null,tagsByName=new Map(),rulesByTag=new Map();
+  for(const tag of state.tags){const key=String(tag.tag_name||'').trim().toLowerCase();tagsByName.set(key,tagsByName.has(key)?null:tag);}
+  for(const rule of state.registry.rules){const key=String(rule.tag_id||'');if(!key)continue;if(!rulesByTag.has(key))rulesByTag.set(key,[]);rulesByTag.get(key).push(rule);}
   rows.forEach((row,index)=>{
-   const tag=selectedTagId?state.tags.find(item=>String(item.tag_id)===String(selectedTagId)):importTagByName(row.tag_name),duplicateKey=`${row.sku}\u0000${tag?.tag_id||row.tag_name.toLowerCase()}`;
+   const tag=selectedTagId?selectedTag:tagsByName.get(String(row.tag_name||'').trim().toLowerCase()),duplicateKey=`${row.sku}\u0000${tag?.tag_id||row.tag_name.toLowerCase()}`;
    if(seen.has(duplicateKey))return;seen.add(duplicateKey);if(!tag)return;
-   for(const rule of state.registry.rules.filter(item=>String(item.tag_id)===String(tag.tag_id))){
+   for(const rule of rulesByTag.get(String(tag.tag_id))||[]){
     const key=M.key(row.sku,rule.target_field,rule.scope),assigned=existing.get(key),earlier=proposed.get(key);
     if(assigned&&assigned.rule_id!==rule.id){errors.set(index+1,`같은 계산 적용점에 이미 '${name(assigned.rule_id)}' 수식이 있습니다.`);break;}
     if(earlier&&earlier!==rule.id){errors.set(index+1,'이 파일 안에서 같은 계산 적용점의 서로 다른 수식이 겹칩니다.');break;}
@@ -271,9 +286,9 @@
   $('drawer-status').textContent=`전체 ${parsed.rows.length.toLocaleString('ko-KR')}행 검사 중…`;
   state.tagImport.server=parsed.rows.length?await D.bulkImportTags({rows:parsed.rows,tagId:selectedTagId,preview:true}):{row_count:0,valid_count:0,error_count:0,duplicate_count:0,sku_count:0,tag_count:1,preview_rows:[]};state.tagImport.localErrors=analyzeTagImport(parsed.rows,selectedTagId);renderTagImport();
   $('drawer-status').textContent=Number(state.tagImport.server.error_count||0)+state.tagImport.localErrors.size?'오류 행을 수정한 파일로 다시 검사하세요.':'검사 완료. 아래 버튼은 미리보기 200행이 아니라 파일 전체에 적용합니다.';
- } async function openTagImport({openFilePicker=false}={}){
+ } async function openTagImport({openFilePicker=false,tagId=null}={}){
   state.tagImport=null;drawer('엑셀 태그 일괄등록',`<div class="rw-import-guide"><b>세 형식을 지원합니다.</b><span><strong>파일명 자동</strong> &lt;태그명&gt;_일괄적용.xlsx → A열만 SKU로 읽고 B열 이후는 메모용으로 무시</span><span><strong>형식 1</strong> A열에 셀피아 SKU만 입력 → 화면에서 공통 태그 선택</span><span><strong>형식 2</strong> A열 셀피아 SKU + B열 태그명 → 행마다 지정한 태그 적용</span><small>파일명 자동 모드는 활성 태그 이름과 대소문자 무시 정확 일치합니다. 첫 행의 ‘셀피아 SKU / 태그명’ 헤더는 선택 사항이며 오류가 있으면 전체 저장을 취소합니다.</small></div><div class="rw-config rw-import-controls"><label>엑셀 파일<input id="rw-tag-import-file" type="file" accept=".xlsx,.xls,.csv" aria-label="태그 일괄등록 엑셀 업로드"></label><label id="rw-tag-import-tag-wrap">A열 전체에 적용할 공통 태그<select id="rw-tag-import-tag"><option value="">태그 선택</option>${option(Object.fromEntries(state.tags.map(tag=>[tag.tag_id,tag.tag_name])),'')}</select></label><div><b>판별된 형식</b><p id="rw-tag-import-mode" class="rw-import-mode">파일을 선택하면 형식을 자동 판별합니다.</p></div></div><details class="rw-import-paste"><summary>엑셀 두 열을 복사해서 붙여넣기</summary><textarea id="rw-tag-import-paste" placeholder="셀피아 SKU&#9;태그명"></textarea><button class="btn" id="rw-tag-import-parse" type="button">붙여넣은 내용 검사</button></details><div id="rw-tag-import-summary" class="rw-rule-summary">아직 읽은 행이 없습니다.</div><div class="rw-scroll"><table><thead><tr><th>행</th><th>셀피아 SKU</th><th>적용 태그</th><th>검사 결과</th></tr></thead><tbody id="rw-tag-import-rows"></tbody></table></div><div class="rw-bar"><span class="rw-muted">표시는 최대 200행 · 저장은 검사한 파일 전체</span><button class="btn primary" id="rw-tag-import-apply" disabled>검사된 전체 행에 태그 적용</button></div>`);
-  renderTagImport();const fileInput=$('tag-import-file');fileInput.onchange=()=>run(async()=>{const file=fileInput.files[0];if(!file)return;await previewTagImport(await fileRows(file),{fileName:file.name});});$('tag-import-parse').onclick=()=>run(()=>previewTagImport(importTextRows($('tag-import-paste').value)));$('tag-import-tag').onchange=()=>{if(state.tagImport?.rows.length&&state.tagImport.mode==='single_tag')void run(()=>previewTagImport(state.tagImport.rows.map(row=>[row.sku])));};$('tag-import-apply').onclick=()=>run(applyTagImport);if(openFilePicker)fileInput.click();
+  renderTagImport();const fileInput=$('tag-import-file'),tagSelect=$('tag-import-tag');if(tagId&&state.tags.some(tag=>String(tag.tag_id)===String(tagId)))tagSelect.value=String(tagId);fileInput.onchange=()=>run(async()=>{const file=fileInput.files[0];if(!file)return;$('drawer-status').textContent=`${file.name} 읽는 중…`;await nextPaint();const rows=await fileRows(file,{tagImport:true});$('drawer-status').textContent=`${rows.length.toLocaleString('ko-KR')}행 확인 중…`;await nextPaint();await previewTagImport(rows,{fileName:file.name});});$('tag-import-parse').onclick=()=>run(()=>previewTagImport(importTextRows($('tag-import-paste').value)));tagSelect.onchange=()=>{if(state.tagImport?.rows.length&&state.tagImport.mode==='single_tag')void run(()=>previewTagImport(state.tagImport.rows.map(row=>[row.sku])));};$('tag-import-apply').onclick=()=>run(applyTagImport);if(openFilePicker)fileInput.click();
  }
  async function applyTagImport(){
   const data=state.tagImport,tagId=data?.mode==='single_tag'?$('tag-import-tag').value:data?.mode==='filename_tag'?data.resolvedTagId:null;if(!data?.rows.length||!data.server)throw Error('먼저 파일 전체 검사를 완료하세요.');if(Number(data.server.error_count||0)+(data.localErrors?.size||0)>0)throw Error('오류 행이 있어 저장할 수 없습니다.');

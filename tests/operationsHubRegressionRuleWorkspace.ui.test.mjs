@@ -11,7 +11,7 @@ try{
  await page.route('**/*',route=>route.abort());
  await page.setContent('<html><head><style>body{font-family:Arial;margin:20px}.btn{padding:6px 10px}</style></head><body><div id="attributes" hidden></div><main id="price-rules"></main></body></html>');
  await page.addStyleTag({path:path.join(root,'mockups/operations-hub/rule-workspace.css')});
- await page.evaluate(()=>{window.XLSX={read(bytes){const rows=new TextDecoder().decode(bytes).replace(/^\ufeff/,'').trimEnd().split(/\r?\n/).map(line=>line.split(','));return {SheetNames:['Sheet1'],Sheets:{Sheet1:rows}};},utils:{sheet_to_json:sheet=>sheet}};});
+ await page.evaluate(()=>{window.XLSX={read(bytes){const rows=new TextDecoder().decode(bytes).replace(/^\ufeff/,'').trimEnd().split(/\r?\n/).map(line=>line.split(','));return {SheetNames:['Sheet1'],Sheets:{Sheet1:rows}};},utils:{sheet_to_json:sheet=>sheet,decode_range:()=>({s:{r:0,c:0},e:{r:0,c:1}})}};});
  await page.evaluate(()=>{
   const copy=v=>structuredClone(v);
   const rule=(id,target,source,steps,extra={})=>({id,tag_id:'tag-'+id,name:id,version:1,is_active:true,target_field:target,source_field:source,input_origin:'self',scope:'',config:{steps},...extra});
@@ -49,6 +49,7 @@ try{
  });
  for(const file of ['rule-registry.js','tag-price-workspace.js','discount-price-math.js','platform-rule-service.js','rule-workspace.js'])await page.addScriptTag({path:path.join(root,'mockups/operations-hub',file)});
  const idle=()=>page.waitForFunction(()=>!HubPriceWorkspace.state.busy);
+ const tagImportReady=()=>page.waitForFunction(()=>document.querySelector('#rw-tag-import-mode')?.textContent!=='파일을 선택하면 형식을 자동 판별합니다.');
  await page.evaluate(()=>HubPriceWorkspace.refresh());await idle();
  assert.deepEqual(errors,[],'initial scripts must mount without page errors');
  await page.locator('#rw-new').click();await page.locator('#rw-tag-name').fill('QA ordered tag');await page.locator('#rw-name').fill('QA ordered rule');
@@ -109,15 +110,20 @@ try{
  assert.equal(await page.evaluate(()=>qa.writes.length),beforeFormulaWrites,'copying formula-tag steps must not persist until save');
  assert.deepEqual(await page.evaluate(()=>HubPriceWorkspace.parseTagImportRows([['셀피아 SKU'],['six'],['loose']])),{mode:'single_tag',rows:[{sku:'six',tag_name:''},{sku:'loose',tag_name:''}]});
  assert.deepEqual(await page.evaluate(()=>HubPriceWorkspace.parseTagImportRows([['셀피아 SKU','태그명'],['six','공통 태그'],['loose','행별 태그']])),{mode:'per_row',rows:[{sku:'six',tag_name:'공통 태그'},{sku:'loose',tag_name:'행별 태그'}]});
+ assert.deepEqual(await page.evaluate(()=>HubPriceWorkspace.parseTagImportRows([['셀피아 SKU','메모'],['six','무시'],['loose','무시']],{fileName:'공통 태그_일괄적용.xlsx'})),{mode:'filename_tag',filenameTagName:'공통 태그',rows:[{sku:'six',tag_name:''},{sku:'loose',tag_name:''}]});
  await page.locator('.rw-tabs [data-tab="bulk"]').click();await idle();
- await page.locator('#rw-tag-import-file').setInputFiles({name:'one-column.csv',mimeType:'text/csv',buffer:Buffer.from('\ufeff셀피아 SKU\nsix\nloose\n')});await idle();
+ await page.locator('#rw-tag-import-file').setInputFiles({name:'one-column.csv',mimeType:'text/csv',buffer:Buffer.from('\ufeff셀피아 SKU\nsix\nloose\n')});await tagImportReady();await idle();
  assert.match(await page.locator('#rw-tag-import-mode').innerText(),/공통 태그 선택/);assert.equal(await page.locator('#rw-tag-import-apply').isDisabled(),true);
  await page.locator('#rw-tag-import-tag').selectOption('tag-one');await idle();assert.equal(await page.locator('#rw-tag-import-apply').isDisabled(),false,(await page.locator('#rw-tag-import-summary').innerText())+' | '+(await page.locator('#rw-drawer-status').innerText())+' | '+(await page.locator('#rw-tag-import-rows').innerText()));
  await page.locator('#rw-tag-import-apply').click();await idle();assert.equal(await page.evaluate(()=>qa.writes.filter(write=>write.action==='tag-excel-import').length),1);
  await page.locator('#rw-close').click();await page.locator('.rw-tabs [data-tab="bulk"]').click();await idle();
- await page.locator('#rw-tag-import-file').setInputFiles({name:'two-column.csv',mimeType:'text/csv',buffer:Buffer.from('\ufeff셀피아 SKU,태그명\nsix,공통 태그\nloose,행별 태그\n')});await idle();
+ await page.locator('#rw-tag-import-file').setInputFiles({name:'two-column.csv',mimeType:'text/csv',buffer:Buffer.from('\ufeff셀피아 SKU,태그명\nsix,공통 태그\nloose,행별 태그\n')});await tagImportReady();await idle();
  assert.match(await page.locator('#rw-tag-import-mode').innerText(),/B열 태그명/);assert.equal(await page.locator('#rw-tag-import-tag').isDisabled(),true);assert.equal(await page.locator('#rw-tag-import-apply').isDisabled(),false);
  await page.locator('#rw-tag-import-apply').click();await idle();assert.equal(await page.evaluate(()=>qa.writes.filter(write=>write.action==='tag-excel-import').length),2);
+ await page.locator('#rw-close').click();await page.locator('.rw-tabs [data-tab="bulk"]').click();await idle();
+ await page.locator('#rw-tag-import-file').setInputFiles({name:'공통 태그_일괄적용.csv',mimeType:'text/csv',buffer:Buffer.from('\ufeff셀피아 SKU\nsix\nloose\n')});await tagImportReady();await idle();
+ assert.match(await page.locator('#rw-tag-import-mode').innerText(),/파일명 태그 자동 인식 · 공통 태그/);assert.equal(await page.locator('#rw-tag-import-tag').isDisabled(),true);assert.equal(await page.locator('#rw-tag-import-tag').inputValue(),'');assert.equal(await page.locator('#rw-tag-import-apply').isDisabled(),false);
+ await page.locator('#rw-tag-import-apply').click();await idle();assert.equal(await page.evaluate(()=>qa.writes.filter(write=>write.action==='tag-excel-import').length),3);
  assert.deepEqual(errors,[]);
  console.log('PASS formula-tag workspace browser flow: ordered save/reload, selected formula bulk action, one-column and two-column Excel tag import, dependency CSV validation/save, live calculation refresh, scoped platform settings, formula-step copy, export file load, desktop density; fixture adapter only');
 }finally{await browser.close();}

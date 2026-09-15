@@ -32,9 +32,12 @@ test('tag-centric manager exposes saved-assignment download and member editing',
   assert.match(data,/async function loadTagCatalog/);
   assert.match(data,/async function loadTagMembers/);
   assert.match(data,/async function removeTagMembers/);
-  assert.match(js,/openTagImport\(\{openFilePicker:true\}\)/);
+  assert.match(js,/id="tag-upload-sync" type="button">엑셀 업로드/);
+  assert.match(js,/function openUpload\(\)\{\s*const tag=currentTag\(\);\s*setStatus/);
+  assert.match(js,/openTagImport\(\{openFilePicker:true,tagId:tag\?\.tag_id\|\|null\}\)/);
   assert.match(rules,/if\(openFilePicker\)fileInput\.click\(\)/);
   assert.match(rules,/fileInput\.onchange=.*previewTagImport/);
+  assert.match(rules,/fileRows\(file,\{tagImport:true\}\)/);
   assert.match(rules,/id="rw-new">새 수식 태그/);
   assert.match(rules,/const explicitTag=readTagContext\(\),tag=explicitTag\|\|linkedTagContext\(current\(\)\)/);
   assert.match(rules,/state\.steps=structuredClone\(imported\.config\?\.steps\|\|\[\]\)/);

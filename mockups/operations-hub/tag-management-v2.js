@@ -69,7 +69,7 @@
     <div class="tag-manager-actions">
       <button class="btn wide" id="tag-download-current" type="button" disabled>현재 적용 목록 XLSX</button>
       <button class="btn" id="tag-download-blank" type="button" disabled>빈 템플릿</button>
-      <button class="btn" id="tag-upload-sync" type="button" disabled>엑셀 업로드</button>
+      <button class="btn" id="tag-upload-sync" type="button">엑셀 업로드</button>
       <button class="btn" id="tag-edit-rule" type="button" disabled>수식 관리</button>
       <button class="btn tag-manager-danger" id="tag-remove-selected" type="button" disabled>선택 해제</button>
       <button class="btn tag-manager-danger" id="tag-clear-all" type="button" disabled>전체 적용 해제</button>
@@ -159,7 +159,8 @@
   document.getElementById('tag-stat-rules').textContent=tag?n(state.rules.length||tag.rule_count):'-';
   const ruleList=document.getElementById('tag-rule-list');
   if(ruleList)ruleList.innerHTML=tag?(state.rules.length?state.rules.map(rule=>{const view=ruleDisplay(rule);return `<i class="tag-rule-item"><span class="tag-rule-item-head"><b class="tag-rule-destination">${esc(view.destination)} 저장</b><small>${esc(rule.name)}${view.code?' · '+esc(view.code):''}</small></span><strong class="tag-rule-formula"><small>계산식</small>${esc(view.formula)}</strong><span class="tag-rule-result">결과 → ${esc(view.target)}</span></i>`;}).join(''):'<i>연결된 수식 없음</i>'):'<i>태그를 선택하면 표시됩니다.</i>';
-  for(const id of ['tag-download-current','tag-download-blank','tag-upload-sync','tag-edit-rule','tag-clear-all'])document.getElementById(id).disabled=!tag;
+  for(const id of ['tag-download-current','tag-download-blank','tag-edit-rule','tag-clear-all'])document.getElementById(id).disabled=!tag;
+  document.getElementById('tag-upload-sync').disabled=false;
   document.getElementById('tag-remove-selected').disabled=!tag||!state.selected.size;
  }
 
@@ -198,11 +199,11 @@
  }
 
  function openUpload(){
-  const tag=currentTag();if(!tag)return;
-  setStatus(`업로드 파일명은 '${tag.tag_name}_일괄적용.xlsx'로 사용하세요. 파일명으로 태그를 자동 인식합니다.`);
+  const tag=currentTag();
+  setStatus(tag?`'${tag.tag_name}'을 공통 태그로 미리 선택했습니다. '<태그명>_일괄적용.xlsx' 파일은 파일명을 우선 자동 인식합니다.`:`'<태그명>_일괄적용.xlsx' 파일은 태그를 선택하지 않아도 파일명으로 자동 인식합니다.`);
   const openTagImport=global.HubPriceWorkspace?.openTagImport;
   if(typeof openTagImport!=='function'){setStatus('엑셀 일괄등록 화면을 불러오지 못했습니다. 페이지를 새로고침해 주세요.','error');return;}
-  openTagImport({openFilePicker:true});
+  openTagImport({openFilePicker:true,tagId:tag?.tag_id||null});
  }
 
  async function editRule(){
