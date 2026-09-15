@@ -12,9 +12,11 @@ test('Ably workflow separates catalog original from PlayAuto export templates',(
   assert.match(app,/에이블리 전체 원본 \(GOODS_LIST\)/);
   assert.match(js,/playauto_product/);
   assert.match(js,/playauto_option/);
-  assert.match(js,/GOODS_LIST는 조회\/매칭에만 사용/);
-  assert.match(js,/판매가 \+ 옵션가 미리보기/);
+  assert.match(js,/장기 원본은 별도로 유지/);
+  assert.match(js,/판매가 \+ 옵션가 파일 선택/);
   assert.match(js,/옵션가 \+ 재고 파일 선택/);
+  assert.match(js,/data-carrier-input="playauto_product"/);
+  assert.match(js,/data-carrier-input="playauto_option"/);
   assert.match(js,/V 추가 금액과 W 판매가능재고만/);
   assert.match(js,/X \*판매수량과 나머지 셀은 보존/);
   assert.match(js,/브라우저 메모리/);
@@ -29,6 +31,7 @@ test('Ably workflow separates catalog original from PlayAuto export templates',(
   assert.match(data,/async function loadAuxiliarySellerFiles/);
   assert.match(data,/async function downloadAuxiliarySellerFile/);
   assert.match(data,/async function loadPlayautoSellpiaCatalog/);
+  assert.match(data,/async function loadCarrierSellerMappings/);
   assert.match(data,/async function loadCarrierMatrixTargets/);
   assert.match(js,/loadCarrierMatrixTargets\(\{source:'ably'/);
   assert.doesNotMatch(js,/loadSystemStocks/);
@@ -63,12 +66,16 @@ test('preview count chips filter only the visible rows and never mutate export o
   assert.match(css,/\.export-preview-filter\.active/);
 });
 
-test('Smartstore carrier renders a preview-only TransformationPlan and keeps XLSX disconnected',()=>{
-  for(const marker of ['TransformationPlan','preview-only','transformation-plan-preview','transformation-plan-summary','transformation-plan-table','latest generation 미반영','timeout/error','원본 fallback','가격 계산 미완료/오류 · 원본 유지'])assert.ok(js.includes(marker),marker);
-  assert.match(js,/rows=.*\.slice\(0,150\)/);
+test('Smartstore and Makeshop share paged TransformationPlan preview and serializer contract',()=>{
+  for(const marker of ['TransformationPlan','transformation-plan-preview','transformation-plan-summary','transformation-plan-table','latest generation 미반영','timeout/error','원본 fallback','가격 계산 미완료/오류 · 원본 유지'])assert.ok(js.includes(marker),marker);
+  assert.match(js,/pageSize=100/);
   assert.match(js,/button\.dataset\.planCanGenerate/);
-  assert.match(js,/source==='smartstore'.*renderTransformationPlan/);
-  assert.match(js,/source==='smartstore'.*preview-only 단계/);
+  assert.match(js,/renderTransformationPlan\(source,file,result\)/);
+  assert.doesNotMatch(js,/if\(source==='smartstore'\).*renderTransformationPlan/);
   assert.match(js,/data-standard-carrier-run="smartstore" disabled/);
-  assert.doesNotMatch(js,/source==='smartstore'.*bridge\.runCarrier/);
+  assert.match(js,/bridge\.runCarrier\(\{source,file,plan\}\)/);
+  assert.match(app,/transformSellerFile\(plan\.file,plan\.operations\|\|plan\.items/);
+  assert.match(app,/loadCarrierSellerMappings\(\{source,identities:parsed\.normalizedRows\}\)/);
+  assert.match(app,/loadMatrixExportSnapshot\(\{source,skus:matchedSkus\}\)/);
+  assert.match(app,/가격\/재고 상태가 변경되었습니다\. 미리보기를 다시 확인해주세요/);
 });

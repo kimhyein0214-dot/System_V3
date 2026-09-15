@@ -7905,14 +7905,29 @@ document.getElementById('seller-export-cancel').addEventListener('click', closeS
 async function prepareStandardCarrierExport(source,file){
   if(!['smartstore','makeshop'].includes(source))throw Error('공식 수정파일 변환은 스마트스토어·메이크샵만 지원합니다.');
   if(!file||typeof file.arrayBuffer!=='function')throw Error('공식 수정 XLSX를 선택해주세요.');
+  const clock=()=>window.performance?.now?.()??Date.now(),started=clock(),timings={};
+  const announce=(percent,title,detail)=>window.dispatchEvent(new CustomEvent('system-v3-seller-export-progress',{detail:{source,percent,title,detail}}));
+  announce(5,'공식 수정파일 확인','XLSX 구조와 행 identity를 읽습니다.');
+  let mark=clock();
   const parsed=await window.SystemV3SellerParsers.parseSellerFiles(source,[file],{price:true,discount:true});
-  const snapshot=await liveData.loadMatrixExportSnapshot({source});
+  timings.xlsx_parse_ms=Math.round(clock()-mark);mark=clock();
+  announce(25,'판매처 연결 확인',`carrier ${formatNumber(parsed.normalizedRows.length)}행의 기존 SKU 연결만 조회합니다.`);
+  const mappings=await liveData.loadCarrierSellerMappings({source,identities:parsed.normalizedRows});
+  timings.seller_mapping_ms=Math.round(clock()-mark);mark=clock();
+  const matchedSkus=[...new Set((mappings.rows||[]).map(row=>row.sku).filter(Boolean))];
+  announce(45,'매트릭스 저장값 확인',`연결된 ${formatNumber(matchedSkus.length)} SKU만 조회합니다.`);
+  const snapshot=matchedSkus.length?await liveData.loadMatrixExportSnapshot({source,skus:matchedSkus}):{source,snapshotId:null,rows:[]};
+  timings.matrix_snapshot_ms=Math.round(clock()-mark);mark=clock();
+  announce(80,'TransformationPlan 생성','원본값과 현재 매트릭스 표시값의 차이를 정리합니다.');
   const prepared=window.HubCurrentPriceExport.prepareCarrierItems(source,file.name,parsed.normalizedRows,snapshot.rows,{snapshotId:snapshot.snapshotId});
-  return {source,file,parsed,...prepared};
+  timings.plan_build_ms=Math.round(clock()-mark);timings.total_ms=Math.round(clock()-started);
+  const fileIdentity={name:file.name,size:Number(file.size||0),lastModified:Number(file.lastModified||0)};
+  announce(100,'TransformationPlan 준비 완료',`${formatNumber(parsed.normalizedRows.length)}행 · ${formatNumber(matchedSkus.length)} SKU · ${(timings.total_ms/1000).toFixed(2)}초`);
+  return {source,file,file_identity:fileIdentity,parsed,mapping_rows:mappings.rows||[],matched_skus:matchedSkus,timings,...prepared};
 }
 
 async function transformStandardCarrierExport(plan,{download=false}={}){
-  const transformed=await sellerExport.transformSellerFile(plan.file,plan.items);
+  const transformed=await sellerExport.transformSellerFile(plan.file,plan.operations||plan.items||[]);
   const skipped=[...plan.excludedItems,...transformed.skippedItems];
   if(download){
     sellerExport.downloadBlob(transformed.blob,sellerExport.outputName(plan.file.name));
@@ -8033,8 +8048,14 @@ window.SystemV3SellerExportBridge={
     const plan=await prepareStandardCarrierExport(source,file);
     return {source,count:`입력 ${formatNumber(plan.preview.length)}행`,detail:`변경 ${formatNumber(plan.preview.filter(row=>row.changed).length)}행 · 경고 ${formatNumber(plan.excludedItems.length)}행`,plan};
   },
-  async runCarrier({source,file}={}){
-    const plan=await prepareStandardCarrierExport(source,file),result=await transformStandardCarrierExport(plan,{download:true});
+  async runCarrier({source,file,plan}={}){
+    if(!plan||plan.kind!=='TransformationPlan'||plan.source!==source)throw Error('먼저 이 파일의 TransformationPlan 미리보기를 확인해주세요.');
+    if(!plan.canGenerate||!plan.safety?.can_generate_xlsx)throw Error(plan.safety?.reason||'가격/매칭 상태가 안전하지 않아 XLSX 생성을 차단했습니다.');
+    const identity=plan.file_identity||{},current={name:file?.name||'',size:Number(file?.size||0),lastModified:Number(file?.lastModified||0)};
+    if(identity.name!==current.name||Number(identity.size)!==current.size||Number(identity.lastModified)!==current.lastModified)throw Error('선택한 carrier 파일이 미리보기 때와 다릅니다. 미리보기를 다시 확인해주세요.');
+    const revalidated=await prepareStandardCarrierExport(source,file);
+    if(revalidated.version_token!==plan.version_token)throw Error('가격/재고 상태가 변경되었습니다. 미리보기를 다시 확인해주세요.');
+    const result=await transformStandardCarrierExport(plan,{download:true});
     return {source,title:'공식 수정파일 변환 완료',progressDetail:`입력 ${formatNumber(plan.preview.length)}행 · 반영 ${formatNumber(result.appliedItems.length)}건 · 경고 ${formatNumber(result.skippedItems.length)}행`,...result};
   },
   async run({source,skus=null,includeStock=false}={}){

@@ -91,7 +91,15 @@
     return items.map(item=>counts.get(item.carrier_identity)>1?{...item,carrier_identity_error:'같은 판매자관리코드와 옵션값이 파일에 중복됩니다.'}:item);
   }
 
-  function resolveSellpiaSku(item,catalog){
+  function resolveSellpiaSku(item,catalog,mappings=[]){
+    const sellerProduct=clean(item.seller_product_code),optionKeys=[clean(item.seller_option_code),clean(item.option_sku_code)].filter(Boolean);
+    const productMappings=sellerProduct?(mappings||[]).filter(row=>clean(row.product_code)===sellerProduct):[];
+    if(productMappings.length){
+      const exactMappings=optionKeys.length?productMappings.filter(row=>optionKeys.includes(clean(row.option_code))):(productMappings.length===1?productMappings:[]);
+      const uniqueMappings=[...new Map(exactMappings.map(row=>[clean(row.sku),row])).values()].filter(row=>clean(row.sku));
+      if(uniqueMappings.length===1)return {sku:uniqueMappings[0].sku,method:'seller_mapping_exact',row:uniqueMappings[0]};
+      if(uniqueMappings.length>1)return {error:'기존 에이블리 판매처 연결이 여러 SKU를 가리킵니다.',method:'seller_mapping_ambiguous'};
+    }
     const rows=(catalog||[]).filter(row=>clean(row.sellpia_product_code)===clean(item.sellpia_product_code));
     if(item.direct_sellpia_sku_code){
       const direct=rows.filter(row=>clean(row.sellpia_sku_code)===clean(item.direct_sellpia_sku_code));
@@ -105,10 +113,11 @@
     if(unique.length===1)return {sku:unique[0].sellpia_sku_code,method:'product_option_exact',row:unique[0]};
     if(unique.length>1)return {error:'같은 상품 안에서 옵션명이 둘 이상 일치합니다.',method:'product_option_exact'};
     if(item.template_type!=='option_price_stock'&&rows.length===1)return {sku:rows[0].sellpia_sku_code,method:'single_product_sku',row:rows[0]};
+    if(productMappings.length>1)return {error:'판매처 상품 연결이 여러 SKU를 가리키며 옵션 식별자와 옵션명으로 하나를 결정하지 못했습니다.',method:'seller_mapping_ambiguous'};
     return {error:rows.length?'옵션명으로 SKU를 하나로 결정하지 못했습니다.':'셀피아 상품코드를 찾지 못했습니다.',method:'unresolved'};
   }
 
-  function resolveRows(items,catalog){return (items||[]).map(item=>({...item,resolution:resolveSellpiaSku(item,catalog)}));}
+  function resolveRows(items,catalog,mappings=[]){return (items||[]).map(item=>({...item,resolution:resolveSellpiaSku(item,catalog,mappings)}));}
 
   async function readTemplate(file){
     if(!global.XLSX)throw Error('XLSX 모듈을 불러오지 못했습니다.');

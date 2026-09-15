@@ -3504,18 +3504,63 @@
     return data;
   }
 
-  async function loadPlayautoSellpiaCatalog() {
+  async function loadPlayautoSellpiaCatalog(productCodes=null) {
+    const requested=Array.isArray(productCodes)?[...new Set(productCodes.map(cleanText).filter(Boolean))]:null;
+    if(requested&&requested.length===0)return [];
     const rows=[];const size=1000;
+    if(requested){
+      for(let offset=0;offset<requested.length;offset+=100){
+        for(let from=0;;from+=size){
+          const {data,error}=await db.from('sellpia_stock_latest')
+            .select('sellpia_sku_code,sellpia_product_code,sellpia_product_name,sellpia_option_name,own_sku')
+            .in('sellpia_product_code',requested.slice(offset,offset+100))
+            .order('sellpia_sku_code',{ascending:true}).range(from,from+size-1);
+          if(error)throw readableDatabaseError(error);
+          rows.push(...(data||[]));
+          if(!data||data.length<size)break;
+        }
+      }
+      return rows;
+    }
     for(let from=0;;from+=size){
       const {data,error}=await db.from('sellpia_stock_latest')
         .select('sellpia_sku_code,sellpia_product_code,sellpia_product_name,sellpia_option_name,own_sku')
         .order('sellpia_sku_code',{ascending:true}).range(from,from+size-1);
-      if(error)throw error;
+      if(error)throw readableDatabaseError(error);
       rows.push(...(data||[]));
       if(!data||data.length<size)break;
       if(rows.length>100000)throw new Error('셀피아 카탈로그 행 수가 안전 한도를 넘었습니다.');
     }
     return rows;
+  }
+
+  async function loadCarrierSellerMappings({source,identities=[]}={}) {
+    const safeSource=cleanText(source);
+    const fields={
+      smartstore:['smartstore_product_code','smartstore_option_code'],
+      makeshop:['makeshop_product_code','makeshop_option_code'],
+      ably:['ably_product_code','ably_option_code']
+    }[safeSource];
+    if(!fields)throw new Error('지원하지 않는 판매처입니다.');
+    const productCodes=[...new Set((identities||[]).map(item=>cleanText(item?.product_code??item?.seller_product_code)).filter(Boolean))];
+    if(!productCodes.length)return {source:safeSource,rows:[]};
+    const [productField,optionField]=fields,rows=[];
+    for(let offset=0;offset<productCodes.length;offset+=100){
+      for(let from=0;;from+=1000){
+        const {data,error}=await db.from('operations_hub_matrix_cached')
+          .select(`sellpia_sku_code,${productField},${optionField}`)
+          .in(productField,productCodes.slice(offset,offset+100))
+          .order('sellpia_sku_code',{ascending:true}).range(from,from+999);
+        if(error)throw readableDatabaseError(error);
+        rows.push(...(data||[]).map(row=>({
+          sku:cleanText(row.sellpia_sku_code),
+          product_code:cleanText(row[productField]),
+          option_code:cleanText(row[optionField])
+        })).filter(row=>row.sku&&row.product_code));
+        if(!data||data.length<1000)break;
+      }
+    }
+    return {source:safeSource,rows};
   }
 
   async function loadSystemStocks(skus=[]) {
@@ -3664,6 +3709,7 @@
     loadAuxiliarySellerFiles,
     downloadAuxiliarySellerFile,
     loadPlayautoSellpiaCatalog,
+    loadCarrierSellerMappings,
     loadSystemStocks,
     loadMatrixStocksForExport,
     loadMatrixExportSnapshot,

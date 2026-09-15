@@ -38,4 +38,12 @@ const catalog=[
 assert.equal(A.resolveSellpiaSku(parsedOption[0],catalog).sku,'11541-1');
 assert.equal(A.resolveSellpiaSku(parsedProduct[1],catalog).sku,'11541-2');
 assert.match(A.resolveSellpiaSku({...parsedOption[0],option_candidates:['다른 옵션']},[catalog[0]]).error,/옵션명/,'carrier rows must not fall back to a single SKU when option values do not match exactly');
-console.log('PASS Ably PlayAuto templates: product+option price and V option delta + W available stock resolve by exact option name; X stays untouched.');
+const mappingItem={...parsedOption[0],seller_product_code:'ABLY-P',seller_option_code:'ABLY-O',option_candidates:['표기가 다른 옵션']};
+const mappings=[{product_code:'ABLY-P',option_code:'ABLY-O',sku:'11541-2'}];
+assert.deepEqual(JSON.parse(JSON.stringify(A.resolveSellpiaSku(mappingItem,catalog,mappings))),{sku:'11541-2',method:'seller_mapping_exact',row:mappings[0]},'verified seller mapping must win over display-name differences');
+assert.match(A.resolveSellpiaSku(mappingItem,catalog,[...mappings,{...mappings[0],sku:'11541-1'}]).error,/여러 SKU/,'ambiguous seller mapping must fail closed');
+const productOnlyMappings=[{product_code:'ABLY-P',option_code:'',sku:'11541-1'},{product_code:'ABLY-P',option_code:'',sku:'11541-2'}];
+assert.equal(A.resolveSellpiaSku({...parsedOption[0],seller_product_code:'ABLY-P'},catalog,productOnlyMappings).sku,'11541-1','missing seller option identity may use strict option-name fallback within a multiply mapped product');
+assert.match(A.resolveSellpiaSku({...parsedOption[0],seller_product_code:'ABLY-P',option_candidates:['없는 옵션']},catalog,productOnlyMappings).error,/여러 SKU/,'unresolved multiply mapped products remain ambiguous');
+assert.equal(A.resolveSellpiaSku({...mappingItem,seller_product_code:'NO-MAPPING'},catalog,[]).error.includes('옵션명'),true,'missing mapping falls back to strict option-name matching');
+console.log('PASS Ably PlayAuto templates: existing seller mapping wins, strict option fallback remains, and V/W contract preserves X.');

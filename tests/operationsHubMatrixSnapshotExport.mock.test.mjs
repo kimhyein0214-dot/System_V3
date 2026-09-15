@@ -98,8 +98,8 @@ test('official carrier scope uses exact identity and only visible draft or calcu
   ];
   const result=h.api.prepareCarrierItems('smartstore','carrier.xlsx',carrier,snapshot);
   assert.equal(result.kind,'TransformationPlan');
-  assert.equal(result.preview_only,true);
-  assert.equal(result.xlsx_connected,false);
+  assert.equal(result.preview_only,false);
+  assert.equal(result.xlsx_connected,true);
   assert.equal(result.source_type,'carrier');
   assert.equal(result.latest_generation_id,null);
   assert.match(result.created_at,/^\d{4}-\d{2}-\d{2}T/);
@@ -111,7 +111,9 @@ test('official carrier scope uses exact identity and only visible draft or calcu
   assert.equal(result.excludedItems.length,0);
   assert.equal(result.preview[0].price_state.code,'calculated_complete','a complete visible draft is safe and takes priority over calculation state');
   assert.equal(result.preview[1].price_state.code,'original_fallback');
-  assert.equal(result.canGenerate,false,'an incomplete price row blocks future XLSX eligibility');
+  assert.equal(result.canGenerate,true,'an explicit original fallback is safe when no price target exists');
+  assert.equal(result.operations,result.items,'preview and serializer must share the same operation array');
+  assert.match(result.version_token,/^[0-9a-f]{16}$/);
   assert.deepEqual(plain(result.summary.price_states),{calculated_complete:1,latest_generation_unreflected:0,timeout_error:0,original_fallback:1});
   assert.equal(result.preview[0].diff.price.after.final,5500,'complete visible draft remains the safe preview target');
   assert.equal(result.preview[0].diff.price.candidate_after.final,5500);
@@ -149,12 +151,14 @@ test('complete price draft wins over stale or failed calculation metadata',()=>{
   assert.equal(result.canGenerate,true);
 });
 
-test('fully calculated carrier plan records future generation eligibility without connecting XLSX',()=>{
+test('fully calculated carrier plan is eligible for the connected XLSX serializer',()=>{
   const calculated={registration_price:5100,registration_status:'calculated',registration_generation_id:12,discount_price:5000,discount_status:'calculated',discount_generation_id:12,option_price:100,option_status:'calculated',option_generation_id:12,final_price:5100,final_status:'calculated',final_generation_id:12};
   const result=exportHarness([]).api.prepareCarrierItems('smartstore','carrier.xlsx',[{product_code:'P-1',option_code:'O-1',source_row_no:7,base_price:5000,discounted_base_price:5000,option_price:0,final_price:5000,stock:8,discount_terms:[]}],[row(calculated)]);
   assert.equal(result.canGenerate,true);
   assert.equal(result.safety.can_generate_xlsx,true);
-  assert.equal(result.xlsx_connected,false);
+  assert.equal(result.xlsx_connected,true);
+  assert.equal(result.preview_only,false);
+  assert.equal(result.operations,result.items);
 });
 
 test('location is required only for an actual visible write',async()=>{
@@ -192,6 +196,31 @@ test('snapshot reader paginates 14000 rows without legacy reads or staging',asyn
   assert.equal(calls.every(call=>call.p_limit===1000),true);
   assert.equal(calls[0].p_after_sku,null);
   assert.equal(calls[13].p_after_sku,'SKU-12999');
+});
+
+test('carrier mapping lookup reads only requested seller product identities before snapshot',async()=>{
+  const functionSource=dataSource.slice(dataSource.indexOf('  async function loadCarrierSellerMappings('),dataSource.indexOf('  async function loadSystemStocks('));
+  const calls=[];
+  const context={cleanText:value=>String(value??'').trim(),readableDatabaseError:error=>error,db:{from:table=>({select:fields=>({in:(field,values)=>({order:()=>({range:async(from,to)=>{calls.push({table,fields,field,values,from,to});return {data:[{sellpia_sku_code:'SKU-1',smartstore_product_code:'P-1',smartstore_option_code:'O-1'}],error:null};}})})})})}};
+  vm.createContext(context);vm.runInContext(functionSource+'\nthis.load=loadCarrierSellerMappings;',context);
+  const result=await context.load({source:'smartstore',identities:[{product_code:'P-1',option_code:'O-1'},{product_code:'P-1',option_code:'O-2'}]});
+  assert.deepEqual(plain(result.rows),[{sku:'SKU-1',product_code:'P-1',option_code:'O-1'}]);
+  assert.equal(calls.length,1);
+  assert.deepEqual(plain(calls[0].values),['P-1']);
+  assert.equal(calls[0].table,'operations_hub_matrix_cached');
+  assert.equal(calls[0].field,'smartstore_product_code');
+});
+
+test('carrier serializer receives the exact TransformationPlan operations',async()=>{
+  const functionSource=appSource.slice(appSource.indexOf('async function transformStandardCarrierExport('),appSource.indexOf('\nasync function prepareChangedOnlyExport('));
+  const operations=[{export_item_id:1,field_key:'sellpia_sale_price'}],otherItems=[{export_item_id:2,field_key:'sellpia_current_stock'}],calls=[];
+  const sellerExport={transformSellerFile:async(file,items)=>{calls.push({file,items});return {blob:{},appliedItems:items,skippedItems:[]};},downloadBlob(){throw Error('download must stay off');},conflictCsv(){return '';},outputName(name){return name;}};
+  const transform=Function('sellerExport',`${functionSource}; return transformStandardCarrierExport;`)(sellerExport);
+  const plan={source:'smartstore',file:{name:'carrier.xlsx'},operations,items:otherItems,excludedItems:[]};
+  const result=await transform(plan,{download:false});
+  assert.equal(calls.length,1);
+  assert.equal(calls[0].items,operations);
+  assert.equal(result.appliedItems,operations);
 });
 
 test('UI is display-only and RPC reads live drafts with same-generation metadata',()=>{
