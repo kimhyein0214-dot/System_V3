@@ -25,6 +25,7 @@ test('attached Ably carrier keeps every cell except requested V/W targets byte-i
   const JSZip=require('jszip');
   const context={console,Blob,JSZip};context.globalThis=context;
   vm.createContext(context);
+  vm.runInContext(fs.readFileSync('mockups/operations-hub/seller-export-adapter.js','utf8'),context);
   vm.runInContext(fs.readFileSync('mockups/operations-hub/ably-stock-export.js','utf8'),context);
   vm.runInContext(fs.readFileSync('mockups/operations-hub/ably-playauto-export.js','utf8'),context);
   const bytes=fs.readFileSync(samplePath),file={name:path.basename(samplePath),arrayBuffer:async()=>bytes.buffer.slice(bytes.byteOffset,bytes.byteOffset+bytes.byteLength)};
@@ -45,9 +46,14 @@ test('attached Ably carrier keeps every cell except requested V/W targets byte-i
   assert.equal((afterXml.match(/<row\b/g)||[]).length,(beforeXml.match(/<row\b/g)||[]).length);
   assert.equal(numericCell(afterCells.get(`V${optionRow}`)),1234);
   assert.equal(numericCell(afterCells.get(`W${stockRow}`)),0);
+  assert.match(afterCells.get(`V${optionRow}`),/\bs="\d+"/,'changed option price must receive a highlight style');
+  assert.match(afterCells.get(`W${stockRow}`),/\bs="\d+"/,'changed stock must receive a highlight style');
   assert.equal(afterCells.get(`W${blankStockRow}`),beforeCells.get(`W${blankStockRow}`),'blank W cell must remain byte-identical');
   const allowed=new Set([`V${optionRow}`,`W${stockRow}`]);
   for(const [reference,cell] of beforeCells)if(!allowed.has(reference))assert.equal(afterCells.get(reference),cell,`${reference} changed unexpectedly`);
   for(const reference of beforeCells.keys())if(/^X\d+$/.test(reference))assert.equal(afterCells.get(reference),beforeCells.get(reference),`${reference} sales quantity changed`);
-  for(const entry of Object.keys(beforeZip.files))if(entry!=='xl/worksheets/sheet1.xml')assert.deepEqual(Buffer.from(await afterZip.file(entry).async('uint8array')),Buffer.from(await beforeZip.file(entry).async('uint8array')),`${entry} changed unexpectedly`);
+  for(const entry of Object.keys(beforeZip.files))if(!['xl/worksheets/sheet1.xml','xl/styles.xml'].includes(entry))assert.deepEqual(Buffer.from(await afterZip.file(entry).async('uint8array')),Buffer.from(await beforeZip.file(entry).async('uint8array')),`${entry} changed unexpectedly`);
+  const stylesXml=await afterZip.file('xl/styles.xml').async('string');
+  assert.match(stylesXml,/FFFFFF00/,'changed cells must use the existing yellow highlight contract');
+  assert.match(stylesXml,/<b\/>/,'changed cells must use bold text');
 });

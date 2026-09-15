@@ -132,32 +132,46 @@
     if(!target)throw Error(`${sheetName} 시트 연결을 찾지 못했습니다.`);
     const path=target.startsWith('/')?target.slice(1):'xl/'+target.replace(/^\.\//,'');
     const entry=zip.file(path);if(!entry)throw Error(`${sheetName} 원본 XML을 찾지 못했습니다.`);
-    return {zip,path,xml:await entry.async('string'),bytes};
+    const stylesPath='xl/styles.xml',stylesEntry=zip.file(stylesPath);
+    if(!stylesEntry)throw Error('원본 XLSX 스타일 정보를 읽지 못했습니다.');
+    return {zip,path,xml:await entry.async('string'),stylesPath,stylesXml:await stylesEntry.async('string'),bytes};
+  }
+
+  function highlightChanges(parts,xml,changes){
+    const apply=global.SystemV3SellerExport?.applyChangeHighlights;
+    if(typeof apply!=='function')throw Error('XLSX 변경 셀 강조 모듈을 불러오지 못했습니다.');
+    const highlighted=apply(xml,parts.stylesXml,changes);
+    parts.zip.file(parts.stylesPath,highlighted.stylesXml,{createFolders:false});
+    return highlighted.sheetXml;
   }
 
   async function buildProductPriceOption(file,items){
     if(!global.XLSX)throw Error('XLSX 모듈을 불러오지 못했습니다.');
-    const {zip,path,bytes}=await sheetParts(file,PRODUCT_SHEET);let {xml}=await sheetParts(file,PRODUCT_SHEET);
+    const parts=await sheetParts(file,PRODUCT_SHEET),{zip,path,bytes}=parts;let {xml}=parts;
     const book=global.XLSX.read(bytes,{type:'array',raw:true}),sheet=book.Sheets[PRODUCT_SHEET];if(!sheet)throw Error(`${PRODUCT_SHEET} 시트를 찾지 못했습니다.`);
     const byRow=new Map();for(const item of items||[]){if(!byRow.has(item.source_row_no))byRow.set(item.source_row_no,[]);byRow.get(item.source_row_no).push(item);}
+    const changes=[];
     for(const [rowNo,rowItems] of byRow){
       const baseTargets=[...new Set(rowItems.filter(item=>finite(item.target_base_price)).map(item=>Number(item.target_base_price)))];
       if(baseTargets.length>1)throw Error(`${rowNo}행 상품 판매가 목표값이 옵션마다 다릅니다.`);
-      if(baseTargets.length===1)xml=global.AblyStockExport.patchCell(xml,rowNo,PRODUCT_BASE_PRICE_COLUMN,baseTargets[0]);
+      if(baseTargets.length===1){xml=global.AblyStockExport.patchCell(xml,rowNo,PRODUCT_BASE_PRICE_COLUMN,baseTargets[0]);changes.push(`${PRODUCT_BASE_PRICE_COLUMN}${rowNo}`);}
       const ref=`${PRODUCT_OPTION_PRICE_COLUMN}${rowNo}`,current=splitLines(sheet[ref]?.v??'');
-      let changed=false;for(const item of rowItems){if(!finite(item.target_option_price))continue;while(current.length<=item.option_index)current.push('');current[item.option_index]=String(Number(item.target_option_price));changed=true;}
+      let changed=false;for(const item of rowItems){if(!finite(item.target_option_price))continue;while(current.length<=item.option_index)current.push('');current[item.option_index]=String(Number(item.target_option_price));changes.push({reference:ref,lineIndex:item.option_index});changed=true;}
       if(changed)xml=global.AblyStockExport.patchCell(xml,rowNo,PRODUCT_OPTION_PRICE_COLUMN,current.join('\n'));
     }
+    if(changes.length)xml=highlightChanges(parts,xml,changes);
     zip.file(path,xml,{createFolders:false});return zip.generateAsync({type:'blob',mimeType:'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',compression:'DEFLATE'});
   }
 
   async function buildOptionPriceStock(file,items){
     const parts=await sheetParts(file,OPTION_SHEET);let xml=parts.xml;
+    const changes=[];
     for(const item of items||[]){
-      if(finite(item.target_option_price))xml=global.AblyStockExport.patchCell(xml,item.source_row_no,OPTION_PRICE_COLUMN,Number(item.target_option_price));
+      if(finite(item.target_option_price)){xml=global.AblyStockExport.patchCell(xml,item.source_row_no,OPTION_PRICE_COLUMN,Number(item.target_option_price));changes.push(`${OPTION_PRICE_COLUMN}${item.source_row_no}`);}
       // 이 공식 carrier의 재고 수정 대상은 W(판매가능재고)다. X(*판매수량)는 원본 그대로 보존한다.
-      if(finite(item.target_stock))xml=global.AblyStockExport.patchCell(xml,item.source_row_no,OPTION_STOCK_COLUMN,Number(item.target_stock));
+      if(finite(item.target_stock)){xml=global.AblyStockExport.patchCell(xml,item.source_row_no,OPTION_STOCK_COLUMN,Number(item.target_stock));changes.push(`${OPTION_STOCK_COLUMN}${item.source_row_no}`);}
     }
+    if(changes.length)xml=highlightChanges(parts,xml,changes);
     parts.zip.file(parts.path,xml,{createFolders:false});return parts.zip.generateAsync({type:'blob',mimeType:'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',compression:'DEFLATE'});
   }
 
