@@ -112,7 +112,7 @@
         </fieldset>
         <fieldset class="attributes-fieldset" hidden><legend><label><input type="checkbox" data-attributes-apply="productTags">상품 공통 태그 교체</label></legend><div class="attributes-tag-grid" data-attributes-tags="product" aria-disabled="true">${renderTagChoices('product')}</div></fieldset>
         <fieldset class="attributes-fieldset"><legend><label><input type="checkbox" data-attributes-apply="skuTags">선택 SKU 태그 교체</label></legend><div class="attributes-tag-grid" data-attributes-tags="sku" aria-disabled="true">${renderTagChoices('sku')}</div></fieldset>
-        <div class="attributes-tag-formula"><label>상품 태그의 수식 확인<select id="attributes-formula-tag" aria-label="수식을 확인하거나 편집할 상품 태그"></select></label><button class="btn" id="attributes-edit-tag-formula" type="button">연결 수식 확인·편집</button><small>수식 태그를 선택하면 입력값, 계산 순서와 적용 SKU 수를 확인합니다. 일반 태그도 필요할 때 수식을 연결할 수 있습니다.</small></div><details class="attributes-new-tag"><summary>새 태그</summary><div><input id="attributes-new-tag-name" maxlength="32" placeholder="태그 이름"><input id="attributes-new-tag-color" type="color" value="#dbeafe"><label><input id="attributes-new-tag-formula" type="checkbox"> 가격 수식 사용</label><button class="btn" id="attributes-create-tag" type="button">저장</button></div></details>
+        <div class="attributes-tag-formula"><label>상품 태그의 수식 확인<select id="attributes-formula-tag" aria-label="수식을 확인하거나 편집할 상품 태그"></select></label><button class="btn" id="attributes-edit-tag-formula" type="button">연결 수식 확인·편집</button><small>수식 태그를 선택하면 입력값, 계산 순서와 적용 SKU 수를 확인합니다. 일반 태그도 필요할 때 수식을 연결할 수 있습니다.</small></div><details class="attributes-new-tag"><summary>새 태그</summary><div><input id="attributes-new-tag-name" maxlength="32" placeholder="태그 이름"><input id="attributes-new-tag-color" type="color" value="#dbeafe"><label><input id="attributes-new-tag-formula" type="checkbox"> 가격 수식 사용</label><button class="btn" id="attributes-create-tag" type="button">태그 생성(DB 저장)</button></div></details>
         <div id="attributes-save-progress" class="attributes-save-progress" hidden><div><b>저장 준비</b><span>0/0</span></div><i><em></em></i></div>
         <button class="btn primary attributes-save" id="attributes-save" type="button" disabled>선택 SKU에 저장</button>
       </aside>
@@ -237,6 +237,7 @@
     updateSelectionUi();
     const errors = [];
     let saved = 0;
+    const savedSkus = [];
     setProgress(0, rows.length, 'DB 저장 시작');
     for (let index = 0; index < rows.length; index += 1) {
       const row = rows[index];
@@ -254,6 +255,7 @@
         });
         row.__profile = result || profile;
         saved += 1;
+        savedSkus.push(sku);
       } catch (error) {
         errors.push(`${sku}: ${cleanError(error)}`);
       }
@@ -261,11 +263,23 @@
     }
     state.saving = false;
     updateSelectionUi();
+    let calculationError = '';
+    if (savedSkus.length && (draft.applies.has('productTags') || draft.applies.has('skuTags')) && global.HubPriceMaterializer?.materialize) {
+      setProgress(savedSkus.length, savedSkus.length, '태그 수식 계산 중');
+      try {
+        await global.HubPriceMaterializer.materialize({skus:[...new Set(savedSkus)], sources:['smartstore','makeshop','ably'], reason:'attributes-tag-save'});
+      } catch (error) {
+        calculationError = cleanError(error);
+      }
+    }
     if (errors.length) {
       status(`속성 저장 ${saved}건 완료 · ${errors.length}건 실패 — ${errors.slice(0, 2).join(' / ')}`, 'error');
+    } else if (calculationError) {
+      status(`태그 DB 저장 ${saved}건 완료 · 수식 계산 확인 필요 — ${calculationError}`, 'error');
     } else {
-      status(`선택한 ${saved}개 SKU의 속성·태그를 DB에 저장했습니다.`, 'success');
+      status(`선택한 ${saved}개 SKU의 속성·태그 저장과 수식 계산을 완료했습니다.`, 'success');
     }
+    if (savedSkus.length) global.dispatchEvent(new CustomEvent('hub-tags-changed', {detail:{skus:savedSkus}}));
     await loadPage({resetSelection:false});
   }
 

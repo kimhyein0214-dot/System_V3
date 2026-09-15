@@ -1,6 +1,7 @@
 (function(g){
  'use strict';
  const ALL_SOURCES=['smartstore','makeshop','ably'],CHUNK=200;
+ const INTERNAL_FIELDS=['actual_inbound_cost','basis_sku_price','calculated_base_price'];
  const PLATFORM_FIELDS={platform_registration_price:'platformBase',platform_discount_price:'discountedBase',platform_option_price:'platformOption',platform_final_price:'platformFinal'};
  const unique=values=>[...new Set(values.map(value=>String(value??'').trim()).filter(Boolean))];
  function aborted(signal){if(signal?.aborted){const error=new Error('계산 결과 저장을 중단했습니다. 완료된 배치는 유지됩니다.');error.name='AbortError';throw error;}}
@@ -36,6 +37,12 @@
    offset+=batch.seeds.length;batches.push(batch);progress('resolve');
   }
   const internalDone=new Set(),platformDone=Object.fromEntries(selected.map(source=>[source,new Set()]));
+  const assignedInternalFields=new Map();
+  for(const assignment of registry.assignments||[]){
+   if((assignment.scope||'')!==''||!INTERNAL_FIELDS.includes(assignment.target_field))continue;
+   if(!assignedInternalFields.has(assignment.sku))assignedInternalFields.set(assignment.sku,new Set());
+   assignedInternalFields.get(assignment.sku).add(assignment.target_field);
+  }
   async function persist(rows){for(let i=0;i<rows.length;i+=CHUNK){aborted(signal);const part=rows.slice(i,i+CHUNK);await D.upsertCalculatedPriceResults({generationId,rows:part});summary.persistedRows+=part.length;summary.errorRows+=part.filter(row=>row.status==='error').length;progress('persist');}}
   const record=(sku,field,scope,result,error)=>({sku,field,scope,value:error?null:result.value,status:error?'error':'calculated',error:error||null,rule_versions:versions(result),result_details:{}});
   const platformFailure=(sku,error)=>Object.keys(PLATFORM_FIELDS).map(field=>record(sku,field,'',null,error));
@@ -50,8 +57,11 @@
    const resolvedValues=new Map(),internalRows=[];
    for(const sku of targets){
     if(internalDone.has(sku))continue;
-    try{if(loadError||evaluationError)throw Error(loadError||evaluationError);const result=evaluator.evaluate(sku,'calculated_base_price');resolvedValues.set(M.key(sku,'calculated_base_price',''),{value:result.value,base:result.base,versions:versions(result)});internalRows.push(record(sku,'calculated_base_price','',result));}
-    catch(error){internalRows.push(record(sku,'calculated_base_price','',null,message(error)));}
+    const fields=[...INTERNAL_FIELDS.filter(field=>field==='calculated_base_price'||assignedInternalFields.get(sku)?.has(field))];
+    for(const field of fields){
+     try{if(loadError||evaluationError)throw Error(loadError||evaluationError);const result=evaluator.evaluate(sku,field);const stored={value:result.value,base:result.base,versions:versions(result)};resolvedValues.set(M.key(sku,field,''),stored);internalRows.push(record(sku,field,'',result));}
+     catch(error){internalRows.push(record(sku,field,'',null,message(error)));}
+    }
    }
    await persist(internalRows);internalRows.forEach(row=>internalDone.add(row.sku));
    for(const source of selected){

@@ -7,7 +7,7 @@
     <title>System V3 · 상품 운영 허브</title>
     <link rel="preconnect" href="https://cdnjs.cloudflare.com" crossorigin>
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/pretendard/1.3.9/static/pretendard.css">
-    <link rel="stylesheet" href="./style.css?v=20260910-rule-destination-v111">
+    <link rel="stylesheet" href="./style.css?v=20260915-tag-matrix-v1">
     <link rel="stylesheet" href="./ably-combinations.css?v=20260910-rule-destination-v111">
     <link rel="stylesheet" href="./workspaces-v91.css?v=20260910-rule-destination-v111">
     <link rel="stylesheet" href="./price-rule-lab.css?v=20260910-rule-destination-v111">
@@ -19,7 +19,7 @@
     <link rel="stylesheet" href="./operations-auth.css?v=20260910-rule-destination-v111">
     <link rel="stylesheet" href="./rule-workspace.css?v=20260914-legacy-formulas-v2">
       <link rel="stylesheet" href="./ui-cleanup-v1.css?v=20260912-queue-count-clarity-v1">
-      <link rel="stylesheet" href="./tag-management-v2.css?v=20260914-formula-display-v2">
+      <link rel="stylesheet" href="./tag-management-v2.css?v=20260915-tag-matrix-v1">
       <link rel="stylesheet" href="./seller-file-workflow-v2.css?v=20260915-carrier-plan-v2">
   </head>
   <body class="operations-auth-locked">
@@ -869,6 +869,7 @@
           <fieldset class="inbound-cost-modes"><legend>실입고가 입력 방식</legend><label><input type="radio" name="inbound-cost-mode" value="empty"><span><b>미설정</b><em>확정되지 않은 값은 빈칸으로 표시</em></span></label><label><input type="radio" name="inbound-cost-mode" value="manual"><span><b>직접 입력</b><em>확인한 개당 실입고가 저장</em></span></label><label><input type="radio" name="inbound-cost-mode" value="formula"><span><b>수식태그</b><em>셀피아 매입가에서 자동 계산</em></span></label></fieldset>
           <label id="inbound-cost-manual-field">직접 입력 금액<input id="inbound-cost-manual" type="number" min="0" step="1"></label>
           <label id="inbound-cost-formula-field">수식태그<select id="inbound-cost-formula"><option value="">수식태그 선택…</option></select></label>
+          <div id="inbound-cost-linked-formula" class="inbound-cost-linked-formula" hidden></div>
           <div class="inbound-cost-preview"><span>저장될 실입고가</span><b id="inbound-cost-preview">-</b><em id="inbound-cost-preview-equation">입력 방식을 선택해주세요.</em></div>
         </div>
         <div class="modal-foot"><button id="inbound-cost-modal-cancel" class="btn" type="button">취소</button><button id="inbound-cost-modal-save" class="btn primary" type="button">실입고가 저장</button></div>
@@ -980,11 +981,11 @@
     <script src="./bundle-import-parser.js?v=20260910-rule-destination-v111"></script>
     <script src="./seller-bundle-import-parser.js?v=20260910-rule-destination-v111"></script>
     <script src="./sellpia-source-parser.js?v=20260910-rule-destination-v111"></script>
-    <script src="./data-service.js?v=20260915-carrier-plan-v2"></script>
+    <script src="./data-service.js?v=20260915-tag-matrix-v1"></script>
     <script src="./channels-page.js?v=20260910-rule-destination-v111"></script>
-    <script src="./app.js?v=20260915-carrier-plan-v2"></script>
+    <script src="./app.js?v=20260915-tag-matrix-v1"></script>
     <script src="./mapping-import.js?v=20260910-rule-destination-v111"></script>
-    <script src="./attributes-page.js?v=20260914-formula-tags-v1"></script>
+    <script src="./attributes-page.js?v=20260915-tag-matrix-v1"></script>
     <script src="./price-rule-lab.js?v=20260910-rule-destination-v111"></script>
     <script src="./ably-stock-export.js?v=20260910-rule-destination-v111"></script>
     <script src="./ably-playauto-export.js?v=20260915-carrier-plan-v2"></script>
@@ -997,11 +998,11 @@
 <script src="./tag-price-workspace.js?v=20260910-rule-destination-v111"></script>
 <script src="./rule-registry.js?v=20260914-legacy-formulas-v2"></script>
 <script src="./platform-rule-service.js?v=20260915-settings-direct-v1"></script>
-<script src="./price-result-materializer.js?v=20260910-rule-destination-v111"></script>
+<script src="./price-result-materializer.js?v=20260915-tag-matrix-v1"></script>
 <script src="./current-price-export.js?v=20260915-carrier-plan-v2"></script>
-<script src="./rule-workspace.js?v=20260915-formula-timeout-v1"></script>
-      <script src="./ui-cleanup-v1.js?v=20260915-tag-sync-loop-v1"></script>
-      <script src="./tag-management-v2.js?v=20260915-tag-import-v2"></script>
-      <script src="./seller-file-workflow-v2.js?v=20260915-carrier-plan-v2"></script>
+<script src="./rule-workspace.js?v=20260915-tag-matrix-v1"></script>
+      <script src="./ui-cleanup-v1.js?v=20260915-tag-matrix-v1"></script>
+      <script src="./tag-management-v2.js?v=20260915-tag-matrix-v1"></script>
+      <script src="./seller-file-workflow-v2.js?v=20260915-tag-matrix-v1"></script>
   </body>
 </html>

@@ -43,6 +43,6 @@ assert.match(css, /\.matrix-page\.active-page \.matrix-toolbar\{[^}]*overflow-x:
 
 const assetVersions = [...html.matchAll(/(?:style\.css|seller-source-parsers\.js|seller-export-adapter\.js|data-service\.js|app\.js)\?v=([^"']+)/g)].map(match => match[1]);
 assert.equal(assetVersions.length,5,"all critical local assets must remain cache-busted");
-assert.match(html,/data-service\.js\?v=20260915-carrier-plan-v2[\s\S]*?app\.js\?v=20260915-carrier-plan-v2/,"the optimized data service and current app bundle must both be cache-versioned");
+assert.match(html,/data-service\.js\?v=20260915-tag-matrix-v1[\s\S]*?app\.js\?v=20260915-tag-matrix-v1/,"the optimized data service and current app bundle must both be cache-versioned");
 
 console.log("Operations hub advanced server-side matrix filter contract: passed");

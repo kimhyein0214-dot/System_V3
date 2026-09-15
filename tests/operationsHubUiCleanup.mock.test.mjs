@@ -18,5 +18,5 @@ test('UI cleanup groups navigation and exposes tag/export workflows',()=>{
   assert.match(js,/if\(panel\.hidden\)panel\.hidden=false/);
   assert.match(js,/if\(panel\._systemV3TagImportState===importState\)return/);
   assert.match(html,/ui-cleanup-v1\.css/);
-  assert.match(html,/ui-cleanup-v1\.js\?v=20260915-tag-sync-loop-v1/);
+  assert.match(html,/ui-cleanup-v1\.js\?v=20260915-tag-matrix-v1/);
 });

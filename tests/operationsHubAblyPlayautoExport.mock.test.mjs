@@ -46,4 +46,13 @@ const productOnlyMappings=[{product_code:'ABLY-P',option_code:'',sku:'11541-1'},
 assert.equal(A.resolveSellpiaSku({...parsedOption[0],seller_product_code:'ABLY-P'},catalog,productOnlyMappings).sku,'11541-1','missing seller option identity may use strict option-name fallback within a multiply mapped product');
 assert.match(A.resolveSellpiaSku({...parsedOption[0],seller_product_code:'ABLY-P',option_candidates:['없는 옵션']},catalog,productOnlyMappings).error,/여러 SKU/,'unresolved multiply mapped products remain ambiguous');
 assert.equal(A.resolveSellpiaSku({...mappingItem,seller_product_code:'NO-MAPPING'},catalog,[]).error.includes('옵션명'),true,'missing mapping falls back to strict option-name matching');
+const crossTemplateMappings=[
+ {product_code:'ABLY-10000',option_code:'OPT-1',sku:'10000-1'},
+ {product_code:'ABLY-10000',option_code:'OPT-2',sku:'10000-2'},
+ {product_code:'ABLY-10000',option_code:'OPT-3',sku:'10000-3'}
+];
+const productTemplate10000={...parsedProduct[1],direct_sellpia_sku_code:'10000-2',seller_product_code:'ABLY-10000',seller_option_code:'OPT-2'};
+const optionTemplate10000={...parsedOption[0],sellpia_product_code:'10000',seller_product_code:'ABLY-10000',seller_option_code:'OPT-2',option_sku_code:'',option_candidates:['표기가 달라도 기존 연결 우선']};
+assert.equal(A.resolveSellpiaSku(productTemplate10000,[],crossTemplateMappings).sku,'10000-2','price+option carrier resolves the mapped SKU');
+assert.equal(A.resolveSellpiaSku(optionTemplate10000,[],crossTemplateMappings).sku,'10000-2','option+stock carrier uses the same seller identity before option text');
 console.log('PASS Ably PlayAuto templates: existing seller mapping wins, strict option fallback remains, and V/W contract preserves X.');

@@ -54,6 +54,27 @@ function fixture(){
  const untouched=fixture();await assert.rejects(untouched.run({signal:controller.signal}),e=>e.name==='AbortError');assert.equal(untouched.qa.begins.length,0,'preabort does not start generation');
 }
 {
+ const f=fixture(),inbound={id:'inbound-half',name:'14K_1/2 · 실입고가',target_field:'actual_inbound_cost',source_field:'purchase_price',scope:'',input_origin:'self',config:{steps:[{op:'divide',value:2}]},is_active:true,version:3,tag_id:'tag-14k-half'};
+ f.registry.rules.push(inbound);f.registry.assignments=f.registry.assignments.filter(item=>item.sku!=='A');f.registry.assignments.push({sku:'A',rule_id:inbound.id,target_field:'actual_inbound_cost',scope:'',version:7,assigned_tag_id:inbound.tag_id});
+ const result=await f.run({skus:['A'],sources:[]}),rows=f.rows(),inboundRow=rows.find(row=>row.sku==='A'&&row.field==='actual_inbound_cost'),baseRow=rows.find(row=>row.sku==='A'&&row.field==='calculated_base_price');
+ assert.equal(rows.filter(row=>row.sku==='A').length,2,'assigned internal target and inherited matrix base are stored in the same generation');
+ assert.equal(result.persistedRows,3,'the affected dependent SKU remains part of bounded materialization');
+ assert.equal(inboundRow.value,5000);assert.equal(baseRow.value,5000);assert.equal(inboundRow.status,'calculated');assert.equal(inboundRow.rule_versions[0].id,inbound.id);assert.equal(inboundRow.rule_versions[0].assignmentVersion,7);assert.deepEqual(inboundRow.result_details,{},'internal derived stages keep the existing RPC-safe result_details contract');assert.equal(inboundRow.generationId,undefined,'wire payload keeps generation at request level');
+}
+{
+ const f=fixture(),definitions=[
+  ['5566-1','14K_기본',53500,[],53500],
+  ['5566-2','14K_노볼',53500,[{op:'subtract',value:7500}],46000],
+  ['5566-3','14K_1/2',55500,[{op:'divide',value:2}],27750]
+ ];
+ f.registry.rules=[];f.registry.assignments=[];f.registry.dependencies=[];
+ for(const [sku,name,purchase,steps] of definitions){const id='rule-'+sku;f.products[sku]={sellpia_sku_code:sku,sellpia_source_purchase_price:purchase,system_base_price:80000};f.registry.rules.push({id,name:name+' · 실입고가',target_field:'actual_inbound_cost',source_field:'purchase_price',scope:'',input_origin:'self',config:{steps},is_active:true,version:1,tag_id:'tag-'+sku});f.registry.assignments.push({sku,rule_id:id,target_field:'actual_inbound_cost',scope:'',version:1,assigned_tag_id:'tag-'+sku});}
+ f.products['5566-4']={sellpia_sku_code:'5566-4',sellpia_source_purchase_price:55500,system_base_price:83500};
+ await f.run({skus:['5566-1','5566-2','5566-3','5566-4'],sources:[]});const rows=f.rows(),value=(sku,field)=>rows.find(row=>row.sku===sku&&row.field===field)?.value;
+ for(const [sku,, , ,expected] of definitions){assert.equal(value(sku,'actual_inbound_cost'),expected);assert.equal(value(sku,'calculated_base_price'),expected);}
+ assert.equal(value('5566-4','actual_inbound_cost'),undefined,'control SKU receives no synthetic formula-stage value');assert.equal(value('5566-4','calculated_base_price'),83500,'control SKU keeps its stored system base');
+}
+{
  const f=fixture();SystemV3Data.upsertCalculatedPriceResults=async()=>{throw Error('write unavailable');};await assert.rejects(f.run({sources:[]}),/write unavailable/,'persistence errors must not be mislabeled as successful error-row saves');
 }
-console.log('PASS materializer actual engines: generation + bounded200 writes/reads, sibling→descendant closure, internal+3platform values/details, whole invalid platform group errors, unlinked skip,405SKU batches, failed batch continuation, abort and writefailure semantics.');
+console.log('PASS materializer actual engines: generation + bounded200 writes/reads, assigned internal targets + inherited matrix base, sibling→descendant closure, internal+3platform values/details, whole invalid platform group errors, unlinked skip,405SKU batches, failed batch continuation, abort and writefailure semantics.');

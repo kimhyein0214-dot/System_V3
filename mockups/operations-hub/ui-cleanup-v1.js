@@ -128,9 +128,22 @@
     return [...new Set(rules.map(rule=>rule.scope).filter(Boolean))];
   }
 
+  function tagSyncContext(data){
+    if(!data)return null;
+    if(data.mode==='filename_tag'&&data.resolvedTagId){
+      return {tagId:data.resolvedTagId,rows:data.rows||[]};
+    }
+    const files=data.files||[];
+    if(files.length!==1)return null;
+    const file=files[0],tagId=file.resolution?.tag?.tag_id;
+    if(!tagId||!['metadata_tag','filename_tag'].includes(file.parsed?.mode))return null;
+    return {tagId,rows:file.rows||[]};
+  }
+
   async function refreshSyncPreview(panel){
     const workspace=global.HubPriceWorkspace,D=global.SystemV3Data,data=workspace?.state?.tagImport;
-    if(!data||data.mode!=='filename_tag'||!data.resolvedTagId||typeof D?.syncTagAssignments!=='function'){
+    const context=tagSyncContext(data);
+    if(!context||typeof D?.syncTagAssignments!=='function'){
       if(!panel.hidden)panel.hidden=true;
       return;
     }
@@ -141,8 +154,8 @@
       panel.querySelector('[data-sync-copy]').textContent='현재 적용대상을 비교하는 중…';
       try{
         data.syncPreview=await D.syncTagAssignments({
-          tagId:data.resolvedTagId,
-          skus:data.rows.map(row=>row.sku).filter(Boolean),
+          tagId:context.tagId,
+          skus:context.rows.map(row=>row.sku).filter(Boolean),
           preview:true
         });
       }catch(error){
@@ -174,18 +187,19 @@
 
   async function applyTagSync(panel){
     const workspace=global.HubPriceWorkspace,D=global.SystemV3Data,M=global.HubRuleRegistry,data=workspace?.state?.tagImport;
-    if(!data?.resolvedTagId||!data.syncPreview)return;
+    const context=tagSyncContext(data);
+    if(!context||!data.syncPreview)return;
     const removeCount=Number(data.syncPreview.remove_count||0),targetCount=Number(data.syncPreview.target_count||0);
     const prompt=targetCount===0
       ? `파일의 A열 SKU가 비어 있습니다. 현재 이 태그에 연결된 ${removeCount.toLocaleString('ko-KR')}개 SKU를 전부 해제합니다. 계속할까요?`
       : `파일을 최종 목록으로 사용합니다. 목록에 없는 ${removeCount.toLocaleString('ko-KR')}개 SKU에서는 태그를 해제합니다. 계속할까요?`;
     if(removeCount>0&&!global.confirm(prompt))return;
 
-    const tagId=data.resolvedTagId;
+    const tagId=context.tagId;
     const rules=workspace.state.registry.rules.filter(rule=>String(rule.tag_id)===String(tagId));
     const ruleIds=new Set(rules.map(rule=>rule.id));
     const previousSkus=workspace.state.registry.assignments.filter(a=>ruleIds.has(a.rule_id)).map(a=>a.sku);
-    const fileSkus=data.rows.map(row=>row.sku).filter(Boolean);
+    const fileSkus=context.rows.map(row=>row.sku).filter(Boolean);
     const affected=[...new Set([...previousSkus,...fileSkus])];
 
     const button=panel.querySelector('[data-sync-apply]');
@@ -215,7 +229,7 @@
     const backdrop=byId('rw-backdrop');
     if(!backdrop||backdrop.hidden)return;
     const title=byId('rw-drawer-title');
-    if(!title||!title.textContent.includes('엑셀 태그 일괄등록'))return;
+    if(!title||!title.textContent.includes('태그 일괄등록'))return;
     let panel=backdrop.querySelector('.ui-tag-sync-panel');
     if(!panel){
       panel=document.createElement('section');

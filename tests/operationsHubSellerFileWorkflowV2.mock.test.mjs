@@ -17,6 +17,7 @@ test('Ably workflow separates catalog original from PlayAuto export templates',(
   assert.match(js,/옵션가 \+ 재고 파일 선택/);
   assert.match(js,/data-carrier-input="playauto_product"/);
   assert.match(js,/data-carrier-input="playauto_option"/);
+  assert.match(js,/에이블리 할인은 공식 파일에 지원 컬럼이 없어 자동 반영하지 않습니다/);
   assert.match(js,/V 추가 금액과 W 판매가능재고만/);
   assert.match(js,/X \*판매수량과 나머지 셀은 보존/);
   assert.match(js,/브라우저 메모리/);
@@ -72,10 +73,44 @@ test('Smartstore and Makeshop share paged TransformationPlan preview and seriali
   assert.match(js,/button\.dataset\.planCanGenerate/);
   assert.match(js,/renderTransformationPlan\(source,file,result\)/);
   assert.doesNotMatch(js,/if\(source==='smartstore'\).*renderTransformationPlan/);
-  assert.match(js,/data-standard-carrier-run="smartstore" disabled/);
+  assert.match(js,/data-standard-carrier-run="smartstore" aria-disabled="true"/);
+  assert.doesNotMatch(js,/data-standard-carrier-run="smartstore" disabled/,'a disabled button swallows clicks and cannot explain why generation is blocked');
+  assert.match(js,/button\.setAttribute\('aria-disabled',String\(!plan\.canGenerate\)\)/);
+  assert.match(js,/공식 수정파일 변환 차단:/,'an unsafe preview must report its reason instead of silently ignoring the click');
+  assert.match(js,/standardProgress\(source,5,'공식 수정파일 변환 시작'/);
+  assert.match(js,/standardProgress\(source,100,'공식 수정파일 변환 완료'/);
+  assert.match(js,/standardProgress\(source,100,'공식 수정파일 변환 중단'/);
   assert.match(js,/bridge\.runCarrier\(\{source,file,plan\}\)/);
   assert.match(app,/transformSellerFile\(plan\.file,plan\.operations\|\|plan\.items/);
   assert.match(app,/loadCarrierSellerMappings\(\{source,identities:parsed\.normalizedRows\}\)/);
   assert.match(app,/loadMatrixExportSnapshot\(\{source,skus:matchedSkus\}\)/);
   assert.match(app,/가격\/재고 상태가 변경되었습니다\. 미리보기를 다시 확인해주세요/);
+});
+
+test('carrier generate click always reports a blocked reason or runs the connected serializer',async()=>{
+  const functionSource=js.slice(js.indexOf('async function runStandardCarrier('),js.indexOf('\n function renderExportStatuses('));
+  const messages=[],progress=[],button={disabled:false,attrs:new Map(),setAttribute(name,value){this.attrs.set(name,value);},removeAttribute(name){this.attrs.delete(name);}};
+  const document={querySelector(){return button;}};
+  const file={name:'smartstore.xlsx'};
+  const blockedPlan={kind:'TransformationPlan',canGenerate:false,safety:{reason:'latest generation 미반영'}};
+  const state={standardCarrierFiles:new Map([['smartstore',file]]),standardCarrierPlans:new Map([['smartstore',blockedPlan]])};
+  let serializerCalls=0;
+  const global={SystemV3SellerExportBridge:{async runCarrier(){serializerCalls++;return {title:'완료',progressDetail:'반영 1건'};}}};
+  const standardResult=(source,text,kind)=>messages.push({source,text,kind});
+  const setStatus=(text,kind)=>messages.push({text,kind});
+  const standardProgress=(...args)=>progress.push(args);
+  const runStandardCarrier=Function('global','state','document','standardResult','setStatus','standardProgress',`${functionSource}; return runStandardCarrier;`)(global,state,document,standardResult,setStatus,standardProgress);
+
+  await runStandardCarrier('smartstore');
+  assert.equal(serializerCalls,0);
+  assert.ok(messages.some(message=>String(message.text).includes('latest generation 미반영')),'blocked click must explain the safety reason');
+
+  state.standardCarrierPlans.set('smartstore',{kind:'TransformationPlan',canGenerate:true,safety:{can_generate_xlsx:true}});
+  messages.length=0;
+  await runStandardCarrier('smartstore');
+  assert.equal(serializerCalls,1,'safe click reaches the existing serializer bridge');
+  assert.deepEqual(progress.map(entry=>[entry[1],entry[2]]),[[5,'공식 수정파일 변환 시작'],[100,'공식 수정파일 변환 완료']]);
+  assert.ok(messages.some(message=>message.text==='공식 수정파일 변환 완료'&&message.kind==='success'));
+  assert.equal(button.disabled,false);
+  assert.equal(button.attrs.get('aria-disabled'),'false');
 });

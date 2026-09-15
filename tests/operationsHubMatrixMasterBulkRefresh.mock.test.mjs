@@ -47,7 +47,7 @@ assert.match(app, /systemOperationalCell\(product, 'sellpia_purchase_price', '�
 assert.match(app, /systemOperationalCell\(product, 'sellpia_order_unit', '발주단위', product\.sellpia_source_order_unit\)/);
 assert.match(app, /systemOperationalCell\(product, 'sellpia_minimum_order_unit', '최소발주단위', product\.sellpia_source_minimum_order_unit\)/);
 assert.match(app, /sellpia_purchase_price:product\?\.sellpia_purchase_price_updated_at[\s\S]*sellpia_order_unit:product\?\.sellpia_order_unit_updated_at[\s\S]*sellpia_minimum_order_unit:product\?\.sellpia_minimum_order_unit_updated_at/, 'each procurement field must compare source freshness against its own saved timestamp');
-assert.match(app, /data-inbound-cost-edit[\s\S]*클릭하여 실입고가 직접 입력 또는 수식태그 설정/);
+assert.match(app, /클릭하여 실입고가 직접 입력 또는 수식태그 설정[\s\S]*data-inbound-cost-edit/);
 
 assert.equal((html.match(/data-drawer-disconnect-source=/g) || []).length, 3);
 assert.match(html, /data-drawer-disconnect-source="smartstore"[^>]*>연결만 해제/);

@@ -745,17 +745,45 @@ function matrixRelationPathBadge(product) {
   return `<em class="matrix-related-context-badge" title="${escapeHtml(label + '\n' + path)}" aria-label="${escapeHtml(label + ' · ' + path)}">↳ ${escapeHtml(shortLabel)}</em>`;
 }
 
+function resolvedInboundCost(product) {
+  const manual = product?.actual_inbound_cost_mode === 'manual';
+  const calculated = product?.__hubInternalPrices?.actual_inbound_cost;
+  if (!manual && calculated) {
+    const ruleNames = Array.isArray(calculated.ruleNames) ? calculated.ruleNames.filter(Boolean) : [];
+    const assignedTags = [...(product?.__profile?.sku_tags || []), ...(product?.__profile?.product_tags || [])];
+    const formulaTag = assignedTags.find(tag => ruleNames.includes(tag?.tag_name)) || null;
+    return {value:calculated.error ? product?.actual_inbound_cost : calculated.value, mode:'formula', tagName:ruleNames.join(' · ') || formulaTag?.tag_name || '수식 태그', color:formulaTag?.tag_color || '#7c3aed', error:calculated.error || '', calculated};
+  }
+  return {value:product?.actual_inbound_cost, mode:product?.actual_inbound_cost_mode || '', tagName:product?.inbound_cost_formula_tag_name || '', color:product?.inbound_cost_formula_tag_color || '#7c3aed', error:'', calculated:null};
+}
+
 function inboundCostCell(product) {
-  const cost = formatNullableNumber(product.actual_inbound_cost);
-  const tagName = product.inbound_cost_formula_tag_name || '';
-  const mode = product.actual_inbound_cost_mode || '';
-  const color = product.inbound_cost_formula_tag_color || '#7c3aed';
+  const resolved = resolvedInboundCost(product);
+  const cost = formatNullableNumber(resolved.value);
+  const {tagName, mode, color} = resolved;
   const badge = mode === 'formula' && tagName
-    ? `<em class="inbound-cost-badge" style="--inbound-tag-color:${escapeHtml(color)}">${escapeHtml(tagName)}</em>`
+    ? `<em class="inbound-cost-badge${resolved.error ? ' error' : ''}" style="--inbound-tag-color:${escapeHtml(color)}">${escapeHtml(resolved.error ? '계산 오류 · '+tagName : 'fx '+tagName)}</em>`
     : mode === 'manual'
       ? '<em class="inbound-cost-badge manual">직접입력</em>'
       : '<em class="inbound-cost-badge empty">설정</em>';
-  return `<button type="button" class="inbound-cost-cell${mode ? ' configured' : ''}" data-inbound-cost-edit data-sku="${escapeHtml(product.sellpia_sku_code)}" title="클릭하여 실입고가 직접 입력 또는 수식태그 설정"><b>${cost}</b>${badge}</button>`;
+  const title = resolved.calculated ? `${tagName} 수식이 계산한 실입고가${resolved.error ? ' · '+resolved.error : ''}` : '클릭하여 실입고가 직접 입력 또는 수식태그 설정';
+  return `<button type="button" class="inbound-cost-cell${mode ? ' configured' : ''}" data-inbound-cost-edit data-sku="${escapeHtml(product.sellpia_sku_code)}" title="${escapeHtml(title)}"><b>${cost}</b>${badge}</button>`;
+}
+
+function matrixAppliedTagChips(profile) {
+  const seen = new Set();
+  const tags = [...(Array.isArray(profile?.product_tags) ? profile.product_tags.map(tag => ({...tag, scope:'상품'})) : []), ...(Array.isArray(profile?.sku_tags) ? profile.sku_tags.map(tag => ({...tag, scope:'SKU'})) : [])].filter(tag => {
+    const key = String(tag?.tag_id || tag?.tag_name || '');
+    if (!key || seen.has(key)) return false;
+    seen.add(key); return true;
+  });
+  if (!tags.length) return '';
+  const visible = tags.slice(0, 3).map(tag => {
+    const formula = String(tag.tag_group || '').includes('수식');
+    const label = `${formula ? 'fx ' : ''}${tag.tag_name || '태그'}`;
+    return `<button type="button" class="matrix-tag-chip${formula ? ' formula' : ''}" data-matrix-tag-id="${escapeHtml(tag.tag_id || '')}" title="${escapeHtml(`${tag.scope} 태그 · ${tag.tag_name || '태그'}${formula ? ' · 수식 연결' : ''}`)}" style="--matrix-tag-color:${escapeHtml(tag.tag_color || '#dbeafe')}">${escapeHtml(label)}</button>`;
+  }).join('');
+  return `<span class="matrix-tag-chips">${visible}${tags.length > 3 ? `<em title="${escapeHtml(tags.slice(3).map(tag => tag.tag_name).join(' · '))}">+${tags.length - 3}</em>` : ''}</span>`;
 }
 
 function formatLiveTime(value) {
@@ -1294,6 +1322,7 @@ function renderLiveMatrixRows(products) {
       : '<span class="tag">미매칭</span>';
     const profile = product.__profile || {};
     const tagSummary = [profile.shape, profile.tag_summary].filter(Boolean).join(' · ');
+    const appliedTagChips = matrixAppliedTagChips(profile);
     const productGroup = sellpiaProductGroupKey(product);
     const priceBasis = product.__priceBasis || {};
     const isPriceBasis = Number(priceBasis.candidateCount || 0) > 1
@@ -1325,7 +1354,7 @@ function renderLiveMatrixRows(products) {
       ${channelInventoryCells(product, 'smartstore', '스마트스토어', sellerBaseMerges.get(`${rowIndex}|smartstore`), productIdentityMerges.get(`${rowIndex}|smartstore`))}
       ${channelInventoryCells(product, 'makeshop', '메이크샵', sellerBaseMerges.get(`${rowIndex}|makeshop`), productIdentityMerges.get(`${rowIndex}|makeshop`))}
       ${channelInventoryCells(product, 'ably', '에이블리', sellerBaseMerges.get(`${rowIndex}|ably`), productIdentityMerges.get(`${rowIndex}|ably`))}
-      <td class="profile-cell${profile.material ? '' : ' data-gap'}">${escapeHtml(profile.material || '-')}</td><td class="profile-cell${profile.product_group ? '' : ' data-gap'}">${escapeHtml(profile.product_group || '-')}</td><td class="profile-tags-cell">${tagSummary ? `<span class="tag" title="${escapeHtml(tagSummary)}">${escapeHtml(tagSummary)}</span>` : mappingTag}</td><td>${formatLiveTime(product.sellpia_source_updated_at || product.sellpia_inventory_at || product.updated_at)}</td>
+      <td class="profile-cell${profile.material ? '' : ' data-gap'}">${escapeHtml(profile.material || '-')}</td><td class="profile-cell${profile.product_group ? '' : ' data-gap'}">${escapeHtml(profile.product_group || '-')}</td><td class="profile-tags-cell">${appliedTagChips || (tagSummary ? `<span class="tag" title="${escapeHtml(tagSummary)}">${escapeHtml(tagSummary)}</span>` : mappingTag)}</td><td>${formatLiveTime(product.sellpia_source_updated_at || product.sellpia_inventory_at || product.updated_at)}</td>
     </tr>`;
   }).join('');
   applyColumnVisibility(activeView);
@@ -11618,7 +11647,8 @@ function updateInboundCostModalPreview() {
   const manualField = document.getElementById('inbound-cost-manual-field');
   const formulaField = document.getElementById('inbound-cost-formula-field');
   manualField.hidden = mode !== 'manual';
-  formulaField.hidden = mode !== 'formula';
+  const unified = resolvedInboundCost(product);
+  formulaField.hidden = mode !== 'formula' || Boolean(unified.calculated && !document.getElementById('inbound-cost-formula').value);
   let value = null;
   let equation = '미설정 상태로 저장합니다.';
   if (mode === 'manual') {
@@ -11627,11 +11657,12 @@ function updateInboundCostModalPreview() {
     equation = value === null ? '직접 입력 금액을 적어주세요.' : '직접 확인한 실입고가';
   } else if (mode === 'formula') {
     const tag = inboundCostState.tags.find(item => String(item.tag_id) === document.getElementById('inbound-cost-formula').value);
-    value = calculateInboundCostPreview(product.sellpia_purchase_price, tag);
-    equation = tag ? `${inboundCostFormulaLabel(tag)} = ${formatNullableNumber(value)}원` : '수식태그를 선택해주세요.';
+    value = tag ? calculateInboundCostPreview(product.sellpia_source_purchase_price, tag) : unified.calculated ? unified.value : null;
+    equation = tag ? `${inboundCostFormulaLabel(tag)} = ${formatNullableNumber(value)}원` : unified.calculated ? `${unified.tagName} · ${unified.error || `저장된 계산값 ${formatNullableNumber(value)}원`}` : '수식태그를 선택해주세요.';
   }
   document.getElementById('inbound-cost-preview').textContent = value === null || !Number.isFinite(value) ? '-' : `${formatNullableNumber(value)}원`;
   document.getElementById('inbound-cost-preview-equation').textContent = equation;
+  document.getElementById('inbound-cost-modal-save').textContent = mode === 'formula' && unified.calculated && !document.getElementById('inbound-cost-formula').value ? '현재 수식 유지' : '실입고가 저장';
 }
 
 async function openInboundCostModal(product) {
@@ -11645,7 +11676,10 @@ async function openInboundCostModal(product) {
   document.getElementById('inbound-cost-manual').value = product.actual_inbound_manual_cost ?? '';
   renderInboundCostTagList();
   document.getElementById('inbound-cost-formula').value = product.inbound_cost_formula_tag_id || '';
-  const mode = product.actual_inbound_cost_mode || 'empty';
+  const unified = resolvedInboundCost(product);
+  const linked = document.getElementById('inbound-cost-linked-formula');
+  if (linked) { linked.hidden = !unified.calculated; linked.innerHTML = unified.calculated ? `<b>현재 적용 수식 태그</b><span>${escapeHtml(unified.tagName)}</span><em>${escapeHtml(unified.error || `실입고가 ${formatNullableNumber(unified.value)}원으로 계산 완료`)} · 태그 해제는 상품 태그 화면에서 합니다.</em>` : ''; }
+  const mode = product.actual_inbound_cost_mode === 'manual' ? 'manual' : unified.calculated ? 'formula' : product.actual_inbound_cost_mode || 'empty';
   const radio = document.querySelector(`input[name="inbound-cost-mode"][value="${mode}"]`);
   if (radio) radio.checked = true;
   updateInboundCostModalPreview();
@@ -11714,7 +11748,10 @@ document.getElementById('inbound-cost-modal-save').addEventListener('click', asy
   const manualCost = mode === 'manual' ? document.getElementById('inbound-cost-manual').value : null;
   const formulaTagId = mode === 'formula' ? document.getElementById('inbound-cost-formula').value : null;
   if (mode === 'manual' && (manualCost === '' || Number(manualCost) < 0)) { showToast('직접 입력할 실입고가를 확인해주세요.'); return; }
-  if (mode === 'formula' && !formulaTagId) { showToast('적용할 수식태그를 선택해주세요.'); return; }
+  if (mode === 'formula' && !formulaTagId) {
+    if (resolvedInboundCost(product).calculated) { closeInboundCostModal(); return; }
+    showToast('적용할 수식태그를 선택해주세요.'); return;
+  }
   event.currentTarget.disabled = true;
   try {
     await liveData.saveInboundCost({sku:product.sellpia_sku_code, manualCost, formulaTagId});
@@ -11785,6 +11822,12 @@ function showPage(pageId) {
 }
 
 document.addEventListener('click', event => {
+  const matrixTagButton = event.target.closest('[data-matrix-tag-id]');
+  if (matrixTagButton) {
+    showPage('attributes');
+    void window.SystemV3TagManager?.openTag(matrixTagButton.dataset.matrixTagId);
+    return;
+  }
   const pageButton = event.target.closest('[data-page]');
   if (pageButton) showPage(pageButton.dataset.page);
   const toastButton = event.target.closest('[data-toast]');

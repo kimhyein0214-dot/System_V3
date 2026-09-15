@@ -2684,7 +2684,7 @@
     let internal,platform;
     try {
       [internal,platform]=await Promise.all([
-        loadCalculatedResults({skus:codes,scope:'',fields:['calculated_base_price']}),
+        loadCalculatedResults({skus:codes,scope:'',fields:['actual_inbound_cost','basis_sku_price','calculated_base_price']}),
         loadStoredMatrixPrices({sources:['smartstore','makeshop','ably'],skus:codes})
       ]);
     } catch(error) {
@@ -2694,11 +2694,26 @@
       return products;
     }
     throwIfAborted(signal);
-    const internalBySku=new Map(internal.rows.map(row=>[row.sku,row])),platformBySku=new Map();
+    const internalBySku=new Map(),platformBySku=new Map();
+    for(const stored of internal.rows||[]){
+      const sku=cleanText(stored.sku);if(!sku)continue;
+      if(!internalBySku.has(sku))internalBySku.set(sku,{});
+      const versions=stored.rule_versions||[],ruleNames=[...new Set(versions.map(version=>cleanText(version?.name)).filter(Boolean))];
+      internalBySku.get(sku)[stored.field]=stored.status==='error'
+        ? {error:stored.error,versions,ruleNames,generationId:stored.generation_id,calculatedAt:stored.calculated_at}
+        : {value:Number(stored.value),versions,ruleNames,generationId:stored.generation_id,calculatedAt:stored.calculated_at};
+    }
     for(const row of platform.rows){if(!platformBySku.has(row.sellpia_sku_code))platformBySku.set(row.sellpia_sku_code,{});platformBySku.get(row.sellpia_sku_code)[row.source_channel]={platformBase:row.base_price,discounted:row.discounted_base_price,platformDiscount:row.base_price==null||row.discounted_base_price==null?null:Number(row.base_price)-Number(row.discounted_base_price),platformOption:row.option_price,platformFinal:row.final_price,platformTerms:row.discount_terms,versions:row.rule_versions,error:row.error};}
     return products.map(product=>{
       const sku=cleanText(product?.sellpia_sku_code),row={...product},storedInternal=internalBySku.get(sku),storedPlatform=platformBySku.get(sku);
-      if(storedInternal){const versions=storedInternal.rule_versions||[],ruleNames=[...new Set(versions.map(version=>cleanText(version?.name)).filter(Boolean))];row.__hubInternalPrices={calculated_base_price:storedInternal.status==='error'?{error:storedInternal.error,versions,ruleNames}:{value:Number(storedInternal.value),versions,ruleNames}};}
+      if(storedInternal){
+        const projected={...storedInternal},profileTags=[...(product?.__profile?.product_tags||[]),...(product?.__profile?.sku_tags||[])],formulaTags=profileTags.filter(tag=>cleanText(tag?.tag_group).includes('수식'));
+        if(projected.actual_inbound_cost){
+          if(!formulaTags.length)delete projected.actual_inbound_cost;
+          else if(!projected.actual_inbound_cost.ruleNames?.length)projected.actual_inbound_cost={...projected.actual_inbound_cost,ruleNames:[...new Set(formulaTags.map(tag=>cleanText(tag?.tag_name)).filter(Boolean))]};
+        }
+        if(Object.keys(projected).length)row.__hubInternalPrices=projected;else delete row.__hubInternalPrices;
+      }
       else delete row.__hubInternalPrices;
       if(storedPlatform)row.__hubRulePrices=storedPlatform;else delete row.__hubRulePrices;
       return row;

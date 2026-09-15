@@ -30,7 +30,7 @@ for (const id of ["queue-status-filter", "queue-source-filter", "queue-refresh",
 const localAssets = [...html.matchAll(/(?:href|src)="(\.\/[^\"]+)"/g)].map(match => match[1]);
 assert.ok(localAssets.length >= 18, "the operations hub must retain its local asset bundle");
 assert.ok(localAssets.every(asset => /\?v=[^&\"]+$/.test(asset)), "all deployed local assets must be versioned");
-assert.match(html,/discount-price-math\.js\?v=20260914-matrix-visible-export-v2[\s\S]*?data-service\.js\?v=20260914-matrix-visible-export-v2[\s\S]*?app\.js\?v=20260914-matrix-visible-export-v2/,"matrix resolver, data adapter and app must deploy together");
+assert.match(html,/discount-price-math\.js\?v=20260914-matrix-visible-export-v2[\s\S]*?data-service\.js\?v=20260915-tag-matrix-v1[\s\S]*?app\.js\?v=20260915-tag-matrix-v1/,"the unchanged matrix resolver and the updated data adapter/app must all be cache-versioned");
 assert.match(data, /loadChangeQueue[\s\S]*?loadChangeQueueStats[\s\S]*?loadChangeEvents[\s\S]*?validateChangeQueue[\s\S]*?cancelChangeQueue[\s\S]*?retryChangeQueue/, "the frontend data adapter must expose the complete queue workflow");
 assert.match(data, /p_batch_id:batchId/, "writes must send their stable request batch ID to the database");
 assert.match(app, /const batchId = pendingChangeBatchId \|\| createRequestId\(\)[\s\S]*?saveSellpiaChanges\(snapshot, batchId\)[\s\S]*?pendingChangeBatchId = batchId/, "Sellpia automatic-save retries must reuse the same batch ID after failure");

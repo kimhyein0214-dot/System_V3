@@ -26,7 +26,15 @@ try{
   assert.equal(await page.locator('.ui-tag-sync-panel').isHidden(),true);
 
   await page.evaluate(()=>{
-    HubPriceWorkspace.state.tagImport={mode:'filename_tag',resolvedTagId:'tag-1',rows:[{sku:'10000-1'},{sku:'10000-2'},{sku:'10000-3'}]};
+    HubPriceWorkspace.state.tagImport={
+      mode:'metadata_tag',
+      rows:[{sku:'10000-1'},{sku:'10000-2'},{sku:'10000-3'}],
+      files:[{
+        parsed:{mode:'metadata_tag'},
+        resolution:{tag:{tag_id:'tag-1',tag_name:'소스_2000'}},
+        rows:[{sku:'10000-1'},{sku:'10000-2'},{sku:'10000-3'}]
+      }]
+    };
     document.body.classList.add('qa-sync-ready');
   });
   await page.waitForFunction(()=>document.querySelector('[data-sync-copy]')?.textContent.includes('최종 SKU 목록'));
