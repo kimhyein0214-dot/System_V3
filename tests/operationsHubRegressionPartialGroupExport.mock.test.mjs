@@ -56,7 +56,7 @@ test('single-SKU calculation errors preserve its original option while valid mat
 test('exportLatest passes exclusions into archive, records only applied rows, and rejects zero valid groups',async()=>{
  const reg={rules:[],assignments:[],dependencies:[]},config={id:'config',version:1,body:{source:'makeshop',anchor:'lowest',mode:'forward'}};
  let includeGood=true,saves=0,received;
- globalThis.SystemV3Data={ruleRegistry:async()=>reg,workDocument:async(action,kind,payload)=>{if(action==='list')return [{id:'config',title:'registry-platform:makeshop'}];if(action==='get')return config;saves++;assert.equal(payload.body.sku_count,1);return payload;},loadRulePlatformSiblings:async()=>[],loadFormulaProducts:async()=>[
+ globalThis.SystemV3Data={ruleRegistry:async()=>reg,workDocument:async(action,kind,payload)=>{if(action==='get_title')return config;saves++;assert.equal(payload.body.sku_count,1);return payload;},loadRulePlatformSiblings:async()=>[],loadFormulaProducts:async()=>[
   ...(includeGood?[{sellpia_sku_code:'good',system_base_price:200,__sellerPriceComponents:{makeshop:{seller_product_code:'G',seller_option_code:'1'}}}]:[]),
   {sellpia_sku_code:'bad1',system_base_price:200,__sellerPriceComponents:{makeshop:{seller_product_code:'D',seller_option_code:'1'}}},
   {sellpia_sku_code:'bad2',system_base_price:300,__sellerPriceComponents:{makeshop:{seller_product_code:'D',seller_option_code:'1'}}}],downloadLatestSellerOriginals:async()=>new Map([['makeshop',[{name:'original.xlsx'}]]])};
@@ -74,7 +74,7 @@ test('exportLatest passes exclusions into archive, records only applied rows, an
 test('late serializer conflict rebuilds untouched originals without any member of the failed product',async()=>{
  const products=[['a1','A','1'],['a2','A','2'],['b','B','1']].map(([sku,product,option])=>({sellpia_sku_code:sku,system_base_price:200,__sellerPriceComponents:{ably:{seller_product_code:product,seller_option_code:option}}}));
  const originalFile={name:'original.xlsx'};let builds=0,saves=0;
- globalThis.SystemV3Data={ruleRegistry:async()=>({rules:[],assignments:[],dependencies:[]}),workDocument:async(action,kind,payload)=>{if(action==='list')return [];if(action==='save'){saves++;assert.equal(payload.body.sku_count,1);return payload;}},loadRulePlatformSiblings:async()=>[],loadFormulaProducts:async()=>products,downloadLatestSellerOriginals:async()=>new Map([['ably',[originalFile]]])};
+ globalThis.SystemV3Data={ruleRegistry:async()=>({rules:[],assignments:[],dependencies:[]}),workDocument:async(action,kind,payload)=>{if(action==='get_title')return null;if(action==='save'){saves++;assert.equal(payload.body.sku_count,1);return payload;}},loadRulePlatformSiblings:async()=>[],loadFormulaProducts:async()=>products,downloadLatestSellerOriginals:async()=>new Map([['ably',[originalFile]]])};
  globalThis.SystemV3SellerParsers={parseSellerFiles:async()=>({normalizedRows:[original('A','1'),original('A','2'),original('B','1')]})};
  const actual=globalThis.SystemV3SellerExport;
  globalThis.SystemV3SellerExport={...actual,buildExportArchive:async(files,items,progress,excluded)=>{
@@ -88,7 +88,7 @@ test('late serializer conflict rebuilds untouched originals without any member o
 test('preexisting per-SKU exclusions do not roll back successful siblings or count preservation as a SKU',async()=>{
  const good={sellpia_sku_code:'good',system_base_price:200,__sellerPriceComponents:{makeshop:{seller_product_code:'P',seller_option_code:'1'}}};
  const bad={sellpia_sku_code:'bad',system_base_price:200,__sellerPriceComponents:{makeshop:{seller_product_code:'P',seller_option_code:'2',draft_change_id:1,pricing_input_mode:'option',option_price_source:'manual',draft_option_price:'invalid'}}};
- let builds=0;globalThis.SystemV3Data={ruleRegistry:async()=>({rules:[],assignments:[],dependencies:[]}),workDocument:async(action,kind,payload)=>{if(action==='list')return [];if(action==='save'){assert.equal(payload.body.sku_count,1);return payload;}},loadRulePlatformSiblings:async()=>[],loadFormulaProducts:async()=>[good,bad],downloadLatestSellerOriginals:async()=>new Map([['makeshop',[{name:'original.xlsx'}]]])};
+ let builds=0;globalThis.SystemV3Data={ruleRegistry:async()=>({rules:[],assignments:[],dependencies:[]}),workDocument:async(action,kind,payload)=>{if(action==='get_title')return null;if(action==='save'){assert.equal(payload.body.sku_count,1);return payload;}},loadRulePlatformSiblings:async()=>[],loadFormulaProducts:async()=>[good,bad],downloadLatestSellerOriginals:async()=>new Map([['makeshop',[{name:'original.xlsx'}]]])};
  globalThis.SystemV3SellerParsers={parseSellerFiles:async()=>({normalizedRows:[original('P','1'),original('P','2')]})};
  const actual=globalThis.SystemV3SellerExport;globalThis.SystemV3SellerExport={...actual,buildExportArchive:async(files,items,progress,excluded)=>{builds++;return {appliedItems:items,skippedItems:excluded,manifest:[]};}};
  try{const out=await api.exportLatest(['good','bad'],'makeshop');assert.equal(builds,1);assert.equal(out.appliedItems.length,2);assert.equal(out.appliedItems.filter(i=>i.preserve_unmapped).length,1);assert.deepEqual(out.skippedItems.map(e=>e.item.sellpia_sku_code),['bad']);}finally{globalThis.SystemV3SellerExport=actual;}

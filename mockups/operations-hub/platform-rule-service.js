@@ -58,7 +58,7 @@
   const terms=effectiveDiscount?[...original.filter(t=>!t.is_baseline&&t.term_key!==discountKey),...replacement]:original;
   return rows.map((r,i)=>({...r,platformBase:base,platformOption:amounts[i]-anchor,platformDiscount:base-discounted,platformFinal:discounted+amounts[i]-anchor,platformTerms:terms,versions:[...(r.versions||[]),...[registrationRules[i],discount].filter(Boolean).map(x=>({id:x.id,version:x.version}))]}));
  }
- async function settings(source){const docs=await data().workDocument('list','formula');const found=docs.find(d=>d.title==='registry-platform:'+source);return found?await data().workDocument('get','formula',{id:found.id}):{title:'registry-platform:'+source,body:{source,mode:'reverse',anchor:'lowest',registration_rule_id:null,discount_rule_id:null}};}
+ async function settings(source){const title='registry-platform:'+source,found=await data().workDocument('get_title','formula',{title});return found||{title,body:{source,mode:'reverse',anchor:'lowest',registration_rule_id:null,discount_rule_id:null}};}
  async function calculate(skus,source,context={}){
   const [registry,config]=await Promise.all([context.registry??data().ruleRegistry('list'),context.config??settings(source)]);
   const requested=[...new Set(skus)];if(!requested.length)throw Error('대상 SKU를 선택하세요.');

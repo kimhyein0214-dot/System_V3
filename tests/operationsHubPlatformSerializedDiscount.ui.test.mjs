@@ -35,7 +35,7 @@ try{
    const logs=[];
    window.SystemV3Data={
     ruleRegistry:async()=>registry,
-    workDocument:async(action,kind,payload)=>action==='list'?[{id:'config',title:'registry-platform:'+source}]:action==='get'?{id:'config',version:1,body:settings}:(logs.push(payload),payload),
+    workDocument:async(action,kind,payload)=>action==='list'?[{id:'config',title:'registry-platform:'+source}]:['get','get_title'].includes(action)?{id:'config',title:'registry-platform:'+source,version:1,body:settings}:(logs.push(payload),payload),
     loadRulePlatformSiblings:async()=>['1000-1','1000-2'],
     loadFormulaProducts:async()=>parsed.normalizedRows.map((r,i)=>({sellpia_sku_code:'1000-'+(i+1),system_base_price:15000+i*2000,__sellerPriceComponents:{[source]:{seller_product_code:r.product_code,seller_option_code:r.option_code,source_discount_terms:r.discount_terms}}})),
     downloadLatestSellerOriginals:async()=>new Map([[source,[file]]])

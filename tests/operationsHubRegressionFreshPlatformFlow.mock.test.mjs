@@ -30,8 +30,7 @@ globalThis.SystemV3Data = {
   ruleRegistry:async action => {assert.equal(action,'list');registryLoads++;calls.push('registry');return clone(registry);},
   workDocument:async (action,kind,payload) => {
     assert.equal(kind,'formula');
-    if(action==='list')return [{id:platform.id,title:platform.title}];
-    if(action==='get')return clone(platform);
+    if(action==='get_title'){assert.equal(payload.title,platform.title);return clone(platform);}
     assert.equal(action,'save');logs.push(clone(payload));return {...payload,version:1};
   },
   loadRulePlatformSiblings:async (skus,source) => {assert.equal(source,'ably');calls.push('siblings');return ['six','eight',...(includeHigh?['high']:[])];},
