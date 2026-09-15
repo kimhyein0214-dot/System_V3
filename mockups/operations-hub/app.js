@@ -11897,14 +11897,13 @@ uploadButton.addEventListener('click', async () => {
         return;
       }
     }
-    let calculationWarning = '';
+    let calculationWarning = result.calculationScopeWarning || '';
     const affectsSellpiaPrice = sourceSelect.value === 'sellpia' && (fields.price || fields.purchasePrice);
     const affectsSellerPrice = ['smartstore','makeshop','ably'].includes(sourceSelect.value) && (fields.price || fields.discount);
-    if (affectsSellpiaPrice || affectsSellerPrice) {
+    if ((affectsSellpiaPrice || affectsSellerPrice) && !calculationWarning) {
       try {
         showUploadProgress({percent:98,title:'저장 가격 갱신 중',detail:'변경된 원본값으로 매트릭스 가격을 다시 저장합니다.'});
-        let affectedSkus = result.affectedSkus || [];
-        if (affectsSellerPrice) affectedSkus = (await liveData.loadAllFilteredSkus({status:'all'})).skus || [];
+        const affectedSkus = result.affectedSkus || [];
         const calculation = await materializeHubPrices(affectedSkus,{
           sources:affectsSellerPrice?[sourceSelect.value]:['smartstore','makeshop','ably'],
           reason:`source-upload:${sourceSelect.value}`,

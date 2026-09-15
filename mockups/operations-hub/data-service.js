@@ -2537,13 +2537,30 @@
   }
   async function loadFormulaProducts(skus, {onProgress} = {}) {
     requireOperationsHubSessionToken();
-    const codes=[...new Set(skus)],chunks=[];for(let i=0;i<codes.length;i+=200)chunks.push(codes.slice(i,i+200));
+    const codes=[...new Set(skus)],chunks=[];for(let i=0;i<codes.length;i+=100)chunks.push(codes.slice(i,i+100));
     const results=new Array(chunks.length);let next=0,completed=0;
-    await Promise.all(Array.from({length:Math.min(4,chunks.length)},async()=>{
-      while(next<chunks.length){const index=next++,chunk=chunks[index];
-        const {data,error}=await db.from(MATRIX_VIEW).select('sellpia_sku_code,display_name,sellpia_source_sale_price,system_base_price,smartstore_price,makeshop_price,ably_price,smartstore_product_code,makeshop_product_code,ably_product_code').in('sellpia_sku_code',chunk);if(error)throw error;
+    const timedOut=error=>/statement timeout|canceling statement/i.test(String(error?.message||error));
+    async function loadChunk(chunk, retry=0) {
+      try {
+        const {data,error}=await db.from(MATRIX_VIEW).select('sellpia_sku_code,display_name,sellpia_source_sale_price,system_base_price,smartstore_price,makeshop_price,ably_price,smartstore_product_code,makeshop_product_code,ably_product_code').in('sellpia_sku_code',chunk);if(error)throw readableDatabaseError(error);
         let part=await attachProductProfiles(data||[]);part=await attachInboundCostDetails(part);part=await attachSystemOperationalDetails(part);
-        results[index]=await attachSellerDrafts(await attachSellerPriceComponents(part));completed+=chunk.length;onProgress?.(completed,codes.length);
+        return await attachSellerDrafts(await attachSellerPriceComponents(part));
+      } catch (error) {
+        if (!timedOut(error)) throw error;
+        if (chunk.length>25) {
+          const middle=Math.ceil(chunk.length/2);
+          return [...await loadChunk(chunk.slice(0,middle)),...await loadChunk(chunk.slice(middle))];
+        }
+        if (retry<1) {
+          await new Promise(resolve=>setTimeout(resolve,150));
+          return loadChunk(chunk,retry+1);
+        }
+        throw error;
+      }
+    }
+    await Promise.all(Array.from({length:Math.min(2,chunks.length)},async()=>{
+      while(next<chunks.length){const index=next++,chunk=chunks[index];
+        results[index]=await loadChunk(chunk);completed+=chunk.length;onProgress?.(completed,codes.length);
       }
     }));
     return results.flat();
@@ -3165,7 +3182,18 @@
       }
 
       let finalRowCount = normalizedRows.length;
+      let affectedSkus = normalizedRows.map(row=>row.sellpia_sku_code);
       if (uploadMode === 'patch') {
+        if (fields.price || fields.purchasePrice) {
+          const {data:priceAffected,error:affectedError}=await db.rpc('operations_hub_sellpia_patch_price_affected_skus',{
+            p_patch_snapshot_id:snapshotId,
+            p_selected_fields:{price:Boolean(fields.price),basePrice:Boolean(fields.basePrice),purchasePrice:Boolean(fields.purchasePrice)}
+          });
+          if(affectedError)throw readableDatabaseError(affectedError);
+          affectedSkus=Array.isArray(priceAffected)?priceAffected:[];
+        } else {
+          affectedSkus=[];
+        }
         onProgress?.({percent:95, title:'셀피아 부분 원본 병합 중', detail:'선택하지 않은 필드와 파일에 없는 SKU를 직전 전체 원본에서 유지합니다.'});
         const {data: mergeResult, error: mergeError} = await db.rpc('finalize_operations_hub_sellpia_patch', {
           p_patch_snapshot_id:snapshotId,
@@ -3196,7 +3224,7 @@
         uploadMode,
         uploadedRowCount:normalizedRows.length,
         rowCount:finalRowCount,
-        affectedSkus:normalizedRows.map(row=>row.sellpia_sku_code)
+        affectedSkus
       };
     } catch (error) {
       if (snapshotId) {
@@ -3305,13 +3333,21 @@
       const {data:finalizedRows, error:finalizeError} = await db.rpc('finalize_seller_inventory_snapshot', {p_snapshot_id:snapshotId});
       if (finalizeError) throw finalizeError;
       const finalized = Array.isArray(finalizedRows) ? finalizedRows[0] : finalizedRows;
+      let affectedSkus=[],calculationScopeWarning='';
+      if(selectedFields.price||selectedFields.discount){
+        const {data:priceAffected,error:affectedError}=await db.rpc('operations_hub_seller_snapshot_price_affected_skus',{p_snapshot_id:snapshotId});
+        if(affectedError)calculationScopeWarning=`판매처 원본은 저장됐지만 가격 영향 범위 조회 실패: ${readableDatabaseError(affectedError).message}`;
+        else affectedSkus=Array.isArray(priceAffected)?priceAffected:[];
+      }
       onProgress?.({percent:97, title:'매트릭스 연결 중', detail:'최신 판매처 재고·가격을 통합 매트릭스에 반영합니다.'});
       return {
         snapshotId,
         source,
         uploadMode,
         uploadedRowCount:normalizedRows.length,
-        rowCount:Number(finalized?.row_count || normalizedRows.length)
+        rowCount:Number(finalized?.row_count || normalizedRows.length),
+        affectedSkus,
+        calculationScopeWarning
       };
     } catch (error) {
       if (snapshotId) {
