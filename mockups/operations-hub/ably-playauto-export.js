@@ -16,6 +16,7 @@
   const splitLines=value=>String(value??'').split(/\r?\n/).map(clean);
   const nonEmptyLines=value=>splitLines(value).filter(Boolean);
   const stripSellpiaPrefix=value=>clean(value).replace(/^sellpia_/i,'');
+  const explicitSellpiaSku=value=>/^sellpia_.+-\d+$/i.test(clean(value))?stripSellpiaPrefix(value):'';
   const sellerProductCode=value=>{const match=clean(value).match(/^sellpia_(.+)$/i);return match?match[1]:'';};
   const headerMap=headers=>new Map((headers||[]).map((value,index)=>[clean(value),index]));
   const assertHeaders=(headers,required,label)=>{const map=headerMap(headers),missing=required.filter(name=>!map.has(name));if(missing.length)throw Error(`${label} 필수 헤더가 없습니다: ${missing.join(', ')}`);return map;};
@@ -74,12 +75,16 @@
       const sellerCode=clean(valueAt(row,map,'*판매자관리코드'));
       const optionPairs=[1,2,3].map(index=>({name:clean(valueAt(row,map,`옵션${index} 명칭`)),value:clean(valueAt(row,map,`옵션${index} 값`))})).filter(pair=>pair.name||pair.value);
       const values=optionPairs.map(pair=>pair.value).filter(Boolean),joined=values.join('/');
+      const sellerOptionCode=clean(valueAt(row,map,'옵션관리코드')),optionSkuCode=clean(valueAt(row,map,'옵션 SKU 코드'));
+      const directSkuCodes=[...new Set([sellerOptionCode,optionSkuCode].map(explicitSellpiaSku).filter(Boolean))];
       return {
         template_type:'option_price_stock',source_row_no:rowIndex+2,
         shop:clean(valueAt(row,map,'*쇼핑몰')),account:clean(valueAt(row,map,'*계정')),seller_management_code:sellerCode,
         sellpia_product_code:sellerProductCode(sellerCode),product_name:clean(valueAt(row,map,'온라인 상품명')),
         seller_product_code:clean(valueAt(row,map,'쇼핑몰상품코드')),base_price:finite(valueAt(row,map,'판매가'))?Number(valueAt(row,map,'판매가')):null,
-        seller_option_code:clean(valueAt(row,map,'옵션관리코드')),option_sku_code:clean(valueAt(row,map,'옵션 SKU 코드')),
+        seller_option_code:sellerOptionCode,option_sku_code:optionSkuCode,
+        direct_sellpia_sku_code:directSkuCodes.length===1?directSkuCodes[0]:'',
+        direct_sellpia_sku_error:directSkuCodes.length>1?'옵션관리코드와 옵션 SKU 코드가 서로 다른 셀피아 SKU를 가리킵니다.':'',
         option_pairs:optionPairs,option_candidates:[...values,...(joined?[joined]:[])],primary_option_name:values[0]||'',
         option_price:finite(valueAt(row,map,'추가 금액'))?Number(valueAt(row,map,'추가 금액')):null,
         available_stock:finite(valueAt(row,map,'판매가능재고'))?Number(valueAt(row,map,'판매가능재고')):null,
@@ -92,15 +97,29 @@
   }
 
   function resolveSellpiaSku(item,catalog,mappings=[]){
-    const sellerProduct=clean(item.seller_product_code),optionKeys=[clean(item.seller_option_code),clean(item.option_sku_code)].filter(Boolean);
+    const optionCarrier=item.template_type==='option_price_stock';
+    if(optionCarrier&&item.direct_sellpia_sku_error)return {error:item.direct_sellpia_sku_error,method:'direct_sku_ambiguous'};
+    const sellerProduct=clean(item.seller_product_code);
+    const optionKeys=[clean(item.seller_option_code),clean(item.option_sku_code)].filter(value=>value&&!explicitSellpiaSku(value));
     const productMappings=sellerProduct?(mappings||[]).filter(row=>clean(row.product_code)===sellerProduct):[];
+    const exactMappings=productMappings.length?(optionKeys.length?productMappings.filter(row=>optionKeys.includes(clean(row.option_code))):(productMappings.length===1?productMappings:[])):[];
+    const uniqueMappings=[...new Map(exactMappings.map(row=>[clean(row.sku),row])).values()].filter(row=>clean(row.sku));
+    const rows=(catalog||[]).filter(row=>clean(row.sellpia_product_code)===clean(item.sellpia_product_code));
+    if(optionCarrier&&item.direct_sellpia_sku_code){
+      const directSku=clean(item.direct_sellpia_sku_code),direct=rows.filter(row=>clean(row.sellpia_sku_code)===directSku);
+      if(direct.length>1)return {error:'직접 SKU가 카탈로그에 중복됩니다.',method:'direct_sku'};
+      if(direct.length===0){
+        const existsElsewhere=(catalog||[]).some(row=>clean(row.sellpia_sku_code)===directSku);
+        return {error:existsElsewhere?'직접 SKU가 해당 셀피아 상품에 속하지 않습니다.':'직접 SKU를 카탈로그에서 찾지 못했습니다.',method:'direct_sku_invalid'};
+      }
+      if(uniqueMappings.length>1)return {error:'기존 에이블리 판매처 연결이 여러 SKU를 가리킵니다.',method:'seller_mapping_ambiguous'};
+      if(uniqueMappings.length===1&&clean(uniqueMappings[0].sku)!==directSku)return {error:'직접 SKU와 기존 에이블리 판매처 연결이 충돌합니다.',method:'direct_sku_mapping_conflict'};
+      return {sku:direct[0].sellpia_sku_code,method:'direct_sku',row:direct[0]};
+    }
     if(productMappings.length){
-      const exactMappings=optionKeys.length?productMappings.filter(row=>optionKeys.includes(clean(row.option_code))):(productMappings.length===1?productMappings:[]);
-      const uniqueMappings=[...new Map(exactMappings.map(row=>[clean(row.sku),row])).values()].filter(row=>clean(row.sku));
       if(uniqueMappings.length===1)return {sku:uniqueMappings[0].sku,method:'seller_mapping_exact',row:uniqueMappings[0]};
       if(uniqueMappings.length>1)return {error:'기존 에이블리 판매처 연결이 여러 SKU를 가리킵니다.',method:'seller_mapping_ambiguous'};
     }
-    const rows=(catalog||[]).filter(row=>clean(row.sellpia_product_code)===clean(item.sellpia_product_code));
     if(item.direct_sellpia_sku_code){
       const direct=rows.filter(row=>clean(row.sellpia_sku_code)===clean(item.direct_sellpia_sku_code));
       if(direct.length===1)return {sku:direct[0].sellpia_sku_code,method:'direct_sku',row:direct[0]};

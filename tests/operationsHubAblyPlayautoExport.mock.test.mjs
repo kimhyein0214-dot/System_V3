@@ -55,4 +55,45 @@ const productTemplate10000={...parsedProduct[1],direct_sellpia_sku_code:'10000-2
 const optionTemplate10000={...parsedOption[0],sellpia_product_code:'10000',seller_product_code:'ABLY-10000',seller_option_code:'OPT-2',option_sku_code:'',option_candidates:['표기가 달라도 기존 연결 우선']};
 assert.equal(A.resolveSellpiaSku(productTemplate10000,[],crossTemplateMappings).sku,'10000-2','price+option carrier resolves the mapped SKU');
 assert.equal(A.resolveSellpiaSku(optionTemplate10000,[],crossTemplateMappings).sku,'10000-2','option+stock carrier uses the same seller identity before option text');
+
+const directOptionRows=[
+ ['*쇼핑몰','*계정','*판매자관리코드','온라인 상품명','쇼핑몰상품코드','옵션1 명칭','옵션1 값','옵션관리코드','옵션 SKU 코드','추가 금액','판매가능재고','*판매수량'],
+ ['에이블리','pink_rocket@naver.com','sellpia_10000','상품','40337964','옵션','별[PM-7-01]','sellpia_10000-1','sellpia_10000-1',0,3,0],
+ ['에이블리','pink_rocket@naver.com','sellpia_10000','상품','40337964','옵션','나비(바변경불가)[PM-7-02]','sellpia_10000-2','sellpia_10000-2',0,2,0],
+ ['에이블리','pink_rocket@naver.com','sellpia_10000','상품','40337964','옵션','볼[PM-7-03]','sellpia_10000-3','sellpia_10000-3',0,1,0]
+];
+const directItems=A.parseOptionRows(directOptionRows);
+const catalog10000=[
+ {sellpia_product_code:'10000',sellpia_sku_code:'10000-1',sellpia_option_name:'별[PM-7-01]'},
+ {sellpia_product_code:'10000',sellpia_sku_code:'10000-2',sellpia_option_name:'나비[PM-7-02]'},
+ {sellpia_product_code:'10000',sellpia_sku_code:'10000-3',sellpia_option_name:'볼[PM-7-03]'}
+];
+assert.deepEqual(directItems.map(item=>item.direct_sellpia_sku_code),['10000-1','10000-2','10000-3'],'both option identity columns expose the same explicit sellpia SKU');
+assert.deepEqual(directItems.map(item=>A.resolveSellpiaSku(item,catalog10000).method),['direct_sku','direct_sku','direct_sku']);
+assert.deepEqual(directItems.map(item=>A.resolveSellpiaSku(item,catalog10000).sku),['10000-1','10000-2','10000-3']);
+assert.equal(A.resolveSellpiaSku(directItems[1],catalog10000).sku,'10000-2','explicit direct SKU wins even when the carrier display name contains an operational suffix');
+
+const directConflict=A.parseOptionRows([
+ directOptionRows[0],
+ [...directOptionRows[1].slice(0,7),'sellpia_10000-1','sellpia_10000-2',0,3,0]
+])[0];
+assert.match(A.resolveSellpiaSku(directConflict,catalog10000).error,/서로 다른/,'conflicting explicit direct SKU columns must fail closed');
+assert.equal(A.resolveSellpiaSku(directConflict,catalog10000).method,'direct_sku_ambiguous');
+
+const missingDirect={...directItems[0],direct_sellpia_sku_code:'10000-9'};
+assert.match(A.resolveSellpiaSku(missingDirect,catalog10000).error,/카탈로그/,'unknown direct SKU must be blocked');
+const otherProductDirect={...directItems[0],direct_sellpia_sku_code:'99999-1'};
+assert.match(A.resolveSellpiaSku(otherProductDirect,[...catalog10000,{sellpia_product_code:'99999',sellpia_sku_code:'99999-1'}]).error,/속하지/,'direct SKU from another product must be blocked');
+
+const directMappingConflict={...directItems[1],seller_option_code:'309683801'};
+const mappings10000=[
+ {product_code:'40337964',option_code:'309683801',sku:'10000-1'},
+ {product_code:'40337964',option_code:'309685687',sku:'10000-2'},
+ {product_code:'40337964',option_code:'309683803',sku:'10000-3'}
+];
+assert.match(A.resolveSellpiaSku(directMappingConflict,catalog10000,mappings10000).error,/충돌/,'direct SKU and verified seller mapping conflict must fail closed');
+assert.equal(A.resolveSellpiaSku(directMappingConflict,catalog10000,mappings10000).method,'direct_sku_mapping_conflict');
+const numericMappingOnly={...directItems[0],direct_sellpia_sku_code:'',seller_option_code:'309683801',option_sku_code:'',option_candidates:['표기가 달라짐']};
+assert.equal(A.resolveSellpiaSku(numericMappingOnly,catalog10000,mappings10000).method,'seller_mapping_exact','numeric Ably option code keeps the existing mapping path');
+assert.equal(A.resolveSellpiaSku({...parsedProduct[0],direct_sellpia_sku_code:'',option_candidates:[]},[{sellpia_product_code:'11541',sellpia_sku_code:'11541-1'}]).method,'single_product_sku','optionless single-product behavior remains unchanged');
 console.log('PASS Ably PlayAuto templates: existing seller mapping wins, strict option fallback remains, and V/W contract preserves X.');
