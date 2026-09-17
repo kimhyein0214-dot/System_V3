@@ -1,0 +1,16 @@
+import assert from 'node:assert/strict';
+import test from 'node:test';
+import fs from 'node:fs';
+import vm from 'node:vm';
+const source=fs.readFileSync('mockups/operations-hub/data-service.js','utf8');
+const migration=fs.readFileSync('supabase/migrations/20260917022748_carrier_scoped_targets_read.sql','utf8');
+function extract(name){const start=source.indexOf('  async function '+name+'('),next=source.slice(start+2).search(/\n  (?:async )?function /);assert.ok(start>=0);return next<0?source.slice(start):source.slice(start,start+2+next);}
+function harness(fail=false){const calls=[],events=[],ctx={global:{},Date,cleanText:v=>String(v??'').trim(),readableDatabaseError:e=>e,requireOperationsHubSessionToken:()=> 'mock-session',db:{from(){throw Error('No managed view/global registry/source snapshot');},async rpc(name,args){calls.push(args);assert.equal(name,'hub_carrier_targets_read_v1');if(fail)return {error:{message:'canceling statement due to statement timeout'}};return {data:{matrix_rows:args.p_skus.map(sku=>({sku,seller_stock:0})),calculated_rows:args.p_skus.map(sku=>({sku,field:'platform_final_price',value:2800,status:'calculated',generation_id:27,rule_versions:[]})),drafts:[],active_price_skus:[]}};}}};vm.createContext(ctx);vm.runInContext(extract('carrierRead')+'\n'+extract('loadCarrierMatrixTargets')+'\nthis.read=loadCarrierMatrixTargets;',ctx);return {ctx,calls,events};}
+test('31-SKU carrier read is one scoped RPC, no retry cache/global fallback; 5 repeats identical',async()=>{
+ const h=harness(),skus=Array.from({length:31},(_,i)=>`1181-${i+1}`);let previous;
+ for(let n=0;n<5;n++){const out=JSON.parse(JSON.stringify(await h.ctx.read({source:'smartstore',skus,onQuery:e=>h.events.push(e)})));assert.equal(out.rows.length,31);assert.ok(out.rows.every(r=>r.seller_stock===0&&r.active_price_rule===false));if(previous)assert.deepEqual(out,previous);previous=out;}
+ assert.equal(h.calls.length,5);assert.ok(h.calls.every(c=>c.p_skus.length===31));assert.ok(h.events.every(e=>e.full_snapshot===false&&e.status==='ok'&&e.scope_count===31));
+});
+test('large request uses 200-SKU chunks, never per-SKU N+1',async()=>{const h=harness();await h.ctx.read({source:'ably',skus:Array.from({length:401},(_,i)=>'S'+i)});assert.deepEqual(h.calls.map(c=>c.p_skus.length),[200,200,1]);});
+test('timeout reports actual RPC and failure metrics, next attempt is clean',async()=>{const h=harness(true);await assert.rejects(h.ctx.read({source:'makeshop',skus:['1181-1'],onQuery:e=>h.events.push(e)}),/hub_carrier_targets_read_v1.*statement timeout/);assert.equal(h.calls.length,1);assert.equal(h.events[0].status,'error');const next=harness();assert.equal((await next.ctx.read({source:'makeshop',skus:['1181-1']})).rows.length,1);});
+test('read RPC keeps operator authentication, cap and exact projection guards',()=>{assert.match(migration,/require_operations_hub_operator_session\(p_session_token\)/);assert.match(migration,/between 1 and 200/);assert.match(migration,/revoke all on function operations_private/);assert.match(migration,/anywhere may fall back/);assert.doesNotMatch(migration,/\b(update|delete|insert|truncate)\s+(?:into|from|public\.|operations_private\.)/i);assert.doesNotMatch(migration,/statement_timeout/);});

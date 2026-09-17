@@ -201,7 +201,7 @@ test('snapshot reader paginates 14000 rows without legacy reads or staging',asyn
 test('carrier mapping lookup reads only requested seller product identities before snapshot',async()=>{
   const functionSource=dataSource.slice(dataSource.indexOf('  async function loadCarrierSellerMappings('),dataSource.indexOf('  async function loadSystemStocks('));
   const calls=[];
-  const context={cleanText:value=>String(value??'').trim(),readableDatabaseError:error=>error,db:{from:table=>({select:fields=>({in:(field,values)=>({order:()=>({range:async(from,to)=>{calls.push({table,fields,field,values,from,to});return {data:[{sellpia_sku_code:'SKU-1',smartstore_product_code:'P-1',smartstore_option_code:'O-1'}],error:null};}})})})})}};
+  const context={carrierRead:async(label,count,query)=>query,cleanText:value=>String(value??'').trim(),readableDatabaseError:error=>error,db:{from:table=>({select:fields=>({in:(field,values)=>({order:()=>({range:async(from,to)=>{calls.push({table,fields,field,values,from,to});return {data:[{sellpia_sku_code:'SKU-1',smartstore_product_code:'P-1',smartstore_option_code:'O-1'}],error:null};}})})})})}};
   vm.createContext(context);vm.runInContext(functionSource+'\nthis.load=loadCarrierSellerMappings;',context);
   const result=await context.load({source:'smartstore',identities:[{product_code:'P-1',option_code:'O-1'},{product_code:'P-1',option_code:'O-2'}]});
   assert.deepEqual(plain(result.rows),[{sku:'SKU-1',product_code:'P-1',option_code:'O-1'}]);

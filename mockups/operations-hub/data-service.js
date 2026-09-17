@@ -3524,18 +3524,17 @@
     return data;
   }
 
-  async function loadPlayautoSellpiaCatalog(productCodes=null) {
+  async function loadPlayautoSellpiaCatalog(productCodes=null,onQuery=null) {
     const requested=Array.isArray(productCodes)?[...new Set(productCodes.map(cleanText).filter(Boolean))]:null;
     if(requested&&requested.length===0)return [];
     const rows=[];const size=1000;
     if(requested){
       for(let offset=0;offset<requested.length;offset+=100){
         for(let from=0;;from+=size){
-          const {data,error}=await db.from('sellpia_stock_latest')
+          const {data}=await carrierRead('carrier Sellpia catalog',requested.slice(offset,offset+100).length,db.from('sellpia_stock_latest')
             .select('sellpia_sku_code,sellpia_product_code,sellpia_product_name,sellpia_option_name,own_sku')
             .in('sellpia_product_code',requested.slice(offset,offset+100))
-            .order('sellpia_sku_code',{ascending:true}).range(from,from+size-1);
-          if(error)throw readableDatabaseError(error);
+            .order('sellpia_sku_code',{ascending:true}).range(from,from+size-1),onQuery);
           rows.push(...(data||[]));
           if(!data||data.length<size)break;
         }
@@ -3554,7 +3553,20 @@
     return rows;
   }
 
-  async function loadCarrierSellerMappings({source,identities=[]}={}) {
+  async function carrierRead(label,scopeSize,query,onQuery){
+    const started=global.performance?.now?.()??Date.now();
+    try{
+      const result=await query;
+      if(result.error)throw readableDatabaseError(result.error);
+      onQuery?.({query:label,scope_count:scopeSize,latency_ms:Math.round((global.performance?.now?.()??Date.now())-started),status:'ok',full_snapshot:false});
+      return result;
+    }catch(error){
+      onQuery?.({query:label,scope_count:scopeSize,latency_ms:Math.round((global.performance?.now?.()??Date.now())-started),status:'error',error:String(error?.message||error),full_snapshot:false});
+      const failure=new Error(`${label} 조회 실패: ${error?.message||error}`);failure.cause=error;failure.stage=label;throw failure;
+    }
+  }
+
+  async function loadCarrierSellerMappings({source,identities=[],onQuery=null}={}) {
     const safeSource=cleanText(source);
     const fields={
       smartstore:['smartstore_product_code','smartstore_option_code'],
@@ -3567,11 +3579,10 @@
     const [productField,optionField]=fields,rows=[];
     for(let offset=0;offset<productCodes.length;offset+=100){
       for(let from=0;;from+=1000){
-        const {data,error}=await db.from('operations_hub_matrix_cached')
+        const {data}=await carrierRead('carrier seller identity',productCodes.slice(offset,offset+100).length,db.from('operations_hub_matrix_cached')
           .select(`sellpia_sku_code,${productField},${optionField}`)
           .in(productField,productCodes.slice(offset,offset+100))
-          .order('sellpia_sku_code',{ascending:true}).range(from,from+999);
-        if(error)throw readableDatabaseError(error);
+          .order('sellpia_sku_code',{ascending:true}).range(from,from+999),onQuery);
         rows.push(...(data||[]).map(row=>({
           sku:cleanText(row.sellpia_sku_code),
           product_code:cleanText(row[productField]),
@@ -3644,35 +3655,24 @@
     }).map(assignment=>JSON.stringify([assignment.sku,assignment.scope])));
   }
 
-  async function loadCarrierMatrixTargets({source,skus=[]}={}) {
+  async function loadCarrierMatrixTargets({source,skus=[],onQuery=null}={}) {
     const safeSource=cleanText(source);
     if(!['smartstore','makeshop','ably'].includes(safeSource))throw new Error('지원하지 않는 판매처입니다.');
     const codes=[...new Set((skus||[]).map(cleanText).filter(Boolean))];
     if(!codes.length)return {source:safeSource,rows:[]};
-    const fields=['platform_registration_price','platform_discount_price','platform_option_price','platform_final_price'];
-    const [calculated,drafts,priceRules,stocks]=await Promise.all([
-      loadCalculatedResults({skus:codes,scope:safeSource,fields}),
-      (async()=>{
-        const rows=[];
-        for(let offset=0;offset<codes.length;offset+=500){
-          const {data,error}=await db.from('operations_hub_active_seller_drafts')
-            .select('change_id,sellpia_sku_code,source_channel,field_key,after_value,price_base_after,price_discounted_base_after,price_option_after,price_final_after,price_discount_terms_after,status,updated_at')
-            .eq('source_channel',safeSource).in('field_key',['sellpia_sale_price','sellpia_current_stock'])
-            .in('sellpia_sku_code',codes.slice(offset,offset+500)).order('updated_at',{ascending:false}).order('change_id',{ascending:false});
-          if(error)throw readableDatabaseError(error);rows.push(...(data||[]));
-        }
-        return rows;
-      })(),
-      loadActiveSellerPriceRules(),
-      (async()=>{
-        const rows=[];
-        for(let offset=0;offset<codes.length;offset+=200){
-          const {data,error}=await db.from(MATRIX_VIEW).select('sellpia_sku_code,'+safeSource+'_stock').in('sellpia_sku_code',codes.slice(offset,offset+200));
-          if(error)throw readableDatabaseError(error);rows.push(...(data||[]));
-        }
-        return new Map(rows.map(row=>[cleanText(row.sellpia_sku_code),row[safeSource+'_stock']]));
-      })()
-    ]);
+    const calculated={rows:[]},drafts=[],priceRules=new Set(),stocks=new Map();
+    // One bounded read preserves current drafts/rules and prices in one transaction.
+    // No full registry, managed view, source snapshot or stale cache fallback.
+    for(let offset=0;offset<codes.length;offset+=200){
+      const chunk=codes.slice(offset,offset+200);
+      const {data}=await carrierRead('hub_carrier_targets_read_v1',chunk.length,db.rpc('hub_carrier_targets_read_v1',{
+        p_session_token:requireOperationsHubSessionToken(),p_source:safeSource,p_skus:chunk
+      }),onQuery);
+      if(!data||!Array.isArray(data.matrix_rows)||!Array.isArray(data.calculated_rows)||!Array.isArray(data.drafts)||!Array.isArray(data.active_price_skus))throw new Error('carrier 목표값 응답 형식이 올바르지 않습니다.');
+      calculated.rows.push(...data.calculated_rows);drafts.push(...data.drafts);
+      for(const sku of data.active_price_skus)priceRules.add(JSON.stringify([sku,safeSource]));
+      for(const row of data.matrix_rows)stocks.set(row.sku,row.seller_stock);
+    }
     const calculatedBySku=new Map();
     for(const row of calculated.rows||[]){
       const sku=cleanText(row.sku);if(!sku)continue;

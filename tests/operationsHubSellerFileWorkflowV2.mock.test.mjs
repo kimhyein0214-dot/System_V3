@@ -83,8 +83,8 @@ test('Smartstore and Makeshop share paged TransformationPlan preview and seriali
   assert.match(js,/standardProgress\(source,100,'공식 수정파일 변환 중단'/);
   assert.match(js,/bridge\.runCarrier\(\{source,file,plan\}\)/);
   assert.match(app,/transformSellerFile\(plan\.file,plan\.operations\|\|plan\.items/);
-  assert.match(app,/loadCarrierSellerMappings\(\{source,identities:parsed\.normalizedRows\}\)/);
-  assert.match(app,/loadMatrixExportSnapshot\(\{source,skus:matchedSkus\}\)/);
+  assert.match(app,/loadCarrierSellerMappings\(\{source,identities:parsed\.normalizedRows,onQuery\}\)/);
+  assert.match(app,/loadCarrierMatrixTargets\(\{source,skus:matchedSkus,onQuery\}\)/);
   assert.match(app,/가격\/재고 상태가 변경되었습니다\. 미리보기를 다시 확인해주세요/);
 });
 
