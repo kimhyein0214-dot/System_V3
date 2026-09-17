@@ -165,10 +165,11 @@
     return {zip,path,xml:await entry.async('string'),stylesPath,stylesXml:await stylesEntry.async('string'),bytes};
   }
 
-  function highlightChanges(parts,xml,changes){
+  function highlightChanges(parts,xml,changes,options){
     const apply=global.SystemV3SellerExport?.applyChangeHighlights;
     if(typeof apply!=='function')throw Error('XLSX 변경 셀 강조 모듈을 불러오지 못했습니다.');
-    const highlighted=apply(xml,parts.stylesXml,changes);
+    const highlighted=apply(xml,parts.stylesXml,changes,options);
+    parts.stylesXml=highlighted.stylesXml;
     parts.zip.file(parts.stylesPath,highlighted.stylesXml,{createFolders:false});
     return highlighted.sheetXml;
   }
@@ -188,6 +189,8 @@
       if(changed)xml=global.AblyStockExport.patchCell(xml,rowNo,PRODUCT_OPTION_PRICE_COLUMN,current.join('\n'));
     }
     if(changes.length)xml=highlightChanges(parts,xml,changes);
+    const warnings=(items||[]).filter(item=>item._status==='warn_keep_original').flatMap(item=>[`${PRODUCT_BASE_PRICE_COLUMN}${item.source_row_no}`,`${PRODUCT_OPTION_PRICE_COLUMN}${item.source_row_no}`]);
+    if(warnings.length)xml=highlightChanges(parts,xml,warnings,{fillColor:'FFFFC7CE',preserveText:true});
     zip.file(path,xml,{createFolders:false});return zip.generateAsync({type:'blob',mimeType:'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',compression:'DEFLATE'});
   }
 
@@ -200,6 +203,8 @@
       if(finite(item.target_stock)){xml=global.AblyStockExport.patchCell(xml,item.source_row_no,OPTION_STOCK_COLUMN,Number(item.target_stock));changes.push(`${OPTION_STOCK_COLUMN}${item.source_row_no}`);}
     }
     if(changes.length)xml=highlightChanges(parts,xml,changes);
+    const warnings=(items||[]).filter(item=>item._status==='warn_keep_original').flatMap(item=>[`${OPTION_PRICE_COLUMN}${item.source_row_no}`,`${OPTION_STOCK_COLUMN}${item.source_row_no}`]);
+    if(warnings.length)xml=highlightChanges(parts,xml,warnings,{fillColor:'FFFFC7CE',preserveText:true});
     parts.zip.file(parts.path,xml,{createFolders:false});return parts.zip.generateAsync({type:'blob',mimeType:'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',compression:'DEFLATE'});
   }
 

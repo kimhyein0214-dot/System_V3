@@ -45,11 +45,11 @@ const localAssets = [...html.matchAll(/(?:href|src)="(\.\/[^\"]+)"/g)].map(match
 assert.ok(localAssets.length >= 18, 'the export page must retain its local asset bundle');
 assert.ok(localAssets.every(asset => /\?v=[^&\"]+$/.test(asset)), 'all local export assets must be versioned');
 assert.match(html,/discount-price-math\.js\?v=20260914-matrix-visible-export-v2/,'shared matrix display math keeps its deployed version');
-assert.match(html,/seller-export-adapter\.js\?v=20260914-carrier-export-v1/,'unchanged serializer keeps its deployed carrier version');
-assert.match(html,/app\.js\?v=20260917-carrier-warnings-v1/,'carrier guard uses a fresh deployed app version');
+assert.match(html,/seller-export-adapter\.js\?v=20260917-carrier-redcells-v1/,'warning color serializer uses a fresh deployed carrier version');
+assert.match(html,/app\.js\?v=20260917-carrier-redcells-v1/,'carrier guard uses a fresh deployed app version');
 assert.match(html,/current-price-export\.js\?v=20260917-carrier-warnings-v1/,'warning-aware TransformationPlan resolver uses a fresh deployed version');
-assert.match(html,/ably-playauto-export\.js\?v=20260917-ably-stock-x-v1/,'unchanged Ably serializer keeps its deployed X stock version');
-assert.match(html,/seller-file-workflow-v2\.js\?v=20260917-carrier-warnings-v1/,'seller file workflow deploys warning-aware TransformationPlan UI');
+assert.match(html,/ably-playauto-export\.js\?v=20260917-carrier-redcells-v1/,'Ably warning color serializer uses a fresh deployed version');
+assert.match(html,/seller-file-workflow-v2\.js\?v=20260917-carrier-redcells-v1/,'seller file workflow deploys warning-aware TransformationPlan UI');
 assert.match(html,/data-service\.js\?v=20260917-carrier-reliability-v1/,'data service must deploy targeted carrier lookup with a fresh version');
 assert.doesNotMatch(html, /class="seller-export-files"/, 'export must reuse the latest stored originals instead of asking for files again');
 for (const scope of ['filtered','selected','all']) assert.match(html, new RegExp(`name="seller-export-scope" value="${scope}"`), `export scope must include ${scope}`);

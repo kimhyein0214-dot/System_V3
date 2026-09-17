@@ -216,7 +216,7 @@ test('carrier mapping lookup reads only requested seller product identities befo
 test('carrier serializer receives the exact TransformationPlan operations',async()=>{
   const functionSource=appSource.slice(appSource.indexOf('async function transformStandardCarrierExport('),appSource.indexOf('\nasync function prepareChangedOnlyExport('));
   const operations=[{export_item_id:1,field_key:'sellpia_sale_price'}],otherItems=[{export_item_id:2,field_key:'sellpia_current_stock'}],calls=[];
-  const sellerExport={transformSellerFile:async(file,items)=>{calls.push({file,items});return {blob:{},appliedItems:items,skippedItems:[]};},downloadBlob(){throw Error('download must stay off');},conflictCsv(){return '';},outputName(name){return name;}};
+  const sellerExport={transformSellerFile:async(file,items)=>{calls.push({file,items});return {blob:{},appliedItems:items,skippedItems:[]};},markCarrierWarnings:async blob=>blob,downloadBlob(){throw Error('download must stay off');},conflictCsv(){return '';},outputName(name){return name;}};
   const transform=Function('sellerExport',`${functionSource}; return transformStandardCarrierExport;`)(sellerExport);
   const plan={source:'smartstore',file:{name:'carrier.xlsx'},operations,items:otherItems,excludedItems:[]};
   const result=await transform(plan,{download:false});
@@ -229,11 +229,11 @@ test('serializer cell conflicts block every download, while planned warning no-o
  const functionSource=appSource.slice(appSource.indexOf('async function transformStandardCarrierExport('),appSource.indexOf('\nasync function prepareChangedOnlyExport('));
  const downloads=[],operations=[{export_item_id:1}],plan={source:'smartstore',file:{name:'carrier.xlsx'},operations,excludedItems:[{status:'warn_keep_original',reason:'가격 없음 → 원본 유지'}]};
  let conflicts=[{reason:'옵션코드가 DB와 다릅니다.'}];
- const sellerExport={async transformSellerFile(){return {blob:{},appliedItems:[],skippedItems:conflicts};},downloadBlob:(blob,name)=>downloads.push(name),outputName:name=>name,conflictCsv:()=>''};
+ const sellerExport={async transformSellerFile(){return {blob:{},appliedItems:[],skippedItems:conflicts};},markCarrierWarnings:async blob=>blob,downloadBlob:(blob,name)=>downloads.push(name),outputName:name=>name,conflictCsv:()=>''};
  const transform=Function('sellerExport','Blob',`${functionSource}; return transformStandardCarrierExport;`)(sellerExport,Blob);
  await assert.rejects(()=>transform(plan,{download:true}),/수정 셀\/원본값 검증 실패/);assert.equal(downloads.length,0);
  conflicts=[];plan.operations=[];
- const result=await transform(plan,{download:true});assert.equal(downloads.length,2,'unchanged workbook and warning CSV are returned');assert.equal(result.skippedItems.length,1);
+ const result=await transform(plan,{download:true});assert.equal(downloads.length,1,'warnings are marked in the SAME workbook, never a separate CSV');assert.equal(result.skippedItems.length,1);
 });
 
 test('UI is display-only and RPC reads live drafts with same-generation metadata',()=>{

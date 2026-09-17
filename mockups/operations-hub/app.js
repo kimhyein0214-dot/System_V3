@@ -7968,12 +7968,12 @@ async function prepareStandardCarrierExport(source,file,{isCurrent=()=>true}={})
 async function transformStandardCarrierExport(plan,{download=false}={}){
   const transformed=await sellerExport.transformSellerFile(plan.file,plan.operations||plan.items||[]);
   if(transformed.skippedItems.length)throw Error(`수정 셀/원본값 검증 실패 → 파일 생성 차단: ${transformed.skippedItems[0].reason||'serializer가 수정 위치를 확정하지 못했습니다.'}`);
+  const blob=await sellerExport.markCarrierWarnings(transformed.blob,plan.source,plan.preview);
   const skipped=[...plan.excludedItems,...transformed.skippedItems];
   if(download){
-    sellerExport.downloadBlob(transformed.blob,sellerExport.outputName(plan.file.name));
-    if(skipped.length)sellerExport.downloadBlob(new Blob([sellerExport.conflictCsv(skipped)],{type:'text/csv;charset=utf-8'}),`${plan.source}_수정파일_경고.csv`);
+    sellerExport.downloadBlob(blob,sellerExport.outputName(plan.file.name));
   }
-  return {...plan,blob:transformed.blob,appliedItems:transformed.appliedItems,skippedItems:skipped};
+  return {...plan,blob,appliedItems:transformed.appliedItems,skippedItems:skipped};
 }
 
 async function prepareChangedOnlyExport(source,skus=null,{download=false}={}){

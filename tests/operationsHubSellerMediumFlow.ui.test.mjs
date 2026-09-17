@@ -2,6 +2,13 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import {createRequire} from 'node:module';
 const require=createRequire(`${process.env.CODEX_NODE_MODULES}/medium-ui.cjs`),{chromium}=require('playwright');
+const JSZip=require('jszip');
+const cellStylesOnly=xml=>xml.replace(/(<c\b[^>]*?)\s+s="[^"]*"/g,'$1');
+function redReferences(xml,styles){
+ const xfs=[...(styles.match(/<cellXfs\b[^>]*>([\s\S]*?)<\/cellXfs>/)?.[1]||'').matchAll(/<xf\b[^>]*?(?:\/>|>[\s\S]*?<\/xf>)/g)].map(m=>m[0]);
+ const fills=[...(styles.match(/<fills\b[^>]*>([\s\S]*?)<\/fills>/)?.[1]||'').matchAll(/<fill\b[^>]*>[\s\S]*?<\/fill>/g)].map(m=>m[0]);
+ return [...xml.matchAll(/<c\b([^>]*?)(?:\/>|>[\s\S]*?<\/c>)/g)].filter(m=>{const style=Number(m[1].match(/\bs="(\d+)"/)?.[1]||0),fill=Number(xfs[style]?.match(/\bfillId="(\d+)"/)?.[1]||0);return fills[fill]?.includes('FFFFC7CE');}).map(m=>m[1].match(/\br="([^"]+)"/)?.[1]);
+}
 const root='mockups/operations-hub/',read=name=>fs.readFileSync(root+name+'.js','utf8');
 const fixture=JSON.parse(fs.readFileSync('tests/fixtures/sellerMedium1181.json','utf8')).rows;
 const app=read('app'),prepare=app.slice(app.indexOf('async function prepareStandardCarrierExport('),app.indexOf('async function prepareChangedOnlyExport('));
@@ -44,11 +51,16 @@ try{
    const count=await page.evaluate(()=>downloads.length);await page.locator(`[data-standard-carrier-run="${source}"]`).click();
    await page.waitForFunction(count=>downloads.length>count,count);
    const output=await page.evaluate(async count=>[...new Uint8Array(await downloads[count].blob.arrayBuffer())],count);
-   assert.deepEqual(Buffer.from(output),fs.readFileSync(process.env[env]),source+' '+mode+' warnings must preserve the entire selected workbook byte-for-byte');
+   const beforeZip=await JSZip.loadAsync(fs.readFileSync(process.env[env])),afterZip=await JSZip.loadAsync(Buffer.from(output));
+   const beforeXml=await beforeZip.file('xl/worksheets/sheet1.xml').async('string'),afterXml=await afterZip.file('xl/worksheets/sheet1.xml').async('string');
+   assert.equal(cellStylesOnly(afterXml),cellStylesOnly(beforeXml),source+' '+mode+' all original cell values/formulas/text preserved; only style IDs change');
+   assert.ok(redReferences(afterXml,await afterZip.file('xl/styles.xml').async('string')).length>0,source+' warnings must be red INSIDE the same XLSX');
+   for(const [name,entry] of Object.entries(beforeZip.files))if(!entry.dir&&!['xl/styles.xml','xl/worksheets/sheet1.xml'].includes(name))assert.deepEqual(await afterZip.file(name).async('uint8array'),await entry.async('uint8array'),source+' preserves '+name);
+   assert.equal(await page.evaluate(()=>downloads.length),count+1,'never create a separate warning CSV');
   }
   // Restore normal scoped targets for the next seller and Ably round.
   await page.evaluate(()=>{SystemV3Data.loadCarrierMatrixTargets=async({source})=>({rows:source==='ably'?ablyTargets:fixture.map(([sku,smartOption,smartStock,makeStock])=>({sku,seller_stock:source==='smartstore'?smartStock:makeStock,active_price_rule:false}))});});
-  console.log(source+': missing/error/stale -> warning 31 -> generated original bytes PASS');
+  console.log(source+': missing/error/stale -> warning 31 -> same XLSX red cells/original values/no CSV PASS');
   // Ambiguity remains a file-level hard blocker, even though other options are safe.
   await page.evaluate(()=>{
    window.normalMappingReader=SystemV3Data.loadCarrierSellerMappings;
@@ -100,12 +112,16 @@ try{
    const before=cells(await beforeZip.file('xl/worksheets/sheet1.xml').async('string')),after=cells(await afterZip.file('xl/worksheets/sheet1.xml').async('string'));
    const parsed=await AblyPlayautoExport.readTemplate(new File([new Uint8Array(bytes)],'before.xlsx')),warnRow=parsed.items[0].source_row_no;
    const unexpected=[...before].filter(([ref,cell])=>!/^([VX])\d+$/.test(ref)&&after.get(ref)!==cell).map(([ref])=>ref);
-   const warningChanges=[...before].filter(([ref,cell])=>new RegExp('^[A-Z]+'+warnRow+'$').test(ref)&&after.get(ref)!==cell).map(([ref])=>ref);
+   const removeStyle=cell=>cell?.replace(/(<c\b[^>]*?)\s+s="[^"]*"/,'$1');
+   const warningChanges=[...before].filter(([ref,cell])=>new RegExp('^[A-Z]+'+warnRow+'$').test(ref)&&removeStyle(after.get(ref))!==removeStyle(cell)).map(([ref])=>ref);
    const output=await AblyPlayautoExport.readTemplate(new File([downloads[count].blob],'after.xlsx'));
    return {unexpected,warningChanges,rows:output.items.length,changes:[...before].filter(([ref,cell])=>after.get(ref)!==cell).length};
   },{count:warningCount,bytes});
   assert.deepEqual(comparison.unexpected,[]);assert.deepEqual(comparison.warningChanges,[]);assert.equal(comparison.rows,355);assert.ok(comparison.changes>0);
-  console.log('Ably actual 355 mixed warnings: warned row all cells unchanged; safe X mutations; W/non-target cells unchanged PASS');
+  const ablyOutput=await page.evaluate(async count=>[...new Uint8Array(await downloads[count].blob.arrayBuffer())],warningCount),ablyZip=await JSZip.loadAsync(Buffer.from(ablyOutput));
+  const redCells=redReferences(await ablyZip.file('xl/worksheets/sheet1.xml').async('string'),await ablyZip.file('xl/styles.xml').async('string'));
+  assert.equal(redCells.length,2);assert.ok(redCells.some(ref=>ref.startsWith('V')));assert.ok(redCells.some(ref=>ref.startsWith('X')));assert.equal(await page.evaluate(()=>downloads.length),warningCount+1);
+  console.log('Ably actual 355 mixed warnings: warned V/X red with original values; safe X mutations; W/non-target cells unchanged; one XLSX PASS');
  }
  assert.deepEqual(errors,[]);console.log('Medium browser UI: actual Smartstore/Makeshop files -> automatic preview -> XLSX download PASS; Ably 355 preview/pagination/progress/download PASS (mock targets, network writes blocked).');
 }finally{await browser.close();}

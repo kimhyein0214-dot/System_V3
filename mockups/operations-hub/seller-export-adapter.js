@@ -116,7 +116,8 @@
     });
     return {sheetXml:nextSheetXml, applied};
   }
-  function applyChangeHighlights(sheetXml, stylesXml, changes) {
+  function applyChangeHighlights(sheetXml, stylesXml, changes, {fillColor='FFFFFF00',preserveText=false}={}) {
+    if(!/^[A-F0-9]{8}$/i.test(fillColor))throw new Error('XLSX 강조 색상 형식이 올바르지 않습니다.');
     const highlights = normalizeHighlights(changes);
     if (!highlights.length) return {sheetXml, stylesXml};
     const fontsSection = String(stylesXml).match(/<fonts\b[^>]*>[\s\S]*?<\/fonts>/)?.[0];
@@ -163,11 +164,11 @@
       const highlight = byReference.get(xmlAttribute(cellAttrs, 'r'));
       if (!highlight) return cellXml;
       const baseStyleId = Number(xmlAttribute(cellAttrs, 's', '0')) || 0;
-      const richText = boldInlineText(cellXml, highlight);
-      const styleId = highlightedStyle(baseStyleId, !richText.applied);
+      const richText = preserveText?{sheetXml:cellXml,applied:false}:boldInlineText(cellXml, highlight);
+      const styleId = highlightedStyle(baseStyleId, !preserveText&&!richText.applied);
       return richText.sheetXml.replace(/^<c\b[^>]*>/, opening => opening.replace(/\s+s="[^"]*"/, '').replace(/\s*(\/?>)$/, ` s="${styleId}"$1`));
     });
-    const yellowFill = '<fill><patternFill patternType="solid"><fgColor rgb="FFFFFF00"/><bgColor indexed="64"/></patternFill></fill>';
+    const yellowFill = `<fill><patternFill patternType="solid"><fgColor rgb="${fillColor}"/><bgColor indexed="64"/></patternFill></fill>`;
     let nextStylesXml = appendStyleNodes(stylesXml, 'fonts', addedFonts, fonts.length + addedFonts.length);
     nextStylesXml = appendStyleNodes(nextStylesXml, 'fills', [yellowFill], fills.length + 1);
     nextStylesXml = appendStyleNodes(nextStylesXml, 'cellXfs', addedXfs, xfs.length + addedXfs.length);
@@ -456,6 +457,25 @@
     return {blob,skippedItems,appliedItems};
   }
 
+  async function markCarrierWarnings(file,source,preview){
+    const warnings=(preview||[]).filter(row=>row.status==='warn_keep_original');
+    if(!warnings.length)return file;
+    if(!['smartstore','makeshop'].includes(source))throw new Error('지원되지 않는 carrier 강조 양식입니다.');
+    const parts=await xlsxParts(file),references=[];
+    const parents=source==='makeshop'?makeshopProductRows(parts.sheetXml,parts.shared):null;
+    for(const row of warnings){
+      const rowNo=Number(row.source_row_no);
+      if(!Number.isInteger(rowNo)||rowNo<=0)throw new Error('원본 유지 경고의 셀 위치를 확인하지 못했습니다.');
+      const columns=source==='smartstore'?['F','BF','BG',...(row.option_code?['R','S']:['M'])]:(row.option_code?['AF','AG']:['AV']);
+      references.push(...columns.map(column=>`${column}${rowNo}`));
+      if(parents){const parent=parents.get(clean(row.product_code));if(parent)references.push(...['AS','DD','AT'].map(column=>`${column}${parent}`));}
+    }
+    // Red is format-only: do not rewrite text runs, formulas, numbers or stock blanks.
+    const marked=applyChangeHighlights(parts.sheetXml,parts.stylesXml,references,{fillColor:'FFFFC7CE',preserveText:true});
+    parts.zip.file(parts.sheetPath,marked.sheetXml);parts.zip.file(parts.stylesPath,marked.stylesXml);
+    return parts.zip.generateAsync({type:'blob',mimeType:'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',compression:'DEFLATE'});
+  }
+
   async function patchCsvFile(file,items,onConflict,onApplied) {
     if(!global.XLSX) throw new Error('CSV 처리 모듈을 불러오지 못했습니다.');
     const workbook=global.XLSX.read(await file.text(),{type:'string',raw:true}); const sheet=workbook.Sheets[workbook.SheetNames[0]];
@@ -519,5 +539,5 @@
   }
   function downloadBlob(blob,name){const url=URL.createObjectURL(blob);const anchor=document.createElement('a');anchor.href=url;anchor.download=name;document.body.appendChild(anchor);anchor.click();anchor.remove();setTimeout(()=>URL.revokeObjectURL(url),30000);}
 
-  global.SystemV3SellerExport=Object.freeze({cellValue,setCellValue,applyChangeHighlights,preflightSharedPriceGroups,patchSmartstoreRow,patchMakeshopRow,scopeWorksheetRows,patchXlsxFile,transformSellerFile,patchCsvFile,buildExportArchive,downloadBlob,outputName,auditCsv,conflictCsv,discountTermsFingerprint});
+  global.SystemV3SellerExport=Object.freeze({cellValue,setCellValue,applyChangeHighlights,markCarrierWarnings,preflightSharedPriceGroups,patchSmartstoreRow,patchMakeshopRow,scopeWorksheetRows,patchXlsxFile,transformSellerFile,patchCsvFile,buildExportArchive,downloadBlob,outputName,auditCsv,conflictCsv,discountTermsFingerprint});
 })(typeof window!=='undefined'?window:globalThis);
