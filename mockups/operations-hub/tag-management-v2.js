@@ -65,7 +65,7 @@
    <section class="tag-manager-panel">
     <div class="tag-manager-head"><div><h3 id="tag-member-title">태그를 선택하세요</h3><p id="tag-member-copy">저장된 태그 적용 내역을 조회·수정할 수 있습니다.</p></div><button class="btn" id="tag-member-refresh" type="button">새로고침</button></div>
     <form id="tag-member-search" class="tag-manager-search"><input id="tag-member-query" placeholder="새로 적용할 SKU / 자사코드 / 상품명 / 옵션명 검색"><button class="btn primary" type="submit">전체 SKU 검색</button><button class="btn" id="tag-member-search-clear" type="button">적용 목록</button></form>
-    <div class="tag-manager-selection-actions"><span id="tag-member-selection-copy">태그 적용 SKU 목록</span><div><button class="btn primary" id="tag-apply-selected" type="button" disabled>선택 SKU에 현재 태그 적용</button></div></div>
+    <div class="tag-manager-selection-actions"><span id="tag-member-selection-copy">태그 적용 SKU 목록</span><div><button class="btn" id="tag-recalculate-selected" type="button" disabled>선택 SKU 내부 수식 재계산</button><button class="btn primary" id="tag-apply-selected" type="button" disabled>선택 SKU에 현재 태그 적용</button></div></div>
     <div class="tag-manager-table-wrap"><table class="tag-manager-table"><thead><tr><th class="check"><input id="tag-member-select-page" type="checkbox" aria-label="현재 페이지 전체 선택"></th><th class="sku">SKU</th><th class="code">자사코드</th><th>상품 / 옵션</th><th class="state">적용 상태</th></tr></thead><tbody id="tag-member-rows"></tbody></table></div>
     <nav class="tag-manager-pagination"><button class="btn" id="tag-member-prev" type="button">이전</button><span id="tag-member-page">1 / 1</span><button class="btn" id="tag-member-next" type="button">다음</button></nav>
    </section>
@@ -179,6 +179,7 @@
   for(const id of ['tag-download-current','tag-download-blank','tag-edit-rule','tag-clear-all','tag-rename'])document.getElementById(id).disabled=!tag;
   document.getElementById('tag-upload-sync').disabled=false;
   const chosen=state.rows.filter(row=>state.selected.has(row.sellpia_sku_code));
+  document.getElementById('tag-recalculate-selected').disabled=!tag||!chosen.length;
   document.getElementById('tag-apply-selected').disabled=!tag||!chosen.some(row=>!row.__tagApplied);
   document.getElementById('tag-remove-selected').disabled=!tag||!chosen.some(row=>row.__tagApplied);
  }
@@ -258,9 +259,9 @@
   finally{button.disabled=false;}
  }
 
- async function recalc(skus,reason){
+ async function recalc(skus,reason,sources=['smartstore','makeshop','ably']){
   if(!skus.length||!global.HubPriceMaterializer?.materialize)return {skipped:true};
-  try{return {result:await global.HubPriceMaterializer.materialize({skus:[...new Set(skus)],sources:['smartstore','makeshop','ably'],reason})};}
+  try{return {result:await global.HubPriceMaterializer.materialize({skus:[...new Set(skus)],sources,reason})};}
   catch(error){return {error:error?.message||String(error)};}
  }
 
@@ -275,6 +276,20 @@
    const skus=rows.map(row=>row.sellpia_sku_code),calculation=await recalc(skus,'tag-manager-apply');await loadCatalog({keepSelection:true});
    setStatus(calculation.error?`태그 적용 ${n(rows.length)}개 완료 · 수식 계산 확인 필요: ${calculation.error}`:`${n(rows.length)}개 SKU에 '${tag.tag_name}' 태그를 적용하고 수식을 계산했습니다.`,calculation.error?'error':'success');global.dispatchEvent(new CustomEvent('hub-tags-changed',{detail:{tagId:tag.tag_id,skus}}));
   }catch(error){setStatus(`태그 적용 실패: ${error?.message||error}`,'error');}
+ }
+
+ async function recalculateSelected(){
+  const skus=state.rows.filter(row=>state.selected.has(row.sellpia_sku_code)).map(row=>row.sellpia_sku_code);
+  if(!skus.length)return;
+  const button=document.getElementById('tag-recalculate-selected');button.disabled=true;
+  setStatus('선택 SKU 내부 수식을 재계산하는 중…');
+  try{
+   const calculation=await recalc(skus,'tag-manager-internal-retry',[]);
+   const failed=calculation.error||calculation.skipped||calculation.result?.errorRows;
+   setStatus(failed?'내부 수식 재계산 확인 필요: '+(calculation.error||'계산 오류/미실행'):
+    '내부 수식 재계산 완료 · 영향 SKU '+n(calculation.result.totalSkus)+'개 · 저장 '+n(calculation.result.persistedRows)+'개',failed?'error':'success');
+   global.dispatchEvent(new CustomEvent('hub-tags-changed',{detail:{skus}}));
+  }finally{renderSelected();}
  }
 
  async function renameTag(){
@@ -327,6 +342,7 @@
   document.getElementById('tag-download-blank').onclick=downloadBlank;
   document.getElementById('tag-upload-sync').onclick=openUpload;
   document.getElementById('tag-apply-selected').onclick=()=>void applySelected();
+  document.getElementById('tag-recalculate-selected').onclick=()=>void recalculateSelected();
   document.getElementById('tag-rename').onclick=()=>void renameTag();
   document.getElementById('tag-edit-rule').onclick=()=>void editRule();
   document.getElementById('tag-remove-selected').onclick=()=>void removeSelected();

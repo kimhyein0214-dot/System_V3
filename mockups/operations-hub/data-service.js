@@ -2736,6 +2736,14 @@
           else if(!formulaTags.length)delete projected.actual_inbound_cost;
           else if(!projected.actual_inbound_cost.ruleNames?.length)projected.actual_inbound_cost={...projected.actual_inbound_cost,ruleNames:[...new Set(formulaTags.map(tag=>cleanText(tag?.tag_name)).filter(Boolean))]};
         }
+        for(const value of Object.values(projected)){
+          if(!Array.isArray(value.activeOutputRules))continue;
+          const owners=value.activeOutputRules;
+          value.currentRuleNames=[...new Set(owners.map(owner=>cleanText(owner.tag_name||owner.name)).filter(Boolean))];
+          const ownerMismatch=owners.some(owner=>!value.versions.some(version=>version.id===owner.id));
+          if(ownerMismatch){value.stale=true;value.ruleNames=[];value.provenanceMismatch=true;}
+          else if(owners.length)value.ruleNames=value.currentRuleNames;
+        }
         if(Object.keys(projected).length)row.__hubInternalPrices=projected;else delete row.__hubInternalPrices;
       }
       else delete row.__hubInternalPrices;

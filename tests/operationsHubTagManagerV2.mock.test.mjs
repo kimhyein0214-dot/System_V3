@@ -52,5 +52,5 @@ test('tag-centric manager exposes saved-assignment download and member editing',
   assert.doesNotMatch(rules,/D\.ruleRegistry\('save'/);
   assert.match(html,/tag-management-v2\.css/);
   assert.match(html,/rule-workspace\.js\?v=20260917-tags-representative-ui-v1/);
-  assert.match(html,/tag-management-v2\.js\?v=20260917-tags-representative-ui-v1/);
+  assert.match(html,/tag-management-v2\.js\?v=20260917-formula-chain-v2/);
 });
