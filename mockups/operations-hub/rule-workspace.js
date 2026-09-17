@@ -6,6 +6,7 @@
  const sources={ably:'에이블리',smartstore:'스마트스토어',makeshop:'메이크샵'};
  const fieldLabels={...M.fields,calculated_base_price:'시스템 기준가격 · 매트릭스',basis_sku_price:'이전 계산 결과'};
  const fieldHelp={
+  representative_base_price:'전체 현재 옵션의 유효 기준가에서 계산한 상품 대표가입니다. 해당 SKU의 판매처 등록가 수식에서만 명시적으로 선택합니다.',
   purchase_price:'셀피아 원본에서 읽은 매입가입니다.',
   source_base_price:'셀피아 원본 파일의 판매가이며, 기존 저장 수식에서 “판매가”로 부르던 기준값입니다.',
   actual_inbound_cost:'매입가에 쌍/낱개 환산·보정 등을 적용한 실제 입고 단가입니다.',
@@ -30,6 +31,7 @@
  host.innerHTML=`<div class="rw"><div class="rw-bar"><h2>가격 수식 관리</h2><button class="btn" id="rw-refresh">최신값 불러오기</button><button class="btn primary" id="rw-new">새 수식 태그</button></div><section class="rw-tag-context" id="rw-tag-context" hidden></section><nav class="rw-bar rw-tabs" aria-label="가격 수식 작업"><button data-tab="rules" aria-selected="true">수식 관리</button><button data-tab="bulk">SKU 일괄적용</button><button data-tab="dependencies">종속관계</button><button data-tab="platform">플랫폼 가격</button><button data-tab="export">내보내기</button></nav><div class="rw-content" id="rw-content"></div><p class="rw-status" id="rw-status" role="status">수식을 불러오세요.</p><div class="rw-drawer-backdrop" id="rw-backdrop" hidden><section class="rw-drawer" role="dialog" aria-modal="true" aria-labelledby="rw-drawer-title"><div class="rw-bar"><h3 id="rw-drawer-title"></h3><button class="btn" id="rw-close">닫기</button></div><div id="rw-drawer-body" class="rw-page"></div><p class="rw-status" id="rw-drawer-status" role="status"></p></section></div></div>`;
  host.append(legacy);
  document.body.appendChild($('backdrop'));
+ const representativeTab=document.createElement('button');representativeTab.dataset.tab='representative';representativeTab.textContent='상품 대표가';host.querySelector('.rw-tabs').append(representativeTab);
  function status(text){$('status').textContent=text;}
  function progressStatus(text){status(text);const drawerStatus=$('drawer-status');if(drawerStatus&&!$('backdrop').hidden)drawerStatus.textContent=text;}
  async function run(fn){if(state.busy)return;state.busy=true;try{await fn();}catch(e){status(e.message);$('drawer-status').textContent=e.message;}finally{state.busy=false;}}
@@ -72,7 +74,7 @@
  }
  async function refresh(){const [registry,tags]=await Promise.all([D.ruleRegistry('list'),typeof D.loadTags==='function'?D.loadTags():Promise.resolve(state.tags)]);state.registry=registry;state.tags=tags||[];if(state.selected&&!current())state.selected=null;renderTab();status(`수식 ${state.registry.rules.length}개 · 적용 ${state.registry.assignments.length}개 · 종속 ${state.registry.dependencies.length}개`);if(state.tab==='rules')await preview();}
  function select(id){readTagContext();state.selected=id;renderRules();void run(preview);}
- function renderTab(){renderTagContext();document.querySelectorAll('.rw-tabs button').forEach(b=>b.setAttribute('aria-selected',String(b.dataset.tab===state.tab)));if(state.tab==='rules')renderRules();if(state.tab==='dependencies')renderDependencies();if(state.tab==='platform')renderPlatform();if(state.tab==='export')renderExport();}
+ function renderTab(){renderTagContext();document.querySelectorAll('.rw-tabs button').forEach(b=>b.setAttribute('aria-selected',String(b.dataset.tab===state.tab)));if(state.tab==='rules')renderRules();if(state.tab==='dependencies')renderDependencies();if(state.tab==='platform')renderPlatform();if(state.tab==='export')renderExport();if(state.tab==='representative'){state.tagContext=null;$('tag-context').hidden=true;void g.HubRepresentativeWorkspace.mount($('content')).catch(e=>status(e.message));}}
  function renderRules(){
   renderTagContext();
   const r=current()||{name:state.tagContext?state.tagContext.name+' 수식':'',target_field:'calculated_base_price',input_origin:'self',source_field:'actual_inbound_cost',scope:'',config:{steps:[]}};const multistep=r.source_field==='basis_sku_price'||r.target_field==='basis_sku_price';state.steps=structuredClone(r.config.steps||[]);state.importConfig=null;
@@ -118,6 +120,7 @@
  async function returnToTags(){state.tagContext=null;$('tag-context').hidden=true;navigate('attributes');await g.SystemV3AttributesPage?.refresh();}
  async function openForTag(tag){return run(async()=>{
   state.registry=await D.ruleRegistry('list');
+  if(tag.id||tag.tag_id){const productRules=typeof D.productPrice==='function'?(await D.productPrice('rules')).rules:[];if(productRules.some(r=>r.tag_id===(tag.id||tag.tag_id))){state.tagContext=null;state.tab='representative';navigate('price-rules');document.querySelectorAll('.rw-tabs button').forEach(b=>b.setAttribute('aria-selected',String(b.dataset.tab===state.tab)));await g.HubRepresentativeWorkspace.mount($('content'),{tagId:tag.id||tag.tag_id});return;}}
   state.tagContext={id:tag.id||tag.tag_id||null,name:tag.name||tag.tag_name||'',color:tag.color||tag.tag_color||'#dbeafe',group:tag.group||tag.tag_group||'운영',returnAfterSave:false};
   if(state.tagContext.id&&!state.tags.some(item=>String(item.tag_id)===String(state.tagContext.id)))state.tags.push({tag_id:state.tagContext.id,tag_name:state.tagContext.name,tag_color:state.tagContext.color,tag_group:state.tagContext.group});
   state.selected=state.registry.rules.find(r=>state.tagContext.id&&String(r.tag_id)===String(state.tagContext.id))?.id||null;

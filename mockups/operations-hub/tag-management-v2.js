@@ -281,7 +281,7 @@
   const tag=currentTag();if(!tag)return;
   const next=global.prompt('새 태그 이름을 입력하세요.',tag.tag_name);if(next===null)return;
   const name=String(next).trim();if(!name){setStatus('태그 이름을 비울 수 없습니다.','error');return;}
-  try{await D().updateProductTag({id:tag.tag_id,name,color:tag.tag_color});await loadCatalog({keepSelection:true});setStatus(`태그 이름을 '${name}'(으)로 수정했습니다.`,'success');global.dispatchEvent(new CustomEvent('hub-tags-changed',{detail:{tagId:tag.tag_id,renamed:true}}));}
+  try{await D().renameProductTag({id:tag.tag_id,name,expectedName:tag.tag_name});await loadCatalog({keepSelection:true});setStatus(`태그 이름을 '${name}'(으)로 수정했습니다.`,'success');global.dispatchEvent(new CustomEvent('hub-tags-changed',{detail:{tagId:tag.tag_id,renamed:true}}));}
   catch(error){setStatus(`태그 이름 수정 실패: ${error?.message||error}`,'error');}
  }
 

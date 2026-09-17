@@ -22,6 +22,7 @@ function harness({batches, refreshError = false, action = 'draft'} = {}) {
     document, sellerExportState:state, sellerExportModal:{hidden:false}, sellerExport:null,
     selectedExportSources:() => ['smartstore'], createRequestId:() => 'test-batch',
     formatNumber:String, showToast:text => notices.push(text), console:{error() {}},
+    window:{dispatchEvent(){}},CustomEvent:class {constructor(type,options){this.type=type;this.detail=options.detail;}},
     // Draft target must use the opening snapshot, not a subsequently changed selection.
     selectedMatrixSkus:() => ['wrong-new-selection'],
     liveData:{stageSellerInventoryDraftBatch:async args => {

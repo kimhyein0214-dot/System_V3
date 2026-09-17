@@ -546,6 +546,7 @@
       products = await attach(products, signal, prefetched);
     }
     products = await attachStoredCalculatedPrices(products, signal);
+    try{products=await attachRepresentativePrices(products);}catch(error){console.warn('representative price detail enrichment failed',error);}
     if(global.HubMatrixShadow)products = await attachMatrixShadow(products, signal);
     throwIfAborted(signal);
     return products;
@@ -2564,7 +2565,7 @@
         const {data,error}=await db.from(MATRIX_VIEW).select('sellpia_sku_code,display_name,sellpia_source_sale_price,system_base_price,smartstore_price,makeshop_price,ably_price,smartstore_product_code,makeshop_product_code,ably_product_code').in('sellpia_sku_code',chunk);if(error)throw readableDatabaseError(error);
         let part=await attachProductProfiles(data||[]);part=await attachInboundCostDetails(part);part=await attachSystemOperationalDetails(part);
         const components=await loadSellerComponents(chunk);
-        return await attachSellerDrafts(await attachSellerPriceComponents(part,undefined,components));
+        return await attachRepresentativePrices(await attachSellerDrafts(await attachSellerPriceComponents(part,undefined,components)));
       } catch (error) {
         if (!timedOut(error)) throw error;
         if (chunk.length>25) {
@@ -2664,9 +2665,21 @@
       const versions=[...new Map(entry.rule_versions.map(version=>[`${version.id}:${version.version}:${version.assignmentVersion||''}`,version])).values()];
       return {sellpia_sku_code:entry.sellpia_sku_code,source_channel:entry.source_channel,seller_product_code:entry.seller_product_code,seller_option_code:entry.seller_option_code,
         base_price:get('platform_registration_price')?.value,discounted_base_price:get('platform_discount_price')?.value,option_price:get('platform_option_price')?.value,final_price:get('platform_final_price')?.value,
-        discount_terms:Array.isArray(discountDetails.discount_terms)?discountDetails.discount_terms:[],rule_versions:versions,generation_id:generations.size===1?[...generations][0]:null,
+        discount_terms:Array.isArray(discountDetails.discount_terms)?discountDetails.discount_terms:[],rule_versions:versions,generation_id:generations.size===1?[...generations][0]:null,input_fingerprint:discountDetails.input_fingerprint,
         status:errors.length||incomplete||mixed?'error':'calculated',error:errors.map(row=>row.error).filter(Boolean).join(' / ')||(incomplete?'저장된 가격 단계가 일부 없습니다.':mixed?'저장된 가격의 계산 세대가 일치하지 않습니다.':'')};
     });
+    // Only the new, explicitly product-dependent records acquire this guard.
+    // Inactive product definitions still identify their stored history.
+    if(typeof productPrice==='function'){
+      const definitions=(await productPrice('rules',{include_inactive:true})).rules||[],ids=new Set(definitions.map(r=>r.id));
+      const dependent=rows.filter(r=>r.rule_versions.some(v=>ids.has(v.id)));
+      if(dependent.length){
+        const current=await readRepresentativePrices([...new Set(dependent.map(r=>r.sellpia_sku_code))]),bySku=new Map();
+        for(const rep of current)for(const option of rep.contributors||[])bySku.set(option.sku,rep);
+        const stamps={};for(const source of selected){const skus=[...new Set(dependent.filter(r=>r.source_channel===source).map(r=>r.sellpia_sku_code))];if(skus.length)stamps[source]=await loadInputFingerprints(skus,source);}
+        for(const row of dependent){const rep=bySku.get(row.sellpia_sku_code);if(!rep||rep.status!=='calculated'||row.input_fingerprint!==stamps[row.source_channel]?.[row.sellpia_sku_code]){row.status='error';row.error='상품 대표가 입력 변경 또는 활성 Rule 없음 · 재계산 필요';}}
+      }
+    }
     const calculatedKeys=new Set(rows.map(row=>JSON.stringify([row.sellpia_sku_code,row.source_channel])));
     if(includeMatrixDrafts){
       const drafts=[],selectDrafts=()=>db.from('operations_hub_active_seller_drafts').select('change_id,sellpia_sku_code,source_channel,price_base_after,price_discounted_base_after,price_option_after,price_final_after,price_discount_terms_after,price_rule_set_id,updated_at').eq('field_key','sellpia_sale_price').in('source_channel',selected).order('updated_at',{ascending:false}).order('change_id',{ascending:false});
@@ -2703,8 +2716,8 @@
       if(!internalBySku.has(sku))internalBySku.set(sku,{});
       const versions=stored.rule_versions||[],ruleNames=[...new Set(versions.map(version=>cleanText(version?.name)).filter(Boolean))];
       internalBySku.get(sku)[stored.field]=stored.status==='error'
-        ? {error:stored.error,versions,ruleNames,generationId:stored.generation_id,calculatedAt:stored.calculated_at}
-        : {value:Number(stored.value),versions,ruleNames,generationId:stored.generation_id,calculatedAt:stored.calculated_at};
+        ? {error:stored.error,versions,ruleNames,activeOutputRules:stored.active_output_rules,generationId:stored.generation_id,calculatedAt:stored.calculated_at}
+        : {value:Number(stored.value),versions,ruleNames,activeOutputRules:stored.active_output_rules,generationId:stored.generation_id,calculatedAt:stored.calculated_at};
     }
     for(const row of platform.rows){if(!platformBySku.has(row.sellpia_sku_code))platformBySku.set(row.sellpia_sku_code,{});platformBySku.get(row.sellpia_sku_code)[row.source_channel]={platformBase:row.base_price,discounted:row.discounted_base_price,platformDiscount:row.base_price==null||row.discounted_base_price==null?null:Number(row.base_price)-Number(row.discounted_base_price),platformOption:row.option_price,platformFinal:row.final_price,platformTerms:row.discount_terms,versions:row.rule_versions,error:row.error};}
     const activeRules=new Set(platform.activePriceRules||[]);
@@ -2715,7 +2728,12 @@
       if(storedInternal){
         const projected={...storedInternal},profileTags=[...(product?.__profile?.product_tags||[]),...(product?.__profile?.sku_tags||[])],formulaTags=profileTags.filter(tag=>cleanText(tag?.tag_group).includes('수식'));
         if(projected.actual_inbound_cost){
-          if(!formulaTags.length)delete projected.actual_inbound_cost;
+          if(Array.isArray(projected.actual_inbound_cost.activeOutputRules)){
+            const owners=projected.actual_inbound_cost.activeOutputRules;
+            if(!owners.length)delete projected.actual_inbound_cost;
+            else projected.actual_inbound_cost={...projected.actual_inbound_cost,ruleNames:[...new Set(owners.map(rule=>cleanText(rule.tag_name||rule.name)).filter(Boolean))]};
+          }
+          else if(!formulaTags.length)delete projected.actual_inbound_cost;
           else if(!projected.actual_inbound_cost.ruleNames?.length)projected.actual_inbound_cost={...projected.actual_inbound_cost,ruleNames:[...new Set(formulaTags.map(tag=>cleanText(tag?.tag_name)).filter(Boolean))]};
         }
         if(Object.keys(projected).length)row.__hubInternalPrices=projected;else delete row.__hubInternalPrices;
@@ -2766,6 +2784,31 @@
     const field=source+'_product_code',codes=[...new Set(skus)],linked=[];
     for(let i=0;i<codes.length;i+=200){const {data,error}=await db.from(MATRIX_VIEW).select('sellpia_sku_code,'+field).in('sellpia_sku_code',codes.slice(i,i+200));if(error)throw error;linked.push(...data.filter(r=>r[field]).map(r=>r.sellpia_sku_code));}return linked;
   }
+  async function productPrice(action, body = {}) {
+    const {data,error}=await db.rpc('hub_product_price_v1',{p_session_token:requireOperationsHubSessionToken(),p_action:action,p_body:body});
+    if(error)throw readableDatabaseError(error);return data;
+  }
+  async function readRepresentativePrices(skus) {
+    const codes=[...new Set(skus)],byProduct=new Map();
+    for(let i=0;i<codes.length;i+=100){const result=await productPrice('read',{skus:codes.slice(i,i+100)});for(const row of result.rows||[])byProduct.set(row.product_identity,row);}
+    return [...byProduct.values()];
+  }
+  async function attachRepresentativePrices(products) {
+    if(!products.length)return products;
+    const rows=await readRepresentativePrices(products.map(p=>p.sellpia_sku_code)),bySku=new Map();
+    for(const row of rows)for(const option of row.contributors||[])bySku.set(option.sku,row);
+    return products.map(product=>bySku.has(product.sellpia_sku_code)?{...product,__hubRepresentativePrice:bySku.get(product.sellpia_sku_code)}:product);
+  }
+  async function expandRepresentativeMembers(skus) {
+    const codes=[...new Set(skus)],members=new Set();
+    for(let i=0;i<codes.length;i+=100){const result=await productPrice('members',{skus:codes.slice(i,i+100)});for(const sku of result.skus||[])members.add(sku);}
+    return [...members];
+  }
+  async function materializeRepresentatives(skus, generationId) {
+    const current=await readRepresentativePrices(skus),owned=current.filter(r=>r.rule),rows=[];
+    for(let i=0;i<owned.length;i+=100){const part=owned.slice(i,i+100),result=await productPrice('materialize',{products:part.map(r=>r.product_identity),generation_id:generationId,expected_fingerprints:Object.fromEntries(part.map(r=>[r.product_identity,r.input_fingerprint]))});rows.push(...result.rows);}
+    return rows;
+  }
   async function ruleRegistry(action, rule = null) {
     if (action === 'list') {
       const {data,error}=await db.rpc('hub_rule_registry_list_v2',{p_session_token:requireOperationsHubSessionToken()});
@@ -2789,8 +2832,13 @@
     const groupedCodes=[...codes];for(let i=0;i<groupedCodes.length;i+=100){for(let from=0;;from+=1000){const {data,error}=await db.from('operations_hub_matrix_cached').select('sellpia_sku_code').in(field,groupedCodes.slice(i,i+100)).order('sellpia_sku_code').range(from,from+999);if(error)throw error;data.forEach(r=>result.add(r.sellpia_sku_code));if(data.length<1000)break;}}
     return [...result];
   }
+  async function renameProductTag({id,name,expectedName=null}) {
+    const {data,error}=await db.rpc('hub_product_tag_rename_v1',{p_session_token:requireOperationsHubSessionToken(),p_tag_id:id,p_name:cleanText(name),p_expected_name:expectedName});
+    if(error)throw readableDatabaseError(error);return data;
+  }
   async function updateProductTag({id,name,color}) {
-    requireOperationsHubSessionToken();const {data,error}=await db.from('product_tags').update({tag_name:cleanText(name),tag_color:color}).eq('tag_id',id).select().single();if(error)throw error;return data;
+    const {data,error}=await db.rpc('hub_product_tag_metadata_update_v1',{p_session_token:requireOperationsHubSessionToken(),p_tag_id:id,p_name:cleanText(name),p_color:color||null,p_expected_name:null});
+    if(error)throw readableDatabaseError(error);return data;
   }
 
   async function workDocument(action,kind,document={}) {
@@ -3919,6 +3967,10 @@
     loadTags,
     workDocument,
     ruleRegistry,
+    productPrice,
+    readRepresentativePrices,
+    expandRepresentativeMembers,
+    materializeRepresentatives,
     assignRules,
     loadRulePlatformSiblings,
     loadFormulaProducts,
@@ -3928,6 +3980,7 @@
     loadStoredMatrixPrices,
     loadSiblingOptions,
     updateProductTag,
+    renameProductTag,
     ensureProductProfile,
     saveProductProfile,
     createProductTag,

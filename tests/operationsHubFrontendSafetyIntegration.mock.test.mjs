@@ -9,7 +9,7 @@ const html = readFileSync(new URL('../mockups/operations-hub/index.html', import
 test('listing graph and seller write RPCs use the new safe contracts', () => {
   assert.match(dataService, /db\.rpc\('list_operations_hub_listing_graph_v3'/);
   assert.doesNotMatch(dataService, /db\.rpc\('list_operations_hub_listing_graph_v2'/);
-  assert.match(dataService, /db\.rpc\('stage_operations_hub_seller_inventory_match_batch',[\s\S]*?p_session_token:requireOperationsHubSessionToken\(\)/);
+  assert.match(dataService, /db\.rpc\('stage_operations_hub_seller_inventory_match_batch_v2',[\s\S]*?p_session_token:requireOperationsHubSessionToken\(\)/);
   assert.match(dataService, /db\.rpc\('prepare_operations_hub_change_export',[\s\S]*?p_session_token:requireOperationsHubSessionToken\(\)/);
 });
 

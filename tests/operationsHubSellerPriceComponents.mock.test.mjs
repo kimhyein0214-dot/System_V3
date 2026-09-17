@@ -13,7 +13,8 @@ const exporter = fs.readFileSync(new URL('../supabase/migrations/20260821020657_
 
 assert.equal((html.match(/<th>판매가<\/th><th>할인정보<\/th><th>옵션가<\/th><th>최종구매가<\/th>/g) || []).length, 3, 'every seller group must expose discount information between base, option, and final customer prices');
 assert.match(app, /priceComponent\.source_base_price[\s\S]*?priceComponent\.source_option_price[\s\S]*?priceComponent\.source_final_price/, 'matrix rows must read all three source components');
-assert.match(app, /const discountContent[\s\S]*?discountView\.summary[\s\S]*?적용가[\s\S]*?const discountCell/, 'matrix rows must render a dedicated discount-information cell and effective discounted price');
+assert.match(app, /const discountContent[\s\S]*?discountView\.hasDiscount \? '할인' : '-'[\s\S]*?formatNullableNumber\(effectiveDiscountedBasePrice\)[\s\S]*?const discountCell/, 'compact matrix must preserve the dedicated discount cell and effective discounted price');
+assert.match(app, /title="\$\{escapeHtml\(discountView\.detail\)\}[\s\S]*?할인 적용 판매가/, 'full discount conditions and applied price remain available in the tooltip');
 assert.match(app, /function matrixDiscountSummary[\s\S]*?판매처 할인가[\s\S]*?조건부/, 'matrix discount summaries must preserve marketplace-reported and conditional discounts');
 assert.match(app, /data-price-component="base"[\s\S]*?data-price-component="option"[\s\S]*?data-price-component="final"/, 'matrix base, option, and final prices must be directly editable');
 assert.match(app, /class="seller-base-cell"[\s\S]*?data-price-component="base"[\s\S]*?data-price-edit[\s\S]*?>수정<\/button>/, 'seller base prices must expose a hover edit trigger');

@@ -20,7 +20,8 @@ try{
       loadProducts:async()=>({rows:[{sellpia_sku_code:'applied-1',__profile:{sku_tags:[{tag_id:'formula'}],product_tags:[]}},{sellpia_sku_code:'new-2',sellpia_product_name:'추가 상품',sellpia_option_name:'실버',__profile:{sku_tags:[],product_tags:[]}}],count:2}),
       saveProductProfile:async payload=>{qa.saved.push(structuredClone(payload));qa.applied.push({sellpia_sku_code:payload.sku,sellpia_product_name:'추가 상품',sellpia_option_name:'실버'});qa.catalog.find(tag=>tag.tag_id==='formula').option_count=qa.applied.length;return {};},
       ensureProductProfile:async()=>({sku_tags:[],product_tags:[]}),
-      updateProductTag:async payload=>{qa.renamed.push(structuredClone(payload));const tag=qa.catalog.find(item=>item.tag_id===payload.id);tag.tag_name=payload.name;return structuredClone(tag);},
+      renameProductTag:async payload=>{qa.renamed.push(structuredClone(payload));const tag=qa.catalog.find(item=>item.tag_id===payload.id);
+        if(payload.expectedName!==tag.tag_name)throw Error('다른 화면에서 수정되었습니다.');tag.tag_name=payload.name;return structuredClone(tag);},
       ruleRegistry:async()=>({rules:[{id:'formula-rule',tag_id:'formula',name:'소스_2000',scope:'smartstore',target_field:'platform_registration_price',source_field:'source_base_price',config:{steps:[{op:'add',value:2000},{op:'round',unit:1,rounding:'nearest'}]}},{id:'makeshop-rule',tag_id:'formula',name:'메이크샵 M15',scope:'makeshop',source_scope:'makeshop',target_field:'platform_discount_price',source_field:'platform_registration_price',config:{discount_mode:'makeshop_code',discount_rule_code:'M15',steps:[{op:'multiply',value:.85},{op:'round',unit:10,rounding:'down'}]}}],assignments:[],dependencies:[]}),
       createProductTag:async payload=>{qa.created.push(structuredClone(payload));const tag={tag_id:'created-'+qa.created.length,tag_name:payload.name,tag_color:payload.color,tag_group:payload.group,rule_count:0,option_count:0};qa.catalog.push(tag);return structuredClone(tag);}
     };
@@ -47,6 +48,10 @@ try{
   page.once('dialog',dialog=>dialog.accept('소스_2500'));
   await page.locator('#tag-rename').click();await page.waitForFunction(()=>qa.renamed.length===1);
   assert.equal((await page.locator('#tag-selected-name').innerText()).includes('소스_2500'),true);
+  assert.deepEqual(await page.evaluate(()=>qa.renamed[0]),{id:'formula',name:'소스_2500',expectedName:'소스_2000'});
+  assert.equal(await page.evaluate(()=>qa.calculations.length),0,'rename must not recalculate or replace Rule identity');
+  await page.locator('[data-tag-kind="all"]').click();await page.locator('[data-tag-id="plain"]').click();await page.locator('[data-tag-id="formula"]').click();
+  await page.waitForFunction(()=>document.getElementById('tag-selected-name').textContent.includes('소스_2500'));
   await page.locator('#tag-member-query').fill('new-2');await page.locator('#tag-member-search button[type="submit"]').click();await page.waitForFunction(()=>document.querySelectorAll('[data-tag-member]').length===2);
   await page.locator('[data-tag-member="new-2"]').check();assert.equal(await page.locator('#tag-apply-selected').isEnabled(),true);
   await page.locator('#tag-apply-selected').click();await page.waitForFunction(()=>qa.saved.length===1);

@@ -9,14 +9,14 @@
   if(rule.tag_role==='discount')throw Error('판매처 할인 태그는 플랫폼 할인 설정에서 적용하세요.');
   return {enabled:true,basis,multiplier:rule.modify_type==='percent'?1+Number(rule.modify_value)/100:1,add:rule.modify_type==='add'?Number(rule.modify_value):0,unit:Number(rule.rounding_unit??1),rounding:rule.rounding_mode||'nearest',fixed:rule.replace_price??'',min:rule.min_price??'',max:rule.max_price??''};
  }
- function calculate(sku,products,formulas,links,stack=[]){
+ function calculate(sku,products,formulas,links,stack=[],output={output_field:'calculated_base_price',scope:''}){
   if(stack.includes(sku)||stack.length>30)throw Error('기준 SKU 순환 연결: '+[...stack,sku].join(' → '));
   const p=products[sku];if(!p)throw Error(sku+' 원본 없음');
   const tagIds=[...new Set([...(p.__profile?.product_tags||[]),...(p.__profile?.sku_tags||[])].map(t=>String(t.tag_id)))];
-  const rules=tagIds.map(id=>formulas[id]).filter(f=>f?.enabled);
-  if(rules.length!==1)throw Error(sku+': 가격 수식 태그 '+rules.length+'개 (1개 필요)');
+  const rules=tagIds.map(id=>({...formulas[id],tag_id:id})).filter(f=>f?.enabled&&(f.output_field||'calculated_base_price')===output.output_field&&(f.scope||'')===(output.scope||''));
+  if(rules.length!==1)throw Error(sku+': '+(output.scope||'공통')+' '+output.output_field+' 수식 '+rules.length+'개 · '+rules.map(f=>f.name||f.tag_id).join(', '));
   const f=rules[0];let base;
-  if(f.basis==='sku'){if(!links[sku])throw Error(sku+': 기준 6mm SKU 미지정');base=calculate(links[sku],products,formulas,links,[...stack,sku]).value;}
+  if(f.basis==='sku'){if(!links[sku])throw Error(sku+': 기준 6mm SKU 미지정');base=calculate(links[sku],products,formulas,links,[...stack,sku],output).value;}
   else base=f.basis==='inbound'?p.actual_inbound_cost:f.basis==='purchase'?p.sellpia_source_purchase_price:p.sellpia_source_sale_price;
   if(base===null||base===undefined||base===''||!Number.isFinite(Number(base))||Number(base)<0)throw Error(sku+': 기준가격 없음');
   const multiplier=Number(f.multiplier),add=Number(f.add),unit=Number(f.unit);

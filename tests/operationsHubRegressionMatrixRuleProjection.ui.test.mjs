@@ -30,7 +30,7 @@ projected=await HubPlatformRules.projectRows(products);
 for(const source of sources){assert.equal(projected[1].__hubRulePrices[source].platformBase,10000);assert.equal(projected[1].__hubRulePrices[source].platformOption,300);assert.equal(projected[1].__hubRulePrices[source].platformFinal,10300,'manual option300 derives from latest calculated base10000, not stale draftbase4000');}
 
 const app=fs.readFileSync(new URL('../mockups/operations-hub/app.js',import.meta.url),'utf8');
-const context={escapeHtml:value=>String(value??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])),matchState:()=>({key:'matched',label:'매칭'}),sellerIdentityCells:()=>'',formatNullableNumber:v=>v==null?'—':Number(v).toLocaleString('ko-KR'),calculateNativeDiscountedBase:base=>base,nativeDiscountSummary:()=>'',matrixDiscountSummary:()=>({summary:'할인 없음',hasDiscount:false,detail:''})};
+const context={discountPriceMath:globalThis.SystemV3DiscountPriceMath,escapeHtml:value=>String(value??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])),matchState:()=>({key:'matched',label:'매칭'}),sellerIdentityCells:()=>'',formatNullableNumber:v=>v==null?'—':Number(v).toLocaleString('ko-KR'),calculateNativeDiscountedBase:base=>base,nativeDiscountSummary:()=>'',matrixDiscountSummary:()=>({summary:'할인 없음',hasDiscount:false,detail:''})};
 vm.createContext(context);
 vm.runInContext(app.slice(app.indexOf('function internalBasePriceText('),app.indexOf('function sellpiaProductGroupKey('))+'\nthis.render=channelInventoryCells;',context);
 const browser=await chromium.launch({channel:'msedge',headless:true});
@@ -44,10 +44,13 @@ try{
  assert.equal(await internal.getAttribute('data-field-key'),'system_base_price');
  for(const source of sources){
   await page.setContent('<table><tbody><tr>'+context.render(projected[1],source,source)+'</tr></tbody></table>');
-  assert.equal(await page.locator('.price-component-base').getAttribute('data-value'),'10000');
-  assert.equal(await page.locator('.price-component-final').getAttribute('data-value'),'10300');
+  // The shadow calculation is 10000/10300 above. Before production cutover,
+  // this renderer preserves the saved draft tuple 4000/4300 as instructed.
+  assert.equal(await page.locator('.price-component-base').getAttribute('data-value'),'4000');
+  assert.equal(await page.locator('.price-component-final').getAttribute('data-value'),'4300');
   assert.equal(await page.locator('.price-component-final').getAttribute('data-option-price'),'300');
-  assert.match(await page.locator('.price-rule-badge').innerText(),/전체 테스트 태그/);
+  assert.equal(await page.locator('.price-rule-badge').innerText(),'fx ↻');
+  assert.match(await page.locator('.price-component-base').getAttribute('title'),/전체 테스트 태그/);
   if(source!=='ably')assert.equal(await page.locator('.price-component-option').getAttribute('data-value'),'300');
  }
  const withoutSource=structuredClone(projected[0]);withoutSource.smartstore_price=null;withoutSource.__sellerPriceComponents.smartstore.source_final_price=null;

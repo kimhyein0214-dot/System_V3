@@ -748,11 +748,12 @@ function matrixRelationPathBadge(product) {
 function resolvedInboundCost(product) {
   const manual = product?.actual_inbound_cost_mode === 'manual';
   const calculated = product?.__hubInternalPrices?.actual_inbound_cost;
-  if (!manual && calculated) {
+  if (!manual && calculated && (!Array.isArray(calculated.activeOutputRules) || calculated.activeOutputRules.length)) {
     const ruleNames = Array.isArray(calculated.ruleNames) ? calculated.ruleNames.filter(Boolean) : [];
     const assignedTags = [...(product?.__profile?.sku_tags || []), ...(product?.__profile?.product_tags || [])];
-    const formulaTag = assignedTags.find(tag => ruleNames.includes(tag?.tag_name)) || null;
-    return {value:calculated.error ? product?.actual_inbound_cost : calculated.value, mode:'formula', tagName:ruleNames.join(' · ') || formulaTag?.tag_name || '수식 태그', color:formulaTag?.tag_color || '#7c3aed', error:calculated.error || '', calculated};
+    const owner = calculated.activeOutputRules?.find(rule=>rule.output_field==='actual_inbound_cost');
+    const formulaTag = assignedTags.find(tag => owner?.tag_id ? tag.tag_id===owner.tag_id : ruleNames.includes(tag?.tag_name)) || null;
+    return {value:calculated.error ? product?.actual_inbound_cost : calculated.value, mode:'formula', tagName:owner?.tag_name || ruleNames.join(' · ') || formulaTag?.tag_name || '수식 태그', color:formulaTag?.tag_color || '#7c3aed', error:calculated.error || '', calculated};
   }
   return {value:product?.actual_inbound_cost, mode:product?.actual_inbound_cost_mode || '', tagName:product?.inbound_cost_formula_tag_name || '', color:product?.inbound_cost_formula_tag_color || '#7c3aed', error:'', calculated:null};
 }
@@ -762,10 +763,10 @@ function inboundCostCell(product) {
   const cost = formatNullableNumber(resolved.value);
   const {tagName, mode, color} = resolved;
   const badge = mode === 'formula' && tagName
-    ? `<em class="inbound-cost-badge${resolved.error ? ' error' : ''}" style="--inbound-tag-color:${escapeHtml(color)}">${escapeHtml(resolved.error ? '계산 오류 · '+tagName : 'fx '+tagName)}</em>`
+    ? `<em class="inbound-cost-badge${resolved.error ? ' error' : ''}" style="--inbound-tag-color:${escapeHtml(color)}">${escapeHtml(resolved.error ? '⚠' : 'fx')}</em>`
     : mode === 'manual'
-      ? '<em class="inbound-cost-badge manual">직접입력</em>'
-      : '<em class="inbound-cost-badge empty">설정</em>';
+      ? '<em class="inbound-cost-badge manual">✎</em>'
+      : '';
   const title = resolved.calculated ? `${tagName} 수식이 계산한 실입고가${resolved.error ? ' · '+resolved.error : ''}` : '클릭하여 실입고가 직접 입력 또는 수식태그 설정';
   return `<button type="button" class="inbound-cost-cell${mode ? ' configured' : ''}" data-inbound-cost-edit data-sku="${escapeHtml(product.sellpia_sku_code)}" title="${escapeHtml(title)}"><b>${cost}</b>${badge}</button>${globalThis.HubMatrixShadow?.internalMarkers(product,'actual_inbound_cost')||''}${globalThis.HubMatrixShadow?.internalChips(product,'actual_inbound_cost')||''}`;
 }
@@ -1118,10 +1119,9 @@ function channelInventoryCells(product, prefix, label, baseMerge = null, identit
     : `<td data-channel="${prefix}"><button class="editable-cell seller-edit${stockDiff && !stockDraft ? ' diff' : ''}${draftClass(stockDraft)}" data-source="${prefix}" data-field-key="sellpia_current_stock" data-field="${label} 재고" data-value="${escapeHtml(stockDisplay)}" data-baseline="${escapeHtml(stock)}" data-value-type="number" data-change-id="${stockDraft?.change_id || ''}" data-draft-status="${stockDraft?.status || ''}" title="${stockDraft ? `수정안 ${formatNullableNumber(stockDisplay)} · 원본 ${formatNullableNumber(stock)}` : '수정 가능한 판매처 재고 · 변경하면 매트릭스 수정안으로 저장됩니다.'}">${formatNullableNumber(stockDisplay)}</button></td>`;
   const componentLayer = (original, draft) => `<span class="price-layer original"><span>원본</span><b>${formatNullableNumber(original)}</b></span>${priceDraft || calculatedPrice || visibleValues.canaryPrice ? `<span class="price-layer draft"><span>${priceDraft?'수정':visibleValues.canaryPrice?'목표':'수식'}</span><b>${formatNullableNumber(draft)}</b></span>` : ''}`;
   const discountView = matrixDiscountSummary(effectiveDiscountTerms, effectiveBasePrice, effectiveDiscountedBasePrice);
-  const priceRuleSummary = `<span class="price-rule-summary">
-    <span class="price-rule-badge ${priceRuleAssignment ? 'assigned' : 'none'}${priceDraft ? ' pending' : ''}"${priceRuleAssignment ? ` style="--price-rule-color:${escapeHtml(priceRuleColor)}"` : ''}>fx ${escapeHtml(priceRuleName || '규칙 없음')}${priceDraft ? ' · 내보내기 준비' : ''}</span>
-    <span class="price-rule-final">${discountView.hasDiscount ? escapeHtml(discountView.summary) : '할인 없음'} → 최종 ${formatNullableNumber(effectiveFinalPrice)}원</span>
-  </span>`;
+  const priceRuleSummary = priceRuleAssignment || priceDraft ? `<span class="price-rule-summary">
+    <span class="price-rule-badge ${priceRuleAssignment ? 'assigned' : 'none'}${priceDraft ? ' pending' : ''}"${priceRuleAssignment ? ` style="--price-rule-color:${escapeHtml(priceRuleColor)}"` : ''}>${priceRuleAssignment ? (rulePrice?.error ? '⚠' : 'fx') : ''}${priceDraft ? ' ↻' : ''}</span>
+  </span>` : '';
   const noPrice = !visibleValues.priceVisible;
   const mergeHidden = Boolean(baseMerge?.hidden);
   const mergeRowspan = Math.max(1, Number(baseMerge?.rowspan) || 1);
@@ -1134,7 +1134,7 @@ function channelInventoryCells(product, prefix, label, baseMerge = null, identit
     : noPrice
       ? `<td class="data-gap${mergeRowspan > 1 ? ' seller-base-merged-cell' : ''}" data-channel="${prefix}"${mergeRowspan > 1 ? ` rowspan="${mergeRowspan}"` : ''}>-</td>`
       : `<td data-channel="${prefix}"${mergeAttributes}><button class="editable-cell seller-edit price-layer-cell price-component-base${draftClass(priceDraft)}" data-source="${prefix}" data-field-key="sellpia_sale_price" data-price-component="base" data-field="${label} 판매가" data-value="${escapeHtml(effectiveBasePrice)}" data-baseline="${escapeHtml(basePrice)}" data-option-price="${escapeHtml(effectiveOptionPrice)}" data-value-type="number" data-change-id="${priceDraft?.change_id || ''}" data-draft-status="${priceDraft?.status || ''}" data-seller-product-code="${escapeHtml(baseMerge?.productCode || productCode)}" data-group-size="${mergeRowspan}" title="${escapeHtml(priceRuleName ? `가격규칙 ${priceRuleName}` : '가격규칙 없음')} · ${escapeHtml(nativeDiscountSummary(discountTerms))} · 할인 적용 판매가 ${formatNullableNumber(effectiveDiscountedBasePrice)}${mergeTitle}">${componentLayer(basePrice, effectiveBasePrice)}${priceRuleSummary}</button><button type="button" class="price-edit-trigger" data-price-edit aria-label="${label} 판매가 수정">수정</button></td>`;
-  const discountContent = `<b>${escapeHtml(discountView.summary)}</b><em>${discountView.hasDiscount ? `적용가 ${formatNullableNumber(effectiveDiscountedBasePrice)}원` : '할인 없음'}</em>`;
+  const discountContent = `<b>${discountView.hasDiscount ? '할인' : '-'}</b>${discountView.hasDiscount ? `<em>${formatNullableNumber(effectiveDiscountedBasePrice)}</em>` : ''}`;
   const discountCell = mergeHidden
     ? ''
     : noPrice

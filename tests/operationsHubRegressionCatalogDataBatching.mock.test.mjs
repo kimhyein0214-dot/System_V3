@@ -13,6 +13,7 @@ const db={from(table){let ids=[],selection='';return {select(value){selection=va
  return Promise.resolve({data,error:null}).then(resolve,reject);
 }};},async rpc(name,args){const ids=Array.from(args.p_skus);calls.push({kind:'rpc',name,count:ids.length});assert.ok(ids.length<=200,'component requests stay within existing200-SKU batch');return {data:[],error:null};}};
 const c={db,MATRIX_VIEW:'matrix',cleanText:v=>String(v??'').trim(),requireOperationsHubSessionToken:()=> 'fixture',withAbortSignal:q=>q,global:{}};
+c.attachRepresentativePrices=async rows=>rows;
 vm.createContext(c);vm.runInContext(names.map(extract).join('\n')+'\nthis.load=loadFormulaProducts;',c);
 const rows=await c.load(skus);
 assert.equal(rows.length,23760);
@@ -30,6 +31,7 @@ assert.ok(calls.filter(c=>c.table==='operations_hub_product_profiles').every(c=>
   return Promise.resolve({data,error:null}).then(resolve,reject);
  }};},async rpc(name,args){const ids=Array.from(args.p_skus);retryCalls.push({kind:'rpc',name,ids});componentAttempts+=1;if(componentAttempts===1)return {data:null,error:{message:'canceling statement due to statement timeout'}};return {data:ids.map(sku=>({sellpia_sku_code:sku,source_channel:'smartstore',seller_product_code:'P10000',seller_option_code:sku})),error:null};}};
  const retryContext={db:retryDb,MATRIX_VIEW:'matrix',cleanText:v=>String(v??'').trim(),requireOperationsHubSessionToken:()=> 'fixture',withAbortSignal:q=>q,readableDatabaseError:e=>e,setTimeout:fn=>fn(),global:{}};
+ retryContext.attachRepresentativePrices=async rows=>rows;
  vm.createContext(retryContext);vm.runInContext(names.map(extract).join('\n')+'\nthis.load=loadFormulaProducts;',retryContext);
  const retryRows=await retryContext.load(retrySkus);
  assert.equal(retryRows.length,3);
@@ -46,6 +48,7 @@ const pipeline=[];
 const stageNames=['attachInboundCostDetails','attachSystemOperationalDetails','attachPriceBasis','attachProductLinkDrafts','attachManualLinks','attachProductProfiles','attachLinkBadges','attachSellerPriceComponents','attachSellerDrafts','attachPriceRuleAssignments','attachLinkSuppressions'];
 const metadataContext={cleanText:v=>String(v??'').trim(),throwIfAborted:signal=>{if(signal?.aborted)throw Error('abort fixture');},withAbortSignal:q=>q,db:{async rpc(name,args){assert.equal(name,'load_operations_hub_matrix_metadata_v1');assert.deepEqual(Array.from(args.p_skus),['one']);return {data:{},error:null};}},global:{},attachStoredCalculatedPrices:async rows=>{pipeline.push('stored-price-projection');assert.ok(rows[0].enriched.includes('attachSellerDrafts'),'manual drafts attach before stored prices');assert.ok(rows[0].enriched.includes('attachSystemOperationalDetails'),'latest operational base attaches before stored prices');return rows.map(r=>({...r,__hubRulePrices:{ably:{platformFinal:10300,platformOption:300}}}));}};
 for(const name of stageNames)metadataContext[name]=async rows=>{pipeline.push(name);return rows.map(r=>({...r,enriched:[...(r.enriched||[]),name]}));};
+metadataContext.attachRepresentativePrices=async rows=>rows;
 vm.createContext(metadataContext);vm.runInContext(extract('attachProductMetadata')+'\nthis.attach=attachProductMetadata;',metadataContext);
 const matrixRows=await metadataContext.attach([{sellpia_sku_code:'one'}]);
 assert.equal(matrixRows[0].__hubRulePrices.ably.platformFinal,10300);

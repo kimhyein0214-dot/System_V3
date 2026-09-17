@@ -5,6 +5,7 @@
  const platformFields=[...platformTargets,'platform_option_input','platform_final_input'];
  const targets=['actual_inbound_cost','basis_sku_price','calculated_base_price','calculated_stock',...platformTargets];
  const raw={purchase_price:'sellpia_source_purchase_price',source_base_price:'sellpia_source_sale_price',actual_inbound_cost:'actual_inbound_cost',basis_sku_price:'system_base_price',calculated_base_price:'system_base_price',system_stock:'system_stock',calculated_stock:'system_stock'};
+ fields.representative_base_price='상품 대표 기준가';
  const key=(sku,field,scope='')=>JSON.stringify([sku,field,scope||'']);
  const isPlatform=field=>platformFields.includes(field);
  const validScope=scope=>['ably','smartstore','makeshop'].includes(scope);
@@ -38,6 +39,7 @@
   if(!['self','parent'].includes(rule.input_origin))throw Error('참조 위치를 선택하세요.');
   if(isPlatform(rule.target_field)?!validScope(rule.scope):!!rule.scope)throw Error('적용 판매처를 확인하세요.');
   if(isPlatform(rule.source_field)?!validScope(rule.source_scope||rule.scope):!!rule.source_scope)throw Error('참조 판매처를 확인하세요.');
+  if(rule.source_field==='representative_base_price'&&(rule.target_field!=='platform_registration_price'||rule.input_origin!=='self'||!validScope(rule.scope)))throw Error('상품 대표가는 해당 SKU의 판매처 등록가 수식에서 명시적으로 선택하세요.');
   if(rule.target_field==='platform_discount_price'){
    if(!validScope(rule.scope))throw Error('할인 수식 태그의 저장 판매처를 선택하세요.');
    if(rule.input_origin!=='self'||rule.source_field!=='platform_registration_price'||!['',rule.scope].includes(rule.source_scope||''))throw Error('할인 수식 태그는 같은 판매처의 등록가격에서 시작해야 합니다.');
@@ -93,6 +95,13 @@
    if(cache.has(k))return cache.get(k);
    const p=products instanceof Map?products.get(sku):Object.hasOwn(products,sku)?products[sku]:null;if(!p)throw Error(sku+' 원본 없음');const assignment=slots.get(k);
    if(!assignment){
+    if(field==='representative_base_price'){
+     const r=p.__hubRepresentativePrice;
+     if(!r||r.status!=='calculated'||r.freshness!=='fresh'||!r.rule?.rule_id||!r.input_fingerprint)throw Error(sku+': 상품 대표가가 없거나 재계산/입력 확인이 필요합니다.');
+     const value=numeric(r.value,'상품 대표가');if(!Number.isSafeInteger(value)||value<0)throw Error('상품 대표가 오류');
+     const result={value,base:value,versions:[{id:r.rule.rule_id,version:r.rule.rule_version,assignmentVersion:r.rule.version}],trace:[{sku,field,value,product_identity:r.product_identity,input_fingerprint:r.input_fingerprint,contributors:r.contributors,selected_options:r.selected_options}],formula:r.rule.tag_name||'상품 대표가'};
+     cache.set(k,result);return result;
+    }
     if(isPlatform(field))throw Error(sku+': 판매처 가격 규칙 미배정');
     const upstream=field==='basis_sku_price'&&slots.has(key(sku,'actual_inbound_cost'))?'actual_inbound_cost':field==='calculated_base_price'&&(slots.has(key(sku,'basis_sku_price'))||slots.has(key(sku,'actual_inbound_cost')))?'basis_sku_price':null;
     if(upstream){const input=evaluate(sku,upstream,'',[...stack,k]);const result={...input,trace:[...input.trace,{sku,field,value:input.value,inherited_from:upstream}]};cache.set(k,result);return result;}
