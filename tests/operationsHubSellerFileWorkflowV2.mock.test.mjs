@@ -20,7 +20,8 @@ test('Ably workflow separates catalog original from PlayAuto export templates',(
   assert.match(js,/에이블리 할인은 공식 파일에 지원 컬럼이 없어 자동 반영하지 않습니다/);
   assert.match(js,/V 추가 금액과 X \*판매수량\(실재고\)만/);
   assert.match(js,/W 판매가능재고와 나머지 셀은 보존/);
-  assert.match(js,/out\.target_stock=item\.sales_quantity/,'preview must resolve stock from X, not W');
+  assert.match(js,/item\.sales_quantity/,'preview must resolve stock from X, not W');
+  assert.match(js,/재고 target 없음 → 이 행 원본 유지/,'missing stock freezes the whole row rather than writing a fallback');
   assert.match(js,/브라우저 메모리/);
   assert.match(js,/Storage 저장 안 함/);
   assert.match(js,/미리보기 실패/);
@@ -49,11 +50,11 @@ test('Ably workflow separates catalog original from PlayAuto export templates',(
 test('preview count chips filter only the visible rows and never mutate export output',()=>{
   const functionSource=js.slice(js.indexOf('function previewRowsForFilter('),js.indexOf('\n function previewFilterButton('));
   const preview={output:[
-    {_status:'ready',_changed:true},
-    {_status:'ready',_changed:false,_blankStockPreserved:true},
+    {_status:'ready',_changed:true,resolution:{sku:'1'}},
+    {_status:'ready',_changed:false,_blankStockPreserved:true,resolution:{sku:'2'}},
     {_status:'unresolved'},
     {_status:'ambiguous'},
-    {_status:'conflict'}
+    {_status:'conflict',resolution:{sku:'3'}}
   ]};
   const before=JSON.stringify(preview.output);
   const previewRowsForFilter=Function(`${functionSource}; return previewRowsForFilter;`)();
@@ -69,7 +70,7 @@ test('preview count chips filter only the visible rows and never mutate export o
 });
 
 test('Smartstore and Makeshop share paged TransformationPlan preview and serializer contract',()=>{
-  for(const marker of ['TransformationPlan','transformation-plan-preview','transformation-plan-summary','transformation-plan-table','latest generation 미반영','timeout/error','원본 fallback','가격 계산 미완료/오류 · 원본 유지'])assert.ok(js.includes(marker),marker);
+  for(const marker of ['TransformationPlan','transformation-plan-preview','transformation-plan-summary','transformation-plan-table','latest generation 미반영','timeout/error','원본 fallback','원본 유지 경고','치명적 차단'])assert.ok(js.includes(marker),marker);
   assert.match(js,/pageSize=100/);
   assert.match(js,/button\.dataset\.planCanGenerate/);
   assert.match(js,/renderTransformationPlan\(source,file,result\)/);

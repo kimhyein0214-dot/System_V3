@@ -274,18 +274,18 @@
   if(!plan||plan.kind!=='TransformationPlan'){standardResult(source,'TransformationPlan을 만들지 못했습니다. 새로고침 후 다시 확인해주세요.','error');return;}
   state.standardCarrierPlans.set(source,plan);
   const c=plan.summary||{},states=c.price_states||{},view=state.standardCarrierViews.get(source)||{filter:'all',page:1},allRows=plan.preview||[];
-  const matchesFilter=row=>view.filter==='all'||(view.filter==='changed'&&row.changed)||(view.filter==='unchanged'&&row.status==='ready'&&!row.changed)||(view.filter==='fallback'&&row.price_state?.code==='original_fallback')||(view.filter==='blocked'&&(row.status!=='ready'||['latest_generation_unreflected','timeout_error'].includes(row.price_state?.code)));
+  const matchesFilter=row=>view.filter==='all'||(view.filter==='changed'&&row.changed)||(view.filter==='unchanged'&&row.status==='ready'&&!row.changed)||(view.filter==='fallback'&&row.status==='warn_keep_original')||(view.filter==='blocked'&&row.status==='blocked');
   const filtered=allRows.filter(matchesFilter),pageSize=100,totalPages=Math.max(1,Math.ceil(filtered.length/pageSize));view.page=Math.min(Math.max(1,view.page||1),totalPages);state.standardCarrierViews.set(source,view);
   const rows=filtered.slice((view.page-1)*pageSize,view.page*pageSize),stateClass=code=>code==='calculated_complete'?'complete':code==='latest_generation_unreflected'?'stale':code==='timeout_error'?'error':'fallback';
   const filterButton=(code,label,count)=>`<button type="button" class="export-preview-filter ${view.filter===code?'active':''}" data-plan-filter="${code}">${esc(label)} ${n(count)}</button>`;
   el.className='direct-export-preview transformation-plan-preview';
   setSellerPanel(source,'preview');
   el.innerHTML=`<div class="transformation-plan-head"><b>${esc(file.name)} · TransformationPlan</b><span>브라우저 메모리 · Storage 저장 안 함</span></div>
-   <div class="transformation-plan-summary"><span>입력 ${n(c.total)}</span><span>매칭 ${n(c.matched)}</span><span>안전 변경 ${n(c.changed)}</span><span>변경 없음 ${n(allRows.filter(row=>row.status==='ready'&&!row.changed).length)}</span><span>후보 변경 ${n(c.candidate_changed)}</span><span>차단 ${n(c.blocked)}</span><span>정상 완료 ${n(states.calculated_complete)}</span><span>latest generation 미반영 ${n(states.latest_generation_unreflected)}</span><span>timeout/error ${n(states.timeout_error)}</span><span>원본 fallback ${n(states.original_fallback)}</span></div>
-   <div class="transformation-plan-filters">${filterButton('all','전체',allRows.length)}${filterButton('changed','변경',allRows.filter(row=>row.changed).length)}${filterButton('unchanged','변경 없음',allRows.filter(row=>row.status==='ready'&&!row.changed).length)}${filterButton('fallback','원본 유지',allRows.filter(row=>row.price_state?.code==='original_fallback').length)}${filterButton('blocked','경고/차단',allRows.filter(row=>row.status!=='ready'||['latest_generation_unreflected','timeout_error'].includes(row.price_state?.code)).length)}</div>
+   <div class="transformation-plan-summary"><span>입력 ${n(c.total)}</span><span>매칭 ${n(c.matched)}</span><span>변경 ${n(c.changed)}</span><span>변경 없음 ${n(c.unchanged)}</span><span>원본 유지 경고 ${n(c.warned)}</span><span>치명적 차단 ${n(c.blocked)}</span><span>정상 완료 ${n(states.calculated_complete)}</span><span>latest generation 미반영 ${n(states.latest_generation_unreflected)}</span><span>timeout/error ${n(states.timeout_error)}</span><span>원본 fallback ${n(states.original_fallback)}</span></div>
+   <div class="transformation-plan-filters">${filterButton('all','전체',allRows.length)}${filterButton('changed','변경',c.changed)}${filterButton('unchanged','변경 없음',c.unchanged)}${filterButton('fallback','원본 유지 경고',c.warned)}${filterButton('blocked','치명적 차단',c.blocked)}</div>
    <div class="transformation-plan-warning">${esc(plan.safety?.reason||'가격 계산 상태를 재검증해야 합니다.')} · 생성 시 대상 SKU만 다시 확인합니다. · 처리 ${((plan.timings?.total_ms||0)/1000).toFixed(2)}초</div>
    <details class="transformation-plan-warning"><summary>조회 진단 · ${n(plan.diagnostics?.query_count)}회 · ${n(plan.diagnostics?.sku_count)} SKU · 전체 snapshot 없음</summary>${Object.entries(plan.timings||{}).map(([key,value])=>`${esc(key)} ${n(value)}ms`).join(' · ')}<br>${(plan.diagnostics?.queries||[]).map(query=>`${esc(query.query)} · 대상 ${n(query.scope_count)} · ${n(query.latency_ms)}ms · ${esc(query.status)}`).join('<br>')}</details>
-   <div class="transformation-plan-table-wrap"><table class="transformation-plan-table"><thead><tr><th>행 / SKU</th><th>상품 · 옵션</th><th>현재값</th><th>preview 저장값</th><th>가격 상태</th></tr></thead><tbody>${rows.map(row=>{const diff=row.diff||{},stock=diff.stock||{},price=diff.price||{},priceState=row.price_state||{};return `<tr><td>${esc(row.source_row_no??'—')} / ${esc(row.sku||'—')}</td><td>${esc(row.product_code||'—')} · ${esc(row.option_code||'—')}</td><td>재고 ${esc(stock.before??'—')}<br>${esc(carrierPriceTuple(price.before))}</td><td>재고 ${esc(stock.after??stock.before??'—')}<br>${esc(carrierPriceTuple(price.after||price.before))}</td><td class="price-state ${stateClass(priceState.code)}"><b>${esc(priceState.label||'가격 계산 미완료/오류 · 원본 유지')}</b><br><small>${esc(row.reason||priceState.detail||'')}</small></td></tr>`;}).join('')||'<tr><td colspan="5">이 조건에 해당하는 항목이 없습니다.</td></tr>'}</tbody></table></div>
+   <div class="transformation-plan-table-wrap"><table class="transformation-plan-table"><thead><tr><th>행 / SKU</th><th>상품 · 옵션</th><th>현재값</th><th>preview 저장값</th><th>상태 / 사유</th></tr></thead><tbody>${rows.map(row=>{const diff=row.diff||{},stock=diff.stock||{},price=diff.price||{},priceState=row.price_state||{},status=row.status==='blocked'?'치명적 차단':row.status==='warn_keep_original'?'원본 유지 경고':row.changed?'변경':'변경 없음';return `<tr class="export-row-${row.status==='blocked'?'blocker':row.status==='warn_keep_original'?'warning':row.changed?'change':'unchanged'}"><td>${esc(row.source_row_no??'—')} / ${esc(row.sku||'—')}</td><td>${esc(row.product_code||'—')} · ${esc(row.option_code||'—')}</td><td>재고 ${esc(stock.before??'—')}<br>${esc(carrierPriceTuple(price.before))}</td><td>재고 ${esc(stock.after??stock.before??'—')}<br>${esc(carrierPriceTuple(price.after||price.before))}</td><td class="price-state ${stateClass(priceState.code)}"><b>${status}</b><br>${esc(priceState.label||'원본 유지')}<br><small>${esc(row.reason||priceState.detail||'')}</small></td></tr>`;}).join('')||'<tr><td colspan="5">이 조건에 해당하는 항목이 없습니다.</td></tr>'}</tbody></table></div>
    <div class="transformation-plan-limit"><button type="button" class="btn" data-plan-page="prev" ${view.page<=1?'disabled':''}>이전</button><span>${n(view.page)} / ${n(totalPages)} · ${n(filtered.length)}행</span><button type="button" class="btn" data-plan-page="next" ${view.page>=totalPages?'disabled':''}>다음</button></div>`;
   el.querySelector('.transformation-plan-filters')?.addEventListener('click',event=>{const button=event.target.closest?.('[data-plan-filter]');if(!button)return;state.standardCarrierViews.set(source,{filter:button.dataset.planFilter,page:1});renderTransformationPlan(source,file,result);});
   el.querySelector('.transformation-plan-limit')?.addEventListener('click',event=>{const button=event.target.closest?.('[data-plan-page]');if(!button)return;view.page+=button.dataset.planPage==='next'?1:-1;state.standardCarrierViews.set(source,view);renderTransformationPlan(source,file,result);});
@@ -428,18 +428,20 @@
    const resolved=await job.mapRows(parsed.items,item=>A().resolveRows([item],catalogRows,mappingResult.rows||[])[0]);
    const resolvedWithSku=resolved.filter(item=>item.resolution?.sku);
    let chosen=scope?resolvedWithSku.filter(item=>scope.has(item.resolution.sku)):resolvedWithSku;
-   if(!chosen.length)throw Error('선택 범위에서 PlayAuto 원본과 매칭되는 SKU가 없습니다.');
+   if(!chosen.length&&scope)throw Error('선택 범위에서 PlayAuto 원본과 매칭되는 SKU가 없습니다.');
 
    // 상품 판매가는 한 행의 옵션들이 공유하므로 선택된 행의 모든 옵션을 함께 읽어 안전성을 확인한다.
    let safetyRows=chosen;
    if(role==='playauto_product'){
     const touched=new Set(chosen.map(item=>item.source_row_no));
-    safetyRows=resolvedWithSku.filter(item=>touched.has(item.source_row_no));
+    safetyRows=scope?resolved.filter(item=>touched.has(item.source_row_no)):resolved;
    }
-   const safetySkus=[...new Set(safetyRows.map(item=>item.resolution.sku))];
+   const safetySkus=[...new Set(safetyRows.map(item=>item.resolution?.sku).filter(Boolean))];
    job.phaseTo('targets',0,safetySkus.length);
    const stored=await D().loadCarrierMatrixTargets({source:'ably',skus:safetySkus,onQuery});job.check();job.phaseTo('targets',safetySkus.length,safetySkus.length);
    const targetMap=new Map((stored.rows||[]).map(row=>[row.sku,row]));
+   const generations=(stored.rows||[]).flatMap(row=>[row.latest_generation_id,row.latest_price_generation_id,row.registration_generation_id,row.discount_generation_id,row.option_generation_id,row.final_generation_id]).filter(value=>value!=null&&value!==''&&Number.isFinite(Number(value))).map(Number);
+   const latestGeneration=generations.length?generations.reduce((latest,value)=>Math.max(latest,value),Number.NEGATIVE_INFINITY):null;
 
    const chosenSet=new Set(chosen.map(item=>`${item.source_row_no}|${item.option_index??''}|${item.resolution.sku}`));
    const sourceRows=role==='playauto_option'&&!scope?resolved:safetyRows;
@@ -448,15 +450,18 @@
     const sku=item.resolution?.sku,row=sku?targetMap.get(sku):null,inScope=sku?chosenSet.has(`${item.source_row_no}|${item.option_index??''}|${sku}`):!scope;
     const out={...item,resolution:item.resolution,_inScope:inScope,_status:'ready',_error:'',_changedFields:[]};
     if(item.carrier_identity_error){out._status='ambiguous';out._error=item.carrier_identity_error;return out;}
-    if(!sku){out._status='unresolved';out._error=item.resolution?.error||'SKU를 정확히 찾지 못했습니다.';return out;}
-    const sourceBase=Number.isFinite(Number(item.base_price))?Number(item.base_price):null;
-    const sourceOption=Number.isFinite(Number(item.option_price))?Number(item.option_price):null;
+    if(!sku){out._status=item.resolution?.method==='unresolved'?'warn_keep_original':'ambiguous';out._error=item.resolution?.error||'SKU를 정확히 찾지 못했습니다.';return out;}
+    const priceState=global.HubCurrentPriceExport.carrierPriceState(row,latestGeneration);out._priceState=priceState;
+    if(!priceState.safe){out._status='warn_keep_original';out._error=priceState.label+' · 이 행 전체 원본 유지';return out;}
+    const sourceBase=item.base_price!=null&&item.base_price!==''&&Number.isFinite(Number(item.base_price))?Number(item.base_price):null;
+    const sourceOption=item.option_price!=null&&item.option_price!==''&&Number.isFinite(Number(item.option_price))?Number(item.option_price):null;
     const sourceFinal=sourceBase!==null&&sourceOption!==null?sourceBase+sourceOption:null;
     const matrixTarget=global.HubCurrentPriceExport?.matrixPriceTarget({...row,
       source_base_price:sourceBase,source_discounted_base_price:sourceBase,source_option_price:sourceOption,
       source_final_price:sourceFinal,source_discount_terms:[]
     });
-    if(matrixTarget?.invalid){out._status='conflict';out._error=matrixTarget.reason;return out;}
+    if(matrixTarget?.invalid){out._status='warn_keep_original';out._error=matrixTarget.reason;return out;}
+    if(sourceBase===null||sourceOption===null){out._status='warn_keep_original';out._error='현재 가격 구성값 없음 → 이 행 원본 유지';return out;}
     if(role==='playauto_product'){
       out.target_base_price=matrixTarget?Number(matrixTarget.base):sourceBase;
       if(inScope)out.target_option_price=matrixTarget?Number(matrixTarget.option):sourceOption;
@@ -465,7 +470,7 @@
       const matrixStock=global.HubCurrentPriceExport?.matrixStockTarget(row);
       if(inScope&&item.sales_quantity==null)out._blankStockPreserved=true;
       else if(inScope&&matrixStock!==null&&matrixStock!==undefined&&Number.isFinite(Number(matrixStock)))out.target_stock=Number(matrixStock);
-      else if(inScope){out._stockOriginalPreserved=true;out.target_stock=item.sales_quantity;}
+      else if(inScope){out._status='warn_keep_original';out._error='재고 target 없음 → 이 행 원본 유지';delete out.target_option_price;}
     }
     return out;
    });
@@ -474,6 +479,14 @@
     const byRow=new Map();for(const item of prepared){if(!byRow.has(item.source_row_no))byRow.set(item.source_row_no,[]);byRow.get(item.source_row_no).push(item);}
     for(const group of byRow.values()){
       if(!group.some(item=>item._inScope))continue;
+      if(group.some(item=>item._status!=='ready'&&item._status!=='warn_keep_original')){
+       for(const item of group)if(item._inScope){item._status='conflict';item._error='공유 판매가 상품에 identity 차단이 있어 생성 차단';delete item.target_base_price;delete item.target_option_price;}
+       continue;
+      }
+      if(group.some(item=>item._status==='warn_keep_original')){
+       for(const item of group)if(item._status==='ready'){item._status='warn_keep_original';item._error='공유 판매가 보호: 같은 상품의 경고 옵션이 있어 상품 전체 원본 유지';delete item.target_base_price;delete item.target_option_price;}
+       continue;
+      }
       const bases=[...new Set(group.filter(item=>Number.isFinite(Number(item.target_base_price))).map(item=>Number(item.target_base_price)))];
       const safe=bases.length===1&&group.every(item=>item.resolution?.sku&&item._status==='ready');
       if(!safe){for(const item of group)if(item._inScope){item._status='conflict';item._error='공유 판매가를 안전하게 결정할 수 없음';delete item.target_base_price;delete item.target_option_price;}}
@@ -482,7 +495,11 @@
 
    const output=prepared.filter(item=>item._inScope);
    for(const item of output){
-    if(item._status!=='ready')continue;
+    if(item._status!=='ready'){
+     delete item.target_base_price;delete item.target_option_price;delete item.target_stock;
+     item._current=role==='playauto_product'?`판매가 ${n(item.base_price)} / 옵션 ${n(item.option_price)}`:`추가 금액 ${n(item.option_price)} / *판매수량(실재고) ${item.sales_quantity==null?'빈칸':n(item.sales_quantity)}`;
+     item._target=item._current;continue;
+    }
     if(role==='playauto_product'){
       const baseChanged=Number(item.target_base_price)!==Number(item.base_price),optionChanged=Number(item.target_option_price)!==Number(item.option_price);
       if(baseChanged)item._changedFields.push('base');if(optionChanged)item._changedFields.push('option');
@@ -496,11 +513,11 @@
       item._current=`추가 금액 ${n(item.option_price)} / *판매수량(실재고) ${item.sales_quantity==null?'빈칸':n(item.sales_quantity)}`;item._target=`추가 금액 ${Number.isFinite(Number(item.target_option_price))?n(item.target_option_price):'유지'} / *판매수량(실재고) ${item._blankStockPreserved?'빈셀 유지':item.target_stock!=null&&Number.isFinite(Number(item.target_stock))?n(item.target_stock):'유지'}`;
     }
    }
-   const unresolved=output.filter(item=>item._status==='unresolved'||item._status==='ambiguous').length,ready=output.filter(item=>item._status==='ready').length,changed=output.filter(item=>item._status==='ready'&&item._changed).length,preserved=output.filter(item=>item._blankStockPreserved).length,blocked=output.filter(item=>item._status!=='ready').length;
+   const unresolved=output.filter(item=>!item.resolution?.sku).length,ready=output.filter(item=>item._status==='ready').length,changed=output.filter(item=>item._status==='ready'&&item._changed).length,preserved=output.filter(item=>item._blankStockPreserved).length,warned=output.filter(item=>item._status==='warn_keep_original').length,blocked=output.filter(item=>item._status!=='ready'&&item._status!=='warn_keep_original').length;
    const versionToken=JSON.stringify(output.map(item=>[item.source_row_no,item.option_index??'',item.resolution?.sku||'',item.resolution?.method||'',item._status,item._changedFields,item._current,item._target,item._error]));
    job.check();job.phaseTo('preview',output.length,output.length);
-   state.preview={role,record,file,parsed,items:prepared,output,versionToken,timings:job.timings,counts:{template:parsed.items.length,matched:resolvedWithSku.length,selected:output.length,ready,changed,blocked,unresolved,preserved}};
-   renderPreview();job.finish();setStatus(`${roles[role].label} 미리보기 완료 · 생성 가능 ${n(ready)}건 · 제외 ${n(blocked)}건`,'success');return state.preview;
+   state.preview={role,record,file,parsed,items:prepared,output,versionToken,timings:job.timings,counts:{template:parsed.items.length,matched:resolvedWithSku.length,selected:output.length,ready,changed,unchanged:ready-changed,warned,blocked,unresolved,preserved}};
+   renderPreview();job.finish();setStatus(`${roles[role].label} 미리보기 완료 · 변경 ${n(changed)} · 원본 유지 경고 ${n(warned)} · 치명적 차단 ${n(blocked)}`,'success');return state.preview;
   }catch(error){if(error?.name==='CarrierCancelledError'||state.ablyJob!==job||job.cancelled)return;job.finish(error);setStatus(`미리보기 실패: ${error?.message||error}`,'error');}
  }
 
@@ -508,9 +525,11 @@
   const rows=Array.isArray(preview?.output)?preview.output:[];
   if(filter==='ready')return rows.filter(item=>item._status==='ready');
   if(filter==='changed')return rows.filter(item=>item._status==='ready'&&item._changed);
-  if(filter==='unresolved')return rows.filter(item=>item._status==='unresolved'||item._status==='ambiguous');
+  if(filter==='unresolved')return rows.filter(item=>!item.resolution?.sku);
+  if(filter==='warned')return rows.filter(item=>item._status==='warn_keep_original');
+  if(filter==='unchanged')return rows.filter(item=>item._status==='ready'&&!item._changed);
   if(filter==='preserved')return rows.filter(item=>item._blankStockPreserved);
-  if(filter==='blocked')return rows.filter(item=>item._status!=='ready');
+  if(filter==='blocked')return rows.filter(item=>item._status!=='ready'&&item._status!=='warn_keep_original');
   return rows;
  }
 
@@ -525,20 +544,21 @@
   setSellerPanel('ably','preview');
   document.getElementById('export-preview-copy').textContent=p.role==='playauto_product'?'PlayAuto 쇼핑몰상품 원본의 판매가·옵션가를 현재 매트릭스 표시값과 비교합니다.':'공식 옵션기본 파일을 Storage에 저장하지 않고 V 추가 금액과 X *판매수량(실재고)만 현재 매트릭스 표시값으로 변환합니다. W 판매가능재고와 나머지 셀은 보존합니다.';
   const c=p.counts,counts=document.getElementById('export-preview-counts');
-  counts.innerHTML=`<span>원본 ${n(c.template)}</span><span>매칭 ${n(c.matched)}</span>${previewFilterButton('all','선택',c.selected)}${previewFilterButton('ready','생성 가능',c.ready,'good')}${previewFilterButton('changed','변경',c.changed,'good')}${previewFilterButton('unresolved','미확정',c.unresolved,'warn')}${c.preserved?previewFilterButton('preserved','원본 blank 유지',c.preserved):''}${previewFilterButton('blocked','제외',c.blocked,c.blocked?'bad':'')}`;
+  counts.innerHTML=`<span>원본 ${n(c.template)}</span><span>매칭 ${n(c.matched)}</span>${previewFilterButton('all','선택',c.selected)}${previewFilterButton('ready','생성 가능',c.ready,'good')}${previewFilterButton('changed','변경',c.changed,'good')}${previewFilterButton('unchanged','변경 없음',c.unchanged)}${previewFilterButton('warned','원본 유지 경고',c.warned,'warn')}${previewFilterButton('unresolved','미확정',c.unresolved,'warn')}${c.preserved?previewFilterButton('preserved','원본 blank 유지',c.preserved):''}${previewFilterButton('blocked','치명적 차단',c.blocked,c.blocked?'bad':'')}`;
   counts.onclick=event=>{const button=event.target.closest?.('[data-preview-filter]');if(!button)return;const next=button.dataset.previewFilter;state.previewFilter=state.previewFilter===next&&next!=='all'?'all':next;state.previewPage=1;renderPreview();};
   const rows=previewRowsForFilter(p,state.previewFilter);
   const pageSize=100,totalPages=Math.max(1,Math.ceil(rows.length/pageSize));state.previewPage=Math.min(Math.max(1,state.previewPage||1),totalPages);
-  document.getElementById('export-preview-rows').innerHTML=rows.slice((state.previewPage-1)*pageSize,state.previewPage*pageSize).map(item=>`<tr><td>${esc(item.resolution?.sku||'—')}</td><td>${esc(item._current||'—')}</td><td>${esc(item._target||'—')}</td><td class="${item._status==='ready'?'':'error'}">${item._status==='ready'?(item._changed?'변경':'동일'):esc(item._error||item._status)}</td></tr>`).join('')||'<tr><td colspan="4">이 조건에 해당하는 항목이 없습니다.</td></tr>';
+  document.getElementById('export-preview-rows').innerHTML=rows.slice((state.previewPage-1)*pageSize,state.previewPage*pageSize).map(item=>`<tr class="export-row-${item._status==='ready'?(item._changed?'change':'unchanged'):item._status==='warn_keep_original'?'warning':'blocker'}"><td>${esc(item.resolution?.sku||'—')}</td><td>${esc(item._current||'—')}</td><td>${esc(item._target||'—')}</td><td>${item._status==='ready'?(item._changed?'변경':'변경 없음'):`${item._status==='warn_keep_original'?'원본 유지 경고':'치명적 차단'} · ${esc(item._error||item._status)}`}</td></tr>`).join('')||'<tr><td colspan="4">이 조건에 해당하는 항목이 없습니다.</td></tr>';
   const pagination=document.getElementById('export-preview-pagination');if(pagination){pagination.innerHTML=`<button class="btn" type="button" data-ably-page="prev" ${state.previewPage<=1?'disabled':''}>이전</button><span>${n(state.previewPage)} / ${n(totalPages)} · ${n(rows.length)}행</span><button class="btn" type="button" data-ably-page="next" ${state.previewPage>=totalPages?'disabled':''}>다음</button>`;pagination.onclick=event=>{const button=event.target.closest?.('[data-ably-page]');if(!button)return;state.previewPage+=button.dataset.ablyPage==='next'?1:-1;renderPreview();};}
-  document.getElementById('export-preview-generate').disabled=!c.ready;
+  document.getElementById('export-preview-generate').disabled=!c.selected||c.blocked>0;
  }
 
  async function generate(){
   const p=state.preview;if(!p)return;
+  if(p.counts.blocked){setStatus('identity/구조 관련 치명적 차단이 있어 파일을 생성할 수 없습니다.','error');return;}
   setStatus('현재 매트릭스 표시값이 미리보기 이후 바뀌지 않았는지 확인하는 중…');
   const revalidated=await preview(p.role);
-  if(!revalidated||revalidated.versionToken!==p.versionToken){
+  if(!revalidated||revalidated.counts.blocked||revalidated.versionToken!==p.versionToken){
    if(revalidated){state.ablyJob?.finish(Error('가격/재고 상태가 변경되었습니다. 미리보기를 다시 확인해주세요.'));setSellerPanel('ably','error');}
    setStatus('가격/재고 상태가 변경되었습니다. 미리보기를 다시 확인해주세요.','error');return;
   }
@@ -565,7 +585,7 @@
    setStatus(`에이블리 ${roles[p.role].label} XLSX 생성 완료`,'success');
    setSellerPanel('ably','success',`${p.file.name} · XLSX 생성 완료. 다운로드를 시작했습니다.`);
   }catch(error){if(error?.name!=='CarrierCancelledError'){serializationJob?.finish(error);setSellerPanel('ably','error');setStatus(`XLSX 생성 실패: ${error?.message||error}`,'error');}}
-  finally{if(progressBox)delete progressBox.dataset.generating;if(generateButton&&state.ablyJob===serializationJob)generateButton.disabled=!state.preview?.counts?.ready;}
+  finally{if(progressBox)delete progressBox.dataset.generating;if(generateButton&&state.ablyJob===serializationJob)generateButton.disabled=!state.preview?.counts?.selected||state.preview?.counts?.blocked>0;}
  }
 
  function renameLegacyExportUi(){

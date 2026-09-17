@@ -94,7 +94,7 @@ test('official carrier scope uses exact identity and only visible draft or calcu
   ];
   const snapshot=[
     row({sku:'DRAFT',price_draft:draft,stock_draft:{after_value:0}}),
-    row({sku:'BLANK',product_code:'P-2',option_code:'O-2',source_row_no:4,system_stock:99,source_stock:3})
+    row({sku:'BLANK',active_price_rule:false,product_code:'P-2',option_code:'O-2',source_row_no:4,system_stock:99,source_stock:3})
   ];
   const result=h.api.prepareCarrierItems('smartstore','carrier.xlsx',carrier,snapshot);
   assert.equal(result.kind,'TransformationPlan');
@@ -135,7 +135,9 @@ test('carrier TransformationPlan distinguishes complete, stale, timeout and orig
   assert.deepEqual(plain(result.preview.map(item=>item.price_state.code)),['calculated_complete','latest_generation_unreflected','timeout_error','original_fallback']);
   assert.equal(result.latest_generation_id,12);
   assert.deepEqual(plain(result.summary.price_states),{calculated_complete:1,latest_generation_unreflected:1,timeout_error:1,original_fallback:1});
-  assert.equal(result.canGenerate,false);
+  assert.equal(result.canGenerate,true,'unsafe price rows are whole-row warnings, not file blockers');
+  assert.equal(result.summary.warned,3);
+  assert.equal(result.summary.blocked,0);
   assert.equal(result.safety.price_complete,false);
   assert.equal(result.preview[1].diff.price.after.final,5000,'stale price keeps the carrier original');
   assert.equal(result.preview[2].diff.price.after.final,5000,'timeout price keeps the carrier original');
@@ -221,6 +223,17 @@ test('carrier serializer receives the exact TransformationPlan operations',async
   assert.equal(calls.length,1);
   assert.equal(calls[0].items,operations);
   assert.equal(result.appliedItems,operations);
+});
+
+test('serializer cell conflicts block every download, while planned warning no-ops permit original download',async()=>{
+ const functionSource=appSource.slice(appSource.indexOf('async function transformStandardCarrierExport('),appSource.indexOf('\nasync function prepareChangedOnlyExport('));
+ const downloads=[],operations=[{export_item_id:1}],plan={source:'smartstore',file:{name:'carrier.xlsx'},operations,excludedItems:[{status:'warn_keep_original',reason:'가격 없음 → 원본 유지'}]};
+ let conflicts=[{reason:'옵션코드가 DB와 다릅니다.'}];
+ const sellerExport={async transformSellerFile(){return {blob:{},appliedItems:[],skippedItems:conflicts};},downloadBlob:(blob,name)=>downloads.push(name),outputName:name=>name,conflictCsv:()=>''};
+ const transform=Function('sellerExport','Blob',`${functionSource}; return transformStandardCarrierExport;`)(sellerExport,Blob);
+ await assert.rejects(()=>transform(plan,{download:true}),/수정 셀\/원본값 검증 실패/);assert.equal(downloads.length,0);
+ conflicts=[];plan.operations=[];
+ const result=await transform(plan,{download:true});assert.equal(downloads.length,2,'unchanged workbook and warning CSV are returned');assert.equal(result.skippedItems.length,1);
 });
 
 test('UI is display-only and RPC reads live drafts with same-generation metadata',()=>{

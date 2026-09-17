@@ -13,7 +13,7 @@ function harness({items=[],targets=[],readError=null,targetReader=null}={}){
  const document={querySelector(selector){if(selector==='[data-ably-progress]')return progress;if(selector==='[data-ably-progress-detail]')return fields.get('detail');return null;},getElementById(id){return nodes.get(id)||null;}};
  let now=0,nextTimer=0,rendered=0;
  const timers=new Map(),messages=[],state={carrierFiles:new Map(),ablyJob:null,ablyJobSequence:0};
- const global={performance:{now:()=>now},setInterval(fn){const id=++nextTimer;timers.set(id,fn);return id;},clearInterval:id=>timers.delete(id),setTimeout:fn=>setImmediate(fn),HubCurrentPriceExport:{matrixPriceTarget:row=>({base:row.source_base_price,option:row.source_option_price}),matrixStockTarget:row=>row?.stock_draft?.after_value??row?.seller_stock??null}};
+ const global={performance:{now:()=>now},setInterval(fn){const id=++nextTimer;timers.set(id,fn);return id;},clearInterval:id=>timers.delete(id),setTimeout:fn=>setImmediate(fn),HubCurrentPriceExport:{carrierPriceState:()=>({safe:true,code:'original_fallback'}),matrixPriceTarget:row=>({base:row.source_base_price,option:row.source_option_price}),matrixStockTarget:row=>row?.stock_draft?.after_value??row?.seller_stock??null}};
  const setStatus=(text,kind)=>messages.push({text,kind}),renderExportStatuses=()=>{},n=value=>Number(value||0).toLocaleString('ko-KR');
  const createAblyJob=Function('global','state','document','n','renderExportStatuses','setStatus',`${helpers};return createAblyJob;`)(global,state,document,n,renderExportStatuses,setStatus);
  const file={name:'carrier.xlsx',async arrayBuffer(){return new ArrayBuffer(1);}};

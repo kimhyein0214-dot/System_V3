@@ -7967,6 +7967,7 @@ async function prepareStandardCarrierExport(source,file,{isCurrent=()=>true}={})
 
 async function transformStandardCarrierExport(plan,{download=false}={}){
   const transformed=await sellerExport.transformSellerFile(plan.file,plan.operations||plan.items||[]);
+  if(transformed.skippedItems.length)throw Error(`수정 셀/원본값 검증 실패 → 파일 생성 차단: ${transformed.skippedItems[0].reason||'serializer가 수정 위치를 확정하지 못했습니다.'}`);
   const skipped=[...plan.excludedItems,...transformed.skippedItems];
   if(download){
     sellerExport.downloadBlob(transformed.blob,sellerExport.outputName(plan.file.name));
@@ -8093,6 +8094,7 @@ window.SystemV3SellerExportBridge={
     const identity=plan.file_identity||{},current={name:file?.name||'',size:Number(file?.size||0),lastModified:Number(file?.lastModified||0)};
     if(identity.name!==current.name||Number(identity.size)!==current.size||Number(identity.lastModified)!==current.lastModified)throw Error('선택한 carrier 파일이 미리보기 때와 다릅니다. 미리보기를 다시 확인해주세요.');
     const revalidated=await prepareStandardCarrierExport(source,file);
+    if(!revalidated.canGenerate)throw Error(revalidated.safety?.reason||'재검증에서 치명적 차단이 발견되었습니다.');
     if(revalidated.version_token!==plan.version_token)throw Error('가격/재고 상태가 변경되었습니다. 미리보기를 다시 확인해주세요.');
     const result=await transformStandardCarrierExport(plan,{download:true});
     return {source,title:'공식 수정파일 변환 완료',progressDetail:`입력 ${formatNumber(plan.preview.length)}행 · 반영 ${formatNumber(result.appliedItems.length)}건 · 경고 ${formatNumber(result.skippedItems.length)}행`,...result};

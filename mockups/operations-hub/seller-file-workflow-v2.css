@@ -117,3 +117,8 @@
 .direct-export-progress[data-state="error"]{background:#fff4f4;border-color:#efcccc}
 .direct-export-progress[data-state="error"] .direct-export-progress-track i{background:#cc4b4b}
 .direct-export-progress[data-state="error"] .direct-export-progress-head span{color:#ae3030}
+/* Row policy is independent of price completion: warnings preserve original cells. */
+.export-row-change td{background:#effaf2}
+.export-row-warning td{background:#fff0e8!important;color:#85351c}
+.export-row-blocker td{background:#ffdada!important;color:#981c1c}
+.export-row-warning td:last-child,.export-row-blocker td:last-child{font-weight:700}
