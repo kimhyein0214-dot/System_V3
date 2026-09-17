@@ -1020,6 +1020,9 @@ function internalBasePriceComparison(product) {
 function systemOperationalCell(product, fieldKey, label, sourceValue) {
   const value = product?.[fieldKey];
   const calculated = fieldKey === 'system_base_price' ? product?.__hubInternalPrices?.calculated_base_price : null;
+  const formulaOwned = calculated && (Array.isArray(calculated.activeOutputRules)
+    ? calculated.activeOutputRules.length > 0
+    : Array.isArray(calculated.versions) && calculated.versions.length > 0);
   const hasValue = value !== null && value !== undefined && value !== '';
   const hasSource = sourceValue !== null && sourceValue !== undefined && sourceValue !== '';
   const differs = hasValue && hasSource && Number(value) !== Number(sourceValue);
@@ -1046,7 +1049,7 @@ function systemOperationalCell(product, fieldKey, label, sourceValue) {
     <b>${calculated ? (calculated.error ? '계산 오류' : formatNullableNumber(calculated.value)) : (hasValue ? formatNullableNumber(value) : '미설정')}</b>
     ${calculated ? `<em>${escapeHtml(calculated.error || `수식 결과 · ${Array.isArray(calculated.ruleNames) && calculated.ruleNames.length ? calculated.ruleNames.join(' · ') : '저장된 수식'}`)}</em><em>원본 저장값 ${hasValue ? formatNullableNumber(value) : '미설정'}</em>` : ''}
     <em>${sourceState}${updatedAt ? ` · 저장 ${formatLiveTime(updatedAt)}` : ''}</em>
-  </button>`;
+  </button>${formulaOwned ? (globalThis.HubMatrixShadow?.internalMarkers(product, 'calculated_base_price') || '') + (globalThis.HubMatrixShadow?.internalChips(product, 'calculated_base_price') || '') : ''}`;
 }
 
 function channelInventoryCells(product, prefix, label, baseMerge = null, identityMerge = null) {

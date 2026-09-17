@@ -42,3 +42,23 @@ test('calculation accepts supplied product and sibling context without another s
  const result=await api.calculate(['3997-1'],'ably',{registry:f.registry,config:{body:{source:'ably',mode:'forward',anchor:'lowest'}},products:Object.fromEntries(f.products.map(p=>[p.sellpia_sku_code,p])),siblings:[]});
  assert.deepEqual(result.errors,[]);assert.equal(result.rows[0].platformFinal,14350);assert.deepEqual(f.reads(),{registryReads:0,productReads:0,siblingReads:0});
 });
+
+test('compact base cell marks active formula ownership with detail proof without changing the value or edit target',async()=>{
+ const app=await readFile(new URL('../mockups/operations-hub/app.js',import.meta.url),'utf8');
+ const shadow=await readFile(new URL('../mockups/operations-hub/matrix-shadow.js',import.meta.url),'utf8');
+ const context={escapeHtml:v=>String(v??'').replaceAll('&','&amp;').replaceAll('<','&lt;'),formatNullableNumber:v=>v==null?'':Number(v).toLocaleString('ko-KR'),formatLiveTime:()=>'',Date};
+ vm.createContext(context);vm.runInContext(shadow,context);
+ vm.runInContext(app.slice(app.indexOf('function internalBasePriceText('),app.indexOf('function channelInventoryCells(')),context);
+ const product={sellpia_sku_code:'5566-1',system_base_price:80000,__hubInternalPrices:{calculated_base_price:{value:59000,activeOutputRules:[{id:'base-2.2'}],versions:[{id:'base-2.2',version:1}],ruleNames:['14K_실입고가_2.2배율'],generationId:34}},__hubShadow:{smartstore:{internalInputFingerprint:'current',calculated:[{scope:'',field:'calculated_base_price',result_details:{input_fingerprint:'current'}}]}}};
+ const before=structuredClone(product),render=p=>context.systemOperationalCell(p,'system_base_price','기준가격',80000),html=render(product);
+ assert.match(html,/<b>59,000<\/b>/);assert.match(html,/data-value="80000"/);
+ assert.match(html,/<\/button><span class="shadow-markers">/);
+ assert.match(html,/class="shadow-marker formula"[^>]*>fx<\/button>/);
+ assert.match(html,/title="[^"]*14K_실입고가_2.2배율[^"]*계산 세대: 34[^"]*상태: 최신/);
+ assert.deepEqual(product,before);
+ const inactive=structuredClone(product);inactive.__hubInternalPrices.calculated_base_price.activeOutputRules=[];
+ assert.doesNotMatch(render(inactive),/shadow-marker/);
+ assert.doesNotMatch(render({system_base_price:4000}),/shadow-marker/);
+ const stale=structuredClone(product);stale.__hubInternalPrices.calculated_base_price.stale=true;
+ assert.match(render(stale),/>↻<\/button>/);assert.match(render(stale),/상태: 재계산 필요/);
+});
