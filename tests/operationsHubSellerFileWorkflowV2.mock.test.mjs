@@ -18,8 +18,9 @@ test('Ably workflow separates catalog original from PlayAuto export templates',(
   assert.match(js,/data-carrier-input="playauto_product"/);
   assert.match(js,/data-carrier-input="playauto_option"/);
   assert.match(js,/에이블리 할인은 공식 파일에 지원 컬럼이 없어 자동 반영하지 않습니다/);
-  assert.match(js,/V 추가 금액과 W 판매가능재고만/);
-  assert.match(js,/X \*판매수량과 나머지 셀은 보존/);
+  assert.match(js,/V 추가 금액과 X \*판매수량\(실재고\)만/);
+  assert.match(js,/W 판매가능재고와 나머지 셀은 보존/);
+  assert.match(js,/out\.target_stock=item\.sales_quantity/,'preview must resolve stock from X, not W');
   assert.match(js,/브라우저 메모리/);
   assert.match(js,/Storage 저장 안 함/);
   assert.match(js,/미리보기 실패/);

@@ -25,7 +25,7 @@
     const valid=items.filter((item,index)=>!results[index].error);
     if(!valid.length)throw new Error('재고를 계산할 수 있는 조합이 없습니다. Q열 연결과 개별 SKU 재고를 확인하세요.');
     if(test){
-      const output=items.map((item,index)=>{const row=[...item.row];row[16]=item.memoText; if(!results[index].error)row[22]=results[index].value;return row;});
+      const output=items.map((item,index)=>{const row=[...item.row];row[16]=item.memoText; if(!results[index].error)row[23]=results[index].value;return row;});
       const book=global.XLSX.utils.book_new();global.XLSX.utils.book_append_sheet(book,global.XLSX.utils.aoa_to_sheet([headers,...output]),'옵션기본');
       return new Blob([global.XLSX.write(book,{type:'array',bookType:'xlsx'})],{type:'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'});
     }
@@ -42,8 +42,8 @@
     const entry=zip.file(path);if(!entry)throw new Error('원본 시트를 읽지 못했습니다.');
     let xml=await entry.async('string');
     items.forEach((item,index)=>{
-      item.row.forEach((value,column)=>{const letters=global.XLSX.utils.encode_col(column),next=column===16?item.memoText:value??'',original=originalSheet[letters+item.line]?.v??'';if(column!==22&&next!==original)xml=patchCell(xml,item.line,letters,next);});
-      if(!results[index].error)xml=patchCell(xml,item.line,'W',results[index].value);
+      item.row.forEach((value,column)=>{const letters=global.XLSX.utils.encode_col(column),next=column===16?item.memoText:value??'',original=originalSheet[letters+item.line]?.v??'';if(column!==22&&column!==23&&next!==original)xml=patchCell(xml,item.line,letters,next);});
+      if(!results[index].error)xml=patchCell(xml,item.line,'X',results[index].value);
     });
     zip.file(path,xml,{createFolders:false});
     return zip.generateAsync({type:'blob',mimeType:'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',compression:'DEFLATE'});
@@ -83,7 +83,7 @@
     let output=xml;
     if(sourceLines){
       if(sourceLines.length!==rows.length||new Set(sourceLines).size!==rows.length)throw Error('원본 행 위치가 일치하지 않습니다.');
-      rows.forEach((row,index)=>{const line=sourceLines[index];if(!Number.isInteger(line)||line<2)throw Error('원본 행 번호 오류');row.forEach((value,column)=>{const letters=global.XLSX.utils.encode_col(column),old=sheet[letters+line]?.v??'';if((value??'')!==old)output=patchCell(output,line,letters,value??'');});});
+      rows.forEach((row,index)=>{const line=sourceLines[index];if(!Number.isInteger(line)||line<2)throw Error('원본 행 번호 오류');row.forEach((value,column)=>{if(column===22)return;const letters=global.XLSX.utils.encode_col(column),old=sheet[letters+line]?.v??'';if((value??'')!==old)output=patchCell(output,line,letters,value??'');});});
     }else output=populateSheet(xml,rows);
     zip.file(path,output,{createFolders:false});
     return zip.generateAsync({type:'blob',mimeType:'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',compression:'DEFLATE'});

@@ -57,7 +57,7 @@
     const results=calculations();
     body.innerHTML=activeGroup.items.slice(0,shown).map((item,index)=>{
       const row=item.row,result=results[index];
-      return `<tr><td>${item.line}</td><td>${escape(row[11])} / ${escape(row[13])}</td><td>${escape(row[17])||'미등록'}</td><td><input class="ably-lab-memo" data-ably-memo="${index}" aria-label="${item.line}행 Q열 연결" value="${escape(item.memoText)}" ${busy?'disabled':''}></td><td>${result.components?.map(c=>`${escape(c.sku)}: ${c.stock}`).join('<br>')||'—'}</td><td>${escape(row[22])||'—'}</td><td>${result.value??'—'}</td><td>${escape(result.error||'다운로드 가능')}</td></tr>`;
+      return `<tr><td>${item.line}</td><td>${escape(row[11])} / ${escape(row[13])}</td><td>${escape(row[17])||'미등록'}</td><td><input class="ably-lab-memo" data-ably-memo="${index}" aria-label="${item.line}행 Q열 연결" value="${escape(item.memoText)}" ${busy?'disabled':''}></td><td>${result.components?.map(c=>`${escape(c.sku)}: ${c.stock}`).join('<br>')||'—'}</td><td>${escape(row[23])||'—'}</td><td>${result.value??'—'}</td><td>${escape(result.error||'다운로드 가능')}</td></tr>`;
     }).join('');
     el('ably-product-row-count').textContent=`조합 ${activeGroup.items.length}행 · 표시 ${shown}행 · 계산 가능 ${results.filter(r=>!r.error).length} · 확인 필요 ${results.filter(r=>r.error).length}`;
     el('ably-product-more').hidden=shown>=activeGroup.items.length;
@@ -74,7 +74,7 @@
     }catch(error){if(id===request)el('ably-stock-status').textContent=`재고 조회 실패: ${error.message}`;return false;}
     finally{if(id===request){setBusy(false);render();}}
   }
-  function open(group){if(global.AblyWorkspace){void global.AblyWorkspace.openImported(group,sourceFile);return;}activeGroup=group;shown=Math.min(200,group.items.length);home.hidden=true;detail.hidden=false;el('ably-product-title').textContent=group.title;el('ably-stock-export-note').textContent=group.test?'테스트 상품입니다. 다운로드는 플랫폼 35컬럼의 테스트 파일이며 실제 판매처 상품 식별값이 없습니다.':'원본 엑셀 전체 양식을 유지하며 이 상품의 Q열 수정값과 계산 가능한 W열만 반영합니다. 확인 필요 행의 재고와 다른 상품은 원본 그대로 유지합니다.';void refresh();el('ably-product-back').focus();}
+  function open(group){if(global.AblyWorkspace){void global.AblyWorkspace.openImported(group,sourceFile);return;}activeGroup=group;shown=Math.min(200,group.items.length);home.hidden=true;detail.hidden=false;el('ably-product-title').textContent=group.title;el('ably-stock-export-note').textContent=group.test?'테스트 상품입니다. 다운로드는 플랫폼 35컬럼의 테스트 파일이며 실제 판매처 상품 식별값이 없습니다.':'원본 엑셀 전체 양식을 유지하며 이 상품의 Q열 수정값과 계산 가능한 X열(*판매수량)만 반영합니다. 확인 필요 행의 재고와 다른 상품은 원본 그대로 유지합니다.';void refresh();el('ably-product-back').focus();}
   products.addEventListener('click',event=>{const button=event.target.closest('[data-ably-product]');if(button)open(groups[Number(button.dataset.ablyProduct)]);});
   el('ably-product-back').onclick=()=>{++request;busy=false;detail.hidden=true;home.hidden=false;input.focus();};
   el('ably-product-more').onclick=()=>{shown=Math.min(shown+200,activeGroup.items.length);render();};

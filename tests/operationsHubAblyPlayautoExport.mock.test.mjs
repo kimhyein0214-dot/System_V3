@@ -9,8 +9,8 @@ assert.ok(A,'AblyPlayautoExport must be exported');
 assert.equal(A.PRODUCT_BASE_PRICE_COLUMN,'I');
 assert.equal(A.PRODUCT_OPTION_PRICE_COLUMN,'T');
 assert.equal(A.OPTION_PRICE_COLUMN,'V');
-assert.equal(A.OPTION_STOCK_COLUMN,'W','PlayAuto carrier stock is 판매가능재고 in W');
-assert.equal(A.OPTION_SALES_QUANTITY_COLUMN,'X','X is sales quantity and must be preserved');
+assert.equal(A.OPTION_STOCK_COLUMN,'X','PlayAuto carrier real stock is *판매수량 in X');
+assert.equal(A.OPTION_SALES_QUANTITY_COLUMN,'X','sales quantity is the stock write target');
 
 const productRows=[
  ['판매자관리코드','쇼핑몰(계정)','온라인 상품명','판매가','옵션','SKU','옵션 추가금액'],
@@ -29,7 +29,7 @@ const optionRows=[
 const parsedOption=A.parseOptionRows(optionRows);
 assert.equal(parsedOption.length,1);
 assert.equal(parsedOption[0].available_stock,0,'stock zero must not become blank');
-assert.equal(parsedOption[0].sales_quantity,100,'sales quantity is captured only for preservation checks');
+assert.equal(parsedOption[0].sales_quantity,100,'sales quantity supplies preview and stock target');
 
 const catalog=[
  {sellpia_product_code:'11541',sellpia_sku_code:'11541-1',sellpia_option_name:'옐로우골드/6mm바[GPA-4-07_2]'},
@@ -96,4 +96,4 @@ assert.equal(A.resolveSellpiaSku(directMappingConflict,catalog10000,mappings1000
 const numericMappingOnly={...directItems[0],direct_sellpia_sku_code:'',seller_option_code:'309683801',option_sku_code:'',option_candidates:['표기가 달라짐']};
 assert.equal(A.resolveSellpiaSku(numericMappingOnly,catalog10000,mappings10000).method,'seller_mapping_exact','numeric Ably option code keeps the existing mapping path');
 assert.equal(A.resolveSellpiaSku({...parsedProduct[0],direct_sellpia_sku_code:'',option_candidates:[]},[{sellpia_product_code:'11541',sellpia_sku_code:'11541-1'}]).method,'single_product_sku','optionless single-product behavior remains unchanged');
-console.log('PASS Ably PlayAuto templates: existing seller mapping wins, strict option fallback remains, and V/W contract preserves X.');
+console.log('PASS Ably PlayAuto templates: existing seller mapping wins, strict option fallback remains, and V/X contract preserves W.');

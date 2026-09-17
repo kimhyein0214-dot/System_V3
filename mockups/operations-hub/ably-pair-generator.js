@@ -25,7 +25,7 @@
       }
       row[16]=components.map(p=>`[${p.sellpia_sku_code}]`).join(',');
       row[17]=components.map(p=>p.sellpia_sku_code).join('+');
-      row[21]=0;row[22]=Math.min(...components.map(p=>Number(p.system_stock)));row[23]=1;row[34]='Y';
+      row[21]=0;row[23]=Math.min(...components.map(p=>Number(p.system_stock)));row[34]='Y';
       return row;
     });
   }

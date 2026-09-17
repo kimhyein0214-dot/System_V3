@@ -498,7 +498,7 @@
             <div id="ably-products-home">
               <div class="page-head"><div><h2>에이블리 조합관리</h2><p>온라인 상품명을 선택하면 해당 상품의 조합 옵션을 확인할 수 있습니다.</p></div></div>
               <section class="panel ably-combination-panel"><h3>상품 목록</h3><div class="ably-home-toolbar"><div><label>옵션기본 엑셀 <input id="ably-combination-file" type="file" accept=".xlsx" aria-label="에이블리 조합 엑셀 파일"></label><p id="ably-combination-file-status" role="status">D열 온라인 상품명을 목록 제목으로 표시합니다. 불러온 상품은 저장 버튼으로 보관하세요. 전체 재고갱신은 저장된 모든 상품을 대상으로 합니다.</p></div><button id="ably-all-stock-download" class="btn primary" type="button">전체 조합 재고갱신 파일</button><button id="ably-virtual-product-open" class="btn primary" type="button">상품 불러오기 · 조합등록 엑셀 생성</button></div><div id="ably-imported-products"><p>엑셀을 불러오면 상품 목록이 표시됩니다.</p></div></section>
-              <section class="panel ably-combination-panel"><details><summary>재고 계산과 Q열 입력 기준</summary><p>주문수집 → 개별 SKU 재고 갱신 → 연결된 개별 SKU의 최솟값으로 조합 재고 갱신.</p><p>Q열 옵션관리코드: SKU1/SKU2 또는 [SKU1],[SKU2]. R열은 조합 SKU, W열은 조합 재고입니다. 기존 조합 재고는 계산에서 제외합니다.</p><p>개별 SKU의 시스템 현재재고를 조회하고 계산한 결과를 플랫폼 엑셀로 받습니다. 시스템 재고 자체는 변경하지 않습니다.</p></details></section>
+              <section class="panel ably-combination-panel"><details><summary>재고 계산과 Q열 입력 기준</summary><p>주문수집 → 개별 SKU 재고 갱신 → 연결된 개별 SKU의 최솟값으로 조합 재고 갱신.</p><p>Q열 옵션관리코드: SKU1/SKU2 또는 [SKU1],[SKU2]. R열은 조합 SKU, X열(*판매수량)은 조합 실재고입니다. W열(판매가능재고)은 보존합니다. 기존 조합 재고는 계산에서 제외합니다.</p><p>개별 SKU의 시스템 현재재고를 조회하고 계산한 결과를 플랫폼 엑셀로 받습니다. 시스템 재고 자체는 변경하지 않습니다.</p></details></section>
             </div>
             <section id="ably-combination-lab" class="panel ably-combination-panel" hidden></section>
             <section id="ably-imported-detail" class="panel ably-combination-panel" hidden><button id="ably-product-back" class="btn" type="button">← 상품 목록</button><h2 id="ably-product-title"></h2><p id="ably-product-row-count"></p><p id="ably-stock-export-note"></p><div class="ably-lab-head"><button id="ably-stock-refresh" class="btn" type="button">재고 새로고침</button><button id="ably-stock-download" class="btn primary" type="button">수정 재고 엑셀 다운로드</button></div><p id="ably-stock-status" role="status"></p><details><summary>연결된 개별 SKU · 시스템 현재재고</summary><div id="ably-stock-components" class="ably-lab-stock-grid"></div></details><div class="ably-combination-table"><table class="data-table"><thead><tr><th>엑셀 행</th><th>옵션</th><th>조합 SKU (R)</th><th>연결 메모 (Q)</th><th>개별 SKU 재고</th><th>기존 재고 (W)</th><th>수정 재고 (W)</th><th>확인 결과</th></tr></thead><tbody id="ably-combination-preview"></tbody></table></div><button id="ably-product-more" class="btn" type="button" hidden>다음 200개 더 보기</button></section>
@@ -987,12 +987,12 @@
     <script src="./mapping-import.js?v=20260910-rule-destination-v111"></script>
     <script src="./attributes-page.js?v=20260915-tag-matrix-v1"></script>
     <script src="./price-rule-lab.js?v=20260910-rule-destination-v111"></script>
-    <script src="./ably-stock-export.js?v=20260910-rule-destination-v111"></script>
-    <script src="./ably-playauto-export.js?v=20260916-ably-direct-sku-v1"></script>
-    <script src="./ably-combinations.js?v=20260910-rule-destination-v111"></script>
+    <script src="./ably-stock-export.js?v=20260917-ably-stock-x-v1"></script>
+    <script src="./ably-playauto-export.js?v=20260917-ably-stock-x-v1"></script>
+    <script src="./ably-combinations.js?v=20260917-ably-stock-x-v1"></script>
     <script src="./ably-combination-lab.js?v=20260910-rule-destination-v111"></script>
-    <script src="./ably-pair-generator.js?v=20260910-rule-destination-v111"></script>
-<script src="./ably-workspace.js?v=20260910-rule-destination-v111"></script>
+    <script src="./ably-pair-generator.js?v=20260917-ably-stock-x-v1"></script>
+<script src="./ably-workspace.js?v=20260917-ably-stock-x-v1"></script>
 <script src="./platform-price-formula.js?v=20260910-rule-destination-v111"></script>
 <script>window.HubPriceWorkspaceEnabled=true;</script>
 <script src="./tag-price-workspace.js?v=20260910-rule-destination-v111"></script>
@@ -1003,6 +1003,6 @@
 <script src="./rule-workspace.js?v=20260915-tag-matrix-v1"></script>
       <script src="./ui-cleanup-v1.js?v=20260915-tag-matrix-v1"></script>
       <script src="./tag-management-v2.js?v=20260915-tag-matrix-v1"></script>
-      <script src="./seller-file-workflow-v2.js?v=20260915-tag-matrix-v1"></script>
+      <script src="./seller-file-workflow-v2.js?v=20260917-ably-stock-x-v1"></script>
   </body>
 </html>

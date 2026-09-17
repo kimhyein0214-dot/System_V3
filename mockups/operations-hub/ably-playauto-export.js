@@ -8,7 +8,7 @@
   const PRODUCT_BASE_PRICE_COLUMN='I';
   const PRODUCT_OPTION_PRICE_COLUMN='T';
   const OPTION_PRICE_COLUMN='V';
-  const OPTION_STOCK_COLUMN='W';
+  const OPTION_STOCK_COLUMN='X';
   const OPTION_SALES_QUANTITY_COLUMN='X';
 
   const clean=value=>String(value??'').trim();
@@ -88,7 +88,7 @@
         option_pairs:optionPairs,option_candidates:[...values,...(joined?[joined]:[])],primary_option_name:values[0]||'',
         option_price:finite(valueAt(row,map,'추가 금액'))?Number(valueAt(row,map,'추가 금액')):null,
         available_stock:finite(valueAt(row,map,'판매가능재고'))?Number(valueAt(row,map,'판매가능재고')):null,
-        sales_quantity:valueAt(row,map,'*판매수량'),
+        sales_quantity:finite(valueAt(row,map,'*판매수량'))?Number(valueAt(row,map,'*판매수량')):null,
         carrier_identity:JSON.stringify([sellerCode,...optionPairs.map(pair=>pair.value)])
       };
     }).filter(item=>item.seller_management_code);
@@ -196,7 +196,7 @@
     const changes=[];
     for(const item of items||[]){
       if(finite(item.target_option_price)){xml=global.AblyStockExport.patchCell(xml,item.source_row_no,OPTION_PRICE_COLUMN,Number(item.target_option_price));changes.push(`${OPTION_PRICE_COLUMN}${item.source_row_no}`);}
-      // 이 공식 carrier의 재고 수정 대상은 W(판매가능재고)다. X(*판매수량)는 원본 그대로 보존한다.
+      // 운영 계약: X(*판매수량)가 실재고 write 대상이고 W(판매가능재고)는 보존한다.
       if(finite(item.target_stock)){xml=global.AblyStockExport.patchCell(xml,item.source_row_no,OPTION_STOCK_COLUMN,Number(item.target_stock));changes.push(`${OPTION_STOCK_COLUMN}${item.source_row_no}`);}
     }
     if(changes.length)xml=highlightChanges(parts,xml,changes);

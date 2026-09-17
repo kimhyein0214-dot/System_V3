@@ -4,7 +4,7 @@
  const state={files:[],catalog:null,catalogKey:'',preview:null,previewFilter:'all',previewPage:1,role:null,loading:false,carrierFiles:new Map(),standardCarrierFiles:new Map(),standardCarrierPlans:new Map(),standardCarrierViews:new Map()};
  const roles={
   playauto_product:{label:'PlayAuto · 판매가 + 옵션가',type:'product_price_option',hint:'쇼핑몰상품 시트',fileLabel:'쇼핑몰상품.xlsx'},
-  playauto_option:{label:'PlayAuto · 옵션가 + 재고',type:'option_price_stock',hint:'옵션기본 시트 · V 추가 금액 / W 판매가능재고 / X 원본 보존',fileLabel:'옵션기본.xlsx'}
+  playauto_option:{label:'PlayAuto · 옵션가 + 재고',type:'option_price_stock',hint:'옵션기본 시트 · V 추가 금액 / X *판매수량(실재고) / W 원본 보존',fileLabel:'옵션기본.xlsx'}
  };
  const esc=v=>String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
  const n=v=>Number(v||0).toLocaleString('ko-KR');
@@ -318,9 +318,9 @@
     }else{
       if(inScope)out.target_option_price=matrixTarget?Number(matrixTarget.option):sourceOption;
       const draftStock=row?.stock_draft?.after_value;
-      if(inScope&&item.available_stock==null)out._blankStockPreserved=true;
+      if(inScope&&item.sales_quantity==null)out._blankStockPreserved=true;
       else if(inScope&&draftStock!==null&&draftStock!==undefined&&draftStock!==''&&Number.isFinite(Number(draftStock)))out.target_stock=Number(draftStock);
-      else if(inScope)out.target_stock=item.available_stock;
+      else if(inScope)out.target_stock=item.sales_quantity;
     }
     return out;
    });
@@ -345,10 +345,10 @@
       item._current=`판매가 ${n(item.base_price)} / 옵션 ${n(item.option_price)}`;item._target=`판매가 ${n(item.target_base_price)} / 옵션 ${n(item.target_option_price)}`;
     }else{
       const optionChanged=Number.isFinite(Number(item.target_option_price))&&Number(item.target_option_price)!==Number(item.option_price);
-      const stockChanged=Number.isFinite(Number(item.target_stock))&&item.available_stock!==null&&Number(item.target_stock)!==Number(item.available_stock);
+      const stockChanged=item.target_stock!=null&&Number.isFinite(Number(item.target_stock))&&item.sales_quantity!==null&&Number(item.target_stock)!==Number(item.sales_quantity);
       if(optionChanged)item._changedFields.push('option');if(stockChanged)item._changedFields.push('stock');
       item._changed=optionChanged||stockChanged;
-      item._current=`추가 금액 ${n(item.option_price)} / 판매가능재고 ${item.available_stock==null?'빈칸':n(item.available_stock)}`;item._target=`추가 금액 ${Number.isFinite(Number(item.target_option_price))?n(item.target_option_price):'유지'} / 판매가능재고 ${item._blankStockPreserved?'빈셀 유지':Number.isFinite(Number(item.target_stock))?n(item.target_stock):'유지'}`;
+      item._current=`추가 금액 ${n(item.option_price)} / *판매수량(실재고) ${item.sales_quantity==null?'빈칸':n(item.sales_quantity)}`;item._target=`추가 금액 ${Number.isFinite(Number(item.target_option_price))?n(item.target_option_price):'유지'} / *판매수량(실재고) ${item._blankStockPreserved?'빈셀 유지':item.target_stock!=null&&Number.isFinite(Number(item.target_stock))?n(item.target_stock):'유지'}`;
     }
    }
    const unresolved=output.filter(item=>item._status==='unresolved'||item._status==='ambiguous').length,ready=output.filter(item=>item._status==='ready').length,changed=output.filter(item=>item._status==='ready'&&item._changed).length,preserved=output.filter(item=>item._blankStockPreserved).length,blocked=output.filter(item=>item._status!=='ready').length;
@@ -376,7 +376,7 @@
  function renderPreview(){
   const p=state.preview,box=document.getElementById('export-preview-v2');if(!p||!box)return;
   box.hidden=false;document.getElementById('export-preview-title').textContent=roles[p.role].label;
-  document.getElementById('export-preview-copy').textContent=p.role==='playauto_product'?'PlayAuto 쇼핑몰상품 원본의 판매가·옵션가를 현재 매트릭스 표시값과 비교합니다.':'공식 옵션기본 파일을 Storage에 저장하지 않고 V 추가 금액과 W 판매가능재고만 현재 매트릭스 표시값으로 변환합니다. X *판매수량과 나머지 셀은 보존합니다.';
+  document.getElementById('export-preview-copy').textContent=p.role==='playauto_product'?'PlayAuto 쇼핑몰상품 원본의 판매가·옵션가를 현재 매트릭스 표시값과 비교합니다.':'공식 옵션기본 파일을 Storage에 저장하지 않고 V 추가 금액과 X *판매수량(실재고)만 현재 매트릭스 표시값으로 변환합니다. W 판매가능재고와 나머지 셀은 보존합니다.';
   const c=p.counts,counts=document.getElementById('export-preview-counts');
   counts.innerHTML=`<span>원본 ${n(c.template)}</span><span>매칭 ${n(c.matched)}</span>${previewFilterButton('all','선택',c.selected)}${previewFilterButton('ready','생성 가능',c.ready,'good')}${previewFilterButton('changed','변경',c.changed,'good')}${previewFilterButton('unresolved','미확정',c.unresolved,'warn')}${c.preserved?previewFilterButton('preserved','원본 blank 유지',c.preserved):''}${previewFilterButton('blocked','제외',c.blocked,c.blocked?'bad':'')}`;
   counts.onclick=event=>{const button=event.target.closest?.('[data-preview-filter]');if(!button)return;const next=button.dataset.previewFilter;state.previewFilter=state.previewFilter===next&&next!=='all'?'all':next;state.previewPage=1;renderPreview();};
