@@ -152,6 +152,7 @@
 
  function ensureUpload(){
   const page=document.getElementById('upload'),layout=page?.querySelector('.upload-layout'),source=document.getElementById('source-select');
+  if(page)global.HubSourceLifecycle?.mount(page);
   if(!page||!layout||!source||document.getElementById('ably-file-set'))return;
   const section=document.createElement('section');section.id='ably-file-set';section.className='ably-file-set';section.hidden=source.value!=='ably';
   section.innerHTML=`<div class="ably-file-set-head"><div><h3>에이블리 장기 원본</h3><p>GOODS_LIST와 판매가·옵션가 ALL만 장기 reference로 보관합니다. 옵션가·재고 부분 수정파일은 내보내기 화면에서 브라우저 메모리로만 처리합니다.</p></div><button class="btn" id="ably-file-refresh" type="button">상태 새로고침</button></div><div class="ably-file-set-grid"><article class="ably-file-card"><header><h4>에이블리 전체 원본 · GOODS_LIST</h4><span>조회·매칭용</span></header><p>상품/옵션 존재 확인과 판매처 매칭 검증에 사용합니다. 이 파일 자체를 수정 업로드용으로 다시 내보내지 않습니다.</p><div class="ably-file-card-status ready">위의 기존 에이블리 원본 업로드 기능으로 등록</div></article>${uploadCard('playauto_product')}<article class="ably-file-card"><header><h4>옵션가·재고 수정파일</h4><span>임시 carrier</span></header><p>Storage에 저장하지 않습니다. 판매처 내보내기 화면에서 파일을 선택해 즉시 변환합니다.</p><div class="ably-file-card-status ready">브라우저 세션 동안만 사용</div></article></div><div id="seller-file-status" class="export-workflow-status">장기 원본과 임시 carrier를 분리해 관리합니다.</div>`;
@@ -219,6 +220,7 @@
    <div id="export-workflow-status" class="export-workflow-status">내보내기 전에 미리보기에서 매칭·변경·제외 건수를 확인하세요.</div>`;
   head.insertAdjacentElement('afterend',section);
   arrangeSellerRows(section,page);
+  // UI preview release: canary controls are not mounted, including URL opt-in.
   document.getElementById('export-workflow-status').hidden=true;
 
   const mode=document.getElementById('export-scope-mode');
@@ -516,7 +518,20 @@
    const unresolved=output.filter(item=>!item.resolution?.sku).length,ready=output.filter(item=>item._status==='ready').length,changed=output.filter(item=>item._status==='ready'&&item._changed).length,preserved=output.filter(item=>item._blankStockPreserved).length,warned=output.filter(item=>item._status==='warn_keep_original').length,blocked=output.filter(item=>item._status!=='ready'&&item._status!=='warn_keep_original').length;
    const versionToken=JSON.stringify(output.map(item=>[item.source_row_no,item.option_index??'',item.resolution?.sku||'',item.resolution?.method||'',item._status,item._changedFields,item._current,item._target,item._error]));
    job.check();job.phaseTo('preview',output.length,output.length);
-   state.preview={role,record,file,parsed,items:prepared,output,versionToken,timings:job.timings,counts:{template:parsed.items.length,matched:resolvedWithSku.length,selected:output.length,ready,changed,unchanged:ready-changed,warned,blocked,unresolved,preserved}};
+   let shadowDiagnostics=[];
+   if(global.HubMatrixShadow&&D().loadMatrixShadowMetadata&&global.HubMatrixShadowEnabled!==false){
+    try{
+     const groups=new Map();for(const item of sourceRows.filter(item=>item.resolution?.sku)){const group=groups.get(item.resolution.sku)||[];group.push(item);groups.set(item.resolution.sku,group);}
+     const duplicateDiagnostics=[...groups].filter(([,rows])=>rows.length!==1).map(([sku])=>({sku,lookup:'conflict',reason:'동일 SKU carrier 증거 복수 · shadow BLOCK'}));
+     const unique=[...groups.values()].filter(rows=>rows.length===1).map(rows=>rows[0]);
+     // Read evidence after production guards/targets are fixed. Never mutate prepared rows.
+     const shadow=await D().loadMatrixShadowMetadata({source:'ably',rows:unique.map(item=>global.HubMatrixShadow.request({sellpia_sku_code:item.resolution.sku},'ably',item))});
+     shadowDiagnostics=[...duplicateDiagnostics,...unique.map(item=>{const r=shadow.rows.find(row=>row.sku===item.resolution.sku);if(!r)throw Error('shadow SKU 누락');const b=global.HubBaselineIdentityShadow.crosswalk({carrier:item,resolvedSku:item.resolution.sku,baselineRows:r.candidates,declaredLinks:r.declared_links});return {sku:item.resolution.sku,lookup:b.disposition==='BLOCK'?'conflict':b.row?(r.declared_links.length?'matched':'crosswalk'):'unavailable',reason:b.reason};})];
+     global.HubMatrixShadow.rememberCarrierEvidence(unique);
+    }catch(error){shadowDiagnostics=[{sku:'진단',lookup:'unavailable',reason:error?.message||String(error)}];}
+    job.check();
+   }
+   state.preview={role,record,file,parsed,items:prepared,output,versionToken,timings:job.timings,shadowDiagnostics,counts:{template:parsed.items.length,matched:resolvedWithSku.length,selected:output.length,ready,changed,unchanged:ready-changed,warned,blocked,unresolved,preserved}};
    renderPreview();job.finish();setStatus(`${roles[role].label} 미리보기 완료 · 변경 ${n(changed)} · 원본 유지 경고 ${n(warned)} · 치명적 차단 ${n(blocked)}`,'success');return state.preview;
   }catch(error){if(error?.name==='CarrierCancelledError'||state.ablyJob!==job||job.cancelled)return;job.finish(error);setStatus(`미리보기 실패: ${error?.message||error}`,'error');}
  }
@@ -545,6 +560,9 @@
   document.getElementById('export-preview-copy').textContent=(p.role==='playauto_product'?'PlayAuto 쇼핑몰상품 원본의 판매가·옵션가를 현재 매트릭스 표시값과 비교합니다.':'공식 옵션기본 파일을 Storage에 저장하지 않고 V 추가 금액과 X *판매수량(실재고)만 현재 매트릭스 표시값으로 변환합니다. W 판매가능재고와 나머지 셀은 보존합니다.')+' XLSX: 변경 셀 노랑 / 원본 유지 경고 셀 빨강.';
   const c=p.counts,counts=document.getElementById('export-preview-counts');
   counts.innerHTML=`<span>원본 ${n(c.template)}</span><span>매칭 ${n(c.matched)}</span>${previewFilterButton('all','선택',c.selected)}${previewFilterButton('ready','생성 가능',c.ready,'good')}${previewFilterButton('changed','변경',c.changed,'good')}${previewFilterButton('unchanged','변경 없음',c.unchanged)}${previewFilterButton('warned','원본 유지 경고',c.warned,'warn')}${previewFilterButton('unresolved','미확정',c.unresolved,'warn')}${c.preserved?previewFilterButton('preserved','원본 blank 유지',c.preserved):''}${previewFilterButton('blocked','치명적 차단',c.blocked,c.blocked?'bad':'')}`;
+  let shadowBox=document.getElementById('export-shadow-provenance');
+  if(!shadowBox){shadowBox=document.createElement('div');shadowBox.id='export-shadow-provenance';counts.after(shadowBox);}
+  shadowBox.innerHTML=global.HubMatrixShadow?.diagnostic(p.shadowDiagnostics)||'';
   counts.onclick=event=>{const button=event.target.closest?.('[data-preview-filter]');if(!button)return;const next=button.dataset.previewFilter;state.previewFilter=state.previewFilter===next&&next!=='all'?'all':next;state.previewPage=1;renderPreview();};
   const rows=previewRowsForFilter(p,state.previewFilter);
   const pageSize=100,totalPages=Math.max(1,Math.ceil(rows.length/pageSize));state.previewPage=Math.min(Math.max(1,state.previewPage||1),totalPages);

@@ -546,6 +546,7 @@
       products = await attach(products, signal, prefetched);
     }
     products = await attachStoredCalculatedPrices(products, signal);
+    if(global.HubMatrixShadow)products = await attachMatrixShadow(products, signal);
     throwIfAborted(signal);
     return products;
   }
@@ -3737,7 +3738,126 @@
     }
     return rows;
   }
+  // Phase 2 opt-in comparison only. Production Matrix/export never calls this reader.
+  async function loadMatrixShadowMetadata({source,rows=[]}={}) {
+    if(!['smartstore','makeshop','ably'].includes(source))throw new Error('지원하지 않는 판매처입니다.');
+    const unique=new Map();for(const row of rows){const existing=unique.get(row.sku);if(existing&&JSON.stringify(existing)!==JSON.stringify(row))throw new Error('동일 SKU shadow identity 충돌');unique.set(row.sku,row);}rows=[...unique.values()];
+    let versionId=null,snapshotId=null,version=null;const result=[];
+    for(let offset=0;offset<rows.length;offset+=200){
+      const {data,error}=await db.rpc('hub_matrix_shadow_metadata_v1',{p_session_token:requireOperationsHubSessionToken(),p_source:source,p_rows:rows.slice(offset,offset+200)});
+      if(error)throw readableDatabaseError(error);
+      if(data?.mode!=='shadow'||data.source!==source||!data.version_id||!Array.isArray(data.rows))throw new Error('shadow 응답 형식 오류');
+      if(versionId&&(versionId!==data.version_id||snapshotId!==data.snapshot_id))throw new Error('shadow version 변경');
+      versionId=data.version_id;snapshotId=data.snapshot_id;version=data.version;result.push(...data.rows);
+    }
+    const fingerprintSkus=result.filter(row=>row.calculated?.some(c=>c.scope===source&&c.result_details?.input_fingerprint)).map(row=>row.sku);
+    if(fingerprintSkus.length){const fingerprints=await loadInputFingerprints(fingerprintSkus,source);for(const row of result)row.current_input_fingerprint=fingerprints[row.sku]||null;}
+    const internalSkus=result.filter(row=>row.calculated?.some(c=>!c.scope&&c.result_details?.input_fingerprint)).map(row=>row.sku);
+    if(internalSkus.length){const fingerprints=await loadInputFingerprints(internalSkus,'');for(const row of result)row.current_internal_input_fingerprint=fingerprints[row.sku]||null;}
+    return {source,mode:'shadow',version_id:versionId,snapshot_id:snapshotId,version,rows:result};
+  }
+  async function attachMatrixShadow(products,signal){
+    if(!global.HubMatrixShadow||global.HubMatrixShadowEnabled===false||!products.length)return products;
+    try{
+      const payloads=await Promise.all(['smartstore','makeshop','ably'].map(source=>loadMatrixShadowMetadata({source,rows:products.map(product=>global.HubMatrixShadow.request(product,source))})));
+      throwIfAborted(signal);
+      // Attach only __hubShadow; no existing numeric, draft, Rule or mapping projection changes.
+      return products.map(product=>payloads.reduce((row,payload)=>global.HubMatrixShadow.annotate(row,payload),product));
+    }catch(error){throwIfAborted(signal);console.warn('matrix shadow annotation unavailable',error);return products;}
+  }
+  async function loadBaselineShadow({source,identities=[]}={}) {
+    const safeSource=cleanText(source);
+    if(!['smartstore','makeshop','ably'].includes(safeSource))throw new Error('지원하지 않는 판매처입니다.');
+    const selected=[...new Map(identities.map(row=>{
+      const identity={product_code:cleanText(row.product_code),option_code:cleanText(row.option_code)};
+      if(!identity.product_code)throw new Error('shadow 비교 상품 identity가 없습니다.');
+      return [JSON.stringify(identity),identity];
+    })).values()];
+    let versionId=null,snapshotId=null;const rows=[];
+    for(let offset=0;offset<selected.length;offset+=200){
+      const {data,error}=await db.rpc('hub_baseline_shadow_read_v1',{
+        p_session_token:requireOperationsHubSessionToken(),p_source:safeSource,p_identities:selected.slice(offset,offset+200)
+      });
+      if(error)throw readableDatabaseError(error);
+      if(data?.mode!=='shadow'||data.source!==safeSource||!data.version_id||!Array.isArray(data.rows))throw new Error('shadow 기준본 응답 형식 오류');
+      if(versionId&&(versionId!==data.version_id||snapshotId!==data.snapshot_id))throw new Error('비교 도중 기준본/원본 version이 변경됐습니다. 다시 비교해주세요.');
+      versionId=data.version_id;snapshotId=data.snapshot_id;rows.push(...data.rows);
+    }
+    return {source:safeSource,mode:'shadow',versionId,snapshotId,rows};
+  }
+
+  async function baselineCanaryRpc(action, args = {}) {
+    if(global.HubReleasePolicy?.previewOnly&&action!=='artifact_read')throw new Error('기준본 갱신은 현재 미리보기 배포에서 사용할 수 없습니다.');
+    const names = {plan_register:'hub_baseline_plan_register_v1', artifact_seal:'hub_baseline_artifact_seal_v1', confirm_plan:'hub_baseline_confirm_plan_v1', artifact_read:'hub_baseline_artifact_read_v1'};
+    if (!names[action]) throw new Error('Baseline canary action 오류');
+    const {data, error} = await db.rpc(names[action], {...args, p_session_token:requireOperationsHubSessionToken()});
+    throwOperationsHubRpcError(error);
+    return data;
+  }
+
+  async function loadInputFingerprints(skus, source = '') {
+    const selected=[...new Set(skus)],result={};
+    for(let offset=0;offset<selected.length;offset+=25){
+      const {data,error}=await db.rpc('hub_input_fingerprints_v1',{p_session_token:requireOperationsHubSessionToken(),p_skus:selected.slice(offset,offset+25),p_source:source});
+      throwOperationsHubRpcError(error);Object.assign(result,data);
+    }
+    return result;
+  }
+
+  async function loadSourceSnapshotPair(source, snapshotId = null) {
+    if(!['sellpia','smartstore','makeshop','ably'].includes(source))throw Error('Source 오류');
+    const table=source==='sellpia'?'sellpia_stock_snapshots':'seller_inventory_snapshots';
+    let query=db.from(table).select('snapshot_id,created_at,completed_at,metadata').eq('upload_status','ready');
+    if(source!=='sellpia')query=query.eq('source_channel',source);
+    const {data,error}=await query.order('created_at',{ascending:false}).order('snapshot_id',{ascending:false}).limit(100);
+    throwOperationsHubRpcError(error);
+    let target=snapshotId?data.find(r=>r.snapshot_id===snapshotId):data[0];
+    if(!target&&snapshotId){
+      let targetQuery=db.from(table).select('snapshot_id,created_at,completed_at,metadata').eq('upload_status','ready').eq('snapshot_id',snapshotId);
+      if(source!=='sellpia')targetQuery=targetQuery.eq('source_channel',source);
+      const response=await targetQuery.limit(1);throwOperationsHubRpcError(response.error);target=response.data?.[0];
+    }
+    if(!target)throw Error('Ready source snapshot 없음');
+    let previousId=target.metadata?.base_snapshot_id||null;
+    if(!previousId){
+      let previousQuery=db.from(table).select('snapshot_id').eq('upload_status','ready')
+        .or(`created_at.lt.${target.created_at},and(created_at.eq.${target.created_at},snapshot_id.lt.${target.snapshot_id})`);
+      if(source!=='sellpia')previousQuery=previousQuery.eq('source_channel',source);
+      const response=await previousQuery.order('created_at',{ascending:false}).order('snapshot_id',{ascending:false}).limit(1);
+      throwOperationsHubRpcError(response.error);previousId=response.data?.[0]?.snapshot_id||null;
+    }
+    return {snapshotId:target.snapshot_id,previousId};
+  }
+
+  async function loadSourceDelta({source,snapshotId,previousId=null,persist=false,requestId=global.crypto.randomUUID(),onProgress} = {}) {
+    if(global.HubReleasePolicy?.previewOnly&&persist)throw new Error('원본 변경 기록은 현재 미리보기 배포에서 사용할 수 없습니다.');
+    let after=null;const rows=[];
+    do{
+      const {data,error}=await db.rpc('hub_source_delta_page_v1',{p_session_token:requireOperationsHubSessionToken(),p_source:source,p_snapshot_id:snapshotId,p_previous_id:previousId,p_after:after,p_limit:200,p_request_id:requestId,p_persist:persist});
+      throwOperationsHubRpcError(error);rows.push(...data.rows);onProgress?.({processed:rows.length});
+      if(data.next_after&&data.next_after===after)throw Error('Source delta cursor 반복');after=data.next_after;
+    }while(after);
+    return {request:{source,snapshotId,previousId,requestId},rows,summary:global.HubSourceLifecycle.deltaSummary(rows)};
+  }
+
+  async function loadBaselineReconcile({source,snapshotId} = {}) {
+    let after=null,versionId=null;const rows=[];
+    do{
+      const {data,error}=await db.rpc('hub_baseline_reconcile_page_v1',{p_session_token:requireOperationsHubSessionToken(),p_source:source,p_snapshot_id:snapshotId,p_expected_version_id:versionId,p_after:after,p_limit:200});
+      throwOperationsHubRpcError(error);versionId=data.version_id;rows.push(...data.rows);
+      if(data.next_after&&data.next_after===after)throw Error('Reconcile cursor 반복');after=data.next_after;
+    }while(after);
+    return {...global.HubSourceLifecycle.reconcile(rows),versionId,snapshotId,source};
+  }
+
   global.SystemV3Data = Object.freeze({
+    loadInputFingerprints,
+    loadSourceSnapshotPair,
+    loadSourceDelta,
+    loadBaselineReconcile,
+    baselineCanaryRpc,
+    loadMatrixShadowMetadata,
+    loadBaselineShadow,
     savePlatformRuleGroup,
     filterRulePlatformSkus,
     loadAllFilteredSkus,
