@@ -8,6 +8,7 @@
  function normalizedTerms(value,fallback=[]){return Array.isArray(value)?value:Array.isArray(fallback)?fallback:[];}
  function termsKey(terms){return JSON.stringify((terms||[]).map(({title,input_source,term_type,...term})=>Object.fromEntries(Object.entries(term).sort(([a],[b])=>a.localeCompare(b)))).sort((a,b)=>String(a.term_key||'').localeCompare(String(b.term_key||''))));}
  function matrixPriceTarget(row){
+  if(row.active_price_rule===false)return null;
   const draft=row.price_draft;
   const statuses=[row.registration_status,row.discount_status,row.option_status,row.final_status];
   const generations=[row.registration_generation_id,row.discount_generation_id,row.option_generation_id,row.final_generation_id];
@@ -44,6 +45,7 @@
   return {base:Number(values[0]),discounted:Number(values[1]),option:Number(values[2]),final:Number(values[3]),terms:normalizedTerms(visible.effectiveDiscountTerms),origin:visible.priceOrigin,ruleVersions:visible.priceOrigin==='calculated'&&Array.isArray(row.rule_versions)?row.rule_versions:[]};
  }
  function carrierPriceState(row,latestGeneration=null){
+  if(row?.active_price_rule===false)return {code:'original_fallback',label:'가격 수식 없음 · 판매처 원본 유지',detail:'현재 유효한 판매처 가격 수식이 없어 과거 계산값을 사용하지 않습니다.',safe:true,usesOriginal:true};
   const draft=row?.price_draft;
   const draftValues=[draft?.price_base_after,draft?.price_discounted_base_after,draft?.price_option_after,draft?.price_final_after??draft?.after_value];
   if(draft&&draftValues.every(finite))return {code:'calculated_complete',label:'정상 표시값 · 현재 수정안',detail:'완전한 가격 수정안(draft)을 계산 결과보다 우선 사용합니다.',safe:true,usesOriginal:false};
@@ -93,8 +95,7 @@
     const priceItems=[];
     for(const row of snapshot.rows){
       const hasLocation=validSourceLocation(row);
-      const stockDraft=row.stock_draft;
-      const stockTarget=stockDraft&&finite(stockDraft.after_value)?Number(stockDraft.after_value):null;
+      const stockTarget=matrixStockTarget(row);
       const stockVisible=row.source_stock!==null&&row.source_stock!==undefined;
       if(stockVisible&&stockTarget!==null&&(!finite(row.source_stock)||Number(row.source_stock)!==stockTarget)){
         if(!hasLocation)exclude({...row,source},'재고 수정안은 보이지만 최신 원본 행 위치가 없습니다.','sellpia_current_stock');
@@ -203,7 +204,7 @@
     source_base_price:original.base_price,source_discounted_base_price:original.discounted_base_price,
     source_option_price:original.option_price,source_final_price:original.final_price,source_discount_terms:original.discount_terms||[]};
    const changedFields=[],rowItems=[],priceState=carrierPriceState(row,latestGeneration);
-   const stockDraft=row.stock_draft,stockTarget=stockDraft&&finite(stockDraft.after_value)?Number(stockDraft.after_value):null;
+   const stockTarget=matrixStockTarget(matches[0]);
    if(original.stock!==null&&original.stock!==undefined&&original.stock!==''&&stockTarget!==null&&Number(original.stock)!==stockTarget){
     rowItems.push({export_item_id:nextId--,sellpia_sku_code:row.sku,source_channel:source,field_key:'sellpia_current_stock',seller_product_code:row.product_code,seller_option_code:row.option_code||'',source_file_name:fileName,source_row_no:Number(original.source_row_no),expected_source_value:original.stock,before_value:original.stock,after_value:stockTarget,matrix_visible_stock:true,target_component_skus:[row.sku]});changedFields.push('stock');
    }
@@ -310,5 +311,11 @@
    remaining=remaining.filter(i=>!(price(i)&&blocked.has(group(i))));
   }
  }
- g.HubCurrentPriceExport={refreshItems,buildArchive,matrixPriceTarget,refreshMatrixSnapshotItems,prepareCarrierItems,validSourceLocation,carrierPriceState,planVersionToken};
+ function matrixStockTarget(row){
+  if(finite(row?.stock_draft?.after_value))return Number(row.stock_draft.after_value);
+  if(finite(row?.seller_stock))return Number(row.seller_stock);
+  if(finite(row?.source_stock))return Number(row.source_stock);
+  return null;
+ }
+ g.HubCurrentPriceExport={refreshItems,buildArchive,matrixPriceTarget,matrixStockTarget,refreshMatrixSnapshotItems,prepareCarrierItems,validSourceLocation,carrierPriceState,planVersionToken};
 })(typeof window==='undefined'?globalThis:window);

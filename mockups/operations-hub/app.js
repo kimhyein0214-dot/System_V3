@@ -1063,7 +1063,8 @@ function channelInventoryCells(product, prefix, label, baseMerge = null, identit
   const stock = product[`${prefix}_stock`];
   const price = product[`${prefix}_price`];
   const priceComponent = product.__sellerPriceComponents?.[prefix] || {};
-  const rulePrice = product.__hubRulePrices?.[prefix];
+  const priceManaged = product.__hubActivePriceRules?.[prefix] !== false;
+  const rulePrice = priceManaged ? product.__hubRulePrices?.[prefix] : null;
   const calculatedPrice = rulePrice && !rulePrice.error ? rulePrice : null;
   const basePrice = priceComponent.source_base_price ?? product[`${prefix}_base_price`] ?? price;
   const discountTerms = priceComponent.source_discount_terms ?? product[`${prefix}_discount_terms`] ?? [];
@@ -1071,14 +1072,14 @@ function channelInventoryCells(product, prefix, label, baseMerge = null, identit
   const optionPrice = priceComponent.source_option_price ?? product[`${prefix}_option_price`] ?? 0;
   const finalPrice = priceComponent.source_final_price ?? product[`${prefix}_final_price`] ?? price;
   const policyPrice = product[`${prefix}_policy_price`];
-  const policyActive = Boolean(product[`${prefix}_policy_active`]);
+  const policyActive = priceManaged && Boolean(product[`${prefix}_policy_active`]);
   const policyName = product[`${prefix}_policy_name`] || '';
   const sellpiaStock = product.system_stock;
   const sellpiaPrice = product.system_base_price;
   const stockDiff = stock !== null && stock !== undefined && sellpiaStock !== null && sellpiaStock !== undefined && Number(stock) !== Number(sellpiaStock);
   const priceDiff = price !== null && price !== undefined && sellpiaPrice !== null && sellpiaPrice !== undefined && Number(price) !== Number(sellpiaPrice);
   const stockDraft = product.__sellerDrafts?.[`${prefix}:sellpia_current_stock`];
-  const priceDraft = product.__sellerDrafts?.[`${prefix}:sellpia_sale_price`];
+  const priceDraft = priceManaged ? product.__sellerDrafts?.[`${prefix}:sellpia_sale_price`] : null;
   const draftBasePrice = priceComponent.draft_base_price ?? priceDraft?.price_base_after ?? null;
   const draftDiscountedBasePrice = priceComponent.draft_discounted_base_price ?? priceDraft?.price_discounted_base_after ?? null;
   const draftDiscountTerms = priceComponent.draft_discount_terms ?? priceDraft?.price_discount_terms_after ?? null;
@@ -1107,7 +1108,7 @@ function channelInventoryCells(product, prefix, label, baseMerge = null, identit
     effectiveOptionPrice,
     effectiveFinalPrice
   } = visibleValues;
-  const priceRuleAssignment = rulePrice ? {set_name:rulePrice.error || (rulePrice.ruleNames||[]).join(' · '),color:rulePrice.error?'#dc2626':'#1558c0'} : product.__priceRuleAssignments?.[prefix];
+  const priceRuleAssignment = priceManaged ? (rulePrice ? {set_name:rulePrice.error || (rulePrice.ruleNames||[]).join(' · '),color:rulePrice.error?'#dc2626':'#1558c0'} : product.__priceRuleAssignments?.[prefix]) : null;
   const priceRuleName = String(priceRuleAssignment?.set_name || '').trim();
   const priceRuleColor = String(priceRuleAssignment?.color || '#1558c0').trim();
   const draftClass = draft => draft ? ` pending draft-${draft.status}` : '';
@@ -7938,7 +7939,7 @@ async function prepareStandardCarrierExport(source,file){
   const announce=(percent,title,detail)=>window.dispatchEvent(new CustomEvent('system-v3-seller-export-progress',{detail:{source,percent,title,detail}}));
   announce(5,'공식 수정파일 확인','XLSX 구조와 행 identity를 읽습니다.');
   let mark=clock();
-  const parsed=await window.SystemV3SellerParsers.parseSellerFiles(source,[file],{price:true,discount:true});
+  const parsed=await window.SystemV3SellerParsers.parseSellerFiles(source,[file],{price:true,discount:true,inventory:true});
   timings.xlsx_parse_ms=Math.round(clock()-mark);mark=clock();
   announce(25,'판매처 연결 확인',`carrier ${formatNumber(parsed.normalizedRows.length)}행의 기존 SKU 연결만 조회합니다.`);
   const mappings=await liveData.loadCarrierSellerMappings({source,identities:parsed.normalizedRows});

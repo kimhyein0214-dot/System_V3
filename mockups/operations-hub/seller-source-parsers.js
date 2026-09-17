@@ -370,7 +370,7 @@
   function parseMakeshopRows(rows, fileName, fields) {
     const headerIndex = findHeader(
       rows,
-      row => cleanText(row[4]) === 'product_uid' && cleanText(row[32]) === 'sto_stock' && cleanText(row[44]) === 'sell_price',
+      isMakeshopHeaderRow,
       '메이크샵'
     );
     const output = [];
@@ -447,6 +447,17 @@
       });
     });
     return output;
+  }
+
+  // Official English and Korean workbooks share the same verified physical layout.
+  // Match header meaning, not the trailing registration instructions. Keep the
+  // three anchors mandatory so unrelated/reordered sheets cannot pass this gate.
+  function isMakeshopHeaderRow(row) {
+    const token = value => cleanText(value).split(/\r?\n/)[0]
+      .replace(/\s*\([^)]*\)\s*$/, '').replace(/\s+/g, '').toLowerCase();
+    return ['product_uid', '상품고유번호'].includes(token(row?.[4]))
+      && ['sto_stock', '옵션별재고'].includes(token(row?.[32]))
+      && ['sell_price', '판매가격'].includes(token(row?.[44]));
   }
 
   function parseAblyRows(rows, fileName, fields) {
@@ -606,6 +617,7 @@
     parseRows,
     parseSmartstoreRows,
     parseMakeshopRows,
+    isMakeshopHeaderRow,
     parseAblyRows,
     validateNormalizedRows,
     validateSelectedFileCount,

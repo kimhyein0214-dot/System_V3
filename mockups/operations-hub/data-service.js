@@ -2634,6 +2634,7 @@
     if(!selected.length||codes!==null&&!codes.length)return {rows:[],missing:[]};
     const required=['platform_registration_price','platform_discount_price','platform_option_price','platform_final_price'];
     const flat=[],missing=[];
+    const priceRules=await loadActiveSellerPriceRules();
     if(codes===null){
       const results=await Promise.all(selected.map(source=>loadCalculatedResultsForExport({source,onProgress})));
       results.forEach(result=>flat.push(...result));
@@ -2650,6 +2651,7 @@
     }
     const grouped=new Map();
     for(const row of flat){
+      if(!priceRules.has(JSON.stringify([row.sku,row.scope])))continue;
       if(row.mapping_missing||!cleanText(row.seller_product_code))continue;
       const key=JSON.stringify([row.sku,row.scope]),entry=grouped.get(key)||{sellpia_sku_code:row.sku,source_channel:row.scope,seller_product_code:row.seller_product_code||'',seller_option_code:row.seller_option_code||'',fields:new Map(),rule_versions:[]};
       entry.fields.set(row.field,row);entry.rule_versions.push(...(row.rule_versions||[]));grouped.set(key,entry);
@@ -2673,10 +2675,10 @@
       const draftSkus=[...new Set(drafts.map(draft=>cleanText(draft.sellpia_sku_code)).filter(Boolean))],components=[],componentJobs=[];for(let offset=0;offset<draftSkus.length;offset+=200)componentJobs.push(draftSkus.slice(offset,offset+200));let nextComponentJob=0;
       await Promise.all(Array.from({length:Math.min(4,componentJobs.length)},async()=>{while(nextComponentJob<componentJobs.length){const chunk=componentJobs[nextComponentJob++],{data,error}=await db.rpc('load_operations_hub_seller_price_components',{p_skus:chunk});if(error)throw readableDatabaseError(error);components.push(...(data||[]));}}));
       const storedKeys=new Set(rows.map(row=>JSON.stringify([row.sellpia_sku_code,row.source_channel])));
-      for(const component of components){const sku=cleanText(component.sellpia_sku_code),source=cleanText(component.source_channel),key=JSON.stringify([sku,source]),draft=draftByKey.get(key);if(!draft||!selected.includes(source)||storedKeys.has(key)||!cleanText(component.seller_product_code))continue;const terms=Array.isArray(draft.price_discount_terms_after)?draft.price_discount_terms_after:(Array.isArray(component.source_discount_terms)?component.source_discount_terms:[]);rows.push({sellpia_sku_code:sku,source_channel:source,seller_product_code:component.seller_product_code,seller_option_code:component.seller_option_code||'',base_price:draft.price_base_after??component.draft_base_price??component.source_base_price,discounted_base_price:draft.price_discounted_base_after??component.draft_discounted_base_price??component.source_discounted_base_price,option_price:draft.price_option_after??component.draft_option_price??component.source_option_price??0,final_price:draft.price_final_after??component.draft_final_price??component.source_final_price,discount_terms:terms,rule_versions:[],generation_id:null,status:'matrix_draft',error:null,change_id:draft.change_id});storedKeys.add(key);}
+      for(const component of components){const sku=cleanText(component.sellpia_sku_code),source=cleanText(component.source_channel),key=JSON.stringify([sku,source]),draft=draftByKey.get(key);if(!priceRules.has(key)||!draft||!selected.includes(source)||storedKeys.has(key)||!cleanText(component.seller_product_code))continue;const terms=Array.isArray(draft.price_discount_terms_after)?draft.price_discount_terms_after:(Array.isArray(component.source_discount_terms)?component.source_discount_terms:[]);rows.push({sellpia_sku_code:sku,source_channel:source,seller_product_code:component.seller_product_code,seller_option_code:component.seller_option_code||'',base_price:draft.price_base_after??component.draft_base_price??component.source_base_price,discounted_base_price:draft.price_discounted_base_after??component.draft_discounted_base_price??component.source_discounted_base_price,option_price:draft.price_option_after??component.draft_option_price??component.source_option_price??0,final_price:draft.price_final_after??component.draft_final_price??component.source_final_price,discount_terms:terms,rule_versions:[],generation_id:null,status:'matrix_draft',error:null,change_id:draft.change_id});storedKeys.add(key);}
     }
     onProgress?.(`저장된 매트릭스 가격 ${rows.length.toLocaleString('ko-KR')}건을 불러왔습니다.`);
-    return {rows,missing:missing.filter(item=>calculatedKeys.has(JSON.stringify([item.sellpia_sku_code,item.source_channel])))};
+    return {rows,activePriceRules:[...priceRules],missing:missing.filter(item=>calculatedKeys.has(JSON.stringify([item.sellpia_sku_code,item.source_channel])))};
   }
   async function attachStoredCalculatedPrices(products, signal) {
     const codes=[...new Set(products.map(product=>cleanText(product?.sellpia_sku_code)).filter(Boolean))];
@@ -2704,8 +2706,11 @@
         : {value:Number(stored.value),versions,ruleNames,generationId:stored.generation_id,calculatedAt:stored.calculated_at};
     }
     for(const row of platform.rows){if(!platformBySku.has(row.sellpia_sku_code))platformBySku.set(row.sellpia_sku_code,{});platformBySku.get(row.sellpia_sku_code)[row.source_channel]={platformBase:row.base_price,discounted:row.discounted_base_price,platformDiscount:row.base_price==null||row.discounted_base_price==null?null:Number(row.base_price)-Number(row.discounted_base_price),platformOption:row.option_price,platformFinal:row.final_price,platformTerms:row.discount_terms,versions:row.rule_versions,error:row.error};}
+    const activeRules=new Set(platform.activePriceRules||[]);
     return products.map(product=>{
       const sku=cleanText(product?.sellpia_sku_code),row={...product},storedInternal=internalBySku.get(sku),storedPlatform=platformBySku.get(sku);
+      row.__hubActivePriceRules=Object.fromEntries(['smartstore','makeshop','ably'].map(source=>[source,activeRules.has(JSON.stringify([sku,source]))]));
+      for(const source of ['smartstore','makeshop','ably'])if(!row.__hubActivePriceRules[source])row[source+'_policy_active']=false;
       if(storedInternal){
         const projected={...storedInternal},profileTags=[...(product?.__profile?.product_tags||[]),...(product?.__profile?.sku_tags||[])],formulaTags=profileTags.filter(tag=>cleanText(tag?.tag_group).includes('수식'));
         if(projected.actual_inbound_cost){
@@ -3624,7 +3629,19 @@
       afterSku=result.next_cursor;
       if(page>100)throw new Error('매트릭스 내보내기 페이지 수가 안전 한도를 넘었습니다.');
     }
-    return {source:safeSource,snapshotId,rows};
+    const priceRules=await loadActiveSellerPriceRules();
+    return {source:safeSource,snapshotId,rows:rows.map(row=>({...row,active_price_rule:priceRules.has(JSON.stringify([row.sku,safeSource]))}))};
+  }
+
+  async function loadActiveSellerPriceRules(){
+    // Current assignments, not historical result rule_versions, decide whether a
+    // seller price is managed. Do not cache across user QA/tag edits.
+    const registry=await ruleRegistry('list');
+    const rules=new Map((registry.rules||[]).filter(rule=>rule.is_active).map(rule=>[rule.id,rule]));
+    return new Set((registry.assignments||[]).filter(assignment=>{
+      const rule=rules.get(assignment.rule_id);
+      return rule&&rule.scope===assignment.scope&&rule.target_field===assignment.target_field&&String(rule.target_field).startsWith('platform_');
+    }).map(assignment=>JSON.stringify([assignment.sku,assignment.scope])));
   }
 
   async function loadCarrierMatrixTargets({source,skus=[]}={}) {
@@ -3633,7 +3650,7 @@
     const codes=[...new Set((skus||[]).map(cleanText).filter(Boolean))];
     if(!codes.length)return {source:safeSource,rows:[]};
     const fields=['platform_registration_price','platform_discount_price','platform_option_price','platform_final_price'];
-    const [calculated,drafts]=await Promise.all([
+    const [calculated,drafts,priceRules,stocks]=await Promise.all([
       loadCalculatedResults({skus:codes,scope:safeSource,fields}),
       (async()=>{
         const rows=[];
@@ -3645,6 +3662,15 @@
           if(error)throw readableDatabaseError(error);rows.push(...(data||[]));
         }
         return rows;
+      })(),
+      loadActiveSellerPriceRules(),
+      (async()=>{
+        const rows=[];
+        for(let offset=0;offset<codes.length;offset+=200){
+          const {data,error}=await db.from(MATRIX_VIEW).select('sellpia_sku_code,'+safeSource+'_stock').in('sellpia_sku_code',codes.slice(offset,offset+200));
+          if(error)throw readableDatabaseError(error);rows.push(...(data||[]));
+        }
+        return new Map(rows.map(row=>[cleanText(row.sellpia_sku_code),row[safeSource+'_stock']]));
       })()
     ]);
     const calculatedBySku=new Map();
@@ -3663,6 +3689,8 @@
       const registration=get('platform_registration_price'),discount=get('platform_discount_price'),option=get('platform_option_price'),final=get('platform_final_price');
       return {
         sku,
+        active_price_rule:priceRules.has(JSON.stringify([sku,safeSource])),
+        seller_stock:stocks.get(sku)??null,
         stock_draft:draftByKey.get(JSON.stringify([sku,'sellpia_current_stock']))||null,
         price_draft:draftByKey.get(JSON.stringify([sku,'sellpia_sale_price']))||null,
         registration_price:registration.value??null,registration_status:registration.status??null,registration_error:registration.error??null,registration_details:registration.result_details??null,registration_generation_id:registration.generation_id??null,

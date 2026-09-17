@@ -183,7 +183,7 @@ test('direct export fails closed when snapshot RPC support is unavailable',async
 test('snapshot reader paginates 14000 rows without legacy reads or staging',async()=>{
   const functionSource=dataSource.slice(dataSource.indexOf('  async function loadMatrixExportSnapshot('),dataSource.indexOf('  async function summarizeMatrixStocksForExport('));
   const calls=[];
-  const context={cleanText:value=>String(value??'').trim(),requireOperationsHubSessionToken:()=> 'session',readableDatabaseError:error=>error,db:{rpc:async(name,args)=>{
+  const context={ruleRegistry:async()=>({rules:[],assignments:[]}),cleanText:value=>String(value??'').trim(),requireOperationsHubSessionToken:()=> 'session',readableDatabaseError:error=>error,db:{rpc:async(name,args)=>{
     assert.equal(name,'hub_matrix_export_snapshot_v1');calls.push(args);
     const start=calls.length-1,from=start*1000,count=Math.min(1000,14000-from);
     const rows=Array.from({length:count},(_,index)=>({sku:`SKU-${String(from+index).padStart(5,'0')}`}));

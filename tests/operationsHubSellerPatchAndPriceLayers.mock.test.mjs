@@ -16,5 +16,8 @@ assert.match(migration, /smartstore_policy_price[\s\S]*?makeshop_policy_price[\s
 assert.match(data, /smartstore_price,smartstore_policy_price,smartstore_policy_active,smartstore_policy_name[\s\S]*?ably_price,ably_policy_price,ably_policy_active,ably_policy_name/, 'frontend matrix reads must request source and calculated prices separately');
 assert.match(app, /price-layer original[\s\S]*?>원본<[\s\S]*?price-layer policy[\s\S]*?>수식<[\s\S]*?price-layer draft[\s\S]*?>반영</, 'the matrix price cell must show original, formula, and staged values as distinct layers');
 assert.match(app, /수식 계산가는 원본을 덮어쓰지 않습니다[\s\S]*?반영 예정가로 저장/, 'price help must state that calculation does not mutate the source price');
+assert.match(app, /const rulePrice = priceManaged \? product\.__hubRulePrices/, 'matrix must mask historical calculated prices after Rule removal');
+assert.match(app, /const policyActive = priceManaged && Boolean/, 'matrix must not revive a removed Rule through the cached policy layer');
+assert.match(app, /const priceRuleAssignment = priceManaged \?/, 'matrix must not show a removed Rule as active through a legacy assignment badge');
 
 console.log('operationsHubSellerPatchAndPriceLayers.mock.test: OK');

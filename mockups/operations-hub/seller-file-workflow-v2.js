@@ -1,7 +1,7 @@
 (function initSellerFileWorkflowV2(global){
  'use strict';
  const D=()=>global.SystemV3Data,A=()=>global.AblyPlayautoExport;
- const state={files:[],catalog:null,catalogKey:'',preview:null,previewFilter:'all',previewPage:1,role:null,loading:false,carrierFiles:new Map(),standardCarrierFiles:new Map(),standardCarrierPlans:new Map(),standardCarrierViews:new Map()};
+ const state={files:[],catalog:null,catalogKey:'',preview:null,previewFilter:'all',previewPage:1,role:null,loading:false,carrierFiles:new Map(),standardCarrierFiles:new Map(),standardCarrierPlans:new Map(),standardCarrierViews:new Map(),ablyJob:null,ablyJobSequence:0};
  const roles={
   playauto_product:{label:'PlayAuto · 판매가 + 옵션가',type:'product_price_option',hint:'쇼핑몰상품 시트',fileLabel:'쇼핑몰상품.xlsx'},
   playauto_option:{label:'PlayAuto · 옵션가 + 재고',type:'option_price_stock',hint:'옵션기본 시트 · V 추가 금액 / X *판매수량(실재고) / W 원본 보존',fileLabel:'옵션기본.xlsx'}
@@ -16,6 +16,55 @@
   for(const id of ['seller-file-status','export-workflow-status']){const el=document.getElementById(id);if(el){el.className=`${id} ${kind}`.trim();el.textContent=text;}}
  }
 
+ // Progress is phase-based. Counts are only shown when a phase has actually processed rows.
+ // Cancelling invalidates the browser job, not an already submitted read-only RPC.
+ const ablyPhases=[['read','파일 읽기',5],['parse','XLSX 파싱',15],['normalize','row 정규화',25],['match','SKU / identity 매칭',40],['targets','가격·재고 조회',65],['guards','guard / 변환 가능성 검증',80],['preview','preview 생성',95],['done','완료',100]];
+ const carrierNow=()=>global.performance?.now?.()??Date.now();
+ function carrierCancelled(){const error=Error('파일 처리가 취소되었습니다.');error.name='CarrierCancelledError';return error;}
+ function createAblyJob(role,file){
+  if(state.ablyJob?.running)state.ablyJob.cancel(false);
+  const started=carrierNow(),job={id:++state.ablyJobSequence,role,file,running:true,phase:'read',processed:null,total:null,started,lastProgress:started,phaseStarted:started,timings:[],error:'',cancelled:false};
+  state.ablyJob=job;
+  job.check=()=>{if(job.cancelled||state.ablyJob!==job)throw carrierCancelled();};
+  job.render=()=>{
+   if(state.ablyJob!==job)return;
+   const box=document.querySelector('[data-ably-progress]');if(!box)return;
+   box.hidden=false;
+   const phase=ablyPhases.find(item=>item[0]===job.phase)||ablyPhases[0],elapsed=Math.max(0,Math.floor((carrierNow()-started)/1000)),delay=job.running&&carrierNow()-job.lastProgress>=30000;
+   box.dataset.state=job.running?'running':job.cancelled?'cancelled':job.error?'error':'done';
+   const title=box.querySelector('[data-ably-progress-title]'),detail=box.querySelector('[data-ably-progress-detail]'),bar=box.querySelector('[data-ably-progress-bar]'),cancel=box.querySelector('[data-ably-progress-cancel]');
+   if(title)title.textContent=job.error?'파일 처리 실패':job.cancelled?'파일 처리 취소':phase[1]+(job.processed===null?'':` · ${n(job.processed)} / ${n(job.total)}`);
+   if(detail)detail.textContent=job.error||`${file.name} · ${elapsed}초${delay?' · 처리 지연 감지 — 응답 대기 중입니다. 취소 후 다른 파일을 선택할 수 있습니다.':''}`;
+   if(bar)bar.style.width=(job.running?phase[2]:job.error||job.cancelled?phase[2]:100)+'%';
+   if(cancel){cancel.disabled=!job.running;cancel.onclick=()=>job.cancel(true);}
+  };
+  job.phaseTo=(phase,processed=null,total=null)=>{
+   job.check();const now=carrierNow();
+   if(job.phase!==phase){job.timings.push({phase:job.phase,ms:Math.round(now-job.phaseStarted),processed:job.processed,total:job.total});job.phaseStarted=now;}
+   if(job.phase!==phase||job.processed!==processed||job.total!==total)job.lastProgress=now;
+   job.phase=phase;job.processed=processed;job.total=total;job.render();
+  };
+  job.finish=error=>{
+   if(state.ablyJob!==job||job.cancelled)return;
+   const now=carrierNow();job.timings.push({phase:job.phase,ms:Math.round(now-job.phaseStarted),processed:job.processed,total:job.total});
+   job.totalMs=Math.round(now-started);job.error=error?String(error?.message||error):'';job.running=false;if(!error)job.phase='done';global.clearInterval(job.timer);job.render();
+   const timing=job.timings.map(item=>`${item.phase} ${item.ms}ms`).join(' · '),detail=document.querySelector('[data-ably-progress-detail]');
+   if(detail)detail.textContent=(job.error?job.error+' · ':'')+`${file.name} · 총 ${job.totalMs}ms · ${timing}`;
+  };
+  job.cancel=visible=>{
+   job.cancelled=true;job.running=false;global.clearInterval(job.timer);
+   if(state.ablyJob!==job)return;
+   state.preview=null;const previewBox=document.getElementById('export-preview-v2');if(previewBox)previewBox.hidden=true;
+   if(visible){if(state.carrierFiles.get(role)===file)state.carrierFiles.delete(role);renderExportStatuses();job.render();setStatus('파일 처리를 취소했습니다. 다른 공식 수정파일을 선택할 수 있습니다.');}
+  };
+  job.mapRows=async(items,resolve)=>{
+   const output=[];job.phaseTo(job.phase,0,items.length);
+   for(let offset=0;offset<items.length;offset+=250){job.check();output.push(...items.slice(offset,offset+250).map(resolve));job.phaseTo(job.phase,output.length,items.length);await new Promise(resolveYield=>global.setTimeout(resolveYield,0));}
+   job.check();return output;
+  };
+  job.timer=global.setInterval(job.render,1000);job.render();return job;
+ }
+
  async function loadStatuses(){
   try{
    const [result,standard]=await Promise.all([D().loadAuxiliarySellerFiles('ably'),D().loadLatestSellerOriginalStatus(['smartstore','makeshop'])]);
@@ -23,10 +72,10 @@
   }catch(error){setStatus(`판매처 원본 상태 조회 실패: ${error?.message||error}`,'error');}
  }
 
- async function catalog(productCodes=[]){
+ async function catalog(productCodes=[],silent=false){
   const normalized=[...new Set((productCodes||[]).map(value=>String(value||'').trim()).filter(Boolean))].sort(),key=normalized.join('\u0000');
   if(state.catalog&&state.catalogKey===key)return state.catalog;
-  setStatus('셀피아 SKU·상품코드·옵션명을 불러오는 중…');
+  if(!silent)setStatus('셀피아 SKU·상품코드·옵션명을 불러오는 중…');
   state.catalog=await D().loadPlayautoSellpiaCatalog(normalized);
   state.catalogKey=key;
   return state.catalog;
@@ -105,6 +154,7 @@
       <div class="export-role-status" data-export-file="playauto_product"></div>
       <div class="export-role-status" data-export-file="playauto_option"></div>
       <input type="file" data-carrier-input="playauto_product" accept=".xlsx,.xls"><input type="file" data-carrier-input="playauto_option" accept=".xlsx,.xls"><div class="ably-export-actions"><button class="btn" type="button" data-carrier-pick="playauto_product">판매가 + 옵션가 파일 선택</button><button class="btn" type="button" data-carrier-pick="playauto_option">옵션가 + 재고 파일 선택</button><button class="btn wide" type="button" data-page-upload-ably>장기 원본 관리</button></div>
+      <div class="direct-export-progress" data-ably-progress hidden aria-live="polite"><div class="direct-export-progress-head"><b data-ably-progress-title>파일 읽기</b><button class="btn" type="button" data-ably-progress-cancel>취소 / 초기화</button></div><div class="direct-export-progress-track"><i data-ably-progress-bar style="width:0%"></i></div><small data-ably-progress-detail></small></div>
     </article>
    </div>
    <section id="export-preview-v2" class="export-preview-v2" hidden><div class="export-preview-head"><div><h4 id="export-preview-title">미리보기</h4><p id="export-preview-copy"></p></div><button class="btn" id="export-preview-close" type="button">닫기</button></div><div id="export-preview-counts" class="export-preview-counts"></div><div class="export-preview-table-wrap"><table class="export-preview-table"><thead><tr><th>SKU</th><th>현재값</th><th>저장값</th><th>상태</th></tr></thead><tbody id="export-preview-rows"></tbody></table></div><div class="export-preview-footer"><div id="export-preview-pagination"></div><button class="btn primary" id="export-preview-generate" type="button">검증된 값으로 XLSX 생성</button></div></section>
@@ -238,7 +288,7 @@
   for(const role of Object.keys(roles)){
    const el=document.querySelector(`[data-export-file="${role}"]`);if(!el)continue;
    const file=state.carrierFiles.get(role),row=currentFile(role);
-   if(file){el.className='export-role-status ready';el.innerHTML=`<b>${esc(roles[role].label)}</b><span>${esc(file.name)} · 브라우저 메모리에서 변환 준비</span>`;continue;}
+   if(file){el.className='export-role-status ready';el.innerHTML=`<b>${esc(roles[role].label)}</b><span>${esc(file.name)} · 브라우저 메모리 carrier · 처리 단계는 아래 진행상태에서 확인</span>`;continue;}
    if(role==='playauto_product'&&row){el.className='export-role-status ready';el.innerHTML=`<b>${esc(roles[role].label)}</b><span>장기 원본 ${esc(row.file_name)} · ${fmtTime(row.created_at)} · 빠른 변환 파일을 선택할 수 있습니다.</span>`;continue;}
    el.className='export-role-status missing';el.innerHTML=`<b>${esc(roles[role].label)}</b><span>공식 수정 XLSX를 선택해주세요 · Storage 저장 안 함</span>`;
   }
@@ -273,16 +323,25 @@
  async function preview(role){
   const carrier=state.carrierFiles.get(role)||null,record=carrier?null:currentFile(role);
   if(!record&&!carrier){setStatus(`${roles[role].label} 공식 수정파일을 선택해주세요.`,'error');return;}
+  const job=createAblyJob(role,carrier||{name:record.file_name});
   state.role=role;state.preview=null;state.previewFilter='all';state.previewPage=1;setStatus(`${roles[role].label} 원본과 저장값을 비교하는 중…`);
+  const oldPreview=document.getElementById('export-preview-v2');if(oldPreview)oldPreview.hidden=true;
   try{
-   const file=carrier||await blobFile(record),parsed=await A().readTemplate(file);
+   // Read once for parsing, retain the selected original File for byte-preserving serialization.
+   await new Promise(resolveYield=>global.setTimeout(resolveYield,0));job.check();
+   const file=carrier||await blobFile(record),bytes=await file.arrayBuffer();job.check();job.phaseTo('parse');
+   await new Promise(resolveYield=>global.setTimeout(resolveYield,0));job.check();
+   const parsed=await A().readTemplate({name:file.name,arrayBuffer:async()=>bytes});job.check();
+   job.phaseTo('normalize',parsed.items.length,parsed.items.length);
    if(parsed.type!==roles[role].type)throw Error('보관된 PlayAuto 원본 역할과 실제 양식이 다릅니다.');
+   await new Promise(resolveYield=>global.setTimeout(resolveYield,0));job.check();job.phaseTo('match');
    const [mappingResult,catalogRows,scope]=await Promise.all([
     D().loadCarrierSellerMappings({source:'ably',identities:parsed.items}),
-    catalog(parsed.items.map(item=>item.sellpia_product_code)),
+    catalog(parsed.items.map(item=>item.sellpia_product_code),true),
     scopeSkus()
    ]);
-   const resolved=A().resolveRows(parsed.items,catalogRows,mappingResult.rows||[]);
+   job.check();
+   const resolved=await job.mapRows(parsed.items,item=>A().resolveRows([item],catalogRows,mappingResult.rows||[])[0]);
    const resolvedWithSku=resolved.filter(item=>item.resolution?.sku);
    let chosen=scope?resolvedWithSku.filter(item=>scope.has(item.resolution.sku)):resolvedWithSku;
    if(!chosen.length)throw Error('선택 범위에서 PlayAuto 원본과 매칭되는 SKU가 없습니다.');
@@ -294,12 +353,14 @@
     safetyRows=resolvedWithSku.filter(item=>touched.has(item.source_row_no));
    }
    const safetySkus=[...new Set(safetyRows.map(item=>item.resolution.sku))];
-   const stored=await D().loadCarrierMatrixTargets({source:'ably',skus:safetySkus});
+   job.phaseTo('targets',0,safetySkus.length);
+   const stored=await D().loadCarrierMatrixTargets({source:'ably',skus:safetySkus});job.check();job.phaseTo('targets',safetySkus.length,safetySkus.length);
    const targetMap=new Map((stored.rows||[]).map(row=>[row.sku,row]));
 
    const chosenSet=new Set(chosen.map(item=>`${item.source_row_no}|${item.option_index??''}|${item.resolution.sku}`));
    const sourceRows=role==='playauto_option'&&!scope?resolved:safetyRows;
-   const prepared=sourceRows.map(item=>{
+   job.phaseTo('guards',0,sourceRows.length);
+   const prepared=await job.mapRows(sourceRows,item=>{
     const sku=item.resolution?.sku,row=sku?targetMap.get(sku):null,inScope=sku?chosenSet.has(`${item.source_row_no}|${item.option_index??''}|${sku}`):!scope;
     const out={...item,resolution:item.resolution,_inScope:inScope,_status:'ready',_error:'',_changedFields:[]};
     if(item.carrier_identity_error){out._status='ambiguous';out._error=item.carrier_identity_error;return out;}
@@ -317,10 +378,10 @@
       if(inScope)out.target_option_price=matrixTarget?Number(matrixTarget.option):sourceOption;
     }else{
       if(inScope)out.target_option_price=matrixTarget?Number(matrixTarget.option):sourceOption;
-      const draftStock=row?.stock_draft?.after_value;
+      const matrixStock=global.HubCurrentPriceExport?.matrixStockTarget(row);
       if(inScope&&item.sales_quantity==null)out._blankStockPreserved=true;
-      else if(inScope&&draftStock!==null&&draftStock!==undefined&&draftStock!==''&&Number.isFinite(Number(draftStock)))out.target_stock=Number(draftStock);
-      else if(inScope)out.target_stock=item.sales_quantity;
+      else if(inScope&&matrixStock!==null&&matrixStock!==undefined&&Number.isFinite(Number(matrixStock)))out.target_stock=Number(matrixStock);
+      else if(inScope){out._stockOriginalPreserved=true;out.target_stock=item.sales_quantity;}
     }
     return out;
    });
@@ -353,9 +414,10 @@
    }
    const unresolved=output.filter(item=>item._status==='unresolved'||item._status==='ambiguous').length,ready=output.filter(item=>item._status==='ready').length,changed=output.filter(item=>item._status==='ready'&&item._changed).length,preserved=output.filter(item=>item._blankStockPreserved).length,blocked=output.filter(item=>item._status!=='ready').length;
    const versionToken=JSON.stringify(output.map(item=>[item.source_row_no,item.option_index??'',item.resolution?.sku||'',item.resolution?.method||'',item._status,item._changedFields,item._current,item._target,item._error]));
-   state.preview={role,record,file,parsed,items:prepared,output,versionToken,counts:{template:parsed.items.length,matched:resolvedWithSku.length,selected:output.length,ready,changed,blocked,unresolved,preserved}};
-   renderPreview();setStatus(`${roles[role].label} 미리보기 완료 · 생성 가능 ${n(ready)}건 · 제외 ${n(blocked)}건`,'success');return state.preview;
-  }catch(error){setStatus(`미리보기 실패: ${error?.message||error}`,'error');}
+   job.check();job.phaseTo('preview',output.length,output.length);
+   state.preview={role,record,file,parsed,items:prepared,output,versionToken,timings:job.timings,counts:{template:parsed.items.length,matched:resolvedWithSku.length,selected:output.length,ready,changed,blocked,unresolved,preserved}};
+   renderPreview();job.finish();setStatus(`${roles[role].label} 미리보기 완료 · 생성 가능 ${n(ready)}건 · 제외 ${n(blocked)}건`,'success');return state.preview;
+  }catch(error){if(error?.name==='CarrierCancelledError'||state.ablyJob!==job||job.cancelled)return;job.finish(error);setStatus(`미리보기 실패: ${error?.message||error}`,'error');}
  }
 
  function previewRowsForFilter(preview,filter='all'){
@@ -392,22 +454,26 @@
   setStatus('현재 매트릭스 표시값이 미리보기 이후 바뀌지 않았는지 확인하는 중…');
   const revalidated=await preview(p.role);
   if(!revalidated||revalidated.versionToken!==p.versionToken){setStatus('가격/재고 상태가 변경되었습니다. 미리보기를 다시 확인해주세요.','error');return;}
+  const serializationJob=state.ablyJob;serializationJob?.check();
   const writeByKey=new Map(p.output.filter(item=>item._status==='ready'&&item._changed).map(item=>[`${item.source_row_no}|${item.option_index??''}|${item.resolution.sku}`,item]));
   const items=p.items.map(item=>{
    const selected=writeByKey.get(`${item.source_row_no}|${item.option_index??''}|${item.resolution?.sku}`),fields=new Set(selected?._changedFields||[]);
    return {...item,target_base_price:fields.has('base')?selected.target_base_price:null,target_option_price:fields.has('option')?selected.target_option_price:null,target_stock:fields.has('stock')?selected.target_stock:null};
   });
   const progressBox=document.getElementById('export-preview-v2');if(progressBox){progressBox.dataset.generating='1';}
+  const generateButton=document.getElementById('export-preview-generate');if(generateButton)generateButton.disabled=true;
   setStatus('PlayAuto XLSX 생성 중 · 25% · 원본 템플릿 준비');
   try{
    setStatus('PlayAuto XLSX 생성 중 · 55% · 수정 셀 반영');
    const blob=p.role==='playauto_product'?await A().buildProductPriceOption(p.file,items):await A().buildOptionPriceStock(p.file,items);
+   serializationJob?.check();
    setStatus('PlayAuto XLSX 생성 중 · 90% · 파일 저장 준비');
    const suffix=p.role==='playauto_product'?'판매가_옵션가':'옵션가_재고';
    const base=safeName(p.file.name).replace(/\.(xlsx|xls)$/i,'');
    global.SystemV3SellerExport.downloadBlob(blob,`${base}_SystemV3_${suffix}_${new Date().toISOString().slice(0,10)}.xlsx`);
    setStatus(`에이블리 ${roles[p.role].label} XLSX 생성 완료`,'success');
-  }catch(error){setStatus(`XLSX 생성 실패: ${error?.message||error}`,'error');}
+  }catch(error){if(error?.name!=='CarrierCancelledError')setStatus(`XLSX 생성 실패: ${error?.message||error}`,'error');}
+  finally{if(progressBox)delete progressBox.dataset.generating;if(generateButton&&state.ablyJob===serializationJob)generateButton.disabled=!state.preview?.counts?.ready;}
  }
 
  function renameLegacyExportUi(){
