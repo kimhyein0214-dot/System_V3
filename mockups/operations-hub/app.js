@@ -767,7 +767,7 @@ function inboundCostCell(product) {
       ? '<em class="inbound-cost-badge manual">직접입력</em>'
       : '<em class="inbound-cost-badge empty">설정</em>';
   const title = resolved.calculated ? `${tagName} 수식이 계산한 실입고가${resolved.error ? ' · '+resolved.error : ''}` : '클릭하여 실입고가 직접 입력 또는 수식태그 설정';
-  return `<button type="button" class="inbound-cost-cell${mode ? ' configured' : ''}" data-inbound-cost-edit data-sku="${escapeHtml(product.sellpia_sku_code)}" title="${escapeHtml(title)}"><b>${cost}</b>${badge}</button>${globalThis.HubMatrixShadow?.internalChips(product,'actual_inbound_cost')||''}`;
+  return `<button type="button" class="inbound-cost-cell${mode ? ' configured' : ''}" data-inbound-cost-edit data-sku="${escapeHtml(product.sellpia_sku_code)}" title="${escapeHtml(title)}"><b>${cost}</b>${badge}</button>${globalThis.HubMatrixShadow?.internalMarkers(product,'actual_inbound_cost')||''}${globalThis.HubMatrixShadow?.internalChips(product,'actual_inbound_cost')||''}`;
 }
 
 function matrixAppliedTagChips(profile) {
@@ -1152,7 +1152,7 @@ function channelInventoryCells(product, prefix, label, baseMerge = null, identit
   const shadowCell = (html, field) => {
     const d = dualRead?.find(row => row.field === field), scope = globalThis.HubBaselineCanary?.finite(product.sellpia_sku_code);
     const comparison = scope && product.__hubShadow?.[prefix] && d ? `<small data-dual-read="${field}">${d.canary_eligible?'Canary 대상':'검증 대기'} · ${escapeHtml(d.discrepancy_reason)}</small>` : '';
-    return html.replace(/<\/td>$/, `${globalThis.HubMatrixShadow?.chips(product,prefix,field)||''}${comparison}</td>`);
+    return html.replace(/<\/td>$/, `${globalThis.HubMatrixShadow?.markers(product,prefix,field)||''}${globalThis.HubMatrixShadow?.chips(product,prefix,field)||''}${comparison}</td>`);
   };
   return `<td data-channel="${prefix}"${title}><span class="matrix-status ${state.key}">${state.label}</span></td>${sellerIdentityCells(product, prefix, label, state, identityMerge, relationBadge)}${shadowCell(stockCell,'stock')}${baseCell}${discountCell}${optionCell}${shadowCell(finalCell,'price')}`;
 }
@@ -4031,7 +4031,7 @@ function isClipboardTypingTarget(target) {
 matrixBody.addEventListener('mousedown', event => {
   const selectionModifier = event.ctrlKey || event.metaKey;
   if (event.target.closest('.row-check,.inline-editor')) return;
-  if (!selectionModifier && event.target.closest('[data-open-multi-link],[data-open-sku-links],[data-discount-edit]')) return;
+  if (!selectionModifier && event.target.closest('[data-open-multi-link],[data-open-sku-links],[data-discount-edit],[data-shadow-value-detail]')) return;
   const cell = event.target.closest('td');
   if (!cell || event.button !== 0) return;
   selectMatrixCell(cell, {extend:event.shiftKey, toggle:selectionModifier});
@@ -5120,6 +5120,15 @@ matrixBody.addEventListener('click', event => {
   const discountButton = event.target.closest('[data-discount-edit]');
   if (discountButton) {
     openDiscountEditor(discountButton);
+    return;
+  }
+  const shadowDetail = event.target.closest('[data-shadow-value-detail]');
+  if (shadowDetail) {
+    const row = shadowDetail.closest('tr[data-sku]');
+    if (row) {
+      drawerState.activeTab = 'inventory';
+      openProductDrawer(row);
+    }
     return;
   }
   const skuLink = event.target.closest('[data-open-sku-links]');

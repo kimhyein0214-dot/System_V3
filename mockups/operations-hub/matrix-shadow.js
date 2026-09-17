@@ -34,6 +34,19 @@
  }
  function chip(text,kind=''){return `<span class="shadow-chip ${kind}">${e(text)}</span>`;}
  function freshness(value){return value==='fresh'?'최신':value==='stale'?'재계산 필요':value==='error'?'계산 오류':value==='not_applicable'?'':value==='missing'?'계산 미설정':'최신 여부 미확인';}
+ function markers(product,source,field){
+  const r=product.__hubShadow?.[source],s=r?.[field];if(!s||!product[source+'_product_code'])return '';
+  const items=[];
+  if(s.origin==='manual')items.push(['✎','수동 수정','manual']);
+  else if(s.origin==='calculated')items.push(['fx','수식 Rule','formula']);
+  if(s.freshness==='stale'||s.sellerSyncState==='업로드 대기')items.push(['↻',s.freshness==='stale'?'재계산 필요':'업로드 대기','pending']);
+  if(s.lookup==='unavailable'||s.lookup==='conflict'||s.disposition==='BLOCK'||['unknown','error','missing'].includes(s.freshness))items.push(['⚠',s.lookup==='conflict'?'연결 충돌':s.lookup==='unavailable'?'기준본 없음':'확인 필요','warning']);
+  const provenance=s.origin==='manual'?'수동 수정':s.origin==='calculated'?'수식 '+(s.ruleNames?.join(' · ')||'가격 Rule'):'판매처 기준본';
+  const detail=`출처: ${provenance}\n기준본: v${r.baselineVersion?.version??'미확인'}\n상태: ${freshness(s.freshness)||'기준본 유지'} · ${s.sellerSyncState}\n기준본 값: ${n(s.baseline)}\nShadow 목표값: ${n(s.effectiveTarget)}${s.reason||s.lookupReason?'\n사유: '+(s.reason||s.lookupReason):''}\n클릭하여 값 계보 확인`;
+  return markerButtons(items,detail);
+ }
+ function markerButtons(items,detail){return items.length?`<span class="shadow-markers">${items.map(([symbol,label,kind])=>`<button type="button" class="shadow-marker ${kind}" data-shadow-value-detail title="${e(label+'\n'+detail)}" aria-label="${e(label+' · 값 계보 열기')}">${e(symbol)}</button>`).join('')}</span>`:'';}
+ function internalMarkers(product,field){const c=product.__hubInternalPrices?.[field];if(!c)return '';const s=internalState(product,field),items=[['fx','수식 Rule','formula']];if(s.freshness==='stale')items.push(['↻','재계산 필요','pending']);else if(s.freshness==='unknown')items.push(['⚠','최신 여부 확인 필요','warning']);return markerButtons(items,`출처: 수식 ${c.ruleNames?.join(' · ')||field}\n계산 세대: ${c.generationId??'미확인'}\n상태: ${freshness(s.freshness)}\n클릭하여 값 계보 확인`);}
  function chips(product,source,field){const r=product.__hubShadow?.[source],s=r?.[field];if(!s)return '';const provenance=s.lookup==='conflict'?'Identity Conflict':s.origin==='manual'?'Manual Override':s.origin==='calculated'?'fx '+(s.ruleNames?.join(' · ')||'가격 Rule'):s.lookup==='unavailable'?'Seller Original / Baseline unavailable':'Seller Baseline';
   return `<div class="matrix-shadow" data-shadow-source="${e(source)}" data-shadow-field="${e(field)}">${chip(provenance)}${freshness(s.freshness)?chip(freshness(s.freshness),s.freshness==='stale'?'warn':''):''}${chip(s.lookup==='crosswalk'?'exact crosswalk':s.sellerSyncState,s.lookup==='conflict'?'bad':'')}<small>shadow ${e(n(field==='price'?s.effectiveTarget?.final:s.effectiveTarget))}${s.baseline==null?' · seller original 유지':` · baseline ${e(n(field==='price'?s.baseline.final:s.baseline))}`}</small></div>`;
  }
@@ -61,5 +74,7 @@
   return `<section class="shadow-lineage"><h4>값 계보 · shadow 검증</h4><p>Matrix 표시값은 기존 운영 로직을 사용합니다. 아래 목표값과 차이를 확인하세요.</p>${raw}${internal}${historical}${channels}</section>`;
  }
  function diagnostic(rows){const counts={matched:0,crosswalk:0,unavailable:0,conflict:0};for(const row of rows||[])counts[row.lookup]=(counts[row.lookup]||0)+1;return `<details class="shadow-lineage" open><summary>Baseline shadow 진단 · 기존 export 판정 유지</summary><p>${Object.entries(counts).map(([k,v])=>chip(k+' '+v,k==='conflict'?'bad':'')).join('')}</p><p>Conflict는 shadow BLOCK입니다. Production cutover 전까지 기존 생성 판정은 변경하지 않습니다.</p><div class="shadow-diagnostic-scroll">${(rows||[]).map(r=>`<p>${e(r.sku)} ${chip(r.lookup,r.lookup==='conflict'?'bad':'')} ${e(r.reason||'')}</p>`).join('')}</div></details>`;}
- g.HubMatrixShadow=Object.freeze({annotate,request,chips,internalChips,renderDetail,diagnostic,rememberCarrierEvidence,carrierFor});
+ function mountDiagnostics(){const toggle=g.document?.getElementById('shadow-diagnostics-toggle');if(!toggle)return;g.document.documentElement.dataset.shadowDiagnostics='off';toggle.addEventListener('click',()=>{const on=toggle.getAttribute('aria-pressed')!=='true';toggle.setAttribute('aria-pressed',String(on));toggle.textContent='Shadow 진단 보기 '+(on?'ON':'OFF');g.document.documentElement.dataset.shadowDiagnostics=on?'on':'off';});}
+ if(g.document){if(g.document.readyState==='loading')g.document.addEventListener('DOMContentLoaded',mountDiagnostics,{once:true});else mountDiagnostics();}
+ g.HubMatrixShadow=Object.freeze({annotate,request,chips,markers,internalChips,internalMarkers,renderDetail,diagnostic,rememberCarrierEvidence,carrierFor});
 })(typeof window==='undefined'?globalThis:window);
