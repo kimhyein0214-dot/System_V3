@@ -3,7 +3,7 @@ import fs from 'node:fs';
 
 const data = fs.readFileSync(new URL('../mockups/operations-hub/data-service.js', import.meta.url), 'utf8');
 
-assert.match(data, /db\.rpc\('load_operations_hub_matrix_metadata_v1', \{p_skus:skus\}\)/, 'one visible page must load all metadata through one bounded RPC');
+assert.match(data, /db\.rpc\(fullMatrixReadContext\?'load_operations_hub_matrix_metadata_batch_v1':'load_operations_hub_matrix_metadata_v1', \{p_skus:skus\}\)/, 'ordinary reads retain their bounded metadata RPC; full reads use the equivalent read wrapper');
 assert.match(data, /const steps = \[[\s\S]*?attachInboundCostDetails[\s\S]*?attachSystemOperationalDetails[\s\S]*?attachProductLinkDrafts[\s\S]*?attachManualLinks[\s\S]*?attachProductProfiles[\s\S]*?attachLinkBadges[\s\S]*?attachSellerPriceComponents[\s\S]*?attachSellerDrafts[\s\S]*?attachPriceRuleAssignments[\s\S]*?attachLinkSuppressions/, 'the established metadata projection order must be preserved after bundling');
 assert.match(data, /for \(const \[attach, prefetched\] of steps\)[\s\S]*?products = await attach\(products, signal, prefetched\)/, 'the bundled rows must pass through the existing projection logic');
 assert.match(data, /async function attachManualLinks\(rows, signal, prefetched = null\)[\s\S]*?Array\.isArray\(prefetched\)[\s\S]*?operations_hub_manual_links/, 'projection helpers must retain their direct-query fallback for non-matrix callers');

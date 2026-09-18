@@ -525,7 +525,7 @@
     const skus = [...new Set(products.map(row => cleanText(row?.sellpia_sku_code)).filter(Boolean))];
     if (!skus.length) return products;
     throwIfAborted(signal);
-    const result = await withAbortSignal(db.rpc('load_operations_hub_matrix_metadata_v1', {p_skus:skus}), signal);
+    const result = await withAbortSignal(db.rpc(fullMatrixReadContext?'load_operations_hub_matrix_metadata_batch_v1':'load_operations_hub_matrix_metadata_v1', {p_skus:skus}), signal);
     if (result.error) throw new Error('Matrix 표시정보 조회: '+(result.error.message||String(result.error)));
     const metadata = result.data || {};
     const steps = [
@@ -827,7 +827,8 @@
     const started=performance.now(),before={...matrixReadMetrics},identity=await loadAllFilteredSkus({status:'all'}),codes=identity.skus;
     const batches=[];for(let i=0;i<codes.length;i+=200)batches.push(codes.slice(i,i+200));
     let cursor=0,loaded=0,failed=false;const rows=[];const complete=part=>part.length>0&&part.every(r=>r.__hubActivePriceRules&&(!global.HubMatrixShadow||['smartstore','makeshop','ably'].every(s=>r.__hubShadow?.[s])));async function readBatch(batch){try{const part=await loadProductsBySkus(batch,{signal});if(part.length!==batch.length||!complete(part))throw Error('필수 shadow 조회 지연');return part;}catch(error){if(batch.length<=25||!/57014|timeout|shadow 조회 지연/i.test(error.message||String(error)))throw error;const middle=Math.ceil(batch.length/2);return [...await readBatch(batch.slice(0,middle)),...await readBatch(batch.slice(middle))];}}
-    await Promise.all(Array.from({length:Math.min(2,batches.length)},async()=>{while(!failed&&cursor<batches.length){throwIfAborted(signal);const batch=batches[cursor++];try{const part=await readBatch(batch);if(failed)return;rows.push(...part);loaded+=part.length;onProgress?.({loaded,total:codes.length,elapsed:performance.now()-started});}catch(error){failed=true;throw error;}}}));
+    const workers=await Promise.allSettled(Array.from({length:Math.min(2,batches.length)},async()=>{while(!failed&&cursor<batches.length){throwIfAborted(signal);const batch=batches[cursor++];try{const part=await readBatch(batch);if(failed)return;rows.push(...part);loaded+=part.length;onProgress?.({loaded,total:codes.length,elapsed:performance.now()-started});}catch(error){failed=true;throw error;}}}));
+    const failure=workers.find(worker=>worker.status==='rejected');if(failure)throw failure.reason;
     const confirm=await loadAllFilteredSkus({status:'all'});
     if(confirm.skus.length!==codes.length||confirm.skus.some((s,i)=>s!==codes[i]))throw Error('로딩 중 전체 SKU membership 변경 · DB 새로고침이 필요합니다.');
     const seen=new Set(rows.map(r=>r.sellpia_sku_code));if(seen.size!==codes.length||codes.some(s=>!seen.has(s)))throw Error('전체 Matrix SKU 중복/누락');
@@ -2746,6 +2747,7 @@
         loadStoredMatrixPrices({sources:['smartstore','makeshop','ably'],skus:codes})
       ]);
     } catch(error) {
+      if(fullMatrixReadContext)throw new Error('Matrix 현재 계산값 조회: '+(error.message||String(error)));
       // Stored prices enrich the matrix; they must never make the core catalog
       // unavailable when this auxiliary read is slow or temporarily fails.
       console.warn('stored matrix price enrichment failed',error);
@@ -3867,7 +3869,8 @@
     try{
       const payloads=await Promise.all(['smartstore','makeshop','ably'].map(source=>loadMatrixShadowMetadata({source,withFingerprints:false,rows:products.map(product=>global.HubMatrixShadow.request(product,source))})));
       const scopes=['','smartstore','makeshop','ably'];
-      const fingerprints=await Promise.all(scopes.map(source=>{const codes=[...new Set(payloads.flatMap(p=>p.rows.filter(r=>r.calculated?.some(c=>c.scope===source&&c.result_details?.input_fingerprint)).map(r=>r.sku)))];return codes.length?loadInputFingerprints(codes,source):{};}));
+      const productsBySku=new Map(products.map(product=>[product.sellpia_sku_code,product]));
+      const fingerprints=await Promise.all(scopes.map(source=>{const codes=[...new Set(payloads.flatMap(p=>p.rows.filter(r=>r.calculated?.some(c=>c.scope===source&&c.result_details?.input_fingerprint&&(!fullMatrixReadContext||(source?productsBySku.get(r.sku)?.__hubRulePrices?.[source]:productsBySku.get(r.sku)?.__hubInternalPrices?.[c.field])))).map(r=>r.sku)))];return codes.length?loadInputFingerprints(codes,source):{};}));
       for(const payload of payloads)for(const row of payload.rows){row.current_internal_input_fingerprint=fingerprints[0][row.sku]||null;row.current_input_fingerprint=fingerprints[scopes.indexOf(payload.source)][row.sku]||null;}
       throwIfAborted(signal);
       // Attach only __hubShadow; no existing numeric, draft, Rule or mapping projection changes.
@@ -3907,7 +3910,7 @@
   async function loadInputFingerprints(skus, source = '') {
     const selected=[...new Set(skus)],result={};
     async function read(codes){
-      const {data,error}=await db.rpc('hub_input_fingerprints_v1',{p_session_token:requireOperationsHubSessionToken(),p_skus:codes,p_source:source});
+      const {data,error}=await db.rpc(fullMatrixReadContext?'hub_matrix_input_fingerprints_batch_v1':'hub_input_fingerprints_v1',{p_session_token:requireOperationsHubSessionToken(),p_skus:codes,p_source:source});
       if(error&&/statement timeout|canceling statement/i.test(error.message)&&codes.length>1){const middle=Math.ceil(codes.length/2);await read(codes.slice(0,middle));await read(codes.slice(middle));return;}
       throwOperationsHubRpcError(error);Object.assign(result,data);
     }

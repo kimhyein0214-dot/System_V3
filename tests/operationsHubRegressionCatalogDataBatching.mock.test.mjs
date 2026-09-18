@@ -12,7 +12,7 @@ const db={from(table){let ids=[],selection='';return {select(value){selection=va
  const data=ids.map(sku=>table==='matrix'?{sellpia_sku_code:sku,system_base_price:1}:table==='operations_hub_product_profiles'?{sellpia_sku_code:sku,sku_tags:[{tag_id:'catalog-test'}]}:table==='operations_hub_sku_operational_live'?{sellpia_sku_code:sku,system_base_price:10000,system_stock:7}:table==='operations_hub_inbound_cost_live'?{sellpia_sku_code:sku,actual_inbound_cost:5000}:null).filter(Boolean);
  return Promise.resolve({data,error:null}).then(resolve,reject);
 }};},async rpc(name,args){const ids=Array.from(args.p_skus);calls.push({kind:'rpc',name,count:ids.length});assert.ok(ids.length<=200,'component requests stay within existing200-SKU batch');return {data:[],error:null};}};
-const c={db,MATRIX_VIEW:'matrix',cleanText:v=>String(v??'').trim(),requireOperationsHubSessionToken:()=> 'fixture',withAbortSignal:q=>q,global:{}};
+const c={fullMatrixReadContext:null,db,MATRIX_VIEW:'matrix',cleanText:v=>String(v??'').trim(),requireOperationsHubSessionToken:()=> 'fixture',withAbortSignal:q=>q,global:{}};
 c.attachRepresentativePrices=async rows=>rows;
 vm.createContext(c);vm.runInContext(names.map(extract).join('\n')+'\nthis.load=loadFormulaProducts;',c);
 const rows=await c.load(skus);
@@ -46,7 +46,7 @@ assert.ok(calls.filter(c=>c.table==='operations_hub_product_profiles').every(c=>
 
 const pipeline=[];
 const stageNames=['attachInboundCostDetails','attachSystemOperationalDetails','attachPriceBasis','attachProductLinkDrafts','attachManualLinks','attachProductProfiles','attachLinkBadges','attachSellerPriceComponents','attachSellerDrafts','attachPriceRuleAssignments','attachLinkSuppressions'];
-const metadataContext={cleanText:v=>String(v??'').trim(),throwIfAborted:signal=>{if(signal?.aborted)throw Error('abort fixture');},withAbortSignal:q=>q,db:{async rpc(name,args){assert.equal(name,'load_operations_hub_matrix_metadata_v1');assert.deepEqual(Array.from(args.p_skus),['one']);return {data:{},error:null};}},global:{},attachStoredCalculatedPrices:async rows=>{pipeline.push('stored-price-projection');assert.ok(rows[0].enriched.includes('attachSellerDrafts'),'manual drafts attach before stored prices');assert.ok(rows[0].enriched.includes('attachSystemOperationalDetails'),'latest operational base attaches before stored prices');return rows.map(r=>({...r,__hubRulePrices:{ably:{platformFinal:10300,platformOption:300}}}));}};
+const metadataContext={fullMatrixReadContext:null,cleanText:v=>String(v??'').trim(),throwIfAborted:signal=>{if(signal?.aborted)throw Error('abort fixture');},withAbortSignal:q=>q,db:{async rpc(name,args){assert.equal(name,'load_operations_hub_matrix_metadata_v1');assert.deepEqual(Array.from(args.p_skus),['one']);return {data:{},error:null};}},global:{},attachStoredCalculatedPrices:async rows=>{pipeline.push('stored-price-projection');assert.ok(rows[0].enriched.includes('attachSellerDrafts'),'manual drafts attach before stored prices');assert.ok(rows[0].enriched.includes('attachSystemOperationalDetails'),'latest operational base attaches before stored prices');return rows.map(r=>({...r,__hubRulePrices:{ably:{platformFinal:10300,platformOption:300}}}));}};
 for(const name of stageNames)metadataContext[name]=async rows=>{pipeline.push(name);return rows.map(r=>({...r,enriched:[...(r.enriched||[]),name]}));};
 metadataContext.attachRepresentativePrices=async rows=>rows;
 vm.createContext(metadataContext);vm.runInContext(extract('attachProductMetadata')+'\nthis.attach=attachProductMetadata;',metadataContext);

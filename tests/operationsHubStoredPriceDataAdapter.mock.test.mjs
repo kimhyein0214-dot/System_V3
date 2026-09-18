@@ -65,6 +65,7 @@ test('stored price enrichment failure keeps the core matrix rows available',asyn
  const products=[{sellpia_sku_code:'SKU-1',price:1200}];
  const warnings=[];
  const context={
+  fullMatrixReadContext:null,
   cleanText:v=>String(v??'').trim(),
   loadCalculatedResults:async()=>{throw new Error('statement timeout');},
   loadStoredMatrixPrices:async()=>({rows:[]}),
