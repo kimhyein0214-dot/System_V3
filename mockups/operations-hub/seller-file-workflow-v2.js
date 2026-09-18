@@ -220,6 +220,7 @@
    <div id="export-workflow-status" class="export-workflow-status">내보내기 전에 미리보기에서 매칭·변경·제외 건수를 확인하세요.</div>`;
   head.insertAdjacentElement('afterend',section);
   arrangeSellerRows(section,page);
+  global.SellpiaPatchExport?.mount(section.querySelector('.export-channel-grid'));
   // UI preview release: canary controls are not mounted, including URL opt-in.
   document.getElementById('export-workflow-status').hidden=true;
 

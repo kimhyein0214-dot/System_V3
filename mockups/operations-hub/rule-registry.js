@@ -50,14 +50,31 @@
   }
   validateConfig(rule.config);return rule;
  }
- function round(value,unit,mode){return ({up:Math.ceil,down:Math.floor,nearest:Math.round}[mode])(value/unit)*unit;}
+ // Price Rule numbers are decimal facts. Keep exact fractions through ordered
+ // arithmetic so a binary float just above 93,500 cannot ceil to 94,000.
+ function fraction(value){
+  const [mantissa,exponent='0']=String(value).toLowerCase().split('e');const sign=mantissa.startsWith('-')?-1n:1n;
+  const [whole,decimal='']=mantissa.replace(/^[+-]/,'').split('.');const scale=decimal.length-Number(exponent);
+  return reduced(sign*BigInt(whole+decimal)*(scale<0?10n**BigInt(-scale):1n),scale>0?10n**BigInt(scale):1n);
+ }
+ function reduced(n,d){if(d<0n){n=-n;d=-d;}let a=n<0n?-n:n,b=d;while(b){const t=a%b;a=b;b=t;}return {n:n/(a||1n),d:d/(a||1n)};}
+ const plus=(a,b)=>reduced(a.n*b.d+b.n*a.d,a.d*b.d);
+ const times=(a,b)=>reduced(a.n*b.n,a.d*b.d);
+ const compare=(a,b)=>a.n*b.d-b.n*a.d;
+ function rounded(value,unit,mode){
+  const q=reduced(value.n*unit.d,value.d*unit.n);let whole=q.n/q.d,rest=q.n%q.d;
+  if(mode==='up'&&rest>0n)whole++;
+  if(mode==='down'&&rest<0n)whole--;
+  if(mode==='nearest'){if(rest<0n){whole--;rest+=q.d;}if(rest*2n>=q.d)whole++;}
+  return times({n:whole,d:1n},unit);
+ }
  function transformValue(base,config){
-  let value=base;
-  for(const step of config.steps){const n=step.value;switch(step.op){case 'add':value+=n;break;case 'subtract':value-=n;break;case 'multiply':value*=n;break;case 'divide':value/=n;break;case 'set':value=n;break;case 'round':value=round(value,step.unit,step.rounding);break;}}
-  if(config.min!==''&&config.min!=null)value=Math.max(value,Number(config.min));
-  if(config.max!==''&&config.max!=null)value=Math.min(value,Number(config.max));
-  if(config.unit!=null||config.rounding!=null)value=round(value,Number(config.unit??1),config.rounding||'nearest');
-  return value;
+  let value=fraction(base);
+  for(const step of config.steps){const n=step.op==='round'?null:fraction(step.value);switch(step.op){case 'add':value=plus(value,n);break;case 'subtract':value=plus(value,{n:-n.n,d:n.d});break;case 'multiply':value=times(value,n);break;case 'divide':value=times(value,{n:n.d,d:n.n});break;case 'set':value=n;break;case 'round':value=rounded(value,fraction(step.unit),step.rounding);break;}}
+  if(config.min!==''&&config.min!=null){const min=fraction(Number(config.min));if(compare(value,min)<0n)value=min;}
+  if(config.max!==''&&config.max!=null){const max=fraction(Number(config.max));if(compare(value,max)>0n)value=max;}
+  if(config.unit!=null||config.rounding!=null)value=rounded(value,fraction(Number(config.unit??1)),config.rounding||'nearest');
+  return Number(value.n)/Number(value.d);
  }
  function transform(base,config,{allowNegative=false}={}){
   validateConfig(config);const value=transformValue(numeric(base,'기준값'),config);

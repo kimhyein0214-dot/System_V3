@@ -89,3 +89,9 @@ test('virtual option/final stage inputs are scoped source-only values',()=>{
  assert.throws(()=>H.validateRule({...option,target_field:'platform_option_input'}),/적용 항목/);
  assert.throws(()=>e.evaluate('A','platform_option_input','makeshop'),/미배정/);
 });
+test('decimal multiply and ordered currency ceiling do not add an extra 500 at exact boundaries',()=>{
+ const config={steps:[{op:'multiply',value:2.2},{op:'round',unit:500,rounding:'up'}]};
+ for(let input=0;input<=150000;input+=250)assert.equal(HubRuleRegistry.transform(input,config),Math.ceil(input*22/5000)*500,'input '+input);
+ assert.equal(HubRuleRegistry.transform(42500,config),93500);assert.equal(HubRuleRegistry.transform(42501,config),94000);assert.equal(HubRuleRegistry.transform(26750,config),59000);
+ assert.throws(()=>HubRuleRegistry.transform(37119,{steps:[{op:'divide',value:2}]}),/안전한 정수/);
+});

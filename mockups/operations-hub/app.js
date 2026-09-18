@@ -12256,7 +12256,6 @@ document.addEventListener('keydown', event => {
 updateSource();
 
 const startupPreset = findPreset(activePresetId);
-window.SellpiaPatchExport?.mount({rows:()=>[...matrixRowsBySku.values()],selected:selectedMatrixSkus,loading:()=>matrixState.loading});
 activePresetId = startupPreset.id;
 initializeMatrixColumnResizing();
 applyViewPreset(startupPreset, {id:startupPreset.id, reload:false, announce:false});

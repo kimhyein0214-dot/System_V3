@@ -2545,6 +2545,23 @@
     for(let i=0;i<codes.length;i+=200){const {data:part,error:e}=await db.from(MATRIX_VIEW).select('sellpia_sku_code,sellpia_product_name,sellpia_option_name').in('sellpia_sku_code',codes.slice(i,i+200));if(e)throw e;rows.push(...part);}
     return rows;
   }
+  async function loadSellpiaPatchRows({skus=null,search='',searchType='sku',withResults=true,onProgress}={}) {
+    const rows=[];let count=0,limit=withResults?50:500;
+    do {
+      const {data,error}=await db.rpc('hub_sellpia_patch_read_v1',{p_session_token:requireOperationsHubSessionToken(),p_skus:skus,p_search:search,p_search_type:searchType,p_offset:rows.length,p_limit:limit,p_with_results:withResults});
+      if(error&&/statement timeout|canceling statement/i.test(error.message)&&limit>1){limit=Math.ceil(limit/2);continue;}
+      throwOperationsHubRpcError(error);count=data.count;rows.push(...data.rows);
+      onProgress?.({processed:rows.length,total:count});
+      if(!data.rows.length)break;
+    }while(rows.length<count);
+    return rows;
+  }
+  async function loadInternalFormulaProducts(skus,{legacySkus=skus}={}) {
+    const rows=await loadSellpiaPatchRows({skus,withResults:false});
+    if(!legacySkus.length)return rows;
+    const details=await attachInboundCostDetails(rows.filter(r=>legacySkus.includes(r.sellpia_sku_code))),bySku=new Map(details.map(r=>[r.sellpia_sku_code,r]));
+    return rows.map(r=>bySku.get(r.sellpia_sku_code)||r);
+  }
   async function loadFormulaProducts(skus, {onProgress} = {}) {
     requireOperationsHubSessionToken();
     const codes=[...new Set(skus)],chunks=[];for(let i=0;i<codes.length;i+=100)chunks.push(codes.slice(i,i+100));
@@ -3861,9 +3878,13 @@
 
   async function loadInputFingerprints(skus, source = '') {
     const selected=[...new Set(skus)],result={};
-    for(let offset=0;offset<selected.length;offset+=25){
-      const {data,error}=await db.rpc('hub_input_fingerprints_v1',{p_session_token:requireOperationsHubSessionToken(),p_skus:selected.slice(offset,offset+25),p_source:source});
+    async function read(codes){
+      const {data,error}=await db.rpc('hub_input_fingerprints_v1',{p_session_token:requireOperationsHubSessionToken(),p_skus:codes,p_source:source});
+      if(error&&/statement timeout|canceling statement/i.test(error.message)&&codes.length>1){const middle=Math.ceil(codes.length/2);await read(codes.slice(0,middle));await read(codes.slice(middle));return;}
       throwOperationsHubRpcError(error);Object.assign(result,data);
+    }
+    for(let offset=0;offset<selected.length;offset+=25){
+      await read(selected.slice(offset,offset+25));
     }
     return result;
   }
@@ -3990,6 +4011,8 @@
     assignRules,
     loadRulePlatformSiblings,
     loadFormulaProducts,
+    loadInternalFormulaProducts,
+    loadSellpiaPatchRows,
     beginCalculationGeneration,
     upsertCalculatedPriceResults,
     loadCalculatedResults,
