@@ -31,12 +31,15 @@
     };
   }
 
+  const matrixReadMetrics={requests:0,bytes:0,networkMs:0};
+  async function measuredHubFetch(...args){const at=performance.now(),response=await global.fetch(...args);matrixReadMetrics.requests++;matrixReadMetrics.networkMs+=performance.now()-at;const original=response.text.bind(response);response.text=async()=>{const value=await original();matrixReadMetrics.bytes+=new TextEncoder().encode(value).byteLength;return value;};return response;}
   function requireClient() {
     if (!global.supabase?.createClient) {
       throw new Error('Supabase 클라이언트를 불러오지 못했습니다.');
     }
     return global.supabase.createClient(SUPABASE_URL, SUPABASE_KEY, {
-      auth: { persistSession: false, autoRefreshToken: false, detectSessionInUrl: false }
+      auth: { persistSession: false, autoRefreshToken: false, detectSessionInUrl: false },
+      global:{fetch:measuredHubFetch}
     });
   }
 
@@ -816,6 +819,24 @@
       page:Number(data?.page || safePage),
       pageSize:Number(data?.pageSize || safePageSize)
     };
+  }
+
+  let fullMatrixReadContext=null;
+  async function loadFullMatrixDataset({signal=null,onProgress=null}={}) {
+    fullMatrixReadContext={};try{
+    const started=performance.now(),before={...matrixReadMetrics},identity=await loadAllFilteredSkus({status:'all'}),codes=identity.skus;
+    const batches=[];for(let i=0;i<codes.length;i+=200)batches.push(codes.slice(i,i+200));
+    let cursor=0,loaded=0;const rows=[];
+    await Promise.all(Array.from({length:Math.min(4,batches.length)},async()=>{while(cursor<batches.length){throwIfAborted(signal);const batch=batches[cursor++];let part;
+      try{part=await loadProductsBySkus(batch,{signal});}catch(error){const message=String(error.message||error);if(!/57014|timeout/i.test(message)||batch.length<2)throw error;part=[];for(let j=0;j<batch.length;j+=50)part.push(...await loadProductsBySkus(batch.slice(j,j+50),{signal}));}
+      if(part.length!==batch.length||part.some(r=>!r.__hubActivePriceRules||global.HubMatrixShadow&&!['smartstore','makeshop','ably'].every(s=>r.__hubShadow?.[s])))throw Error('전체 Matrix 필수 현재값 조회 불완전 · 다시 시도하세요.');
+      rows.push(...part);loaded+=part.length;onProgress?.({loaded,total:codes.length,elapsed:performance.now()-started});
+    }}));
+    const confirm=await loadAllFilteredSkus({status:'all'});
+    if(confirm.skus.length!==codes.length||confirm.skus.some((s,i)=>s!==codes[i]))throw Error('로딩 중 전체 SKU membership 변경 · DB 새로고침이 필요합니다.');
+    const seen=new Set(rows.map(r=>r.sellpia_sku_code));if(seen.size!==codes.length||codes.some(s=>!seen.has(s)))throw Error('전체 Matrix SKU 중복/누락');
+    return {rows,count:codes.length,elapsed:performance.now()-started,metrics:{requests:matrixReadMetrics.requests-before.requests,bytes:matrixReadMetrics.bytes-before.bytes,networkMs:matrixReadMetrics.networkMs-before.networkMs}};
+    }finally{fullMatrixReadContext=null;}
   }
 
   async function loadProductsBySkus(skus = [], {signal = null} = {}) {
@@ -2844,12 +2865,15 @@
   }
   async function ruleRegistry(action, rule = null) {
     if (action === 'list') {
-      const {data,error}=await db.rpc('hub_rule_registry_list_v2',{p_session_token:requireOperationsHubSessionToken()});
+      if(typeof fullMatrixReadContext!=='undefined'&&fullMatrixReadContext?.registry)return fullMatrixReadContext.registry;
+      const read=(async()=>{const {data,error}=await db.rpc('hub_rule_registry_list_v2',{p_session_token:requireOperationsHubSessionToken()});
       if(error)throw readableDatabaseError(error);
       // Transfer shared assignment fields once per group, then restore the engine contract.
       const {assignment_groups = [], ...registry} = data;
       return {...registry, assignments: assignment_groups.flatMap(({entries, ...group}) =>
-        entries.map(([sku, version]) => ({...group, sku, version})))};
+        entries.map(([sku, version]) => ({...group, sku, version})))};})();
+      if(typeof fullMatrixReadContext!=='undefined'&&fullMatrixReadContext)fullMatrixReadContext.registry=read;
+      return read;
     }
     const {data,error}=await db.rpc('hub_rule_registry_v1',{p_session_token:requireOperationsHubSessionToken(),p_action:action,p_rule:rule});
     if(error)throw readableDatabaseError(error);return data;
@@ -3820,7 +3844,7 @@
     return rows;
   }
   // Phase 2 opt-in comparison only. Production Matrix/export never calls this reader.
-  async function loadMatrixShadowMetadata({source,rows=[]}={}) {
+  async function loadMatrixShadowMetadata({source,rows=[],withFingerprints=true}={}) {
     if(!['smartstore','makeshop','ably'].includes(source))throw new Error('지원하지 않는 판매처입니다.');
     const unique=new Map();for(const row of rows){const existing=unique.get(row.sku);if(existing&&JSON.stringify(existing)!==JSON.stringify(row))throw new Error('동일 SKU shadow identity 충돌');unique.set(row.sku,row);}rows=[...unique.values()];
     let versionId=null,snapshotId=null,version=null;const result=[];
@@ -3832,15 +3856,18 @@
       versionId=data.version_id;snapshotId=data.snapshot_id;version=data.version;result.push(...data.rows);
     }
     const fingerprintSkus=result.filter(row=>row.calculated?.some(c=>c.scope===source&&c.result_details?.input_fingerprint)).map(row=>row.sku);
-    if(fingerprintSkus.length){const fingerprints=await loadInputFingerprints(fingerprintSkus,source);for(const row of result)row.current_input_fingerprint=fingerprints[row.sku]||null;}
+    if(withFingerprints&&fingerprintSkus.length){const fingerprints=await loadInputFingerprints(fingerprintSkus,source);for(const row of result)row.current_input_fingerprint=fingerprints[row.sku]||null;}
     const internalSkus=result.filter(row=>row.calculated?.some(c=>!c.scope&&c.result_details?.input_fingerprint)).map(row=>row.sku);
-    if(internalSkus.length){const fingerprints=await loadInputFingerprints(internalSkus,'');for(const row of result)row.current_internal_input_fingerprint=fingerprints[row.sku]||null;}
+    if(withFingerprints&&internalSkus.length){const fingerprints=await loadInputFingerprints(internalSkus,'');for(const row of result)row.current_internal_input_fingerprint=fingerprints[row.sku]||null;}
     return {source,mode:'shadow',version_id:versionId,snapshot_id:snapshotId,version,rows:result};
   }
   async function attachMatrixShadow(products,signal){
     if(!global.HubMatrixShadow||global.HubMatrixShadowEnabled===false||!products.length)return products;
     try{
-      const payloads=await Promise.all(['smartstore','makeshop','ably'].map(source=>loadMatrixShadowMetadata({source,rows:products.map(product=>global.HubMatrixShadow.request(product,source))})));
+      const payloads=await Promise.all(['smartstore','makeshop','ably'].map(source=>loadMatrixShadowMetadata({source,withFingerprints:false,rows:products.map(product=>global.HubMatrixShadow.request(product,source))})));
+      const scopes=['','smartstore','makeshop','ably'];
+      const fingerprints=await Promise.all(scopes.map(source=>{const codes=[...new Set(payloads.flatMap(p=>p.rows.filter(r=>r.calculated?.some(c=>c.scope===source&&c.result_details?.input_fingerprint)).map(r=>r.sku)))];return codes.length?loadInputFingerprints(codes,source):{};}));
+      for(const payload of payloads)for(const row of payload.rows){row.current_internal_input_fingerprint=fingerprints[0][row.sku]||null;row.current_input_fingerprint=fingerprints[scopes.indexOf(payload.source)][row.sku]||null;}
       throwIfAborted(signal);
       // Attach only __hubShadow; no existing numeric, draft, Rule or mapping projection changes.
       return products.map(product=>payloads.reduce((row,payload)=>global.HubMatrixShadow.annotate(row,payload),product));
@@ -3935,7 +3962,7 @@
     return {...global.HubSourceLifecycle.reconcile(rows),versionId,snapshotId,source};
   }
 
-  global.SystemV3Data = Object.freeze({
+  const api = {
     loadInputFingerprints,
     loadSourceSnapshotPair,
     loadSourceDelta,
@@ -3971,6 +3998,7 @@
     logoutOperationsHub,
     setOperationsHubSessionToken,
     loadProducts,
+    loadFullMatrixDataset,
     loadProductsBySkus,
     loadProductThumbnailsBySkus,
     loadMatrixExportChunk,
@@ -4101,5 +4129,8 @@
     loadSellpiaMatrixSyncStatus,
     waitForSellpiaMatrixRebuild,
     uploadSellerSnapshot,
-  });
+  };
+  for(const [name,fn] of Object.entries(api)){if(typeof fn!=='function'||! /^(save|apply|remove|bulkImport|syncTag|rename|assign|delete|cancel|upsertCalculated|uploadSellpiaSnapshot|uploadSellerSnapshot|productPrice|ruleRegistry)/.test(name))continue;api[name]=async function(...args){const result=await fn(...args);if(args[0]?.preview===true||(['productPrice','ruleRegistry'].includes(name)&&['list','rules','read','members','inspect'].includes(args[0])))return result;if(/^(uploadSellpiaSnapshot|uploadSellerSnapshot)$/.test(name))global.dispatchEvent(new CustomEvent('hub-matrix-source-reloaded'));const codes=new Set();const visit=(v,depth=0)=>{if(depth>5||v==null)return;if(Array.isArray(v)){for(const x of v)if(typeof x==='string'&&/^[^\s]+-\d+$/.test(x))codes.add(x);else visit(x,depth+1);}else if(typeof v==='object')for(const [k,x] of Object.entries(v)){if(['sku','sellpia_sku_code'].includes(k)&&typeof x==='string')codes.add(x);else if(['skus','affectedSkus','affected_skus','rows','assignments','applied'].includes(k))visit(x,depth+1);}};args.forEach(a=>visit(a));visit(result);const tag=args[0]?.tagId||args[0]?.tag_id||(/renameProductTag/.test(name)?args[0]?.id:null);if(tag&&/rename|saveTag/.test(name)&&global.HubMatrixClient?.dataset)global.HubMatrixClient.dataset.tagSkus(tag).forEach(s=>codes.add(s));if(global.HubMatrixClient?.dataset){const input=typeof args[0]==='object'?args[0]:args[1],ids=new Set([input?.id,input?.rule_id,result?.id,result?.rule?.id].filter(Boolean).map(String)),product=input?.product_code;for(const row of global.HubMatrixClient.dataset.rows){const owners=[...Object.values(row.__hubInternalPrices||{}).flatMap(r=>[...(r.activeOutputRules||[]),...(r.versions||[])]),...Object.values(row.__hubRulePrices||{}).flatMap(r=>r.versions||[]),row.__hubRepresentativePrice?.rule].filter(Boolean);if(owners.some(o=>ids.has(String(o.id||o.rule_id)))||product&&String(row.__profile?.sellpia_product_code)===String(product))codes.add(row.sellpia_sku_code);}}
+    if(codes.size)global.dispatchEvent(new CustomEvent('hub-matrix-affected',{detail:{skus:[...codes]}}));return result&&typeof result==='object'&&!Array.isArray(result)&&codes.size?{...result,affected_skus:[...codes]}:result;};}
+  global.SystemV3Data=Object.freeze(api);
 })(window);

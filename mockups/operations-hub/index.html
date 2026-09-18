@@ -283,7 +283,7 @@
                 <tbody id="matrix-body"><tr class="matrix-empty-row"><td colspan="43"><b>데이터를 불러오는 중입니다.</b><span>시스템 기준값과 원본 비교값을 함께 조회합니다.</span></td></tr></tbody>
               </table>
             </div>
-            <div class="matrix-footer"><span id="matrix-range">데이터를 불러오는 중입니다.</span><p>실제 SKU·이미지·작업상태는 Supabase에서 조회합니다.</p><div class="matrix-pagination"><button id="matrix-prev" type="button" aria-label="이전 페이지" disabled>‹</button><label class="matrix-page-jump" title="페이지 번호를 입력하고 Enter를 누르세요"><input id="matrix-page" type="number" min="1" step="1" value="1" inputmode="numeric" aria-label="이동할 페이지"><span id="matrix-total-pages">/ 1</span></label><button id="matrix-next" type="button" aria-label="다음 페이지">›</button></div></div>
+            <div class="matrix-footer"><span id="matrix-range">데이터를 불러오는 중입니다.</span><p>실제 SKU·이미지·작업상태는 Supabase에서 조회합니다.</p><div class="matrix-pagination" hidden><button id="matrix-prev" type="button" aria-label="이전 페이지" disabled>‹</button><label class="matrix-page-jump" title="페이지 번호를 입력하고 Enter를 누르세요"><input id="matrix-page" type="number" min="1" step="1" value="1" inputmode="numeric" aria-label="이동할 페이지"><span id="matrix-total-pages">/ 1</span></label><button id="matrix-next" type="button" aria-label="다음 페이지">›</button></div></div>
 
             <div id="change-bar" class="change-bar" hidden><div><span>↻</span><p><b>DB 자동 저장 <strong id="pending-count">0</strong>건</b><em>연속 입력을 잠깐 묶은 뒤 Supabase에 자동 저장합니다.</em></p></div><button class="btn" id="discard-changes">저장 전 취소</button><button class="btn primary" id="preview-changes">변경 미리보기</button></div>
           </div>
@@ -989,11 +989,12 @@
     <script src="./baseline-identity-shadow.js?v=20260917-shadow-preview-v1"></script>
     <script src="./matrix-shadow.js?v=20260917-formula-chain-v2"></script>
     <script src="./baseline-canary.js?v=20260917-shadow-preview-v1"></script>
-    <script src="./data-service.js?v=20260918-14k-independent-v1"></script>
+    <script src="./data-service.js?v=20260918-full-scope-v1"></script>
     <script src="./channels-page.js?v=20260910-rule-destination-v111"></script>
-    <link rel="stylesheet" href="./sellpia-patch-export.css?v=20260918-14k-independent-v1">
-    <script src="./sellpia-patch-export.js?v=20260918-14k-independent-v2"></script>
-    <script src="./app.js?v=20260918-14k-independent-v1"></script>
+    <link rel="stylesheet" href="./sellpia-patch-export.css?v=20260918-full-scope-v1">
+    <script src="./sellpia-patch-export.js?v=20260918-full-scope-v1"></script>
+    <script src="./matrix-dataset.js?v=20260918-full-v1"></script>
+<script src="./app.js?v=20260918-full-scope-v1"></script>
     <script src="./mapping-import.js?v=20260910-rule-destination-v111"></script>
     <script src="./attributes-page.js?v=20260915-tag-matrix-v1"></script>
     <script src="./price-rule-lab.js?v=20260910-rule-destination-v111"></script>
@@ -1006,15 +1007,15 @@
 <script src="./platform-price-formula.js?v=20260910-rule-destination-v111"></script>
 <script>window.HubPriceWorkspaceEnabled=true;</script>
 <script src="./tag-price-workspace.js?v=20260917-tags-representative-ui-v1"></script>
-<script src="./rule-registry.js?v=20260918-14k-independent-v1"></script>
+<script src="./rule-registry.js?v=20260918-full-scope-v1"></script>
 <script src="./platform-rule-service.js?v=20260915-settings-direct-v1"></script>
-<script src="./price-result-materializer.js?v=20260918-14k-independent-v1"></script>
+<script src="./price-result-materializer.js?v=20260918-full-scope-v1"></script>
 <script src="./current-price-export.js?v=20260917-carrier-warnings-v1"></script>
 <script src="./representative-price.js?v=20260917-tags-representative-ui-v1"></script>
 <script src="./representative-price-workspace.js?v=20260917-tags-representative-ui-v1"></script>
 <script src="./rule-workspace.js?v=20260918-tag-partial-v2"></script>
       <script src="./ui-cleanup-v1.js?v=20260915-tag-matrix-v1"></script>
       <script src="./tag-management-v2.js?v=20260917-formula-chain-v2"></script>
-      <script src="./seller-file-workflow-v2.js?v=20260918-14k-independent-v1"></script>
+      <script src="./seller-file-workflow-v2.js?v=20260918-full-scope-v1"></script>
   </body>
 </html>

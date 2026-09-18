@@ -40,7 +40,7 @@ const sellerBundleImportParser = window.SellerBundleImportParser;
 const MATRIX_PAGE_SIZE_KEY = 'system-v3-matrix-page-size';
 const storedMatrixPageSize = Number(localStorage.getItem(MATRIX_PAGE_SIZE_KEY));
 const initialMatrixPageSize = [50, 100, 200].includes(storedMatrixPageSize) ? storedMatrixPageSize : 50;
-const MATRIX_SEARCH_DEBOUNCE_MS = 600;
+const MATRIX_SEARCH_DEBOUNCE_MS = 120;
 const MATRIX_TRANSIENT_RETRY_DELAYS_MS = [700];
 const MAPPING_SYNC_POLL_INTERVAL_MS = 60000;
 const matrixState = {page:1, pageSize:initialMatrixPageSize, search:'', searchSources:['sellpia','smartstore','makeshop','ably'], status:'all', sort:'sku_asc', excludeCombinationSkus:false, includeRelatedSkuContext:true, advancedFilter:{logic:'and', conditions:[]}, total:0, directCount:0, relatedCount:0, rows:[], loading:false, requestId:0, requestController:null, codeListSkus:[], codeListRows:[], codeListName:''};
@@ -1288,7 +1288,32 @@ function renderCodeListPlaceholderRow(product) {
   </tr>`;
 }
 
+let matrixDataset=null,matrixFullLoad=null,matrixVirtualPainting=false,matrixVirtualFrame=0,matrixRowHeight=72,matrixVirtualStart=-1;
+const matrixDirtySkus=new Set();
+const matrixDirtyVersions=new Map();let matrixDirtyVersion=0;
+function markMatrixAffected(skus){for(const sku of skus||[]){matrixDirtySkus.add(sku);matrixDirtyVersions.set(sku,++matrixDirtyVersion);}}
+let matrixSourceReloadNeeded=false;
+window.addEventListener('hub-matrix-source-reloaded',()=>{matrixSourceReloadNeeded=true;});
+const matrixPerformance={initialMs:0,filterMs:0,renderMs:0,patchMs:0,count:0};
+function showMatrixPerformance(){let box=document.getElementById('matrix-client-performance');if(!box){box=document.createElement('details');box.id='matrix-client-performance';document.querySelector('.matrix-footer')?.append(box);}box.innerHTML='<summary>조회 성능 · 전체 dataset</summary><pre>'+escapeHtml(JSON.stringify(matrixPerformance,null,2))+'</pre>';}
+window.HubMatrixClient={get dataset(){return matrixDataset;},metrics:matrixPerformance,affected:matrixDirtySkus};
+window.addEventListener('hub-matrix-affected',event=>markMatrixAffected(event.detail?.skus));
+function mountMatrixClientFilters(){
+ if(document.getElementById('matrix-client-state'))return;
+ const host=document.querySelector('.matrix-page-size')?.parentElement;if(!host)return;
+ const controls=document.createElement('div');controls.className='matrix-client-filters';controls.innerHTML='<select id="matrix-client-seller" aria-label="연결 판매처"><option value="">전체 판매처</option><option value="smartstore">Smartstore 연결</option><option value="makeshop">Makeshop 연결</option><option value="ably">Ably 연결</option></select><select id="matrix-client-tag" aria-label="적용 태그"><option value="">전체 태그</option></select><select id="matrix-client-state" aria-label="작업 상태"><option value="">전체 상태</option><option value="stale">재계산 필요</option><option value="conflict">충돌</option><option value="baseline_unavailable">기준본 없음</option><option value="pending">업로드 대기</option><option value="stock_mismatch">재고 차이</option><option value="price_mismatch">가격 차이</option></select>';
+ host.append(controls);const tagMap=new Map();for(const r of matrixDataset.rows)for(const t of window.HubMatrixDataset.tags(r))tagMap.set(String(t.tag_id),t.tag_name);for(const [id,name] of tagMap){const o=document.createElement('option');o.value=id;o.textContent=name;controls.querySelector('#matrix-client-tag').append(o);}controls.querySelectorAll('select').forEach(s=>s.onchange=()=>void loadLiveMatrix({resetScroll:true}));
+}
+function paintVirtualMatrix(){
+ if(!matrixDataset||matrixVirtualPainting)return;const rows=matrixState.rows,visible=Math.ceil((matrixShell.clientHeight||700)/matrixRowHeight),start=Math.max(0,Math.floor(matrixShell.scrollTop/matrixRowHeight)-6),end=Math.min(rows.length,start+visible+12);
+ if(start===matrixVirtualStart&&matrixBody.querySelector('[data-sku]'))return;matrixVirtualStart=start;const at=performance.now();matrixVirtualPainting=true;
+ try{renderLiveMatrixRows(rows.slice(start,end));if(rows.length){const spacer=h=>{const tr=document.createElement('tr');tr.className='matrix-virtual-spacer';tr.setAttribute('aria-hidden','true');tr.innerHTML=`<td colspan="${MATRIX_COLUMN_COUNT}" style="height:${h}px;padding:0;border:0"></td>`;return tr;};matrixBody.prepend(spacer(start*matrixRowHeight));matrixBody.append(spacer((rows.length-end)*matrixRowHeight));const heights=[...matrixBody.querySelectorAll('tr[data-sku]')].slice(0,5).map(r=>r.getBoundingClientRect().height).filter(h=>h>0);if(heights.length&&start===0){matrixRowHeight=heights.reduce((a,b)=>a+b,0)/heights.length;matrixBody.lastElementChild.firstElementChild.style.height=((rows.length-end)*matrixRowHeight)+'px';}}
+  matrixPerformance.renderMs=performance.now()-at;
+ }finally{matrixVirtualPainting=false;}
+}
+matrixShell.addEventListener('scroll',()=>{if(matrixVirtualFrame)return;matrixVirtualFrame=requestAnimationFrame(()=>{matrixVirtualFrame=0;paintVirtualMatrix();});},{passive:true});
 function renderLiveMatrixRows(products) {
+  if(matrixDataset&&!matrixVirtualPainting){matrixVirtualStart=-1;paintVirtualMatrix();return;}
   clearMatrixCellSelection();
   matrixRowsBySku.clear();
   if (!products.length) {
@@ -1546,7 +1571,20 @@ function waitForMatrixRetry(delayMs, signal) {
   });
 }
 
-async function loadLiveMatrix({resetPage = false, resetScroll = resetPage} = {}) {
+async function loadCanonicalMatrix({resetScroll=false,fullReload=false}={}){
+ try{
+  if(fullReload&&matrixFullLoad)await matrixFullLoad;
+  if(!matrixDataset||fullReload){if(!matrixFullLoad){matrixState.loading=true;setMatrixConnection('loading','전체 Matrix 생성 중');matrixFullLoad=liveData.loadFullMatrixDataset({onProgress:p=>setMatrixConnection('loading',`전체 ${formatNumber(p.loaded)} / ${formatNumber(p.total)} SKU · ${(p.elapsed/1000).toFixed(0)}초`)}).then(result=>{matrixDataset=new window.HubMatrixDataset.Dataset(result.rows,result.count);matrixPerformance.initialMs=result.elapsed;matrixPerformance.count=result.count;Object.assign(matrixPerformance,result.metrics);matrixPerformance.heapBytes=performance.memory?.usedJSHeapSize||null;matrixSourceReloadNeeded=false;}).finally(()=>{matrixFullLoad=null;matrixState.loading=false;});}await matrixFullLoad;}
+  if(matrixDirtySkus.size){const targets=[...matrixDirtySkus].filter(s=>matrixDataset.bySku.has(s)),versions=new Map(targets.map(s=>[s,matrixDirtyVersions.get(s)]));if(targets.length)await refreshMatrixSkus(targets);targets.forEach(s=>{if(matrixDirtyVersions.get(s)===versions.get(s))matrixDirtySkus.delete(s);});}
+  mountMatrixClientFilters();const at=performance.now();matrixState.rows=matrixDataset.select({...matrixState,skus:matrixState.codeListSkus,searchType:document.getElementById('matrix-search-type')?.value||'all',seller:document.getElementById('matrix-client-seller')?.value,tagId:document.getElementById('matrix-client-tag')?.value,state:document.getElementById('matrix-client-state')?.value});matrixPerformance.filterMs=performance.now()-at;matrixState.total=matrixState.rows.length;matrixState.directCount=matrixState.total;matrixState.relatedCount=0;
+  if(resetScroll)matrixShell.scrollTop=0;renderLiveMatrixRows(matrixState.rows);
+  document.getElementById('matrix-total-count').textContent=formatNumber(matrixState.total);document.getElementById('matrix-range').textContent=`${formatNumber(matrixState.total)} 결과 / 전체 ${formatNumber(matrixDataset.rows.length)} SKU · 메모리 유지`;document.getElementById('matrix-related-count').hidden=true;
+  document.querySelector('.matrix-pagination').hidden=true;document.querySelector('.matrix-page-size').hidden=true;setMatrixConnection('connected',`전체 ${formatNumber(matrixDataset.rows.length)} · 검색/필터 로컬`);setSystemHealthComponent('matrix',true);matrixState.lastLoadedAt=new Date().toISOString();showMatrixPerformance();return true;
+ }catch(error){matrixState.loading=false;setMatrixConnection('error','전체 조회 실패 · 기존 dataset 유지');showToast(error.message);console.error(error);return false;}
+}
+
+async function loadLiveMatrix({resetPage = false, resetScroll = resetPage,fullReload=false} = {}) {
+  if(liveData?.loadFullMatrixDataset&&window.HubMatrixDataset)return loadCanonicalMatrix({resetScroll,fullReload});
   if (!liveData) {
     setSystemHealthComponent('matrix', false);
     return false;
@@ -1800,7 +1838,7 @@ async function refreshLiveData(options = {}) {
   let result = {matrix:false, source:false, metrics:false, mapping:false};
   try {
     const [matrix, source, metrics] = await Promise.all([
-      loadLiveMatrix(options),
+      loadLiveMatrix({...options,fullReload:Boolean(options.fullReload||matrixSourceReloadNeeded)}),
       loadLiveSourceStatus(),
       loadLiveDashboardMetrics()
     ]);
@@ -1815,7 +1853,8 @@ async function refreshLiveData(options = {}) {
 async function refreshMatrixSkus(skus = []) {
   const targets = [...new Set(skus.map(sku => String(sku || '').trim()).filter(Boolean))];
   if (!targets.length || !liveData?.loadProductsBySkus) return [];
-  const rows = await liveData.loadProductsBySkus(targets);
+  const patchAt=performance.now(),rows=[];for(let i=0;i<targets.length;i+=200)rows.push(...await liveData.loadProductsBySkus(targets.slice(i,i+200)));
+  if(matrixDataset){matrixDataset.patch(rows);matrixPerformance.patchMs=performance.now()-patchAt;const replacements=new Map(rows.map(r=>[r.sellpia_sku_code,r]));matrixState.rows=matrixState.rows.map(r=>replacements.get(r.sellpia_sku_code)||r);renderLiveMatrixRows(matrixState.rows);return rows;}
   const refreshedBySku = new Map(rows.map(product => [String(product.sellpia_sku_code || '').trim(), product]));
   matrixState.rows = matrixState.rows.map(product => refreshedBySku.get(String(product.sellpia_sku_code || '').trim()) || product);
   renderLiveMatrixRows(matrixState.rows);
@@ -2530,6 +2569,7 @@ window.addEventListener('hub-canary-matrix-refresh', async () => {
 });
 let pendingHubPriceRender = false;
 async function refreshHubPriceProjection() {
+  if(typeof matrixDataset!=='undefined'&&matrixDataset){const targets=[...matrixDirtySkus].filter(s=>matrixDataset.bySku.has(s)),versions=new Map(targets.map(s=>[s,matrixDirtyVersions.get(s)]));if(targets.length){await refreshMatrixSkus(targets);targets.forEach(s=>{if(matrixDirtyVersions.get(s)===versions.get(s))matrixDirtySkus.delete(s);});}return true;}
   if (!liveData?.loadProductsBySkus || !matrixState.rows.length) return;
   const epoch = ++hubPriceProjectionEpoch;
   const pageSkus = matrixState.rows.map(row => row.sellpia_sku_code).join('\u0000');
@@ -2568,9 +2608,11 @@ function materializationWarning(result) {
     : '';
 }
 
-window.addEventListener('hub-rules-changed', async () => {
+window.addEventListener('hub-rules-changed', async event => {
+  markMatrixAffected(event.detail?.affectedSkus);
   try {
     if (await refreshHubPriceProjection() === false) return;
+    if(matrixDataset){await loadCanonicalMatrix();return;}
     if (document.activeElement?.closest('.editable-cell')) { pendingHubPriceRender = true; return; }
     renderLiveMatrixRows(matrixState.rows);
   } catch (error) {
@@ -5926,11 +5968,11 @@ document.getElementById('price-rule-bulk-composer-save').addEventListener('click
     renderPriceRuleBulkComposer();
   }
 });
-document.getElementById('matrix-refresh-btn').addEventListener('click', () => refreshLiveData());
+document.getElementById('matrix-refresh-btn').addEventListener('click', () => refreshLiveData({fullReload:true}));
 topRefreshButton?.addEventListener('click', async () => {
   if (systemHealthState.refreshing || topRefreshButton.disabled) return;
   try {
-    const result = await refreshLiveData();
+    const result = await refreshLiveData({fullReload:true});
     const failed = Object.entries(result).filter(([, succeeded]) => !succeeded).map(([component]) => component);
     if (!failed.length) showToast('운영 데이터를 최신 상태로 다시 조회했습니다.');
     else if (failed.length < Object.keys(result).length) showToast(`새로고침 일부 지연 · ${formatNumber(failed.length)}개 조회를 다시 확인해주세요.`);

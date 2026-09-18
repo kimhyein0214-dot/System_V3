@@ -4,7 +4,7 @@ import fs from 'node:fs';
 const app = fs.readFileSync(new URL('../mockups/operations-hub/app.js', import.meta.url), 'utf8');
 const data = fs.readFileSync(new URL('../mockups/operations-hub/data-service.js', import.meta.url), 'utf8');
 
-assert.match(app, /MATRIX_SEARCH_DEBOUNCE_MS = 600;[\s\S]*?MATRIX_TRANSIENT_RETRY_DELAYS_MS = \[700\]/, 'matrix search must settle before loading and use at most one short retry');
+assert.match(app, /MATRIX_SEARCH_DEBOUNCE_MS = 120;[\s\S]*?MATRIX_TRANSIENT_RETRY_DELAYS_MS = \[700\]/, 'matrix search must settle before loading and use at most one short retry');
 assert.match(app, /matrixDataViewSignature\([\s\S]*?status:[\s\S]*?sort:[\s\S]*?excludeCombinationSkus:[\s\S]*?advancedFilter:[\s\S]*?previousDataSignature !== matrixDataViewSignature\(activeView\)/, 'visual-only preset changes must not reload matrix data');
 assert.match(app, /matrixState\.requestController\?\.abort\(\)[\s\S]*?new AbortController\(\)[\s\S]*?signal:requestController\.signal/, 'a new matrix load must cancel the previous in-flight request');
 assert.match(app, /requestId !== matrixState\.requestId \|\| isMatrixAbortError\(error\)\) return false;[\s\S]*?DB 조회 지연/, 'stale or intentionally aborted requests must not surface as database errors');
