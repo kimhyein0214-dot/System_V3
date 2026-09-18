@@ -1313,7 +1313,7 @@ function paintVirtualMatrix(){
 }
 matrixShell.addEventListener('scroll',()=>{if(matrixVirtualFrame)return;matrixVirtualFrame=requestAnimationFrame(()=>{matrixVirtualFrame=0;paintVirtualMatrix();});},{passive:true});
 function renderLiveMatrixRows(products) {
-  if(matrixDataset&&!matrixVirtualPainting){matrixVirtualStart=-1;paintVirtualMatrix();return;}
+  if(typeof matrixDataset!=='undefined'&&matrixDataset&&!matrixVirtualPainting){matrixVirtualStart=-1;paintVirtualMatrix();return;}
   clearMatrixCellSelection();
   matrixRowsBySku.clear();
   if (!products.length) {

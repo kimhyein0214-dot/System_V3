@@ -826,12 +826,8 @@
     fullMatrixReadContext={};try{
     const started=performance.now(),before={...matrixReadMetrics},identity=await loadAllFilteredSkus({status:'all'}),codes=identity.skus;
     const batches=[];for(let i=0;i<codes.length;i+=200)batches.push(codes.slice(i,i+200));
-    let cursor=0,loaded=0;const rows=[];
-    await Promise.all(Array.from({length:Math.min(4,batches.length)},async()=>{while(cursor<batches.length){throwIfAborted(signal);const batch=batches[cursor++];let part;
-      try{part=await loadProductsBySkus(batch,{signal});}catch(error){const message=String(error.message||error);if(!/57014|timeout/i.test(message)||batch.length<2)throw error;part=[];for(let j=0;j<batch.length;j+=50)part.push(...await loadProductsBySkus(batch.slice(j,j+50),{signal}));}
-      if(part.length!==batch.length||part.some(r=>!r.__hubActivePriceRules||global.HubMatrixShadow&&!['smartstore','makeshop','ably'].every(s=>r.__hubShadow?.[s])))throw Error('전체 Matrix 필수 현재값 조회 불완전 · 다시 시도하세요.');
-      rows.push(...part);loaded+=part.length;onProgress?.({loaded,total:codes.length,elapsed:performance.now()-started});
-    }}));
+    let cursor=0,loaded=0,failed=false;const rows=[];const complete=part=>part.length>0&&part.every(r=>r.__hubActivePriceRules&&(!global.HubMatrixShadow||['smartstore','makeshop','ably'].every(s=>r.__hubShadow?.[s])));async function readBatch(batch){try{const part=await loadProductsBySkus(batch,{signal});if(part.length!==batch.length||!complete(part))throw Error('필수 shadow 조회 지연');return part;}catch(error){if(batch.length<=25||!/57014|timeout|shadow 조회 지연/i.test(error.message||String(error)))throw error;const middle=Math.ceil(batch.length/2);return [...await readBatch(batch.slice(0,middle)),...await readBatch(batch.slice(middle))];}}
+    await Promise.all(Array.from({length:Math.min(2,batches.length)},async()=>{while(!failed&&cursor<batches.length){throwIfAborted(signal);const batch=batches[cursor++];try{const part=await readBatch(batch);if(failed)return;rows.push(...part);loaded+=part.length;onProgress?.({loaded,total:codes.length,elapsed:performance.now()-started});}catch(error){failed=true;throw error;}}}));
     const confirm=await loadAllFilteredSkus({status:'all'});
     if(confirm.skus.length!==codes.length||confirm.skus.some((s,i)=>s!==codes[i]))throw Error('로딩 중 전체 SKU membership 변경 · DB 새로고침이 필요합니다.');
     const seen=new Set(rows.map(r=>r.sellpia_sku_code));if(seen.size!==codes.length||codes.some(s=>!seen.has(s)))throw Error('전체 Matrix SKU 중복/누락');
