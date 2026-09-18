@@ -32,7 +32,7 @@
   }
 
   const matrixReadMetrics={requests:0,bytes:0,networkMs:0};
-  async function measuredHubFetch(...args){const at=performance.now(),response=await global.fetch(...args);matrixReadMetrics.requests++;matrixReadMetrics.networkMs+=performance.now()-at;const original=response.text.bind(response);response.text=async()=>{const value=await original();matrixReadMetrics.bytes+=new TextEncoder().encode(value).byteLength;return value;};return response;}
+  async function measuredHubFetch(...args){const at=performance.now(),context=fullMatrixReadContext,response=await global.fetch(...args),elapsed=performance.now()-at;matrixReadMetrics.requests++;matrixReadMetrics.networkMs+=elapsed;let endpoint;if(context){const route=new URL(typeof args[0]==='string'?args[0]:args[0].url).pathname.split('/').pop();context.endpoints??={};endpoint=context.endpoints[route]??={requests:0,bytes:0,networkMs:0,bodyReadMs:0};endpoint.requests++;endpoint.networkMs+=elapsed;}const original=response.text.bind(response);response.text=async()=>{const bodyAt=performance.now(),value=await original(),bytes=new TextEncoder().encode(value).byteLength;matrixReadMetrics.bytes+=bytes;if(endpoint){endpoint.bytes+=bytes;endpoint.bodyReadMs+=performance.now()-bodyAt;}return value;};return response;}
   function requireClient() {
     if (!global.supabase?.createClient) {
       throw new Error('Supabase 클라이언트를 불러오지 못했습니다.');
@@ -832,7 +832,7 @@
     const confirm=await loadAllFilteredSkus({status:'all'});
     if(confirm.skus.length!==codes.length||confirm.skus.some((s,i)=>s!==codes[i]))throw Error('로딩 중 전체 SKU membership 변경 · DB 새로고침이 필요합니다.');
     const seen=new Set(rows.map(r=>r.sellpia_sku_code));if(seen.size!==codes.length||codes.some(s=>!seen.has(s)))throw Error('전체 Matrix SKU 중복/누락');
-    return {rows,count:codes.length,elapsed:performance.now()-started,metrics:{requests:matrixReadMetrics.requests-before.requests,bytes:matrixReadMetrics.bytes-before.bytes,networkMs:matrixReadMetrics.networkMs-before.networkMs}};
+    return {rows,count:codes.length,elapsed:performance.now()-started,metrics:{requests:matrixReadMetrics.requests-before.requests,bytes:matrixReadMetrics.bytes-before.bytes,networkMs:matrixReadMetrics.networkMs-before.networkMs,endpoints:fullMatrixReadContext.endpoints||{}}};
     }finally{fullMatrixReadContext=null;}
   }
 
@@ -3849,7 +3849,7 @@
     if(!['smartstore','makeshop','ably'].includes(source))throw new Error('지원하지 않는 판매처입니다.');
     const unique=new Map();for(const row of rows){const existing=unique.get(row.sku);if(existing&&JSON.stringify(existing)!==JSON.stringify(row))throw new Error('동일 SKU shadow identity 충돌');unique.set(row.sku,row);}rows=[...unique.values()];
     let versionId=null,snapshotId=null,version=null;const result=[];
-    const batchSize=typeof fullMatrixReadContext!=='undefined'&&fullMatrixReadContext?50:200;
+    const batchSize=200;
     for(let offset=0;offset<rows.length;offset+=batchSize){
       const rpc=typeof fullMatrixReadContext!=='undefined'&&fullMatrixReadContext?'hub_matrix_shadow_metadata_batch_v1':'hub_matrix_shadow_metadata_v1';
       const {data,error}=await db.rpc(rpc,{p_session_token:requireOperationsHubSessionToken(),p_source:source,p_rows:rows.slice(offset,offset+batchSize)});
