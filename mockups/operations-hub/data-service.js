@@ -419,7 +419,7 @@
     if (!skus.length) return products;
     let details = Array.isArray(prefetched) ? prefetched : null;
     if (!details) {
-      const result = await withAbortSignal(db.rpc('load_operations_hub_price_basis_v1', {p_skus:skus}), signal);
+      const result = await withAbortSignal(db.rpc(fullMatrixReadContext?'load_operations_hub_price_basis_batch_v1':'load_operations_hub_price_basis_v1', {p_skus:skus}), signal);
       if (result.error) throw result.error;
       details = Array.isArray(result.data) ? result.data : [];
     }
@@ -840,11 +840,12 @@
     const normalizedSkus = [...new Set((Array.isArray(skus) ? skus : []).map(cleanText).filter(Boolean))];
     if (!normalizedSkus.length) return [];
     const rows = [];
-    for (let offset = 0; offset < normalizedSkus.length; offset += 500) {
-      const {data, error} = await withAbortSignal(db
+    const batchSize=fullMatrixReadContext?200:500;
+    for (let offset = 0; offset < normalizedSkus.length; offset += batchSize) {
+      const {data, error} = await withAbortSignal(fullMatrixReadContext?db.rpc('load_operations_hub_matrix_rows_batch_v1',{p_skus:normalizedSkus.slice(offset,offset+batchSize)}):db
         .from(MATRIX_VIEW)
         .select(MATRIX_SELECT)
-        .in('sellpia_sku_code', normalizedSkus.slice(offset, offset + 500)), signal);
+        .in('sellpia_sku_code', normalizedSkus.slice(offset, offset + batchSize)), signal);
       if (error) throw new Error("Matrix 기본 행 조회: "+(error.message||String(error)));
       rows.push(...(data || []));
     }
@@ -2650,7 +2651,7 @@
     for(let offset=0;offset<codes.length;offset+=200){
       const chunk=codes.slice(offset,offset+200);let afterKey=null;
       do{
-        const {data,error}=await db.rpc('hub_calculation_results_read_v1',{
+        const {data,error}=await db.rpc(typeof fullMatrixReadContext!=='undefined'&&fullMatrixReadContext?'hub_matrix_calculation_results_batch_v1':'hub_calculation_results_read_v1',{
           p_session_token:requireOperationsHubSessionToken(),p_skus:chunk,p_scope:scope,p_fields:fields,p_after_key:afterKey,p_limit:1000
         });
         if(error)throw readableDatabaseError(error);
