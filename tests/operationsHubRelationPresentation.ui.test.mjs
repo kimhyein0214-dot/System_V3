@@ -13,6 +13,7 @@ const context={
   sellpiaEditor:()=>'',systemOperationalCell:()=>'',inboundCostCell:()=>'',channelInventoryCells:()=>'',formatLiveTime:()=>'',applyColumnVisibility(){},activeView:{}
 };
 vm.createContext(context);
+vm.runInContext(app.slice(app.indexOf('function matrixAppliedTagChips('),app.indexOf('function formatLiveTime(')),context);
 vm.runInContext(app.slice(app.indexOf('function matrixRelationContext('),app.indexOf('function inboundCostCell(')),context);
 vm.runInContext(app.slice(app.indexOf('function renderLiveMatrixRows('),app.indexOf('function setMatrixConnection(')),context);
 const root=(sku,name)=>({sellpia_sku_code:sku,sellpia_product_name:name,matrix_context:{kind:'direct',rootSku:sku}});

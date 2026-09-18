@@ -3,7 +3,7 @@
  const collator=new Intl.Collator('en',{numeric:true});const text=v=>String(v??'').toLocaleLowerCase(),sources=['sellpia','smartstore','makeshop','ably'];
  const tags=r=>[...(r.__profile?.product_tags||[]),...(r.__profile?.sku_tags||[])];
  function state(r,key){const shadows=Object.values(r.__hubShadow||{}),internal=Object.values(r.__hubInternalPrices||{});
-  if(key==='stale')return internal.some(x=>x.stale||x.provenanceMismatch)||shadows.some(x=>x.price?.freshness==='stale'||x.stock?.freshness==='stale');
+  if(key==='stale')return internal.some(x=>x.stale||x.provenanceMismatch)||Object.keys(r.__hubInternalPrices||{}).some(field=>g.HubMatrixShadow?.internalState?.(r,field).freshness==='stale')||shadows.some(x=>x.price?.freshness==='stale'||x.stock?.freshness==='stale');
   if(key==='conflict')return shadows.some(x=>x.lookup==='conflict'||x.price?.disposition==='BLOCK'||x.stock?.disposition==='BLOCK');
   if(key==='baseline_unavailable')return shadows.some(x=>x.lookup==='unavailable'||x.price?.sellerSyncState==='baseline unavailable');
   if(key==='pending')return Object.values(r.__sellerDrafts||{}).some(x=>!['applied','cancelled'].includes(x.status))||shadows.some(x=>x.price?.sellerSyncState==='업로드 대기'||x.stock?.sellerSyncState==='업로드 대기');

@@ -827,7 +827,7 @@
     const started=performance.now(),before={...matrixReadMetrics},identity=await loadAllFilteredSkus({status:'all'}),codes=identity.skus;
     const batches=[];for(let i=0;i<codes.length;i+=200)batches.push(codes.slice(i,i+200));
     let cursor=0,loaded=0,failed=false;const rows=[];const complete=part=>part.length>0&&part.every(r=>r.__hubActivePriceRules&&(!global.HubMatrixShadow||['smartstore','makeshop','ably'].every(s=>r.__hubShadow?.[s])));async function readBatch(batch){try{const part=await loadProductsBySkus(batch,{signal});if(part.length!==batch.length||!complete(part))throw Error('필수 shadow 조회 지연');return part;}catch(error){if(batch.length<=25||!/57014|timeout|shadow 조회 지연/i.test(error.message||String(error)))throw error;const middle=Math.ceil(batch.length/2);return [...await readBatch(batch.slice(0,middle)),...await readBatch(batch.slice(middle))];}}
-    await Promise.all(Array.from({length:Math.min(2,batches.length)},async()=>{while(!failed&&cursor<batches.length){throwIfAborted(signal);const batch=batches[cursor++];try{const part=await readBatch(batch);if(failed)return;rows.push(...part);loaded+=part.length;onProgress?.({loaded,total:codes.length,elapsed:performance.now()-started});}catch(error){failed=true;throw error;}}}));
+    await Promise.all(Array.from({length:Math.min(4,batches.length)},async()=>{while(!failed&&cursor<batches.length){throwIfAborted(signal);const batch=batches[cursor++];try{const part=await readBatch(batch);if(failed)return;rows.push(...part);loaded+=part.length;onProgress?.({loaded,total:codes.length,elapsed:performance.now()-started});}catch(error){failed=true;throw error;}}}));
     const confirm=await loadAllFilteredSkus({status:'all'});
     if(confirm.skus.length!==codes.length||confirm.skus.some((s,i)=>s!==codes[i]))throw Error('로딩 중 전체 SKU membership 변경 · DB 새로고침이 필요합니다.');
     const seen=new Set(rows.map(r=>r.sellpia_sku_code));if(seen.size!==codes.length||codes.some(s=>!seen.has(s)))throw Error('전체 Matrix SKU 중복/누락');
@@ -2684,7 +2684,7 @@
       results.forEach(result=>flat.push(...result));
     }else{
       const jobs=[];let completed=0,total=codes.length*selected.length,nextJob=0;
-      for(const source of selected)for(let offset=0;offset<codes.length;offset+=200)jobs.push({source,codes:codes.slice(offset,offset+200)});
+      for(const source of selected){const requested=typeof fullMatrixReadContext!=='undefined'&&fullMatrixReadContext?codes.filter(sku=>priceRules.has(JSON.stringify([sku,source]))):codes;for(let offset=0;offset<requested.length;offset+=200)jobs.push({source,codes:requested.slice(offset,offset+200)});}
       await Promise.all(Array.from({length:Math.min(6,jobs.length)},async()=>{
         while(nextJob<jobs.length){
           const job=jobs[nextJob++],result=await loadCalculatedResults({skus:job.codes,scope:job.source,fields:required});
@@ -2846,7 +2846,9 @@
   }
   async function attachRepresentativePrices(products) {
     if(!products.length)return products;
-    const rows=await readRepresentativePrices(products.map(p=>p.sellpia_sku_code)),bySku=new Map();
+    let requested=products;
+    if(typeof fullMatrixReadContext!=='undefined'&&fullMatrixReadContext){const definitions=(await productPrice('rules',{include_inactive:true})).rules||[],tagIds=new Set(definitions.map(r=>String(r.tag_id)));requested=products.filter(p=>[...(p.__profile?.product_tags||[]),...(p.__profile?.sku_tags||[])].some(t=>tagIds.has(String(t.tag_id))));}
+    const rows=await readRepresentativePrices(requested.map(p=>p.sellpia_sku_code)),bySku=new Map();
     for(const row of rows)for(const option of row.contributors||[])bySku.set(option.sku,row);
     return products.map(product=>bySku.has(product.sellpia_sku_code)?{...product,__hubRepresentativePrice:bySku.get(product.sellpia_sku_code)}:product);
   }
