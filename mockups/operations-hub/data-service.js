@@ -3848,21 +3848,21 @@
   async function loadMatrixShadowMetadata({source,rows=[],withFingerprints=true}={}) {
     if(!['smartstore','makeshop','ably'].includes(source))throw new Error('지원하지 않는 판매처입니다.');
     const unique=new Map();for(const row of rows){const existing=unique.get(row.sku);if(existing&&JSON.stringify(existing)!==JSON.stringify(row))throw new Error('동일 SKU shadow identity 충돌');unique.set(row.sku,row);}rows=[...unique.values()];
-    let versionId=null,snapshotId=null,version=null;const result=[];
+    let versionId=null,snapshotId=null,version=null,compact=false;const result=[];
     const batchSize=200;
     for(let offset=0;offset<rows.length;offset+=batchSize){
-      const rpc=typeof fullMatrixReadContext!=='undefined'&&fullMatrixReadContext?'hub_matrix_shadow_metadata_batch_v1':'hub_matrix_shadow_metadata_v1';
+      const rpc=typeof fullMatrixReadContext!=='undefined'&&fullMatrixReadContext?'hub_matrix_shadow_compact_batch_v1':'hub_matrix_shadow_metadata_v1';
       const {data,error}=await db.rpc(rpc,{p_session_token:requireOperationsHubSessionToken(),p_source:source,p_rows:rows.slice(offset,offset+batchSize)});
       if(error)throw readableDatabaseError(error);
       if(data?.mode!=='shadow'||data.source!==source||!data.version_id||!Array.isArray(data.rows))throw new Error('shadow 응답 형식 오류');
       if(versionId&&(versionId!==data.version_id||snapshotId!==data.snapshot_id))throw new Error('shadow version 변경');
-      versionId=data.version_id;snapshotId=data.snapshot_id;version=data.version;result.push(...data.rows);
+      versionId=data.version_id;snapshotId=data.snapshot_id;version=data.version;compact=compact||data.compact===true;result.push(...data.rows);
     }
     const fingerprintSkus=result.filter(row=>row.calculated?.some(c=>c.scope===source&&c.result_details?.input_fingerprint)).map(row=>row.sku);
     if(withFingerprints&&fingerprintSkus.length){const fingerprints=await loadInputFingerprints(fingerprintSkus,source);for(const row of result)row.current_input_fingerprint=fingerprints[row.sku]||null;}
     const internalSkus=result.filter(row=>row.calculated?.some(c=>!c.scope&&c.result_details?.input_fingerprint)).map(row=>row.sku);
     if(withFingerprints&&internalSkus.length){const fingerprints=await loadInputFingerprints(internalSkus,'');for(const row of result)row.current_internal_input_fingerprint=fingerprints[row.sku]||null;}
-    return {source,mode:'shadow',version_id:versionId,snapshot_id:snapshotId,version,rows:result};
+    return {source,mode:'shadow',compact,version_id:versionId,snapshot_id:snapshotId,version,rows:result};
   }
   async function attachMatrixShadow(products,signal){
     if(!global.HubMatrixShadow||global.HubMatrixShadowEnabled===false||!products.length)return products;
@@ -3875,7 +3875,7 @@
       throwIfAborted(signal);
       // Attach only __hubShadow; no existing numeric, draft, Rule or mapping projection changes.
       return products.map(product=>payloads.reduce((row,payload)=>global.HubMatrixShadow.annotate(row,payload),product));
-    }catch(error){throwIfAborted(signal);console.warn('matrix shadow annotation unavailable',error);return products;}
+    }catch(error){throwIfAborted(signal);if(fullMatrixReadContext)throw error;console.warn('matrix shadow annotation unavailable',error);return products;}
   }
   async function loadBaselineShadow({source,identities=[]}={}) {
     const safeSource=cleanText(source);

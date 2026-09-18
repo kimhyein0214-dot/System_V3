@@ -30,7 +30,7 @@
   const operations=[['price','sellpia_sale_price'],['stock','sellpia_current_stock']].map(([field,key])=>M.operationFor({source,sku:product.sellpia_sku_code,productCode:identity.product_code,optionCode:identity.option_code,identityCount:lookup==='conflict'?0:Number(product[source+'_listing_count']||1),fieldKey:key,state:field==='price'?price:stock,baseline:baseline?.[field]}));
   const projection={source,price,stock,baselineVersion:version,identity,lookup,sourceDelta:row.source_delta,calculated:stored,internalInputFingerprint:row.current_internal_input_fingerprint,operations,
    carrier_before:carrier?{price:{base:carrier.base_price,option:carrier.option_price},stock:carrier.sales_quantity}:null,baseline_before:baseline??null,effective_target:{price:price.effectiveTarget,stock:stock.effectiveTarget},serialized_after:null};
-  return {...product,__hubShadow:{...product.__hubShadow,[source]:projection}};
+  return {...product,__hubShadowCompact:product.__hubShadowCompact||payload.compact===true,__hubShadow:{...product.__hubShadow,[source]:projection}};
  }
  function chip(text,kind=''){return `<span class="shadow-chip ${kind}">${e(text)}</span>`;}
  function freshness(value){return value==='fresh'?'최신':value==='stale'?'재계산 필요':value==='error'?'계산 오류':value==='not_applicable'?'':value==='missing'?'계산 미설정':'최신 여부 미확인';}

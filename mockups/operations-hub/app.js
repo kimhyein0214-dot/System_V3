@@ -2484,6 +2484,14 @@ function openProductDrawer(row) {
   drawerBackdrop.classList.add('open');
   productDrawer.setAttribute('aria-hidden', 'false');
   setDrawerTab(drawerState.activeTab);
+  if(liveProduct.__hubShadowCompact&&liveData?.loadProductsBySkus){
+    const selectedSku=product.sku,selectedProduct=liveProduct;
+    void liveData.loadProductsBySkus([selectedSku]).then(details=>{
+      if(productDrawer.dataset.sku!==selectedSku||!productDrawer.classList.contains('open')||matrixDataset?.bySku.get(selectedSku)!==selectedProduct)return;
+      const lineage=productDrawer.querySelector('.shadow-lineage');
+      if(lineage&&details[0])lineage.outerHTML=window.HubMatrixShadow.renderDetail(details[0]);
+    }).catch(error=>console.warn('drawer calculation history unavailable',error));
+  }
 }
 
 function closeProductDrawer() {
