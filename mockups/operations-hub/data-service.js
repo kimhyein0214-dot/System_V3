@@ -526,7 +526,7 @@
     if (!skus.length) return products;
     throwIfAborted(signal);
     const result = await withAbortSignal(db.rpc('load_operations_hub_matrix_metadata_v1', {p_skus:skus}), signal);
-    if (result.error) throw result.error;
+    if (result.error) throw new Error('Matrix 표시정보 조회: '+(result.error.message||String(result.error)));
     const metadata = result.data || {};
     const steps = [
       [attachInboundCostDetails, metadata.inbound_costs],
@@ -546,7 +546,7 @@
     ];
     for (const [attach, prefetched] of steps) {
       throwIfAborted(signal);
-      products = await attach(products, signal, prefetched);
+      try{products = await attach(products, signal, prefetched);}catch(error){throw new Error('Matrix '+attach.name+': '+(error.message||String(error)));}
     }
     products = await attachStoredCalculatedPrices(products, signal);
     try{products=await attachRepresentativePrices(products);}catch(error){console.warn('representative price detail enrichment failed',error);}
@@ -827,7 +827,7 @@
     const started=performance.now(),before={...matrixReadMetrics},identity=await loadAllFilteredSkus({status:'all'}),codes=identity.skus;
     const batches=[];for(let i=0;i<codes.length;i+=200)batches.push(codes.slice(i,i+200));
     let cursor=0,loaded=0,failed=false;const rows=[];const complete=part=>part.length>0&&part.every(r=>r.__hubActivePriceRules&&(!global.HubMatrixShadow||['smartstore','makeshop','ably'].every(s=>r.__hubShadow?.[s])));async function readBatch(batch){try{const part=await loadProductsBySkus(batch,{signal});if(part.length!==batch.length||!complete(part))throw Error('필수 shadow 조회 지연');return part;}catch(error){if(batch.length<=25||!/57014|timeout|shadow 조회 지연/i.test(error.message||String(error)))throw error;const middle=Math.ceil(batch.length/2);return [...await readBatch(batch.slice(0,middle)),...await readBatch(batch.slice(middle))];}}
-    await Promise.all(Array.from({length:Math.min(4,batches.length)},async()=>{while(!failed&&cursor<batches.length){throwIfAborted(signal);const batch=batches[cursor++];try{const part=await readBatch(batch);if(failed)return;rows.push(...part);loaded+=part.length;onProgress?.({loaded,total:codes.length,elapsed:performance.now()-started});}catch(error){failed=true;throw error;}}}));
+    await Promise.all(Array.from({length:Math.min(2,batches.length)},async()=>{while(!failed&&cursor<batches.length){throwIfAborted(signal);const batch=batches[cursor++];try{const part=await readBatch(batch);if(failed)return;rows.push(...part);loaded+=part.length;onProgress?.({loaded,total:codes.length,elapsed:performance.now()-started});}catch(error){failed=true;throw error;}}}));
     const confirm=await loadAllFilteredSkus({status:'all'});
     if(confirm.skus.length!==codes.length||confirm.skus.some((s,i)=>s!==codes[i]))throw Error('로딩 중 전체 SKU membership 변경 · DB 새로고침이 필요합니다.');
     const seen=new Set(rows.map(r=>r.sellpia_sku_code));if(seen.size!==codes.length||codes.some(s=>!seen.has(s)))throw Error('전체 Matrix SKU 중복/누락');
@@ -844,7 +844,7 @@
         .from(MATRIX_VIEW)
         .select(MATRIX_SELECT)
         .in('sellpia_sku_code', normalizedSkus.slice(offset, offset + 500)), signal);
-      if (error) throw error;
+      if (error) throw new Error("Matrix 기본 행 조회: "+(error.message||String(error)));
       rows.push(...(data || []));
     }
     return attachProductMetadata(rows, signal);
@@ -3847,9 +3847,10 @@
     if(!['smartstore','makeshop','ably'].includes(source))throw new Error('지원하지 않는 판매처입니다.');
     const unique=new Map();for(const row of rows){const existing=unique.get(row.sku);if(existing&&JSON.stringify(existing)!==JSON.stringify(row))throw new Error('동일 SKU shadow identity 충돌');unique.set(row.sku,row);}rows=[...unique.values()];
     let versionId=null,snapshotId=null,version=null;const result=[];
-    for(let offset=0;offset<rows.length;offset+=200){
+    const batchSize=typeof fullMatrixReadContext!=='undefined'&&fullMatrixReadContext?50:200;
+    for(let offset=0;offset<rows.length;offset+=batchSize){
       const rpc=typeof fullMatrixReadContext!=='undefined'&&fullMatrixReadContext?'hub_matrix_shadow_metadata_batch_v1':'hub_matrix_shadow_metadata_v1';
-      const {data,error}=await db.rpc(rpc,{p_session_token:requireOperationsHubSessionToken(),p_source:source,p_rows:rows.slice(offset,offset+200)});
+      const {data,error}=await db.rpc(rpc,{p_session_token:requireOperationsHubSessionToken(),p_source:source,p_rows:rows.slice(offset,offset+batchSize)});
       if(error)throw readableDatabaseError(error);
       if(data?.mode!=='shadow'||data.source!==source||!data.version_id||!Array.isArray(data.rows))throw new Error('shadow 응답 형식 오류');
       if(versionId&&(versionId!==data.version_id||snapshotId!==data.snapshot_id))throw new Error('shadow version 변경');
