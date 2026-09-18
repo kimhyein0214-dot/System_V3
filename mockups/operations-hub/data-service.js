@@ -658,7 +658,7 @@
     }));
   }
 
-  async function loadProducts({ page = 1, pageSize = PAGE_SIZE, search = '', searchSources = ['sellpia','smartstore','makeshop','ably'], status = 'all', sort = 'sku_asc', skus = [], codeListRows = [], advancedFilter = null, excludeCombinationSkus = false, includeRelatedSkuContext = false, signal = null } = {}) {
+  async function loadProducts({ page = 1, pageSize = PAGE_SIZE, search = '', searchType = 'all', searchSources = ['sellpia','smartstore','makeshop','ably'], status = 'all', sort = 'sku_asc', skus = [], codeListRows = [], advancedFilter = null, excludeCombinationSkus = false, includeRelatedSkuContext = false, signal = null } = {}) {
     status = normalizeConnectionStatus(status);
     const safePage = Math.max(1, Number(page) || 1);
     const safePageSize = MATRIX_PAGE_SIZES.has(Number(pageSize)) ? Number(pageSize) : PAGE_SIZE;
@@ -717,6 +717,14 @@
     }
     const filterPayload = normalizeConnectionConditions(advancedFilter);
     const normalizedMatrixSearch = normalizedSearch(search);
+    if (normalizedMatrixSearch && ['sku','own_code','name'].includes(searchType)) {
+      const result = await loadPagedRpc('load_operations_hub_matrix_search_mvp', {
+        p_search:normalizedMatrixSearch, p_search_type:searchType, p_search_sources:searchSources,
+        p_status:status, p_sort:sort, p_filter:filterPayload, p_exclude_dependent:Boolean(excludeCombinationSkus)
+      });
+      return {...result, rows:await attachProductMetadata(result.rows, signal),
+        directCount:result.count, relatedCount:0, relationContextEnabled:false};
+    }
     const includeRelatedContext = Boolean(includeRelatedSkuContext) && Boolean(normalizedMatrixSearch);
     if (includeRelatedContext) {
       throwIfAborted(signal);

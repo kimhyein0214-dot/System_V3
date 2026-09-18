@@ -1567,6 +1567,7 @@ async function loadLiveMatrix({resetPage = false, resetScroll = resetPage} = {})
       page:matrixState.page,
       pageSize:matrixState.pageSize,
       search:matrixState.search,
+      searchType:document.getElementById('matrix-search-type')?.value || 'all',
       searchSources:matrixState.searchSources,
       status:matrixState.status,
       sort:matrixState.sort,
@@ -5542,10 +5543,15 @@ function updateCodeListFilterUi() {
   document.getElementById('code-list-filter-count').textContent = active ? `${formatNumber(matrixState.codeListRows.length)}개 결과` : '0개 결과';
   document.getElementById('code-list-open').classList.toggle('active', active);
   codeListSearchInput.disabled = active;
+  const searchTypeSelect = document.getElementById('matrix-search-type');
+  if (searchTypeSelect) searchTypeSelect.disabled = active;
   document.getElementById('matrix-status-filter').disabled = active;
   matrixSearchSourceInputs.forEach(input => { input.disabled = active; });
   codeListSearchInput.placeholder = active
     ? `${matrixState.codeListName || '엑셀 목록'} 순서로 모아보는 중`
+    : searchTypeSelect?.value === 'sku' ? 'Sellpia SKU · exact 우선 / prefix'
+    : searchTypeSelect?.value === 'own_code' ? '자사코드 · exact 우선 / prefix'
+    : searchTypeSelect?.value === 'name' ? '상품명 / 옵션명 · 포함 검색'
     : 'SKU / 자사코드 / 상품명 / 상품코드-옵션코드 검색';
   renderAdvancedFilterBar();
 }
@@ -5598,6 +5604,12 @@ codeListApply.addEventListener('click', () => {
 codeListFilterPill.addEventListener('click', clearCodeListFilter);
 
 let matrixSearchTimer;
+document.getElementById('matrix-search-type')?.addEventListener('change', () => {
+  clearTimeout(matrixSearchTimer);
+  const type = document.getElementById('matrix-search-type').value;
+  codeListSearchInput.placeholder = type === 'sku' ? 'Sellpia SKU · exact 우선 / prefix' : type === 'own_code' ? '자사코드 · exact 우선 / prefix' : type === 'name' ? '상품명 / 옵션명 · 포함 검색' : '코드 또는 상품명 / 옵션명 교집합 검색';
+  loadLiveMatrix({resetPage:true});
+});
 codeListSearchInput.addEventListener('input', event => {
   matrixState.search = event.target.value.trim();
   clearTimeout(matrixSearchTimer);
@@ -12244,6 +12256,7 @@ document.addEventListener('keydown', event => {
 updateSource();
 
 const startupPreset = findPreset(activePresetId);
+window.SellpiaPatchExport?.mount({rows:()=>[...matrixRowsBySku.values()],selected:selectedMatrixSkus,loading:()=>matrixState.loading});
 activePresetId = startupPreset.id;
 initializeMatrixColumnResizing();
 applyViewPreset(startupPreset, {id:startupPreset.id, reload:false, announce:false});
