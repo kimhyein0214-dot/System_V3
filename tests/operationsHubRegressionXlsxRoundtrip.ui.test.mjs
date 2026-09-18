@@ -63,23 +63,23 @@ try {
     const item0 = {line:2, row:[...raw[1]], memoText:'001-1/001-2'};
     const item1 = {line:3, row:[...raw[2]], memoText:''};
     const mixed = await AblyStockExport.build({file, items:[item0,item1], results:[{value:0},{value:null,error:'fixture missing stock'}]});
-    const first = await verifyPreservation(mixed, {Q2:'001-1/001-2',W2:0});
-    verify(first.sheet.W2.t === 'n', 'Zero stock must remain numeric');
+    const first = await verifyPreservation(mixed, {Q2:'001-1/001-2',X2:0});
+    verify(first.sheet.X2.t === 'n', 'Zero stock must remain numeric in *판매수량');
     verify(first.sheet.Q2.t === 's', 'Leading-zero SKU memo must remain text');
-    const finalRow = [...raw[90]]; finalRow[22] = 5;
+    const finalRow = [...raw[90]]; finalRow[23] = 5;
     const selected = await AblyStockExport.buildFromTemplate(file, [finalRow], [91]);
-    await verifyPreservation(selected, {W91:5});
+    await verifyPreservation(selected, {X91:5});
     let duplicateRejected = false;
     try {await AblyStockExport.buildFromTemplate(file, [finalRow,finalRow], [91,91]);} catch {duplicateRejected = true;}
     verify(duplicateRejected, 'Duplicate source row mapping must reject');
     const generatedRows = Array.from({length:12}, (_, index) => {
-      const row = [...raw[1]];row[3] = `QA & <pair> ${index + 1}`;row[16] = `001-${index + 1}`;row[22] = index;return row;
+      const row = [...raw[1]];row[3] = `QA & <pair> ${index + 1}`;row[16] = `001-${index + 1}`;row[23] = index;return row;
     });
     const generated = await AblyStockExport.buildFromTemplate(file, generatedRows);
     const generatedResult = await verifyPreservation(generated, {}, 12);
     verify(generatedResult.sheet.D13.v === 'QA & <pair> 12', 'XML escaping at multi-digit row');
     verify(generatedResult.sheet.Q13.v === '001-12', 'Text SKU at multi-digit row');
-    verify(generatedResult.sheet.W13.v === 11, 'Last generated stock');
+    verify(generatedResult.sheet.X13.v === 11, 'Last generated stock');
     const xml = await generatedResult.zip.file(sheetPath).async('string');
     verify(new DOMParser().parseFromString(xml, 'application/xml').getElementsByTagName('parsererror').length === 0, 'Export XML must parse');
     return {sourceRows:rows.length, columns:35, zipParts:first.originalNames.length, selectiveExports:2, generatedRows:12, externalRequests:0};

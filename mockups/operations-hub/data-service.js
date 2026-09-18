@@ -2835,6 +2835,7 @@
     for(let i=0;i<codes.length;i+=200){const {data,error}=await db.from(MATRIX_VIEW).select('sellpia_sku_code,'+field).in('sellpia_sku_code',codes.slice(i,i+200));if(error)throw error;linked.push(...data.filter(r=>r[field]).map(r=>r.sellpia_sku_code));}return linked;
   }
   async function productPrice(action, body = {}) {
+    const key=JSON.stringify(body);if(action==='rules'&&typeof fullMatrixReadContext!=='undefined'&&fullMatrixReadContext){fullMatrixReadContext.productRules??=new Map();if(fullMatrixReadContext.productRules.has(key))return fullMatrixReadContext.productRules.get(key);const read=(async()=>{const {data,error}=await db.rpc('hub_product_price_v1',{p_session_token:requireOperationsHubSessionToken(),p_action:action,p_body:body});if(error)throw readableDatabaseError(error);return data;})();fullMatrixReadContext.productRules.set(key,read);return read;}
     const {data,error}=await db.rpc('hub_product_price_v1',{p_session_token:requireOperationsHubSessionToken(),p_action:action,p_body:body});
     if(error)throw readableDatabaseError(error);return data;
   }
@@ -3845,7 +3846,8 @@
     const unique=new Map();for(const row of rows){const existing=unique.get(row.sku);if(existing&&JSON.stringify(existing)!==JSON.stringify(row))throw new Error('동일 SKU shadow identity 충돌');unique.set(row.sku,row);}rows=[...unique.values()];
     let versionId=null,snapshotId=null,version=null;const result=[];
     for(let offset=0;offset<rows.length;offset+=200){
-      const {data,error}=await db.rpc('hub_matrix_shadow_metadata_v1',{p_session_token:requireOperationsHubSessionToken(),p_source:source,p_rows:rows.slice(offset,offset+200)});
+      const rpc=typeof fullMatrixReadContext!=='undefined'&&fullMatrixReadContext?'hub_matrix_shadow_metadata_batch_v1':'hub_matrix_shadow_metadata_v1';
+      const {data,error}=await db.rpc(rpc,{p_session_token:requireOperationsHubSessionToken(),p_source:source,p_rows:rows.slice(offset,offset+200)});
       if(error)throw readableDatabaseError(error);
       if(data?.mode!=='shadow'||data.source!==source||!data.version_id||!Array.isArray(data.rows))throw new Error('shadow 응답 형식 오류');
       if(versionId&&(versionId!==data.version_id||snapshotId!==data.snapshot_id))throw new Error('shadow version 변경');
