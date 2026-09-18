@@ -1840,7 +1840,7 @@ async function refreshLiveData(options = {}) {
   let result = {matrix:false, source:false, metrics:false, mapping:false};
   try {
     const [matrix, source, metrics] = await Promise.all([
-      loadLiveMatrix({...options,fullReload:Boolean(options.fullReload||matrixSourceReloadNeeded)}),
+      liveData?.loadFullMatrixDataset&&window.HubMatrixDataset&&!matrixDataset&&!options.fullReload&&!document.getElementById('matching')?.classList.contains('active-page')?Promise.resolve(false):loadLiveMatrix({...options,fullReload:Boolean(options.fullReload||matrixSourceReloadNeeded)}),
       loadLiveSourceStatus(),
       loadLiveDashboardMetrics()
     ]);
@@ -11899,6 +11899,7 @@ function showPage(pageId) {
   document.querySelectorAll('.nav-item').forEach(item => item.classList.toggle('active', item.dataset.page === pageId));
   const target = document.getElementById(pageId);
   if (target) target.classList.add('active-page');
+  if(pageId==='matching'&&liveData?.loadFullMatrixDataset&&window.HubMatrixDataset){if(!matrixDataset||matrixDirtySkus.size||matrixSourceReloadNeeded)void loadLiveMatrix({resetScroll:true,fullReload:matrixSourceReloadNeeded});else{matrixVirtualStart=-1;paintVirtualMatrix();}}
   if (pageId === 'jobs') loadChangeQueue();
   if (pageId === 'dashboard') window.SystemV3ChannelsPage?.show();
   if (pageId === 'ably-combinations') window.AblyWorkspace?.refresh();
