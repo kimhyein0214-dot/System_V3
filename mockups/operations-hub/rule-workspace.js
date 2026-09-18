@@ -253,13 +253,15 @@
  async function fileRows(file,{tagImport=false,withMetadata=false}={}){
   if(!file)return[];
   if(tagImport&&Number(file.size||0)>TAG_IMPORT_MAX_BYTES)throw Error('태그 파일은 최대 20MB까지 업로드할 수 있습니다. 필요한 A/B열만 남겨 다시 저장해 주세요.');
-  const book=g.XLSX.read(await file.arrayBuffer(),{type:'array',...(tagImport?{dense:true,sheetRows:TAG_IMPORT_MAX_ROWS+2}:{})}),sheet=book.Sheets[book.SheetNames.find(name=>name!==TAG_IMPORT_METADATA_SHEET)||book.SheetNames[0]];
+  const book=g.XLSX.read(await file.arrayBuffer(),{type:'array',...(tagImport?{dense:true,sheetRows:TAG_IMPORT_MAX_ROWS+2,raw:true,...(/\.csv$/i.test(file.name||'')?{codepage:65001}:{})}:{})}),sheet=book.Sheets[book.SheetNames.find(name=>name!==TAG_IMPORT_METADATA_SHEET)||book.SheetNames[0]];
   if(!sheet)return withMetadata?{rows:[],metadata:tagWorkbookMetadata(book)}:[];
   if(!tagImport){const rows=g.XLSX.utils.sheet_to_json(sheet,{header:1,defval:''});return withMetadata?{rows,metadata:tagWorkbookMetadata(book)}:rows;}
   const fullRange=g.XLSX.utils.decode_range(sheet['!fullref']||sheet['!ref']||'A1:A1');
   if(fullRange.e.r+1>TAG_IMPORT_MAX_ROWS+1)throw Error(`한 번에 최대 ${TAG_IMPORT_MAX_ROWS.toLocaleString('ko-KR')}행까지 등록할 수 있습니다.`);
   const endRow=Math.min(fullRange.e.r,TAG_IMPORT_MAX_ROWS),range={s:{r:0,c:0},e:{r:endRow,c:1}};
-  const rows=g.XLSX.utils.sheet_to_json(sheet,{header:1,defval:'',range});return withMetadata?{rows,metadata:tagWorkbookMetadata(book)}:rows;
+  const rows=g.XLSX.utils.sheet_to_json(sheet,{header:1,defval:'',range,blankrows:true});
+  for(let r=0;r<=endRow;r++)for(let c=0;c<=1;c++){const cell=Array.isArray(sheet)?sheet[r]?.[c]:sheet[g.XLSX.utils.encode_cell({r,c})];if(cell?.t==='e'){rows[r]=rows[r]||[];rows[r][c]=cell.w||`Excel error ${cell.v}`;}}
+  return withMetadata?{rows,metadata:tagWorkbookMetadata(book)}:rows;
  }
  function tagNameFromFilename(fileName){
   const name=String(fileName||'').split(/[\\/]/).pop()||'',match=name.match(/^(.+)_일괄적용\.(xlsx|xls|csv)$/i);
@@ -269,14 +271,14 @@
  function parseTagImportRows(sourceRows,{fileName='',metadata={}}={}){
   const filenameTagName=tagNameFromFilename(fileName),normalized=normalizeTagName,metadataTagId=String(metadata.tagId||''),metadataTagName=String(metadata.tagName||'');
   if(metadataTagId||metadataTagName||filenameTagName){
-   const cells=(sourceRows||[]).map(row=>Array.isArray(row)?row:[row]).map(row=>String(row[0]??'').trim()).filter(Boolean);
-   if(cells.length&&['sku','셀피아sku','셀피아코드','sellpiaskucode'].includes(normalized(cells[0])))cells.shift();
-   return {mode:metadataTagId||metadataTagName?'metadata_tag':'filename_tag',...(filenameTagName?{filenameTagName}:{}),...(metadataTagId?{metadataTagId}:{}),...(metadataTagName?{metadataTagName}:{}),rows:cells.map(sku=>({sku,tag_name:''}))};
+   const cells=(sourceRows||[]).map((row,index)=>({sku:String((Array.isArray(row)?row:[row])[0]??'').trim(),source_row_no:index+1})).filter(row=>row.sku);
+   if(cells.length&&['sku','셀피아sku','셀피아코드','sellpiaskucode'].includes(normalized(cells[0].sku)))cells.shift();
+   return {mode:metadataTagId||metadataTagName?'metadata_tag':'filename_tag',...(filenameTagName?{filenameTagName}:{}),...(metadataTagId?{metadataTagId}:{}),...(metadataTagName?{metadataTagName}:{}),rows:cells.map(row=>({...row,tag_name:''}))};
   }
-  const cells=(sourceRows||[]).map(row=>Array.isArray(row)?row:[row]).map(row=>[String(row[0]??'').trim(),String(row[1]??'').trim()]).filter(row=>row[0]||row[1]);
-  if(cells.length&&['sku','셀피아sku','셀피아코드','sellpiaskucode'].includes(normalized(cells[0][0])))cells.shift();
-  const mode=cells.some(row=>row[1])?'per_row':'single_tag';
-  return {mode,rows:cells.map(([sku,tag_name])=>({sku,tag_name:mode==='per_row'?tag_name:''}))};
+  const cells=(sourceRows||[]).map((row,index)=>({sku:String((Array.isArray(row)?row:[row])[0]??'').trim(),tag_name:String((Array.isArray(row)?row:[row])[1]??'').trim(),source_row_no:index+1})).filter(row=>row.sku||row.tag_name);
+  if(cells.length&&['sku','셀피아sku','셀피아코드','sellpiaskucode'].includes(normalized(cells[0].sku)))cells.shift();
+  const mode=cells.some(row=>row.tag_name)?'per_row':'single_tag';
+  return {mode,rows:cells.map(row=>({...row,tag_name:mode==='per_row'?row.tag_name:''}))};
  }
  function importTagByName(value){const matches=state.tags.filter(tag=>String(tag.tag_name||'').trim().toLowerCase()===String(value||'').trim().toLowerCase());return matches.length===1?matches[0]:null;}
  function resolveTagImportTag({metadata={},fileName='',manualTagId=''}={}){
@@ -322,23 +324,18 @@
    const manualTagId=source.manualTagId||(parsed.mode==='single_tag'?preferredTagId:'');
    const resolution=parsed.mode==='per_row'?{status:'resolved',source:'per_row',tag:null}:resolveTagImportTag({metadata:source.metadata,fileName:source.fileName,manualTagId});
    const rows=resolution.status==='resolved'&&resolution.tag?parsed.rows.map(row=>({...row,tag_name:resolution.tag.tag_name})):parsed.rows;
-   let server=null,localErrors=new Map(),status='needs_choice',message=resolution.message||'';
-   if(resolution.status==='resolved'){
-    server=rows.length?await D.bulkImportTags({rows,tagId:null,preview:true}):{row_count:0,valid_count:0,error_count:0,duplicate_count:0,sku_count:0,tag_count:resolution.tag?1:0,preview_rows:[]};
-    localErrors=analyzeTagImport(rows,null);
-    const errorCount=Number(server.error_count||0)+localErrors.size;
-    status=errorCount?'error':'ready';message=errorCount?'파일의 오류 행을 수정한 뒤 다시 선택하세요.':tagResolutionLabel(resolution.source);
-   }else if(resolution.status==='ambiguous')status='needs_choice';
-   files.push({...source,fileIndex,parsed,rows,resolution,manualTagId,server,localErrors,status,message});
+   const status=resolution.status==='resolved'?(rows.length?'ready':'error'):'needs_choice',message=resolution.status==='resolved'?(rows.length?tagResolutionLabel(resolution.source):'필수 SKU 열에서 읽은 행이 없습니다.'):resolution.message||'';
+   files.push({...source,fileIndex,parsed,rows:rows.map(row=>({...row,source_file:source.fileName})),resolution,manualTagId,status,message});
    await nextPaint();
   }
   if(totalRows>TAG_IMPORT_MAX_ROWS)throw Error(`여러 파일을 합쳐 최대 ${TAG_IMPORT_MAX_ROWS.toLocaleString('ko-KR')}행까지 등록할 수 있습니다.`);
-  const ready=files.filter(file=>file.status==='ready'),rows=ready.flatMap(file=>file.rows),allReady=files.length>0&&files.every(file=>file.status==='ready');
-  const server={row_count:files.reduce((sum,file)=>sum+Number(file.server?.row_count||file.rows?.length||0),0),valid_count:files.reduce((sum,file)=>sum+Number(file.server?.valid_count||0),0),error_count:files.reduce((sum,file)=>sum+Number(file.server?.error_count||0),0),duplicate_count:files.reduce((sum,file)=>sum+Number(file.server?.duplicate_count||0),0),sku_count:new Set(rows.map(row=>row.sku)).size,tag_count:new Set(rows.map(row=>row.tag_name)).size};
-  state.tagImport={mode:files.length>1?'multi_file':files[0]?.parsed?.mode||'single_tag',prepared,files,rows,server,canApply:allReady&&Number(server.valid_count||0)>0};
+  const ready=files.filter(file=>file.status==='ready'),rows=ready.flatMap(file=>file.rows);
+  const server=rows.length?await D.bulkImportTags({rows,tagId:null,preview:true,partial:true}):{row_count:0,row_results:[],apply_count:0,noop_count:0,blocked_count:0,invalid_count:0};
+  if(rows.length&&(!Array.isArray(server.row_results)||server.row_results.length!==rows.length))throw Error('부분 적용 검사 결과가 완전하지 않아 저장을 차단했습니다.');
+  state.tagImport={mode:files.length>1?'multi_file':files[0]?.parsed?.mode||'single_tag',prepared,files,rows,server,filter:'all',applied:false,canApply:Number(server.apply_count||0)>0};
   renderTagImport();
   const needs=files.filter(file=>file.status==='needs_choice').length,errors=files.filter(file=>file.status==='error').length;
-  $('drawer-status').textContent=needs?`${needs}개 파일은 적용할 태그를 확인해야 합니다.`:errors?`${errors}개 파일에 오류가 있습니다. 정상 파일도 아직 저장하지 않습니다.`:'검사 완료. 모든 파일은 한 번의 원자적 저장으로 적용됩니다.';
+  $('drawer-status').textContent=`검사 완료 · APPLY ${server.apply_count||0} · BLOCK ${server.blocked_count||0} · NOOP ${server.noop_count||0} · INVALID ${server.invalid_count||0}${needs||errors?` · 판별/읽기 불가 ${needs+errors}파일은 전체 제외`:''}. 정상 APPLY 행만 하나의 transaction으로 저장합니다.`;
   return state.tagImport;
  }
  async function previewTagImportFiles(fileList,{preferredTagId=''}={}){
@@ -355,40 +352,56 @@
   const data=state.tagImport||{mode:'single_tag',files:[],rows:[],server:null,canApply:false},server=data.server||{},files=data.files||[];
   $('tag-import-mode').textContent=files.length?(files.length>1?`${files.length}개 파일을 각각 판별했습니다.`:files[0].parsed?.mode==='single_tag'&&files[0].status!=='ready'?`${files[0].fileName} · 공통 태그 선택 필요`:files[0].resolution?.source==='filename_exact'?`파일명 태그 자동 인식 · ${files[0].resolution.tag?.tag_name||files[0].resolution.detectedName}`:files[0].resolution?.source==='filename_normalized'?`파일명 태그 자동 추정 · ${files[0].resolution.tag?.tag_name||files[0].resolution.detectedName}`:`${files[0].fileName} · ${files[0].status==='ready'?tagResolutionLabel(files[0].resolution?.source):'태그 확인 필요'}`):'파일을 선택하면 형식을 자동 판별합니다.';
   const hasGenericFile=files.some(file=>file.parsed?.mode==='single_tag');$('tag-import-tag').disabled=files.length>0&&!hasGenericFile;$('tag-import-tag-wrap').classList.toggle('rw-disabled',files.length>0&&!hasGenericFile);
-  const errorCount=files.reduce((sum,file)=>sum+Number(file.server?.error_count||0)+(file.localErrors?.size||0),0),readyCount=files.filter(file=>file.status==='ready').length,needsCount=files.filter(file=>file.status==='needs_choice').length;
-  $('tag-import-summary').textContent=files.length?`정상 ${readyCount}파일 · 확인 필요 ${needsCount}파일 · 오류 ${files.length-readyCount-needsCount}파일 · 전체 ${Number(server.row_count||0).toLocaleString('ko-KR')}행 · 적용 가능 ${Number(server.valid_count||0).toLocaleString('ko-KR')}행 · 중복 ${Number(server.duplicate_count||0).toLocaleString('ko-KR')}행 · 오류 ${errorCount.toLocaleString('ko-KR')}행`:'아직 읽은 행이 없습니다.';
+  const count=value=>Number(value||0).toLocaleString('ko-KR');
+  $('tag-import-summary').textContent=files.length?`전체 ${count(server.row_count)} · ${data.applied?'적용':'적용 가능'} ${count(data.applied?server.applied_count:server.apply_count)} · 변경 없음 ${count(server.noop_count)} · 차단 ${count(server.blocked_count)} · 오류 ${count(server.invalid_count)} · 파일 전체 제외 ${files.filter(file=>file.status!=='ready').length}`:'아직 읽은 행이 없습니다.';
   const fileRowsHtml=files.map(file=>{const auto=file.resolution?.status==='resolved',needs=file.status==='needs_choice',kind=file.status==='ready'?(file.resolution?.source==='filename_normalized'?'자동 추정':'정상'):needs?'확인 필요':'적용 불가',tag=auto?file.resolution.tag?.tag_name:'';return `<tr><td>${esc(file.fileName)}</td><td>${esc(tag||file.resolution?.detectedName||'—')}</td><td>${Number(file.rows?.length||0).toLocaleString('ko-KR')}</td><td class="${file.status==='ready'?'':'rw-error'}">${esc(kind)}${file.message?' · '+esc(file.message):''}${needs?`<br><select data-import-file-tag="${file.fileIndex}"><option value="">태그 선택</option>${option(Object.fromEntries(state.tags.map(item=>[item.tag_id,item.tag_name])),file.manualTagId||'')}</select>`:''}</td></tr>`;}).join('');
   if($('tag-import-files'))$('tag-import-files').innerHTML=fileRowsHtml||'<tr><td colspan="4" class="rw-empty">선택한 파일이 없습니다.</td></tr>';
-  const detail=[];for(const file of files){const serverRows=new Map((file.server?.preview_rows||[]).map(row=>[row.row_no,row]));file.rows?.forEach((row,index)=>{if(detail.length>=200)return;const checked=serverRows.get(index+1),error=file.localErrors?.get(index+1)||checked?.error||(checked?.is_duplicate?'중복 행 · 한 번만 적용':file.status==='ready'?'정상':file.message||'태그 확인 필요');detail.push({file:file.fileName,row:index+1,sku:row.sku,tag:checked?.tag_name||row.tag_name,error});});}
-  $('tag-import-rows').innerHTML=detail.map(row=>`<tr><td>${esc(row.file)}</td><td>${row.row}</td><td>${esc(row.sku||'—')}</td><td>${esc(row.tag||'—')}</td><td class="${row.error==='정상'||row.error.startsWith('중복')?'':'rw-error'}">${esc(row.error)}</td></tr>`).join('')||'<tr><td colspan="5" class="rw-empty">XLSX, XLS 또는 CSV 파일을 선택하세요.</td></tr>';
-  $('tag-import-apply').disabled=!data.canApply;
+  const rejected=row=>['BLOCK','INVALID'].includes(row.state),detail=(server.row_results||[]).filter(row=>data.filter!=='blocked'||rejected(row)).slice(0,200);
+  $('tag-import-rows').innerHTML=detail.map(row=>`<tr data-import-state="${esc(row.state)}"><td>${esc(row.source_file||'—')}</td><td>${row.source_row_no}</td><td>${esc(row.sku||'—')}</td><td>${esc(row.tag_name||'—')}</td><td class="${rejected(row)?'rw-error':row.state==='NOOP'?'rw-muted':''}">${esc(row.state)} · ${row.state==='APPLY'?(data.applied?'적용 완료':'정상'):esc(row.reason||'변경 없음')}${(row.issues||[]).map(issue=>`<br>기존: ${esc(issue.existing_tag||'—')} · stage: ${esc(issue.stage)} · output: ${esc(issue.output_field)} · ${esc(issue.reason)}`).join('')}</td></tr>`).join('')||'<tr><td colspan="5" class="rw-empty">표시할 행이 없습니다.</td></tr>';
+  if($('tag-import-filter')){$('tag-import-filter').textContent=`${data.filter==='blocked'?'전체 보기':'차단만 보기'} · 오류/차단 ${count(Number(server.blocked_count||0)+Number(server.invalid_count||0))}건`;$('tag-import-filter').onclick=()=>{data.filter=data.filter==='blocked'?'all':'blocked';renderTagImport();};}
+  if($('tag-import-download')){$('tag-import-download').disabled=!(server.row_results||[]).some(rejected);$('tag-import-download').onclick=downloadBlockedTagRows;}
+  $('tag-import-apply').disabled=!data.canApply||data.applied;
   $('tag-import-files')?.querySelectorAll('[data-import-file-tag]').forEach(select=>select.onchange=()=>{const prepared=data.prepared.map(item=>({...item})),index=Number(select.dataset.importFileTag);prepared[index].manualTagId=select.value;void run(()=>validatePreparedTagImports(prepared,{preferredTagId:$('tag-import-tag').value}));});
+ }
+ function blockedTagWorkbook(data=state.tagImport){
+  const rows=(data?.server?.row_results||[]).filter(row=>['BLOCK','INVALID'].includes(row.state)),book=g.XLSX.utils.book_new();
+  const retry=g.XLSX.utils.aoa_to_sheet([['셀피아 SKU','태그명'],...rows.map(row=>[String(row.sku||''),String(row.tag_name||'')])]);
+  formatTagWorkbookSkuColumn(retry,Math.max(1,rows.length+1));g.XLSX.utils.book_append_sheet(book,retry,'재등록');
+  const details=[['원본 행번호','Sellpia SKU','요청 태그','기존 태그','stage','output_field','exclusive_group','상태','차단 사유','원본 파일']];
+  for(const row of rows){const issues=row.issues||[],join=field=>[...new Set(issues.map(issue=>issue[field]).filter(Boolean))].join(' / ');details.push([row.source_row_no,String(row.sku||''),row.tag_name,join('existing_tag'),join('stage'),join('output_field'),join('exclusive_group'),row.state,join('reason')||row.reason,row.source_file]);}
+  g.XLSX.utils.book_append_sheet(book,g.XLSX.utils.aoa_to_sheet(details),'차단 상세');return book;
+ }
+ function downloadBlockedTagRows(){
+  const data=state.tagImport,tagNames=[...new Set((data.server.row_results||[]).filter(row=>['BLOCK','INVALID'].includes(row.state)).map(row=>row.tag_name))];
+  g.XLSX.writeFile(blockedTagWorkbook(data),`${(tagNames.length===1?tagNames[0]:'태그').replace(/[\\/:*?"<>|]/g,'_')}_차단행_${new Date().toISOString().slice(0,10).replaceAll('-','')}.xlsx`);
  }
  async function previewTagImport(sourceRows,{fileName=''}={}){
   return validatePreparedTagImports([{fileName:fileName||'붙여넣기',sourceRows,metadata:{},manualTagId:''}],{preferredTagId:$('tag-import-tag').value});
  } async function openTagImport({openFilePicker=false,tagId=null}={}){
-  state.tagImport=null;drawer('태그 일괄등록 검사',`<div class="rw-import-guide"><b>파일을 먼저 선택해도 됩니다.</b><span><strong>자동 판별</strong> 템플릿 tag_id → 템플릿 태그명 → &lt;태그명&gt;_일괄적용.xlsx 순서로 확인</span><span><strong>파일명 호환</strong> /, _, -, 공백 차이는 후보가 하나일 때만 같은 태그로 판단</span><span><strong>행별 지정</strong> A열 셀피아 SKU + B열 태그명</span><small>여러 파일은 각각 검사한 뒤 한 번에 저장합니다. 한 파일이라도 확인 필요/오류면 DB에 아무것도 저장하지 않습니다.</small></div><div class="rw-config rw-import-controls" id="rw-tag-import-drop"><label>엑셀 파일 여러 개<input id="rw-tag-import-file" type="file" accept=".xlsx,.xls,.csv" multiple aria-label="태그 일괄등록 엑셀 업로드"></label><label id="rw-tag-import-tag-wrap">태그 정보 없는 A열 파일의 공통 태그<select id="rw-tag-import-tag"><option value="">태그 선택</option>${option(Object.fromEntries(state.tags.map(tag=>[tag.tag_id,tag.tag_name])),'')}</select></label><div><b>판별된 형식</b><p id="rw-tag-import-mode" class="rw-import-mode">파일을 선택하면 형식을 자동 판별합니다.</p></div></div><p class="rw-muted">여기로 XLSX/XLS/CSV 파일을 여러 개 끌어다 놓을 수도 있습니다.</p><details class="rw-import-paste"><summary>엑셀 두 열을 복사해서 붙여넣기</summary><textarea id="rw-tag-import-paste" placeholder="셀피아 SKU&#9;태그명"></textarea><button class="btn" id="rw-tag-import-parse" type="button">붙여넣은 내용 검사</button></details><div id="rw-tag-import-summary" class="rw-rule-summary">아직 읽은 행이 없습니다.</div><h4>파일별 검사 결과</h4><div class="rw-scroll"><table><thead><tr><th>파일</th><th>감지 태그</th><th>입력 SKU</th><th>상태</th></tr></thead><tbody id="rw-tag-import-files"></tbody></table></div><h4>행 미리보기</h4><div class="rw-scroll"><table><thead><tr><th>파일</th><th>행</th><th>셀피아 SKU</th><th>적용 태그</th><th>검사 결과</th></tr></thead><tbody id="rw-tag-import-rows"></tbody></table></div><div class="rw-bar"><span class="rw-muted">표시는 최대 200행 · 저장은 검사한 파일 전체</span><button class="btn primary" id="rw-tag-import-apply" disabled>검사된 전체 파일 태그 적용</button></div>`);
+  state.tagImport=null;drawer('태그 일괄등록 검사',`<div class="rw-import-guide"><b>파일을 먼저 선택해도 됩니다.</b><span><strong>자동 판별</strong> 템플릿 tag_id → 템플릿 태그명 → &lt;태그명&gt;_일괄적용.xlsx 순서로 확인</span><span><strong>파일명 호환</strong> /, _, -, 공백 차이는 후보가 하나일 때만 같은 태그로 판단</span><span><strong>행별 지정</strong> A열 셀피아 SKU + B열 태그명</span><small>여러 파일은 각각 검사한 뒤 한 번에 저장합니다. 정상 APPLY 행만 저장합니다. BLOCK/INVALID 행과 판별·읽기 불가 파일은 제외합니다.</small></div><div class="rw-config rw-import-controls" id="rw-tag-import-drop"><label>엑셀 파일 여러 개<input id="rw-tag-import-file" type="file" accept=".xlsx,.xls,.csv" multiple aria-label="태그 일괄등록 엑셀 업로드"></label><label id="rw-tag-import-tag-wrap">태그 정보 없는 A열 파일의 공통 태그<select id="rw-tag-import-tag"><option value="">태그 선택</option>${option(Object.fromEntries(state.tags.map(tag=>[tag.tag_id,tag.tag_name])),'')}</select></label><div><b>판별된 형식</b><p id="rw-tag-import-mode" class="rw-import-mode">파일을 선택하면 형식을 자동 판별합니다.</p></div></div><p class="rw-muted">여기로 XLSX/XLS/CSV 파일을 여러 개 끌어다 놓을 수도 있습니다.</p><details class="rw-import-paste"><summary>엑셀 두 열을 복사해서 붙여넣기</summary><textarea id="rw-tag-import-paste" placeholder="셀피아 SKU&#9;태그명"></textarea><button class="btn" id="rw-tag-import-parse" type="button">붙여넣은 내용 검사</button></details><div id="rw-tag-import-summary" class="rw-rule-summary">아직 읽은 행이 없습니다.</div><h4>파일별 검사 결과</h4><div class="rw-scroll"><table><thead><tr><th>파일</th><th>감지 태그</th><th>입력 SKU</th><th>상태</th></tr></thead><tbody id="rw-tag-import-files"></tbody></table></div><h4>행 미리보기</h4><div class="rw-bar"><button class="btn" id="rw-tag-import-filter">차단만 보기</button><button class="btn" id="rw-tag-import-download" disabled>차단행 XLSX 다운로드</button></div><div class="rw-scroll"><table><thead><tr><th>파일</th><th>행</th><th>셀피아 SKU</th><th>적용 태그</th><th>검사 결과</th></tr></thead><tbody id="rw-tag-import-rows"></tbody></table></div><div class="rw-bar"><span class="rw-muted">표시는 최대 200행 · 저장은 검사한 파일 전체</span><button class="btn primary" id="rw-tag-import-apply" disabled>검사된 APPLY 행 태그 적용</button></div>`);
   renderTagImport();const fileInput=$('tag-import-file'),tagSelect=$('tag-import-tag'),drop=$('tag-import-drop');if(tagId&&state.tags.some(tag=>String(tag.tag_id)===String(tagId)))tagSelect.value=String(tagId);
   const process=files=>run(()=>previewTagImportFiles(files,{preferredTagId:tagSelect.value}));fileInput.onchange=()=>process(fileInput.files);drop.ondragover=event=>{event.preventDefault();};drop.ondrop=event=>{event.preventDefault();process(event.dataTransfer?.files);};
   $('tag-import-parse').onclick=()=>run(()=>previewTagImport(importTextRows($('tag-import-paste').value)));tagSelect.onchange=()=>{if(state.tagImport?.prepared?.length)void run(()=>validatePreparedTagImports(state.tagImport.prepared.map(item=>({...item,manualTagId:item.manualTagId||''})),{preferredTagId:tagSelect.value}));};$('tag-import-apply').onclick=()=>run(applyTagImport);if(openFilePicker)fileInput.click();
  }
  async function applyTagImport(){
-  const data=state.tagImport,tagId=null;if(!data?.rows.length||!data.server)throw Error('먼저 파일 전체 검사를 완료하세요.');if(!data.canApply)throw Error('확인 필요 또는 오류 파일이 있어 저장할 수 없습니다.');
-  progressStatus(`1/3 · 전체 ${data.rows.length.toLocaleString('ko-KR')}행을 DB에 저장하는 중…`);
-  const result=await D.bulkImportTags({rows:data.rows,tagId,preview:false});
-  const skus=[...new Set(data.rows.map(row=>row.sku).filter(Boolean))];
-  const importedTagIds=new Set(data.rows.map(row=>importTagByName(row.tag_name)?.tag_id).filter(Boolean));
+  const data=state.tagImport,tagId=null;if(!data?.rows.length||!data.server)throw Error('먼저 파일 검사를 완료하세요.');if(!data.canApply||data.applied)throw Error('저장할 APPLY 행이 없습니다.');
+  const candidates=data.server.row_results.filter(row=>row.state==='APPLY'),rows=candidates.map(row=>data.rows[row.row_no-1]);
+  progressStatus(`1/3 · APPLY ${rows.length.toLocaleString('ko-KR')}행을 재검사하고 DB에 저장하는 중…`);
+  const result=await D.bulkImportTags({rows,tagId,preview:false,partial:true});
+  const merged=[...data.server.row_results];for(const row of result.row_results||[]){const original=candidates[row.row_no-1];merged[original.row_no-1]={...row,row_no:original.row_no};}
+  data.server={...result,row_count:merged.length,row_results:merged,noop_count:merged.filter(row=>row.state==='NOOP').length,blocked_count:merged.filter(row=>row.state==='BLOCK').length,invalid_count:merged.filter(row=>row.state==='INVALID').length};data.applied=true;data.canApply=false;renderTagImport();
+  const skus=result.applied_skus||[];
+  const importedTagIds=new Set((result.row_results||[]).filter(row=>row.state==='APPLY').map(row=>importTagByName(row.tag_name)?.tag_id).filter(Boolean));
   progressStatus(`2/3 · 태그 DB 저장 완료 · SKU ${result.sku_count.toLocaleString('ko-KR')}개 · 연결 ${result.inserted_tag_count.toLocaleString('ko-KR')}개`);
   state.registry=await D.ruleRegistry('list');
   const rules=state.registry.rules.filter(rule=>importedTagIds.has(rule.tag_id));
   let calculation=null,calculationError=null;
-  if(rules.length){
+  if(rules.length&&skus.length){
    progressStatus('3/3 · 수식 태그 가격을 다시 계산하는 중…');
    try{calculation=await materialize(skus,{sources:sourcesForRules(rules),reason:'tag-excel-import'});}
    catch(error){calculationError=error?.message||String(error);}
   }
-  state.tagImport.server={...data.server,...result};renderTagImport();$('tag-import-apply').disabled=true;
-  const message=`태그 DB 저장 완료 · 전체 ${result.row_count.toLocaleString('ko-KR')}행 · SKU ${result.sku_count.toLocaleString('ko-KR')}개 · 태그 연결 ${result.inserted_tag_count.toLocaleString('ko-KR')}개${calculation?' · '+calculationState(calculation):''}${calculationError?` · 가격 재계산 실패(태그 적용은 유지됨): ${calculationError}`:''}`;
+  const message=`태그 DB 저장 완료 · 전체 ${merged.length.toLocaleString('ko-KR')} · 적용 ${result.applied_count||0} · 변경 없음 ${data.server.noop_count} · 차단 ${data.server.blocked_count} · 오류 ${data.server.invalid_count}${calculation?' · '+calculationState(calculation):''}${calculationError?` · 가격 재계산 실패(태그 적용은 유지됨): ${calculationError}`:''}`;
   status(message);$('drawer-status').textContent=message;g.dispatchEvent(new CustomEvent('hub-rules-changed',{detail:{persisted:true}}));
  }
  async function openBulk(){if(!current())throw Error('먼저 저장된 수식을 선택하세요.');state.checks=new Set();drawer('SKU 일괄적용',`<div class="rw-rule-summary">${esc(current().name)} · ${esc(fieldLabels[current().target_field])}</div><div class="rw-bar"><input id="rw-search" placeholder="SKU 또는 상품명" aria-label="SKU 또는 상품 검색"><button class="btn" id="rw-search-go">검색</button><input type="file" id="rw-bulk-file" accept=".xlsx,.xls,.csv" aria-label="SKU 엑셀 업로드"></div><textarea id="rw-paste" placeholder="SKU 목록 붙여넣기" aria-label="SKU 목록 붙여넣기"></textarea><div class="rw-bar"><button class="btn" id="rw-paste-go">붙여넣기 조회</button><button class="btn" id="rw-select-all">전체 선택</button><span id="rw-selected-count">0개 선택</span></div><div class="rw-scroll"><table><thead><tr><th></th><th>SKU</th><th>상품 / 옵션</th><th>현재 수식</th><th>적용 후 수식</th><th>충돌</th></tr></thead><tbody id="rw-bulk-rows"></tbody></table></div><div class="rw-bar"><button class="btn" id="rw-remove">선택 수식만 제거</button><button class="btn primary" id="rw-apply">선택 SKU에 적용</button></div>`);
@@ -461,5 +474,5 @@
  async function loadOriginals(){const files=await D.loadLatestSellerOriginalStatus();const source=$('platform-source').value;const entry=files.find(r=>r.source===source);$('export-file').innerHTML='<option value="">최신 보관 원본 전체</option>'+option(Object.fromEntries((entry?.files||[]).map(f=>[f.name,f.name])), '');}
  async function loadHistory(){const docs=(await D.workDocument('list','formula')).filter(d=>d.title.startsWith('registry-export:')).slice(0,20);const history=await Promise.all(docs.map(d=>D.workDocument('get','formula',{id:d.id})));if(!$('history'))return;$('history').innerHTML=history.map(d=>`<tr><td>${esc(d.body.created_at)}</td><td>${esc(sources[d.body.source])}</td><td>${d.body.sku_count}</td><td>${esc((d.body.rule_versions||[]).map(r=>name(r.id)+' v'+r.version).join(', '))}</td></tr>`).join('');}
  $('new').onclick=newFormulaTag;$('refresh').onclick=()=>run(refresh);$('close').onclick=()=>{$('backdrop').hidden=true;};$('backdrop').onclick=e=>{if(e.target===$('backdrop'))$('backdrop').hidden=true;};document.addEventListener('keydown',e=>{if(e.key==='Escape')$('backdrop').hidden=true;});document.querySelectorAll('.rw-tabs button').forEach(b=>b.onclick=()=>{if(b.dataset.tab==='bulk'){void run(openTagImport);return;}state.tab=b.dataset.tab;renderTab();});
- g.HubPriceWorkspace={refresh:()=>run(refresh),openForTag,state,parseTagImportRows,tagNameFromFilename,normalizeTagName,resolveTagImportTag,formatTagWorkbookSkuColumn,addTagWorkbookMetadata,openTagImport:options=>run(()=>openTagImport(options))};g.TagPriceWorkspace=g.HubPriceWorkspace;renderTab();
+ g.HubPriceWorkspace={blockedTagWorkbook,refresh:()=>run(refresh),openForTag,state,parseTagImportRows,tagNameFromFilename,normalizeTagName,resolveTagImportTag,formatTagWorkbookSkuColumn,addTagWorkbookMetadata,openTagImport:options=>run(()=>openTagImport(options))};g.TagPriceWorkspace=g.HubPriceWorkspace;renderTab();
 })(window);

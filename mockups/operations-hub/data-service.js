@@ -2778,9 +2778,9 @@
     const {data,error}=await db.rpc('hub_tag_assign_v1',{p_session_token:requireOperationsHubSessionToken(),p_tag_id:tagId,p_skus:[...new Set(skus)],p_action:action});
     if(error)throw readableDatabaseError(error);return data;
   }
-  async function bulkImportTags({rows,tagId=null,preview=true}) {
-    const normalized=(Array.isArray(rows)?rows:[]).map(row=>({sku:cleanText(row?.sku),tag_name:cleanText(row?.tag_name)}));
-    const {data,error}=await db.rpc('hub_tag_bulk_import_v1',{p_session_token:requireOperationsHubSessionToken(),p_rows:normalized,p_tag_id:tagId||null,p_preview:Boolean(preview)});
+  async function bulkImportTags({rows,tagId=null,preview=true,partial=false}) {
+    const normalized=(Array.isArray(rows)?rows:[]).map(row=>({sku:cleanText(row?.sku),tag_name:cleanText(row?.tag_name),...(partial?{source_row_no:row?.source_row_no,source_file:cleanText(row?.source_file)}:{})}));
+    const {data,error}=await db.rpc(partial?'hub_tag_bulk_import_v2':'hub_tag_bulk_import_v1',{p_session_token:requireOperationsHubSessionToken(),p_rows:normalized,p_tag_id:tagId||null,p_preview:Boolean(preview)});
     if(error)throw readableDatabaseError(error);return data||{};
   }
   async function saveTagRule({tag,rule}) {
