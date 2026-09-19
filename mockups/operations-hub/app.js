@@ -1310,13 +1310,24 @@ function paintVirtualMatrix(){
  if(!matrixDataset||matrixVirtualPainting)return;const rows=matrixState.rows,visible=Math.ceil((matrixShell.clientHeight||700)/matrixRowHeight),start=Math.max(0,Math.floor(matrixShell.scrollTop/matrixRowHeight)-6),end=Math.min(rows.length,start+visible+12);
  if(start===matrixVirtualStart&&matrixBody.querySelector('[data-sku]'))return;matrixVirtualStart=start;const at=performance.now();matrixVirtualPainting=true;
  try{renderLiveMatrixRows(rows.slice(start,end));if(rows.length){const spacer=h=>{const tr=document.createElement('tr');tr.className='matrix-virtual-spacer';tr.setAttribute('aria-hidden','true');tr.innerHTML=`<td colspan="${MATRIX_COLUMN_COUNT}" style="height:${h}px;padding:0;border:0"></td>`;return tr;};matrixBody.prepend(spacer(start*matrixRowHeight));matrixBody.append(spacer((rows.length-end)*matrixRowHeight));const heights=[...matrixBody.querySelectorAll('tr[data-sku]')].slice(0,5).map(r=>r.getBoundingClientRect().height).filter(h=>h>0);if(heights.length&&start===0){matrixRowHeight=heights.reduce((a,b)=>a+b,0)/heights.length;matrixBody.lastElementChild.firstElementChild.style.height=((rows.length-end)*matrixRowHeight)+'px';}}
+  rebindVirtualMatrixSelection();
   matrixPerformance.renderMs=performance.now()-at;
  }finally{matrixVirtualPainting=false;}
 }
 matrixShell.addEventListener('scroll',()=>{if(matrixVirtualFrame)return;matrixVirtualFrame=requestAnimationFrame(()=>{matrixVirtualFrame=0;paintVirtualMatrix();});},{passive:true});
+function rebindVirtualMatrixSelection(){
+ const key=cell=>{const row=cell?.closest('tr[data-sku]');return row?row.dataset.sku+'|'+cell.dataset.matrixColumn:null;};
+ indexMatrixBodyColumns();const visible=new Map([...matrixBody.querySelectorAll('tr[data-sku] > td[data-matrix-column]')].map(c=>[key(c),c]));
+ const bind=cell=>visible.get(key(cell))||cell;
+ matrixCellSelection.selected=new Set([...matrixCellSelection.selected].map(bind));matrixCellSelection.dragBase=new Set([...matrixCellSelection.dragBase].map(bind));
+ matrixCellSelection.anchor=bind(matrixCellSelection.anchor);matrixCellSelection.focus=bind(matrixCellSelection.focus);
+ for(const cell of matrixCellSelection.selected){const sku=cell?.closest('tr[data-sku]')?.dataset.sku;if(sku&&matrixDataset.bySku.has(sku))matrixRowsBySku.set(sku,matrixDataset.bySku.get(sku));}
+ paintMatrixCellSelection();
+}
+
 function renderLiveMatrixRows(products) {
   if(typeof matrixDataset!=='undefined'&&matrixDataset&&!matrixVirtualPainting){matrixVirtualStart=-1;paintVirtualMatrix();return;}
-  clearMatrixCellSelection();
+  if(typeof matrixVirtualPainting==='undefined'||!matrixVirtualPainting)clearMatrixCellSelection();
   matrixRowsBySku.clear();
   if (!products.length) {
     matrixBody.innerHTML = `<tr class="matrix-empty-row"><td colspan="${MATRIX_COLUMN_COUNT}"><b>검색 결과가 없습니다.</b><span>SKU 또는 자사코드를 다시 확인해주세요.</span></td></tr>`;
@@ -1579,7 +1590,7 @@ async function loadCanonicalMatrix({resetScroll=false,fullReload=false}={}){
   if(!matrixDataset||fullReload){if(!matrixFullLoad){matrixState.loading=true;setMatrixConnection('loading','전체 Matrix 생성 중');matrixFullLoad=liveData.loadFullMatrixDataset({onProgress:p=>{setMatrixConnection('loading',`전체 ${formatNumber(p.loaded)} / ${formatNumber(p.total)} SKU · ${(p.elapsed/1000).toFixed(0)}초`);Object.assign(matrixPerformance,{loaded:p.loaded,total:p.total,initialMs:p.elapsed,...p.metrics});showMatrixPerformance();}}).then(result=>{const assembledAt=performance.now();matrixDataset=new window.HubMatrixDataset.Dataset(result.rows,result.count);matrixPerformance.assemblyMs=performance.now()-assembledAt;matrixPerformance.initialMs=result.elapsed;matrixPerformance.count=result.count;Object.assign(matrixPerformance,result.metrics);matrixPerformance.heapBytes=performance.memory?.usedJSHeapSize||null;matrixSourceReloadNeeded=false;}).finally(()=>{matrixFullLoad=null;matrixState.loading=false;});}await matrixFullLoad;}
   if(matrixDirtySkus.size){const targets=[...matrixDirtySkus].filter(s=>matrixDataset.bySku.has(s)),versions=new Map(targets.map(s=>[s,matrixDirtyVersions.get(s)]));if(targets.length)await refreshMatrixSkus(targets);targets.forEach(s=>{if(matrixDirtyVersions.get(s)===versions.get(s))matrixDirtySkus.delete(s);});}
   mountMatrixClientFilters();const at=performance.now();matrixState.rows=matrixDataset.select({...matrixState,skus:matrixState.codeListSkus,searchType:document.getElementById('matrix-search-type')?.value||'all',seller:document.getElementById('matrix-client-seller')?.value,tagId:document.getElementById('matrix-client-tag')?.value,state:document.getElementById('matrix-client-state')?.value});matrixPerformance.filterMs=performance.now()-at;matrixState.total=matrixState.rows.length;matrixState.directCount=matrixState.total;matrixState.relatedCount=0;
-  if(resetScroll)matrixShell.scrollTop=0;renderLiveMatrixRows(matrixState.rows);
+  clearMatrixCellSelection();if(resetScroll)matrixShell.scrollTop=0;renderLiveMatrixRows(matrixState.rows);
   document.getElementById('matrix-total-count').textContent=formatNumber(matrixState.total);document.getElementById('matrix-range').textContent=`${formatNumber(matrixState.total)} 결과 / 전체 ${formatNumber(matrixDataset.rows.length)} SKU · 메모리 유지`;document.getElementById('matrix-related-count').hidden=true;
   document.querySelector('.matrix-pagination').hidden=true;document.querySelector('.matrix-page-size').hidden=true;setMatrixConnection('connected',`전체 ${formatNumber(matrixDataset.rows.length)} · 검색/필터 로컬`);setSystemHealthComponent('matrix',true);matrixState.lastLoadedAt=new Date().toISOString();showMatrixPerformance();return true;
  }catch(error){matrixState.loading=false;setMatrixConnection('error','전체 조회 실패 · 기존 dataset 유지');showToast(error.message);console.error(error);return false;}
@@ -3432,7 +3443,7 @@ function selectedSourceRefreshTargets() {
     sellpia_order_unit:'sellpia_source_order_unit',
     sellpia_minimum_order_unit:'sellpia_source_minimum_order_unit'
   };
-  for (const cell of matrixBody.querySelectorAll('td.matrix-cell-selected')) {
+  for (const cell of matrixCellSelection.selected) {
     const row = cell.closest('tr[data-sku]');
     if (!row) continue;
     const sku = row.dataset.sku;
@@ -3548,7 +3559,7 @@ function paintMatrixCellSelection() {
     cell.classList.remove('matrix-cell-selected', 'matrix-cell-anchor');
     cell.setAttribute('aria-selected', 'false');
   });
-  matrixCellSelection.selected = new Set([...matrixCellSelection.selected].filter(cell => cell?.isConnected));
+  matrixCellSelection.selected = new Set([...matrixCellSelection.selected].filter(cell => cell?.isConnected || typeof matrixDataset!=='undefined'&&matrixDataset?.bySku.has(cell?.closest('tr[data-sku]')?.dataset.sku)));
   matrixCellSelection.selected.forEach(cell => {
     cell.classList.add('matrix-cell-selected');
     cell.setAttribute('aria-selected', 'true');
@@ -7382,6 +7393,7 @@ function selectedMatrixTargets() {
       }
     }
   }
+  for(const cell of selectedCells){if(cell.isConnected||typeof matrixDataset==='undefined'||!matrixDataset)continue;const sku=cell.closest('tr[data-sku]')?.dataset.sku;if(!sku||!matrixDataset?.bySku.has(sku))continue;cells.add(cell);skus.add(sku);if(cell.dataset.channel){sources.add(cell.dataset.channel);sourceSkuSets[cell.dataset.channel]?.add(sku);}}
   return {
     cells:[...cells],
     skus:[...skus],
