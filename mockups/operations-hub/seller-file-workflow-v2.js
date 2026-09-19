@@ -328,7 +328,7 @@
   const button=document.querySelector('[data-standard-preview="'+source+'"]');if(button)button.disabled=true;global.__systemV3DirectExportBusy=true;
   standardResult(source,'매트릭스 가격·재고와 원본 위치를 검증하는 중…');
   standardProgress(source,3,'변경분 조회','현재 매트릭스 표시값과 최신 원본을 비교합니다.');
-  try{const skus=await directScopeSkus();await refreshMatrixStockStatus(source,skus);const result=await bridge.previewChangedOnly({source,skus});standardResult(source,[result.count,result.detail,'재고는 현재 수정안/판매처 반영 상태만 사용'].filter(Boolean).join(' · '),'success');setStatus((source==='smartstore'?'스마트스토어':'메이크샵')+' 변경분 미리보기 완료','success');}
+  try{const skus=await directScopeSkus();const result=await bridge.previewChangedOnly({source,skus});const stock=document.querySelector('[data-matrix-stock-status="'+source+'"]');if(stock){stock.className='export-role-status matrix-stock-state ready';stock.textContent='carrier 대상 '+n(result.diagnostics?.sku_count)+' SKU · DB 조회 '+n(result.diagnostics?.query_count)+'회 · 전체 snapshot 없음';}standardResult(source,[result.count,result.detail,'재고는 현재 수정안/판매처 반영 상태만 사용'].filter(Boolean).join(' · '),'success');setStatus((source==='smartstore'?'스마트스토어':'메이크샵')+' 변경분 미리보기 완료','success');}
   catch(error){standardResult(source,error?.message||String(error),'error');setStatus('미리보기 실패: '+(error?.message||error),'error');}
   finally{global.__systemV3DirectExportBusy=false;if(button)button.disabled=false;}
  }
@@ -338,7 +338,7 @@
   const button=document.querySelector('[data-standard-run="'+source+'"]');if(button)button.disabled=true;global.__systemV3DirectExportBusy=true;
   if(typeof lockStandardGeneration==='function')lockStandardGeneration(source,true);
   standardProgress(source,3,'파일 생성 준비','현재 매트릭스 표시값과 최신 원본 위치를 읽습니다.');standardResult(source,'매트릭스에 보이는 값으로 파일을 생성하는 중…');setStatus('판매처 파일 생성 중…');
-  try{const skus=await directScopeSkus();await refreshMatrixStockStatus(source,skus);const result=await bridge.runChangedOnly({source,skus});standardProgress(source,100,'변경분 파일 생성 완료','현재 매트릭스와 다른 안전 행만 원본 양식에 남겼습니다.','done');standardResult(source,[result.title,result.progressDetail].filter(Boolean).join(' · ')||'변경분 파일 생성 완료','success');setStatus('변경분 파일 생성 완료','success');}
+  try{const skus=await directScopeSkus();const result=await bridge.runChangedOnly({source,skus});const stock=document.querySelector('[data-matrix-stock-status="'+source+'"]');if(stock){stock.className='export-role-status matrix-stock-state ready';stock.textContent='carrier 대상 '+n(result.diagnostics?.sku_count)+' SKU · DB 조회 '+n(result.diagnostics?.query_count)+'회 · 전체 snapshot 없음';}standardProgress(source,100,'변경분 파일 생성 완료','현재 매트릭스와 다른 안전 행만 원본 양식에 남겼습니다.','done');standardResult(source,[result.title,result.progressDetail].filter(Boolean).join(' · ')||'변경분 파일 생성 완료','success');setStatus('변경분 파일 생성 완료','success');}
   catch(error){standardProgress(source,100,'파일 생성 중단',error?.message||String(error),'error');standardResult(source,error?.message||String(error),'error');setStatus('파일 생성 실패: '+(error?.message||error),'error');}
   finally{global.__systemV3DirectExportBusy=false;if(button)button.disabled=false;if(typeof lockStandardGeneration==='function')lockStandardGeneration(source,false);}
  }
