@@ -8076,10 +8076,12 @@ async function transformStandardCarrierExport(plan,{download=false}={}){
   return {...plan,blob,appliedItems:transformed.appliedItems,skippedItems:skipped};
 }
 
-async function prepareChangedOnlyExport(source,skus=null,{download=false,onProgress=null}={}){
-  if(!['smartstore','makeshop'].includes(source))throw Error('변경분 내보내기는 스마트스토어·메이크샵만 지원합니다.');
+async function prepareChangedOnlyExport(source,skus=null,{download=false,onProgress=null,mode='changed_only'}={}){
+  if(!['smartstore','makeshop'].includes(source))throw Error('원본 기반 내보내기는 스마트스토어·메이크샵만 지원합니다.');
+  if(!['changed_only','full_original'].includes(mode))throw Error('내보내기 모드를 확인해주세요.');
   const clock=()=>globalThis.performance?.now?.()??Date.now(),started=clock(),timings={download_ms:0,parse_ms:0,mapping_ms:0,target_ms:0,plan_ms:0,serialize_ms:0},queries=[];
   const requested=Array.isArray(skus)?new Set(skus.map(value=>String(value||'').trim()).filter(Boolean)):null;
+  const identityKey=row=>JSON.stringify([String(row?.product_code||'').trim(),String(row?.option_code||'').trim()]);
   let mark=clock();
   const filesBySource=await liveData.downloadLatestSellerOriginals([source]);
   timings.download_ms=Math.round(clock()-mark);
@@ -8094,11 +8096,16 @@ async function prepareChangedOnlyExport(source,skus=null,{download=false,onProgr
     mark=clock();
     const mapped=await liveData.loadCarrierSellerMappings({source,identities:parsed.normalizedRows,onQuery});
     timings.mapping_ms+=Math.round(clock()-mark);
-    let mappingRows=mapped.rows||[],scopedCarrierRows=parsed.normalizedRows;
+    let mappingRows=mapped.rows||[];
+    const mappedIdentities=new Set(mappingRows.map(identityKey));
+    let scopedCarrierRows;
     if(requested){
-      const selectedProducts=new Set(mappingRows.filter(row=>requested.has(row.sku)).map(row=>String(row.product_code||'').trim()).filter(Boolean));
+      const selectedProducts=new Set(mappingRows.filter(row=>requested.has(String(row.sku||'').trim())).map(row=>String(row.product_code||'').trim()).filter(Boolean));
       mappingRows=mappingRows.filter(row=>selectedProducts.has(String(row.product_code||'').trim()));
       scopedCarrierRows=parsed.normalizedRows.filter(row=>selectedProducts.has(String(row.product_code||'').trim()));
+    }else{
+      // Untouched/unmapped original rows are not export warnings. Start from identities that are actually connected.
+      scopedCarrierRows=parsed.normalizedRows.filter(row=>mappedIdentities.has(identityKey(row)));
     }
     const matchedSkus=[...new Set(mappingRows.map(row=>String(row.sku||'').trim()).filter(Boolean))];
     matchedSkuCount+=matchedSkus.length;
@@ -8109,31 +8116,55 @@ async function prepareChangedOnlyExport(source,skus=null,{download=false,onProgr
     const targetBySku=new Map((targets.rows||[]).map(row=>[row.sku,row]));
     const snapshotRows=mappingRows.map(row=>({...targetBySku.get(row.sku),...row}));
     mark=clock();
-    const plan=window.HubCurrentPriceExport.prepareCarrierItems(source,file.name,scopedCarrierRows,snapshotRows,{snapshotId:null});
+    let plan=window.HubCurrentPriceExport.prepareCarrierItems(source,file.name,scopedCarrierRows,snapshotRows,{snapshotId:null});
+    if(!requested){
+      const priceProducts=new Set((plan.operations||[]).filter(item=>item.field_key==='sellpia_sale_price').map(item=>String(item.seller_product_code||'')).filter(Boolean));
+      if(priceProducts.size){
+        const expanded=parsed.normalizedRows.filter(row=>mappedIdentities.has(identityKey(row))||priceProducts.has(String(row.product_code||'')));
+        if(expanded.length!==scopedCarrierRows.length){scopedCarrierRows=expanded;plan=window.HubCurrentPriceExport.prepareCarrierItems(source,file.name,scopedCarrierRows,snapshotRows,{snapshotId:null});}
+      }
+    }
     timings.plan_ms+=Math.round(clock()-mark);plans.push(plan);skipped.push(...plan.excludedItems);
     const fileItems=(plan.operations||[]).map(item=>({...item}));
     if(!fileItems.length)continue;
-    const dataRows=new Set(scopedCarrierRows.map(row=>Number(row.source_row_no))),keepRows=new Set(fileItems.map(item=>Number(item.source_row_no)));
+    const allDataRows=new Set(parsed.normalizedRows.map(row=>Number(row.source_row_no)).filter(Number.isInteger));
+    const keepRowsForItems=items=>{
+      const changedProducts=new Set(items.map(item=>String(item.seller_product_code||'')).filter(Boolean));
+      return new Set(parsed.normalizedRows.filter(row=>changedProducts.has(String(row.product_code||''))).map(row=>Number(row.source_row_no)).filter(Number.isInteger));
+    };
+    const transformOptions=items=>mode==='changed_only'?{dataRowNumbers:allDataRows,keepOnlyRows:keepRowsForItems(items)}:{};
     mark=clock();
-    let transformed=await sellerExport.transformSellerFile(file,fileItems,{dataRowNumbers:dataRows,keepOnlyRows:keepRows});
+    let transformed=await sellerExport.transformSellerFile(file,fileItems,transformOptions(fileItems));
     timings.serialize_ms+=Math.round(clock()-mark);
+    let appliedItems=transformed.appliedItems,warningPreview=plan.preview;
     if(transformed.skippedItems.length){
       skipped.push(...transformed.skippedItems);
       const blocked=new Set(transformed.skippedItems.map(entry=>Number(entry.item?.export_item_id))),safe=fileItems.filter(item=>!blocked.has(Number(item.export_item_id))).map(item=>({...item}));
       if(!safe.length)continue;
       mark=clock();
-      transformed=await sellerExport.transformSellerFile(file,safe,{dataRowNumbers:dataRows,keepOnlyRows:new Set(safe.map(item=>Number(item.source_row_no)))});
-      timings.serialize_ms+=Math.round(clock()-mark);
-      skipped.push(...transformed.skippedItems);
+      transformed=await sellerExport.transformSellerFile(file,safe,transformOptions(safe));
+      timings.serialize_ms+=Math.round(clock()-mark);skipped.push(...transformed.skippedItems);appliedItems=transformed.appliedItems;
     }
-    if(!transformed.appliedItems.length)continue;
-    outputs.push({file,blob:transformed.blob,appliedItems:transformed.appliedItems});
-    if(download)sellerExport.downloadBlob(transformed.blob,sellerExport.outputName(file.name).replace('_SystemV3반영','_SystemV3변경분'));
+    if(!appliedItems.length)continue;
+    let outputBlob=transformed.blob;
+    if(mode==='changed_only'){
+      const keepRows=keepRowsForItems(appliedItems);
+      const sorted=[...allDataRows].sort((a,b)=>a-b),kept=sorted.filter(row=>keepRows.has(row)),first=sorted[0]??1,rowMap=new Map(kept.map((row,index)=>[row,first+index]));
+      warningPreview=(plan.preview||[]).filter(row=>keepRows.has(Number(row.source_row_no))).map(row=>({...row,source_row_no:rowMap.get(Number(row.source_row_no))||row.source_row_no}));
+    }
+    outputBlob=await sellerExport.markCarrierWarnings(outputBlob,source,warningPreview);
+    outputs.push({file,blob:outputBlob,appliedItems});
+    if(download){
+      const suffix=mode==='full_original'?'_SystemV3전체반영':'_SystemV3변경분';
+      sellerExport.downloadBlob(outputBlob,sellerExport.outputName(file.name).replace('_SystemV3반영',suffix));
+    }
   }
-  if(download&&skipped.length)sellerExport.downloadBlob(new Blob([sellerExport.conflictCsv(skipped)],{type:'text/csv;charset=utf-8'}),`${source}_변경분_경고.csv`);
+  if(download&&skipped.length)sellerExport.downloadBlob(new Blob([sellerExport.conflictCsv(skipped)],{type:'text/csv;charset=utf-8'}),`${source}_${mode==='full_original'?'전체반영':'변경분'}_경고.csv`);
   timings.total_ms=Math.round(clock()-started);
-  return {source,outputs,plans,skippedItems:skipped,changedItems:outputs.flatMap(output=>output.appliedItems),timings,diagnostics:{queries,query_count:queries.length,carrier_rows:carrierRows,sku_count:matchedSkuCount,full_snapshot:false}};
+  return {source,mode,outputs,plans,skippedItems:skipped,changedItems:outputs.flatMap(output=>output.appliedItems),timings,diagnostics:{queries,query_count:queries.length,carrier_rows:carrierRows,sku_count:matchedSkuCount,full_snapshot:false}};
 }
+
+async function prepareFullOriginalExport(source,skus=null,options={}){return prepareChangedOnlyExport(source,skus,{...options,mode:'full_original'});}
 
 window.SystemV3SellerExportBridge={
   async refreshInventoryDrafts({source,skus=null,overwriteBlank=false,job=null,onProgress=null,onCheckpoint=null}={}){
@@ -8206,6 +8237,15 @@ window.SystemV3SellerExportBridge={
       detail:document.getElementById('seller-export-preview-detail')?.textContent||'',
       selectedSkus:[...sellerExportState.selectedSkus]
     };
+  },
+  async previewFullOriginal({source,skus=null}={}){
+    const result=await prepareFullOriginalExport(source,skus,{download:false,onProgress:detail=>globalThis.dispatchEvent(new CustomEvent('system-v3-seller-export-progress',{detail:{source,percent:45,title:'carrier 대상 조회',detail}}))});
+    return {source,count:`반영 ${formatNumber(result.changedItems.length)}건`,detail:`전체 원본 유지 · carrier ${formatNumber(result.diagnostics.carrier_rows)}행 · 대상 ${formatNumber(result.diagnostics.sku_count)} SKU · 경고 ${formatNumber(result.skippedItems.length)}건 · ${(result.timings.total_ms/1000).toFixed(2)}초`,...result};
+  },
+  async runFullOriginal({source,skus=null}={}){
+    const result=await prepareFullOriginalExport(source,skus,{download:true,onProgress:detail=>globalThis.dispatchEvent(new CustomEvent('system-v3-seller-export-progress',{detail:{source,percent:45,title:'carrier 대상 조회',detail}}))});
+    if(!result.outputs.length)throw Error('현재 매트릭스와 다른 안전한 변경 행이 없습니다.');
+    return {source,title:'전체 원본 XLSX 생성 완료',progressDetail:`원본 행 전체 유지 · 파일 ${formatNumber(result.outputs.length)}개 · 반영 ${formatNumber(result.changedItems.length)}건 · 경고 ${formatNumber(result.skippedItems.length)}건 · ${(result.timings.total_ms/1000).toFixed(2)}초`,...result};
   },
   async previewChangedOnly({source,skus=null}={}){
     const result=await prepareChangedOnlyExport(source,skus,{download:false,onProgress:detail=>globalThis.dispatchEvent(new CustomEvent('system-v3-seller-export-progress',{detail:{source,percent:45,title:'carrier 대상 조회',detail}}))});

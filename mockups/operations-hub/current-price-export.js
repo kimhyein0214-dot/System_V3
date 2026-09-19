@@ -229,20 +229,28 @@
    }
    items.push(...rowItems);preview.push({source_row_no:original.source_row_no,sku:row.sku,product_code:row.product_code,option_code:row.option_code,status:'ready',disposition:changedFields.length?'change':'unchanged',changed:changedFields.length>0,changed_fields:changedFields,price_state:priceState,diff});
   }
-  // A product's base/discount is shared. Do not let a healthy sibling mutate a warned row indirectly.
+  // A product's base/discount is shared across options. If one sibling must keep its original
+  // price, freeze only the shared price/discount operations. Independent stock changes stay eligible.
   const warningProducts=new Set(preview.filter(row=>row.status==='warn_keep_original').map(row=>String(row.product_code||'')));
+  const sharedPriceReason='같은 상품의 일부 옵션이 원본 유지 대상이라 공유 판매가/할인은 원본 유지합니다. 재고 등 독립 필드는 안전한 경우 반영합니다.';
   for(const row of preview){
    if(row.status!=='ready'||!warningProducts.has(String(row.product_code||'')))continue;
-   row.status='warn_keep_original';row.disposition=row.status;row.changed=false;row.changed_fields=[];
-   row.reason='같은 상품에 원본 유지 경고가 있어 공유 판매가 보호를 위해 상품 전체 원본 유지';
-   row.diff.stock.after=row.diff.stock.before;row.diff.stock.changed=false;
+   const hadPriceCandidate=Boolean(row.diff?.price?.changed||row.diff?.price?.candidate_changed||row.changed_fields?.includes('price'));
+   if(!hadPriceCandidate)continue;
+   row.shared_price_warning=true;row.shared_price_reason=sharedPriceReason;
+   row.changed_fields=(row.changed_fields||[]).filter(field=>field!=='price');
    row.diff.price.after=row.diff.price.before;row.diff.price.changed=false;delete row.diff.price.candidate_changed;delete row.diff.price.candidate_after;
-   const export_item_id=nextId--;excludedItems.push({export_item_id,status:row.status,reason:row.reason,item:{export_item_id,source_channel:source,sellpia_sku_code:row.sku,seller_product_code:row.product_code,seller_option_code:row.option_code,field_key:'carrier_row',source_file_name:fileName,source_row_no:row.source_row_no}});
+   row.changed=Boolean(row.diff?.stock?.changed||row.changed_fields.length);
+   row.disposition=row.changed?'change_with_price_warning':'warn_keep_original';
+   row.reason=sharedPriceReason;
+   const export_item_id=nextId--;excludedItems.push({export_item_id,status:'warn_keep_original',reason:sharedPriceReason,item:{export_item_id,source_channel:source,sellpia_sku_code:row.sku,seller_product_code:row.product_code,seller_option_code:row.option_code,field_key:'sellpia_sale_price',source_file_name:fileName,source_row_no:row.source_row_no}});
   }
-  for(let index=items.length-1;index>=0;index--)if(warningProducts.has(String(items[index].seller_product_code||'')))items.splice(index,1);
+  for(let index=items.length-1;index>=0;index--){
+   if(items[index].field_key==='sellpia_sale_price'&&warningProducts.has(String(items[index].seller_product_code||'')))items.splice(index,1);
+  }
   const priceStates={calculated_complete:0,latest_generation_unreflected:0,timeout_error:0,original_fallback:0};
   for(const row of preview){const code=row.price_state?.code||'original_fallback';priceStates[code]=(priceStates[code]||0)+1;}
-  const summary={total:preview.length,matched:preview.filter(row=>row.sku).length,changed:preview.filter(row=>row.diff?.stock?.changed||row.diff?.price?.changed).length,candidate_changed:preview.filter(row=>row.diff?.stock?.changed||row.diff?.price?.candidate_changed).length,unchanged:preview.filter(row=>row.status==='ready'&&!row.changed).length,warned:preview.filter(row=>row.status==='warn_keep_original').length,blocked:preview.filter(row=>row.status==='blocked').length,price_states:priceStates};
+  const summary={total:preview.length,matched:preview.filter(row=>row.sku).length,changed:preview.filter(row=>row.diff?.stock?.changed||row.diff?.price?.changed).length,candidate_changed:preview.filter(row=>row.diff?.stock?.changed||row.diff?.price?.candidate_changed).length,unchanged:preview.filter(row=>row.status==='ready'&&!row.changed&&!row.shared_price_warning).length,warned:preview.filter(row=>row.status==='warn_keep_original'||row.shared_price_warning).length,warning_products:new Set(preview.filter(row=>row.status==='warn_keep_original'||row.shared_price_warning).map(row=>String(row.product_code||''))).size,shared_price_warned:preview.filter(row=>row.shared_price_warning).length,blocked:preview.filter(row=>row.status==='blocked').length,price_states:priceStates};
    const priceSafe=preview.length>0&&preview.every(row=>row.price_state?.safe===true);
    const canGenerate=preview.length>0&&summary.blocked===0;
    const versionToken=planVersionToken({source,fileName,snapshotId,preview,operations:items});

@@ -445,9 +445,30 @@
     zip.file(sheetPath,highlighted.sheetXml); zip.file(stylesPath,highlighted.stylesXml); return zip.generateAsync({type:'blob',compression:'DEFLATE',compressionOptions:{level:6}});
   }
 
+  function remapWorksheetRow(rowXml,fromRow,toRow){
+    if(fromRow===toRow)return rowXml;
+    let output=String(rowXml).replace(new RegExp('(<row\\b[^>]*\\br=")'+fromRow+'("[^>]*>)'),(_,head,tail)=>head+toRow+tail);
+    output=output.replace(new RegExp('\\br="([A-Z]+)'+fromRow+'"','g'),(_,column)=>'r="'+column+toRow+'"');
+    return output;
+  }
   function scopeWorksheetRows(sheetXml,dataRowNumbers,keepOnlyRows){
-    const dataRows=new Set([...(dataRowNumbers||[])].map(Number)),kept=new Set([...(keepOnlyRows||[])].map(Number));
-    return String(sheetXml).replace(/<row\b[^>]*\br="(\d+)"[^>]*>[\s\S]*?<\/row>/g,(rowXml,rowNo)=>dataRows.has(Number(rowNo))&&!kept.has(Number(rowNo))?'':rowXml);
+    const dataRows=[...(dataRowNumbers||[])].map(Number).filter(Number.isInteger).sort((a,b)=>a-b),kept=new Set([...(keepOnlyRows||[])].map(Number));
+    if(!dataRows.length)return String(sheetXml);
+    const first=dataRows[0],last=dataRows[dataRows.length-1],keptRows=dataRows.filter(row=>kept.has(row));
+    const rowMap=new Map(keptRows.map((row,index)=>[row,first+index]));
+    const removed=dataRows.length-keptRows.length;
+    let output=String(sheetXml).replace(/<row\b[^>]*\br="(\d+)"[^>]*>[\s\S]*?<\/row>/g,(rowXml,rowNo)=>{
+      const row=Number(rowNo);
+      if(dataRows.includes(row)){if(!kept.has(row))return '';return remapWorksheetRow(rowXml,row,rowMap.get(row));}
+      if(row>last&&removed>0)return remapWorksheetRow(rowXml,row,row-removed);
+      return rowXml;
+    });
+    const rowRefs=[...output.matchAll(/<row\b[^>]*\br="(\d+)"/g)].map(match=>Number(match[1])).filter(Number.isInteger);
+    if(rowRefs.length){
+      const maxRow=Math.max(...rowRefs);
+      output=output.replace(/<dimension\b([^>]*\bref=")([A-Z]+)1:([A-Z]+)\d+("[^>]*)\/?>(?:<\/dimension>)?/i,(_,head,left,right,tail)=>'<dimension'+head+left+'1:'+right+maxRow+tail+'/>');
+    }
+    return output;
   }
 
   async function transformSellerFile(file,items,options={}){
@@ -458,19 +479,24 @@
   }
 
   async function markCarrierWarnings(file,source,preview){
-    const warnings=(preview||[]).filter(row=>row.status==='warn_keep_original');
+    const warnings=(preview||[]).filter(row=>row.status==='warn_keep_original'||row.shared_price_warning);
     if(!warnings.length)return file;
     if(!['smartstore','makeshop'].includes(source))throw new Error('지원되지 않는 carrier 강조 양식입니다.');
     const parts=await xlsxParts(file),references=[];
     const parents=source==='makeshop'?makeshopProductRows(parts.sheetXml,parts.shared):null;
     for(const row of warnings){
       const rowNo=Number(row.source_row_no);
-      if(!Number.isInteger(rowNo)||rowNo<=0)throw new Error('원본 유지 경고의 셀 위치를 확인하지 못했습니다.');
+      if(!Number.isInteger(rowNo)||rowNo<=0)continue;
+      if(row.shared_price_warning&&row.status!=='warn_keep_original'){
+        if(source==='smartstore')references.push(...['F','BF','BG',...(row.option_code?['R']:[])].map(column=>column+rowNo));
+        else {if(row.option_code)references.push('AF'+rowNo);const parent=parents?.get(clean(row.product_code));if(parent)references.push(...['AS','DD','AT'].map(column=>column+parent));}
+        continue;
+      }
       const columns=source==='smartstore'?['F','BF','BG',...(row.option_code?['R','S']:['M'])]:(row.option_code?['AF','AG']:['AV']);
-      references.push(...columns.map(column=>`${column}${rowNo}`));
-      if(parents){const parent=parents.get(clean(row.product_code));if(parent)references.push(...['AS','DD','AT'].map(column=>`${column}${parent}`));}
+      references.push(...columns.map(column=>column+rowNo));
+      if(parents){const parent=parents.get(clean(row.product_code));if(parent)references.push(...['AS','DD','AT'].map(column=>column+parent));}
     }
-    // Red is format-only: do not rewrite text runs, formulas, numbers or stock blanks.
+    if(!references.length)return file;
     const marked=applyChangeHighlights(parts.sheetXml,parts.stylesXml,references,{fillColor:'FFFFC7CE',preserveText:true});
     parts.zip.file(parts.sheetPath,marked.sheetXml);parts.zip.file(parts.stylesPath,marked.stylesXml);
     return parts.zip.generateAsync({type:'blob',mimeType:'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',compression:'DEFLATE'});

@@ -45,9 +45,9 @@ const localAssets = [...html.matchAll(/(?:href|src)="(\.\/[^\"]+)"/g)].map(match
 assert.ok(localAssets.length >= 18, 'the export page must retain its local asset bundle');
 assert.ok(localAssets.every(asset => /\?v=[^&\"]+$/.test(asset)), 'all local export assets must be versioned');
 assert.match(html,/discount-price-math\.js\?v=20260914-matrix-visible-export-v2/,'shared matrix display math keeps its deployed version');
-assert.match(html,/seller-export-adapter\.js\?v=20260917-carrier-redcells-v1/,'warning color serializer uses a fresh deployed carrier version');
+assert.match(html,/seller-export-adapter\.js\?v=20260919-seller-export-modes-v1/,'warning color serializer uses a fresh deployed carrier version');
 assert.match(html,/app\.js\?v=[^"']+/,'carrier guard remains cache-versioned');
-assert.match(html,/current-price-export\.js\?v=20260917-carrier-warnings-v1/,'warning-aware TransformationPlan resolver uses a fresh deployed version');
+assert.match(html,/current-price-export\.js\?v=20260919-seller-export-modes-v1/,'warning-aware TransformationPlan resolver uses a fresh deployed version');
 assert.match(html,/ably-playauto-export\.js\?v=20260917-carrier-redcells-v1/,'Ably warning color serializer uses a fresh deployed version');
 assert.match(html,/seller-file-workflow-v2\.js\?v=[^"']+/,'seller file workflow remains cache-versioned');
 assert.match(html,/data-service\.js\?v=[^"']+/,'targeted carrier lookup data service remains cache-versioned');
