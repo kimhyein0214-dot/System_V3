@@ -3684,22 +3684,35 @@
     if(!fields)throw new Error('지원하지 않는 판매처입니다.');
     const productCodes=[...new Set((identities||[]).map(item=>cleanText(item?.product_code??item?.seller_product_code)).filter(Boolean))];
     if(!productCodes.length)return {source:safeSource,rows:[]};
-    const [productField,optionField]=fields,rows=[];
+    const [productField,optionField]=fields,rows=[],suppressed=new Set();
+    const mappingKey=(sku,product,option)=>JSON.stringify([cleanText(sku),cleanText(product),cleanText(option)]);
     for(let offset=0;offset<productCodes.length;offset+=100){
+      const chunk=productCodes.slice(offset,offset+100);
       for(let from=0;;from+=1000){
-        const {data}=await carrierRead('carrier seller identity',productCodes.slice(offset,offset+100).length,db.from('operations_hub_matrix_cached')
+        const {data}=await carrierRead('carrier link suppressions',chunk.length,db.from('operations_hub_link_suppressions')
+          .select('sellpia_sku_code,product_code,option_code')
+          .eq('source_channel',safeSource)
+          .in('product_code',chunk)
+          .order('sellpia_sku_code',{ascending:true}).range(from,from+999),onQuery);
+        for(const row of data||[])suppressed.add(mappingKey(row.sellpia_sku_code,row.product_code,row.option_code));
+        if(!data||data.length<1000)break;
+      }
+      for(let from=0;;from+=1000){
+        const {data}=await carrierRead('carrier seller identity',chunk.length,db.from('operations_hub_matrix_cached')
           .select(`sellpia_sku_code,${productField},${optionField}`)
-          .in(productField,productCodes.slice(offset,offset+100))
+          .in(productField,chunk)
           .order('sellpia_sku_code',{ascending:true}).range(from,from+999),onQuery);
         rows.push(...(data||[]).map(row=>({
           sku:cleanText(row.sellpia_sku_code),
           product_code:cleanText(row[productField]),
           option_code:cleanText(row[optionField])
-        })).filter(row=>row.sku&&row.product_code));
+        })).filter(row=>row.sku&&row.product_code&&!suppressed.has(mappingKey(row.sku,row.product_code,row.option_code))));
         if(!data||data.length<1000)break;
       }
     }
-    return {source:safeSource,rows};
+    const unique=new Map();
+    for(const row of rows){const key=mappingKey(row.sku,row.product_code,row.option_code);if(!unique.has(key))unique.set(key,row);}
+    return {source:safeSource,rows:[...unique.values()]};
   }
 
   async function loadSystemStocks(skus=[]) {
