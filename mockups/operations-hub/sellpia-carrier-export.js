@@ -76,7 +76,7 @@
         if(preview?.error)continue;
         const columnIndex=location.analysis.columns[FIELD_COLUMNS[key]], actual=location.row.row[columnIndex], expected=preview?.before;
         if(!same(actual,expected)){
-          appendBlock(blocks,sku,FIELD_LABELS[key],`${location.analysis.file.name}: 보관 원본 값(${actual})과 DB 원본 값(${expected})이 다릅니다.`,actual);
+          appendBlock(blocks,sku,FIELD_LABELS[key],`${location.analysis.file.name}: 보관 원본 값(${actual})과 같은 snapshot 원본 값(${expected})이 다릅니다.`,actual);
           blocked.add(sku);break;
         }
         if(!same(actual,after))pending.push({sku,key,field:FIELD_LABELS[key],row:location.row.physicalRow,columnIndex,expected,value:Number(after),numeric:true});
@@ -101,10 +101,22 @@
     };
   }
 
-  function csvBlob(rows){
+  function columnName(index){
+    let result='',value=Number(index)+1;
+    while(value>0){value--;result=String.fromCharCode(65+value%26)+result;value=Math.floor(value/26);}
+    return result;
+  }
+
+  function xlsxFileFromRows(rows,name){
     const X=global.XLSX;
-    const text=X.utils.sheet_to_csv(X.utils.aoa_to_sheet(rows),{FS:',',RS:'\r\n'});
-    return new Blob([new Uint8Array([0xEF,0xBB,0xBF]),text],{type:'text/csv;charset=utf-8'});
+    const sheet=X.utils.aoa_to_sheet(rows),book=X.utils.book_new();
+    X.utils.book_append_sheet(book,sheet,'Sellpia원본');
+    return new File([X.write(book,{type:'array',bookType:'xlsx',compression:true})],name,{type:'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'});
+  }
+
+  function xlsxOutputName(name,mode){
+    const base=String(name||'Sellpia원본').replace(/\.(csv|tsv|txt)$/i,'');
+    return `${base}${mode==='full'?'_SystemV3반영':'_SystemV3변경분'}.xlsx`;
   }
 
   async function build(prepared){
@@ -115,22 +127,24 @@
       const changes=prepared.changesByFile.get(analysis.file.name)||[], keep=prepared.changedRowsByFile.get(analysis.file.name)||new Set();
       if(prepared.mode==='changed_only'&&!keep.size)continue;
       if(analysis.delimited){
-        const rows=analysis.rows.map(row=>[...row]);
-        for(const change of changes)rows[change.row-1][change.columnIndex]=change.value;
-        let outputRows=rows;
+        let outputRows=analysis.rows.map(row=>[...row]),mappedChanges=changes;
         if(prepared.mode==='changed_only'){
           const kept=[...keep].sort((a,b)=>a-b);
-          outputRows=[rows[0],...kept.map((physicalRow,index)=>{
-            const row=[...rows[physicalRow-1]];
+          const rowMap=new Map(kept.map((physicalRow,index)=>[physicalRow,index+2]));
+          outputRows=[outputRows[0],...kept.map((physicalRow,index)=>{
+            const row=[...outputRows[physicalRow-1]];
             row[analysis.columns.rowNo]=renumberStart+index;
             return row;
           })];
+          mappedChanges=changes.map(change=>({...change,row:rowMap.get(change.row)}));
           renumberStart+=kept.length;
         }
-        outputs.push({name:outputName(analysis.file.name,prepared.mode),blob:csvBlob(outputRows),changeCount:changes.length,rowCount:outputRows.length-1,stylePreserved:false});
+        const generated=xlsxFileFromRows(outputRows,xlsxOutputName(analysis.file.name,prepared.mode));
+        const result=await adapter.transformTabularXlsx(generated,mappedChanges.map(change=>({...change,column:columnName(change.columnIndex)})));
+        transformConflicts.push(...result.conflicts);
+        outputs.push({name:xlsxOutputName(analysis.file.name,prepared.mode),blob:result.blob,changeCount:result.applied.length,rowCount:outputRows.length-1,stylePreserved:true,sourceFormat:'csv',outputFormat:'xlsx'});
       }else{
         if(/\.xls$/i.test(analysis.file.name)&&!/\.xlsx$/i.test(analysis.file.name))throw Error(`${analysis.file.name}: XLS 바이너리 원본은 구조 보존 수정이 불가능합니다. XLSX 또는 CSV 원본을 업로드해주세요.`);
-        const columnName=index=>{let result='',value=Number(index)+1;while(value>0){value--;result=String.fromCharCode(65+value%26)+result;value=Math.floor(value/26);}return result;};
         const result=await adapter.transformTabularXlsx(analysis.file,changes.map(change=>({...change,column:columnName(change.columnIndex)})),prepared.mode==='changed_only'?{
           dataRowNumbers:analysis.dataRows,keepOnlyRows:keep,renumberColumn:columnName(analysis.columns.rowNo),renumberStart
         }:{});

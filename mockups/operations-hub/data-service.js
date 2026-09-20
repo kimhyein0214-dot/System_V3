@@ -2797,12 +2797,17 @@
     for(let i=0;i<codes.length;i+=200){const {data:part,error:e}=await db.from(MATRIX_VIEW).select('sellpia_sku_code,sellpia_product_name,sellpia_option_name').in('sellpia_sku_code',codes.slice(i,i+200));if(e)throw e;rows.push(...part);}
     return rows;
   }
-  async function loadSellpiaPatchRows({skus=null,search='',searchType='sku',withResults=true,onProgress}={}) {
+  async function loadSellpiaPatchRows({skus=null,search='',searchType='sku',withResults=true,snapshotId=null,onProgress}={}) {
+    const expectedSnapshotId=cleanText(snapshotId);
     const rows=[];let count=0,limit=withResults?50:500;
     do {
-      const {data,error}=await db.rpc('hub_sellpia_patch_read_v1',{p_session_token:requireOperationsHubSessionToken(),p_skus:skus,p_search:search,p_search_type:searchType,p_offset:rows.length,p_limit:limit,p_with_results:withResults});
+      const args={p_session_token:requireOperationsHubSessionToken(),p_skus:skus,p_search:search,p_search_type:searchType,p_offset:rows.length,p_limit:limit,p_with_results:withResults};
+      if(expectedSnapshotId)args.p_snapshot_id=expectedSnapshotId;
+      const {data,error}=await db.rpc(expectedSnapshotId?'hub_sellpia_patch_read_v2':'hub_sellpia_patch_read_v1',args);
       if(error&&/statement timeout|canceling statement/i.test(error.message)&&limit>1){limit=Math.ceil(limit/2);continue;}
-      throwOperationsHubRpcError(error);count=data.count;rows.push(...data.rows);
+      throwOperationsHubRpcError(error);
+      if(expectedSnapshotId&&cleanText(data?.snapshot_id)!==expectedSnapshotId)throw Error('Sellpia 원본 snapshot이 조회 중 변경됐습니다. 다시 미리보기하세요.');
+      count=data.count;rows.push(...data.rows);
       onProgress?.({processed:rows.length,total:count});
       if(!data.rows.length)break;
     }while(rows.length<count);
