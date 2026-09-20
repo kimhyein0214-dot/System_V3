@@ -23,58 +23,60 @@ function snapshot(product='P',option='O',extra={}){
 function calculated(generation=27){
  return {registration_price:5500,registration_status:'calculated',registration_generation_id:generation,discount_price:5500,discount_status:'calculated',discount_generation_id:generation,option_price:0,option_status:'calculated',option_generation_id:generation,final_price:5500,final_status:'calculated',final_generation_id:generation};
 }
-function assertWarningRow(plan,index=0){
+function assertPriceWarningRow(plan,index=0,{stockChanged=true}={}){
  const row=plan.preview[index];
  assert.equal(row.status,'warn_keep_original');
- assert.equal(row.changed,false);
- assert.deepEqual(plain(row.changed_fields||[]),[]);
- assert.equal(row.diff.stock.after,row.diff.stock.before,'warning must not mutate stock even when its target is available');
+ assert.equal(row.warning_field,'price');
+ assert.equal(row.changed,stockChanged);
+ assert.deepEqual(plain(row.changed_fields||[]),stockChanged?['stock']:[]);
+ assert.equal(row.diff.stock.changed,stockChanged,'price warning must not suppress an independent stock operation');
  assert.deepEqual(plain(row.diff.price.after),plain(row.diff.price.before),'warning must preserve the complete original price tuple');
- assert.equal(plan.operations.filter(item=>item.seller_product_code===row.product_code&&item.seller_option_code===row.option_code).length,0);
+ assert.equal(plan.operations.some(item=>item.seller_product_code===row.product_code&&item.seller_option_code===row.option_code&&item.field_key==='sellpia_sale_price'),false);
+ assert.equal(plan.operations.some(item=>item.seller_product_code===row.product_code&&item.seller_option_code===row.option_code&&item.field_key==='sellpia_current_stock'),stockChanged);
  assert.ok(row.reason,'warning must explain why the original is kept');
 }
 
 for(const source of ['smartstore','makeshop']){
- test(`${source}: missing price target permits generation with an entirely untouched warning row`,()=>{
+ test(`${source}: missing price target preserves price while exporting independent stock`,()=>{
   const plan=harness().prepareCarrierItems(source,'carrier.xlsx',[carrier()],[snapshot()]);
   assert.equal(plan.canGenerate,true);
   assert.equal(plan.summary.warned,1);
   assert.equal(plan.summary.blocked,0);
-  assert.equal(plan.summary.changed,0);
-  assert.equal(plan.operations.length,0);
-  assertWarningRow(plan);
+  assert.equal(plan.summary.changed,1);
+  assert.deepEqual(plain(plan.operations.map(item=>[item.field_key,item.after_value])),[['sellpia_current_stock',0]]);
+  assertPriceWarningRow(plan);
   assert.equal(plan.preview[0].price_state.code,'original_fallback');
  });
- test(`${source}: timeout/error is a row-level original-preservation warning, not a file blocker`,()=>{
+ test(`${source}: timeout/error preserves price but does not freeze independent stock`,()=>{
   const plan=harness().prepareCarrierItems(source,'carrier.xlsx',[carrier()],[snapshot('P','O',{registration_status:'error',registration_error:'canceling statement due to statement timeout'})]);
   assert.equal(plan.canGenerate,true);
   assert.equal(plan.summary.warned,1);
   assert.equal(plan.summary.blocked,0);
   assert.equal(plan.preview[0].price_state.code,'timeout_error');
-  assertWarningRow(plan);
+  assertPriceWarningRow(plan);
  });
- test(`${source}: stale calculated generation cannot reach serializer operations`,()=>{
+ test(`${source}: complete per-SKU generations remain current even when another SKU has a newer generation`,()=>{
   const plan=harness().prepareCarrierItems(source,'carrier.xlsx',[carrier('OLD'),carrier('NEW','O',7)],[snapshot('OLD','O',calculated(26)),snapshot('NEW','O',calculated(27))]);
   assert.equal(plan.latest_generation_id,27);
   assert.equal(plan.canGenerate,true);
-  assert.equal(plan.summary.warned,1);
+  assert.equal(plan.summary.warned,0);
   assert.equal(plan.summary.blocked,0);
-  assert.equal(plan.preview[0].price_state.code,'latest_generation_unreflected');
-  assertWarningRow(plan);
-  assert.ok(plan.operations.length>0);
-  assert.ok(plan.operations.every(item=>item.seller_product_code==='NEW'));
+  assert.equal(plan.summary.changed,2);
+  assert.deepEqual(plain(plan.preview.map(row=>row.price_state.code)),['calculated_complete','calculated_complete']);
+  assert.ok(plan.operations.some(item=>item.seller_product_code==='OLD'&&item.field_key==='sellpia_sale_price'));
+  assert.ok(plan.operations.some(item=>item.seller_product_code==='NEW'&&item.field_key==='sellpia_sale_price'));
  });
  test(`${source}: mixed products mutate safe rows and retain missing-price rows completely`,()=>{
   const plan=harness().prepareCarrierItems(source,'carrier.xlsx',[carrier('GOOD'),carrier('WARN','O',7)],[snapshot('GOOD','O',calculated()),snapshot('WARN')]);
   assert.equal(plan.operations,plan.items,'preview and serializer share one resolved operation array');
   assert.equal(plan.canGenerate,true);
-  assert.equal(plan.summary.changed,1);
+  assert.equal(plan.summary.changed,2);
   assert.equal(plan.summary.warned,1);
   assert.equal(plan.summary.blocked,0);
   assert.equal(plan.preview[0].status,'ready');
   assert.equal(plan.preview[0].disposition,'change');
-  assertWarningRow(plan,1);
-  assert.deepEqual(plain(plan.operations.map(item=>[item.seller_product_code,item.field_key,item.after_value])),[['GOOD','sellpia_current_stock',0],['GOOD','sellpia_sale_price',5500]]);
+  assertPriceWarningRow(plan,1);
+  assert.deepEqual(plain(plan.operations.map(item=>[item.seller_product_code,item.field_key,item.after_value])),[['GOOD','sellpia_current_stock',0],['GOOD','sellpia_sale_price',5500],['WARN','sellpia_current_stock',0]]);
  });
  test(`${source}: a unique unmatched identity is safely kept original without invented SKU operations`,()=>{
   const plan=harness().prepareCarrierItems(source,'carrier.xlsx',[carrier('UNMATCHED')],[]);
@@ -107,12 +109,12 @@ for(const source of ['smartstore','makeshop']){
   assert.equal(plan.canGenerate,true);
   assert.equal(plan.summary.warned,2);
   assert.equal(plan.summary.blocked,0);
-  assert.equal(plan.summary.changed,2);
+  assert.equal(plan.summary.changed,3);
   assert.equal(plan.preview[0].shared_price_warning,true);
   assert.equal(plan.preview[0].diff.price.changed,false);
   assert.equal(plan.preview[0].diff.stock.changed,true);
   assert.deepEqual(plain(plan.preview[0].changed_fields),['stock']);
-  assertWarningRow(plan,1);
+  assertPriceWarningRow(plan,1);
   assert.ok(plan.operations.length>0);
   assert.ok(plan.operations.filter(item=>item.seller_product_code==='SHARED').every(item=>item.field_key==='sellpia_current_stock'),'shared price warning must retain only independent stock operations');
   assert.ok(plan.operations.some(item=>item.seller_product_code==='OTHER'&&item.field_key==='sellpia_sale_price'));

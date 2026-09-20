@@ -128,7 +128,7 @@ test('carrier TransformationPlan distinguishes complete, stale, timeout and orig
   const carrier=(product,rowNo)=>({product_code:product,option_code:'O-1',source_row_no:rowNo,base_price:5000,discounted_base_price:5000,option_price:0,final_price:5000,stock:8,discount_terms:[]});
   const result=exportHarness([]).api.prepareCarrierItems('smartstore','carrier.xlsx',[carrier('OK',1),carrier('STALE',2),carrier('TIMEOUT',3),carrier('FALLBACK',4)],[
     row({sku:'OK',product_code:'OK',...calculated}),
-    row({sku:'STALE',product_code:'STALE',...calculated,registration_generation_id:11,discount_generation_id:11,option_generation_id:11,final_generation_id:11}),
+    row({sku:'STALE',product_code:'STALE',...calculated,latest_generation_id:12,registration_generation_id:11,discount_generation_id:11,option_generation_id:11,final_generation_id:11}),
     row({sku:'TIMEOUT',product_code:'TIMEOUT',registration_status:'error',registration_error:'canceling statement due to statement timeout'}),
     row({sku:'FALLBACK',product_code:'FALLBACK'})
   ]);

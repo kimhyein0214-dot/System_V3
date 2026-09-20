@@ -516,6 +516,20 @@
     return {blob,applied,conflicts};
   }
 
+  function carrierWarningReferences(source,row,parents=null){
+    const rowNo=Number(row?.source_row_no);
+    if(!Number.isInteger(rowNo)||rowNo<=0)return [];
+    if(row.warning_field==='price'||row.shared_price_warning&&row.status!=='warn_keep_original'){
+      if(source==='smartstore')return ['F','BF','BG',...(row.option_code?['R']:[])].map(column=>column+rowNo);
+      const refs=row.option_code?['AF'+rowNo]:[],parent=parents?.get(clean(row.product_code));
+      if(parent)refs.push(...['AS','DD','AT'].map(column=>column+parent));
+      return refs;
+    }
+    const refs=(source==='smartstore'?['F','BF','BG',...(row.option_code?['R','S']:['M'])]:(row.option_code?['AF','AG']:['AV'])).map(column=>column+rowNo);
+    if(parents){const parent=parents.get(clean(row.product_code));if(parent)refs.push(...['AS','DD','AT'].map(column=>column+parent));}
+    return refs;
+  }
+
   async function markCarrierWarnings(file,source,preview){
     const warnings=(preview||[]).filter(row=>row.status==='warn_keep_original'||row.shared_price_warning);
     if(!warnings.length)return file;
@@ -523,16 +537,7 @@
     const parts=await xlsxParts(file),references=[];
     const parents=source==='makeshop'?makeshopProductRows(parts.sheetXml,parts.shared):null;
     for(const row of warnings){
-      const rowNo=Number(row.source_row_no);
-      if(!Number.isInteger(rowNo)||rowNo<=0)continue;
-      if(row.shared_price_warning&&row.status!=='warn_keep_original'){
-        if(source==='smartstore')references.push(...['F','BF','BG',...(row.option_code?['R']:[])].map(column=>column+rowNo));
-        else {if(row.option_code)references.push('AF'+rowNo);const parent=parents?.get(clean(row.product_code));if(parent)references.push(...['AS','DD','AT'].map(column=>column+parent));}
-        continue;
-      }
-      const columns=source==='smartstore'?['F','BF','BG',...(row.option_code?['R','S']:['M'])]:(row.option_code?['AF','AG']:['AV']);
-      references.push(...columns.map(column=>column+rowNo));
-      if(parents){const parent=parents.get(clean(row.product_code));if(parent)references.push(...['AS','DD','AT'].map(column=>column+parent));}
+      references.push(...carrierWarningReferences(source,row,parents));
     }
     if(!references.length)return file;
     const marked=applyChangeHighlights(parts.sheetXml,parts.stylesXml,references,{fillColor:'FFFFC7CE',preserveText:true});
@@ -603,5 +608,5 @@
   }
   function downloadBlob(blob,name){const url=URL.createObjectURL(blob);const anchor=document.createElement('a');anchor.href=url;anchor.download=name;document.body.appendChild(anchor);anchor.click();anchor.remove();setTimeout(()=>URL.revokeObjectURL(url),30000);}
 
-  global.SystemV3SellerExport=Object.freeze({cellValue,setCellValue,applyChangeHighlights,markCarrierWarnings,preflightSharedPriceGroups,patchSmartstoreRow,patchMakeshopRow,scopeWorksheetRows,patchXlsxFile,transformSellerFile,transformTabularXlsx,patchCsvFile,buildExportArchive,downloadBlob,outputName,auditCsv,conflictCsv,discountTermsFingerprint});
+  global.SystemV3SellerExport=Object.freeze({cellValue,setCellValue,applyChangeHighlights,carrierWarningReferences,markCarrierWarnings,preflightSharedPriceGroups,patchSmartstoreRow,patchMakeshopRow,scopeWorksheetRows,patchXlsxFile,transformSellerFile,transformTabularXlsx,patchCsvFile,buildExportArchive,downloadBlob,outputName,auditCsv,conflictCsv,discountTermsFingerprint});
 })(typeof window!=='undefined'?window:globalThis);

@@ -3,6 +3,7 @@ import test from 'node:test';
 import '../mockups/operations-hub/seller-export-adapter.js';
 
 const apply=globalThis.SystemV3SellerExport.applyChangeHighlights;
+const warningRefs=globalThis.SystemV3SellerExport.carrierWarningReferences;
 const warningOptions={fillColor:'FFFF0000',preserveText:true};
 const styles='<styleSheet><numFmts count="1"><numFmt numFmtId="165" formatCode="#,##0.00;[Red]-#,##0.00"/></numFmts><fonts count="2"><font><name val="맑은 고딕"/><sz val="10"/><color rgb="FF334455"/></font><font><i/><name val="Arial"/><sz val="12"/><color theme="1"/></font></fonts><fills count="2"><fill><patternFill patternType="none"/></fill><fill><patternFill patternType="gray125"/></fill></fills><borders count="2"><border/><border><left style="thin"><color rgb="FF123456"/></left></border></borders><cellXfs count="3"><xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0"/><xf numFmtId="165" fontId="1" fillId="0" borderId="1" xfId="0" applyNumberFormat="1" applyAlignment="1"><alignment horizontal="right" wrapText="1"/></xf><xf numFmtId="49" fontId="0" fillId="0" borderId="1" xfId="0" applyProtection="1"><protection locked="0"/></xf></cellXfs></styleSheet>';
 const cells=[
@@ -84,4 +85,12 @@ test('duplicate warning refs do not duplicate fills or change originals, empty r
  assert.equal((result.stylesXml.match(/fgColor rgb="FFFF0000"/g)||[]).length,1);
  assert.equal(withoutStyle(cell(result.sheetXml,'A2')),withoutStyle(cells[0]));
  assert.deepEqual(apply(sheet,styles,[],warningOptions),{sheetXml:sheet,stylesXml:styles});
+});
+
+test('price-only warnings leave independent stock cells available for yellow change highlighting',()=>{
+ assert.deepEqual(warningRefs('smartstore',{source_row_no:7,option_code:'O',warning_field:'price'}),['F7','BF7','BG7','R7']);
+ assert.equal(warningRefs('smartstore',{source_row_no:7,option_code:'O',warning_field:'price'}).includes('S7'),false,'Smartstore stock S must not be painted red by a price warning');
+ assert.deepEqual(warningRefs('makeshop',{source_row_no:8,product_code:'P',option_code:'O',warning_field:'price'},new Map([['P',3]])),['AF8','AS3','DD3','AT3']);
+ assert.equal(warningRefs('makeshop',{source_row_no:8,product_code:'P',option_code:'O',warning_field:'price'},new Map([['P',3]])).includes('AG8'),false,'Makeshop stock AG must not be painted red by a price warning');
+ assert.ok(warningRefs('smartstore',{source_row_no:7,option_code:'O'}).includes('S7'),'identity-wide warnings still mark the stock cell');
 });

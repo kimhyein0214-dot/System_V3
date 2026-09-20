@@ -47,19 +47,21 @@ function assertNoOp(item){
  assert.ok(item._error);
 }
 
-test('Ably option carrier: mixed independent rows update safe stock zero and retain missing/error/stale price rows',async()=>{
+test('Ably option carrier: per-SKU generations are independent while missing/error rows stay protected',async()=>{
  const items=[row('SAFE-1',6),row('MISSING-1',7),row('ERROR-1',8),row('STALE-1',9),row('LATEST-1',10)];
  const targets=[target('SAFE-1'),target('MISSING-1',{active_price_rule:true}),target('ERROR-1',{active_price_rule:true,registration_status:'error',registration_error:'canceling statement due to statement timeout'}),target('STALE-1',calculated(26)),target('LATEST-1',calculated(27))];
  const h=harness({items,targets}),preview=await h.run();
  assert.ok(preview,h.messages.at(-1)?.text);
- assert.equal(preview.counts.warned,3);
+ assert.equal(preview.counts.warned,2);
  assert.equal(preview.counts.blocked,0);
- assert.equal(preview.counts.changed,2);
+ assert.equal(preview.counts.changed,3);
  assert.equal(preview.output[0]._status,'ready');
  assert.equal(preview.output[0].target_stock,0);
  assert.deepEqual(plain(preview.output[0]._changedFields),['stock']);
- for(const index of [1,2,3])assertNoOp(preview.output[index]);
- assert.deepEqual(preview.output.slice(1,4).map(item=>item._priceState.code),['original_fallback','timeout_error','latest_generation_unreflected']);
+ for(const index of [1,2])assertNoOp(preview.output[index]);
+ assert.deepEqual(preview.output.slice(1,4).map(item=>item._priceState.code),['original_fallback','timeout_error','calculated_complete']);
+ assert.equal(preview.output[3].target_option_price,100);
+ assert.equal(preview.output[3].target_stock,0);
  assert.equal(preview.output[4].target_option_price,100);
  assert.equal(preview.output[4].target_stock,0);
  assert.equal(preview.output[0].available_stock,888,'W available stock is preserved');
