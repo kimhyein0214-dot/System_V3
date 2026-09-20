@@ -9,3 +9,17 @@ test('canonical full dataset keeps identity through local filtering/sort and bou
 test('local exact/prefix searches and null numeric/stale/ownership guards',()=>{
  const d=new Dataset([{sellpia_sku_code:'1-1',own_code:'ABC',system_stock:null,__hubInternalPrices:{calculated_base_price:{stale:true}}},{sellpia_sku_code:'1-10',own_code:'ABCD',system_stock:3}]);assert.equal(d.select({search:'1-1',searchType:'sku'}).length,1);assert.equal(d.select({search:'ABC',searchType:'own_code'}).length,1);assert.equal(d.select({state:'stale'}).length,1);assert.equal(d.select({advancedFilter:{conditions:[{field:'system_stock',operator:'lt',value:1}]}}).length,0);
 });
+test('compact Grid flags and tag ids preserve local filter semantics without shadow traversal',()=>{
+ const rows=[
+  {sellpia_sku_code:'G-1',__grid_tag_ids:['T1'],__profile:{sku_tags:[{tag_id:'T1',tag_name:'14K'}]},__grid_stale:true,__grid_conflict:false,__grid_pending:false,__grid_stock_mismatch:true,__grid_price_mismatch:false},
+  {sellpia_sku_code:'G-2',__grid_tag_ids:['T2'],__profile:{sku_tags:[{tag_id:'T2',tag_name:'기타'}]},__grid_stale:false,__grid_conflict:true,__grid_pending:true,__grid_stock_mismatch:false,__grid_price_mismatch:true}
+ ];
+ const d=new Dataset(rows);
+ const selected=options=>JSON.stringify(d.select(options).map(r=>r.sellpia_sku_code));
+ assert.equal(selected({tagId:'T1'}),JSON.stringify(['G-1']));
+ assert.equal(selected({state:'stale'}),JSON.stringify(['G-1']));
+ assert.equal(selected({state:'conflict'}),JSON.stringify(['G-2']));
+ assert.equal(selected({state:'pending'}),JSON.stringify(['G-2']));
+ assert.equal(selected({state:'stock_mismatch'}),JSON.stringify(['G-1']));
+ assert.equal(selected({state:'price_mismatch'}),JSON.stringify(['G-2']));
+});

@@ -1587,7 +1587,11 @@ function waitForMatrixRetry(delayMs, signal) {
 async function loadCanonicalMatrix({resetScroll=false,fullReload=false}={}){
  try{
   if(fullReload&&matrixFullLoad)await matrixFullLoad;
-  if(!matrixDataset||fullReload){if(!matrixFullLoad){matrixState.loading=true;setMatrixConnection('loading','전체 Matrix 생성 중');matrixFullLoad=liveData.loadFullMatrixDataset({onProgress:p=>{setMatrixConnection('loading',`전체 ${formatNumber(p.loaded)} / ${formatNumber(p.total)} SKU · ${(p.elapsed/1000).toFixed(0)}초`);Object.assign(matrixPerformance,{loaded:p.loaded,total:p.total,initialMs:p.elapsed,...p.metrics});showMatrixPerformance();}}).then(result=>{const assembledAt=performance.now();matrixDataset=new window.HubMatrixDataset.Dataset(result.rows,result.count);matrixPerformance.assemblyMs=performance.now()-assembledAt;matrixPerformance.initialMs=result.elapsed;matrixPerformance.count=result.count;Object.assign(matrixPerformance,result.metrics);matrixPerformance.heapBytes=performance.memory?.usedJSHeapSize||null;matrixSourceReloadNeeded=false;}).finally(()=>{matrixFullLoad=null;matrixState.loading=false;});}await matrixFullLoad;}
+  if(!matrixDataset||fullReload){if(!matrixFullLoad){matrixState.loading=true;setMatrixConnection('loading','전체 Matrix Grid feed 생성 중');const progress=p=>{setMatrixConnection('loading',`전체 ${formatNumber(p.loaded)} / ${formatNumber(p.total)} SKU · ${(p.elapsed/1000).toFixed(0)}초`);Object.assign(matrixPerformance,{loaded:p.loaded,total:p.total,initialMs:p.elapsed,...p.metrics});showMatrixPerformance();};matrixFullLoad=(async()=>{
+    const forceLegacy=localStorage.getItem('system-v3-matrix-bootstrap-v1')==='legacy';
+    if(!forceLegacy&&liveData.loadMatrixGridDataset){try{return await liveData.loadMatrixGridDataset({onProgress:progress});}catch(error){console.error('Matrix Grid feed failed; complete legacy fallback starts',error);setMatrixConnection('loading','Grid feed 실패 · 기존 전체 조회로 안전 전환');showToast('빠른 Grid feed를 완료하지 못해 기존 전체 조회로 전환합니다.');const result=await liveData.loadFullMatrixDataset({onProgress:progress});result.metrics={...result.metrics,mode:'legacy-fallback',gridFeedError:error?.message||String(error)};return result;}}
+    return liveData.loadFullMatrixDataset({onProgress:progress});
+  })().then(result=>{const assembledAt=performance.now();const replacement=new window.HubMatrixDataset.Dataset(result.rows,result.count);matrixDataset=replacement;matrixPerformance.assemblyMs=performance.now()-assembledAt;matrixPerformance.initialMs=result.elapsed;matrixPerformance.count=result.count;Object.assign(matrixPerformance,result.metrics);matrixPerformance.heapBytes=performance.memory?.usedJSHeapSize||null;matrixSourceReloadNeeded=false;}).finally(()=>{matrixFullLoad=null;matrixState.loading=false;});}await matrixFullLoad;}
   if(matrixDirtySkus.size){const targets=[...matrixDirtySkus].filter(s=>matrixDataset.bySku.has(s)),versions=new Map(targets.map(s=>[s,matrixDirtyVersions.get(s)]));if(targets.length)await refreshMatrixSkus(targets);targets.forEach(s=>{if(matrixDirtyVersions.get(s)===versions.get(s))matrixDirtySkus.delete(s);});}
   mountMatrixClientFilters();const at=performance.now();matrixState.rows=matrixDataset.select({...matrixState,skus:matrixState.codeListSkus,searchType:document.getElementById('matrix-search-type')?.value||'all',seller:document.getElementById('matrix-client-seller')?.value,tagId:document.getElementById('matrix-client-tag')?.value,state:document.getElementById('matrix-client-state')?.value});matrixPerformance.filterMs=performance.now()-at;matrixState.total=matrixState.rows.length;matrixState.directCount=matrixState.total;matrixState.relatedCount=0;
   clearMatrixCellSelection();if(resetScroll)matrixShell.scrollTop=0;renderLiveMatrixRows(matrixState.rows);
@@ -1597,7 +1601,7 @@ async function loadCanonicalMatrix({resetScroll=false,fullReload=false}={}){
 }
 
 async function loadLiveMatrix({resetPage = false, resetScroll = resetPage,fullReload=false} = {}) {
-  if(liveData?.loadFullMatrixDataset&&window.HubMatrixDataset)return loadCanonicalMatrix({resetScroll,fullReload});
+  if((liveData?.loadMatrixGridDataset||liveData?.loadFullMatrixDataset)&&window.HubMatrixDataset)return loadCanonicalMatrix({resetScroll,fullReload});
   if (!liveData) {
     setSystemHealthComponent('matrix', false);
     return false;
@@ -1851,7 +1855,7 @@ async function refreshLiveData(options = {}) {
   let result = {matrix:false, source:false, metrics:false, mapping:false};
   try {
     const [matrix, source, metrics] = await Promise.all([
-      liveData?.loadFullMatrixDataset&&window.HubMatrixDataset&&!matrixDataset&&!options.fullReload&&!document.getElementById('matching')?.classList.contains('active-page')?Promise.resolve(false):loadLiveMatrix({...options,fullReload:Boolean(options.fullReload||matrixSourceReloadNeeded)}),
+      (liveData?.loadMatrixGridDataset||liveData?.loadFullMatrixDataset)&&window.HubMatrixDataset&&!matrixDataset&&!options.fullReload&&!document.getElementById('matching')?.classList.contains('active-page')?Promise.resolve(false):loadLiveMatrix({...options,fullReload:Boolean(options.fullReload||matrixSourceReloadNeeded)}),
       loadLiveSourceStatus(),
       loadLiveDashboardMetrics()
     ]);
@@ -2495,10 +2499,16 @@ function openProductDrawer(row) {
   drawerBackdrop.classList.add('open');
   productDrawer.setAttribute('aria-hidden', 'false');
   setDrawerTab(drawerState.activeTab);
-  if(liveProduct.__hubShadowCompact&&liveData?.loadProductsBySkus){
+  if((liveProduct.__grid_compact||liveProduct.__hubShadowCompact)&&liveData?.loadProductsBySkus){
     const selectedSku=product.sku,selectedProduct=liveProduct;
     void liveData.loadProductsBySkus([selectedSku]).then(details=>{
       if(productDrawer.dataset.sku!==selectedSku||!productDrawer.classList.contains('open')||matrixDataset?.bySku.get(selectedSku)!==selectedProduct)return;
+      if(liveProduct.__grid_compact&&details[0]){
+        matrixDataset.patch([details[0]]);
+        matrixRowsBySku.set(selectedSku,details[0]);
+        openProductDrawer(row);
+        return;
+      }
       const lineage=productDrawer.querySelector('.shadow-lineage');
       if(lineage&&details[0])lineage.outerHTML=window.HubMatrixShadow.renderDetail(details[0]);
     }).catch(error=>console.warn('drawer calculation history unavailable',error));
@@ -11991,7 +12001,7 @@ function showPage(pageId) {
   document.querySelectorAll('.nav-item').forEach(item => item.classList.toggle('active', item.dataset.page === pageId));
   const target = document.getElementById(pageId);
   if (target) target.classList.add('active-page');
-  if(pageId==='matching'&&liveData?.loadFullMatrixDataset&&window.HubMatrixDataset){if(!matrixDataset||matrixDirtySkus.size||matrixSourceReloadNeeded)void loadLiveMatrix({resetScroll:true,fullReload:matrixSourceReloadNeeded});else{matrixVirtualStart=-1;paintVirtualMatrix();}}
+  if(pageId==='matching'&&(liveData?.loadMatrixGridDataset||liveData?.loadFullMatrixDataset)&&window.HubMatrixDataset){if(!matrixDataset||matrixDirtySkus.size||matrixSourceReloadNeeded)void loadLiveMatrix({resetScroll:true,fullReload:matrixSourceReloadNeeded});else{matrixVirtualStart=-1;paintVirtualMatrix();}}
   if (pageId === 'jobs') loadChangeQueue();
   if (pageId === 'dashboard') window.SystemV3ChannelsPage?.show();
   if (pageId === 'ably-combinations') window.AblyWorkspace?.refresh();

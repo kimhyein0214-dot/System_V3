@@ -871,6 +871,91 @@
   }
 
   let fullMatrixReadContext=null;
+  function normalizeMatrixGridRow(input) {
+    const row={...(input||{})};
+    row.__profile=row.__profile&&typeof row.__profile==='object'?row.__profile:{};
+    row.__sellerDrafts=row.__sellerDrafts&&typeof row.__sellerDrafts==='object'?row.__sellerDrafts:{};
+    row.__sellerProductLinkDrafts=row.__sellerProductLinkDrafts&&typeof row.__sellerProductLinkDrafts==='object'?row.__sellerProductLinkDrafts:{};
+    row.__sellerPriceComponents=row.__sellerPriceComponents&&typeof row.__sellerPriceComponents==='object'?row.__sellerPriceComponents:{};
+    row.__hubInternalPrices=row.__hubInternalPrices&&typeof row.__hubInternalPrices==='object'?row.__hubInternalPrices:{};
+    row.__hubRulePrices=row.__hubRulePrices&&typeof row.__hubRulePrices==='object'?row.__hubRulePrices:{};
+    row.__hubActivePriceRules=row.__hubActivePriceRules&&typeof row.__hubActivePriceRules==='object'?row.__hubActivePriceRules:{};
+    row.__priceRuleAssignments=row.__priceRuleAssignments&&typeof row.__priceRuleAssignments==='object'?row.__priceRuleAssignments:{};
+    const suppressions=Array.isArray(row.__linkSuppressions)?row.__linkSuppressions:[];
+    for(const source of ['smartstore','makeshop','ably']){
+      const draft=row.__sellerProductLinkDrafts[source];
+      if(draft&&!cleanText(row[`${source}_match_tier`])){
+        row[`${source}_product_code`]=draft.product_code;
+        row[`${source}_name`]=draft.product_name;
+        row[`${source}_option_code`]=null;
+        row[`${source}_option_name`]=null;
+        for(const suffix of ['sale_status','stock','price','policy_price','policy_active','policy_name','inventory_at'])row[`${source}_${suffix}`]=null;
+      }
+      const blocked=suppressions.some(item=>cleanText(item?.source_channel)===source
+        &&cleanText(item?.product_code)===cleanText(row[`${source}_product_code`])
+        &&cleanText(item?.option_code)===cleanText(row[`${source}_option_code`]));
+      if(blocked){
+        for(const suffix of ['name','option_name','product_code','option_code','match_tier','match_score','sale_status','stock','price','policy_price','policy_active','policy_name','inventory_at'])row[`${source}_${suffix}`]=null;
+        row[`${source}_listing_count`]=0;
+        row[`${source}_name_is_draft`]=false;
+        delete row.__sellerPriceComponents[source];
+      }
+      if(row.__hubActivePriceRules[source]!==true)row[`${source}_policy_active`]=false;
+    }
+    row.overall_status=['smartstore','makeshop','ably'].some(source=>cleanText(row[`${source}_product_code`]))?'connected':'unmatched';
+    return row;
+  }
+
+  async function loadMatrixGridDataset({signal=null,onProgress=null,chunkSize=3000}={}) {
+    const safeChunk=Math.max(250,Math.min(4000,Number(chunkSize)||3000));
+    const started=performance.now(),before={...matrixReadMetrics};
+    const rows=[],seen=new Set(),serverTimes=[],rpcTimes=[];
+    let afterSku=null,total=null,datasetVersion=null,requests=0;
+    fullMatrixReadContext={mode:'grid-feed',endpoints:{}};
+    try{
+      while(true){
+        throwIfAborted(signal);
+        const requestAt=performance.now();
+        const {data,error}=await withAbortSignal(db.rpc('hub_matrix_grid_feed_v1',{
+          p_session_token:requireOperationsHubSessionToken(),p_after_sku:afterSku,p_limit:safeChunk
+        }),signal);
+        rpcTimes.push(performance.now()-requestAt);requests++;
+        if(error)throw readableDatabaseError(error);
+        const result=data&&typeof data==='object'?data:{};
+        const part=Array.isArray(result.rows)?result.rows:[];
+        const responseTotal=Number(result.total);
+        const responseVersion=String(result.dataset_version||'');
+        if(!Number.isInteger(responseTotal)||responseTotal<0)throw Error('Grid feed 전체 count가 올바르지 않습니다.');
+        if(total===null){total=responseTotal;datasetVersion=responseVersion;}
+        else if(total!==responseTotal||datasetVersion!==responseVersion)throw Error('Grid feed 로딩 중 Matrix cache가 변경되었습니다. DB 새로고침 후 다시 시도해주세요.');
+        if(Number(result.loaded)!==part.length)throw Error('Grid feed 응답 count가 일치하지 않습니다.');
+        for(const raw of part){
+          const row=normalizeMatrixGridRow(raw),sku=cleanText(row.sellpia_sku_code);
+          if(!sku||seen.has(sku))throw Error(`Grid feed SKU identity 중복/누락: ${sku||'(빈 SKU)'}`);
+          seen.add(sku);rows.push(row);
+        }
+        if(Number.isFinite(Number(result.server_ms)))serverTimes.push(Number(result.server_ms));
+        onProgress?.({loaded:rows.length,total,elapsed:performance.now()-started,metrics:{
+          mode:'grid-feed',requests:matrixReadMetrics.requests-before.requests,bytes:matrixReadMetrics.bytes-before.bytes,
+          networkMs:matrixReadMetrics.networkMs-before.networkMs,serverMeanMs:serverTimes.length?serverTimes.reduce((a,b)=>a+b,0)/serverTimes.length:0,
+          serverMaxMs:serverTimes.length?Math.max(...serverTimes):0,chunkSize:safeChunk,endpoints:fullMatrixReadContext.endpoints||{}
+        }});
+        if(!result.has_more)break;
+        const next=cleanText(result.next_sku);
+        if(!part.length||!next||next===afterSku)throw Error('Grid feed keyset cursor가 진행되지 않았습니다.');
+        afterSku=next;
+        if(requests>25)throw Error('Grid feed 요청 수가 안전 한도 25회를 넘었습니다.');
+      }
+      if(rows.length!==total||seen.size!==total)throw Error(`Grid feed 전체 SKU 누락: ${rows.length.toLocaleString('ko-KR')} / ${Number(total||0).toLocaleString('ko-KR')}`);
+      return {rows,count:total,elapsed:performance.now()-started,metrics:{
+        mode:'grid-feed',requests:matrixReadMetrics.requests-before.requests,bytes:matrixReadMetrics.bytes-before.bytes,
+        networkMs:matrixReadMetrics.networkMs-before.networkMs,clientRpcMeanMs:rpcTimes.length?rpcTimes.reduce((a,b)=>a+b,0)/rpcTimes.length:0,
+        clientRpcMaxMs:rpcTimes.length?Math.max(...rpcTimes):0,serverMeanMs:serverTimes.length?serverTimes.reduce((a,b)=>a+b,0)/serverTimes.length:0,
+        serverMaxMs:serverTimes.length?Math.max(...serverTimes):0,chunkSize:safeChunk,datasetVersion,endpoints:fullMatrixReadContext.endpoints||{}
+      }};
+    }finally{fullMatrixReadContext=null;}
+  }
+
   async function loadFullMatrixDataset({signal=null,onProgress=null}={}) {
     fullMatrixReadContext={};try{
     const started=performance.now(),before={...matrixReadMetrics},identity=await loadAllFilteredSkus({status:'all'}),codes=identity.skus;
@@ -4179,6 +4264,7 @@
     setOperationsHubSessionToken,
     getOriginalBoundaryDiagnostics:()=>originalBoundaryDiagnostics.map(entry=>({...entry})),
     loadProducts,
+    loadMatrixGridDataset,
     loadFullMatrixDataset,
     loadProductsBySkus,
     loadProductThumbnailsBySkus,

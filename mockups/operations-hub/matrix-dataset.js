@@ -2,7 +2,13 @@
  'use strict';
  const collator=new Intl.Collator('en',{numeric:true});const text=v=>String(v??'').toLocaleLowerCase(),sources=['sellpia','smartstore','makeshop','ably'];
  const tags=r=>[...(r.__profile?.product_tags||[]),...(r.__profile?.sku_tags||[])];
+ const compactTagIds=r=>Array.isArray(r.__grid_tag_ids)?r.__grid_tag_ids.map(String):null;
  function state(r,key){const shadows=Object.values(r.__hubShadow||{}),internal=Object.values(r.__hubInternalPrices||{});
+  if(key==='stale'&&typeof r.__grid_stale==='boolean')return r.__grid_stale;
+  if(key==='conflict'&&typeof r.__grid_conflict==='boolean')return r.__grid_conflict;
+  if(key==='pending'&&typeof r.__grid_pending==='boolean')return r.__grid_pending;
+  if(key==='stock_mismatch'&&typeof r.__grid_stock_mismatch==='boolean')return r.__grid_stock_mismatch;
+  if(key==='price_mismatch'&&typeof r.__grid_price_mismatch==='boolean')return r.__grid_price_mismatch;
   if(key==='stale')return internal.some(x=>x.stale||x.provenanceMismatch)||Object.keys(r.__hubInternalPrices||{}).some(field=>g.HubMatrixShadow?.internalState?.(r,field).freshness==='stale')||shadows.some(x=>x.price?.freshness==='stale'||x.stock?.freshness==='stale');
   if(key==='conflict')return shadows.some(x=>x.lookup==='conflict'||x.price?.disposition==='BLOCK'||x.stock?.disposition==='BLOCK');
   if(key==='baseline_unavailable')return shadows.some(x=>x.lookup==='unavailable'||x.price?.sellerSyncState==='baseline unavailable');
@@ -19,7 +25,7 @@
   patch(rows){const changed=[];for(const r of rows){const sku=r.sellpia_sku_code;if(!this.bySku.has(sku))throw Error('전체 reload가 필요한 신규 SKU: '+sku);this.bySku.set(sku,r);changed.push(sku);}const keys=new Set(changed);this.rows=this.rows.map(r=>keys.has(r.sellpia_sku_code)?this.bySku.get(r.sellpia_sku_code):r);this.version++;return changed;}
   tagSkus(id){return this.rows.filter(r=>tags(r).some(t=>String(t.tag_id)===String(id))).map(r=>r.sellpia_sku_code);}
   select(o={}){const allowed=o.skus?.length?new Set(o.skus):null,cs=o.advancedFilter?.conditions||[];let rows=this.rows.filter(r=>!allowed||allowed.has(r.sellpia_sku_code));const exact=o.search&&['sku','own_code'].includes(o.searchType)?rows.some(r=>text(o.searchType==='sku'?r.sellpia_sku_code:field(r,'sellpia_own_code'))===text(o.search).trim()):false;
-   rows=rows.filter(r=>(!exact?searchMatch(r,o.search,o.searchType,o.searchSources):text(o.searchType==='sku'?r.sellpia_sku_code:field(r,'sellpia_own_code'))===text(o.search).trim())&&(!o.excludeCombinationSkus||!r.is_dependent_combination_sku)&&(!o.status||o.status==='all'||(o.status==='unmatched'?!sources.slice(1).some(s=>r[s+'_product_code']):sources.slice(1).some(s=>r[s+'_product_code'])))&&(!o.seller||!!r[o.seller+'_product_code'])&&(!o.tagId||tags(r).some(t=>String(t.tag_id)===String(o.tagId)))&&(!o.state||state(r,o.state))&&(!cs.length||(o.advancedFilter.logic==='or'?cs.some(c=>condition(r,c)):cs.every(c=>condition(r,c)))));
+   rows=rows.filter(r=>(!exact?searchMatch(r,o.search,o.searchType,o.searchSources):text(o.searchType==='sku'?r.sellpia_sku_code:field(r,'sellpia_own_code'))===text(o.search).trim())&&(!o.excludeCombinationSkus||!r.is_dependent_combination_sku)&&(!o.status||o.status==='all'||(o.status==='unmatched'?!sources.slice(1).some(s=>r[s+'_product_code']):sources.slice(1).some(s=>r[s+'_product_code'])))&&(!o.seller||!!r[o.seller+'_product_code'])&&(!o.tagId||(compactTagIds(r)||tags(r).map(t=>String(t.tag_id))).includes(String(o.tagId)))&&(!o.state||state(r,o.state))&&(!cs.length||(o.advancedFilter.logic==='or'?cs.some(c=>condition(r,c)):cs.every(c=>condition(r,c)))));
    const key={stock_desc:'system_stock',price_desc:'system_base_price',updated_desc:'updated_at'}[o.sort];return rows.sort((a,b)=>{if(key){const av=a[key],bv=b[key];const d=key==='updated_at'?String(bv||'').localeCompare(String(av||'')):Number(bv??-Infinity)-Number(av??-Infinity);if(d&&!Number.isNaN(d))return d;}return collator.compare(String(a.sellpia_sku_code),String(b.sellpia_sku_code));});
   }
  }
