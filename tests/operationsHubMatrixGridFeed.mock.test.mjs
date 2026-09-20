@@ -135,7 +135,7 @@ test('grid loader completes manifest plus keyset pages and rechecks the manifest
 });
 
 test('grid loader rejects duplicates, manifest drift, and stalled cursors',async()=>{
-  const manifest={contract_version:5,total:2,dataset_version:'2026-09-20T00:00:00Z',recommended_chunk_size:1250,max_chunk_size:4000,tag_catalog:{},link_badges:[],page_cursors:[null]};
+  const manifest={contract_version:5,total:2,dataset_version:'2026-09-20T00:00:00Z',recommended_chunk_size:3000,max_chunk_size:4000,tag_catalog:{},link_badges:[],page_cursors:[null]};
   let fixture=gridLoaderContext([manifest,{contract_version:5,rows:[{sellpia_sku_code:'1'},{sellpia_sku_code:'1'}],loaded:2,next_sku:null,has_more:false,dataset_version:manifest.dataset_version},{contract_version:5,total:2,dataset_version:manifest.dataset_version}]);
   await assert.rejects(fixture.context.loadMatrixGridDataset(),/중복/);
   fixture=gridLoaderContext([manifest,{contract_version:5,rows:[{sellpia_sku_code:'1'},{sellpia_sku_code:'2'}],loaded:2,next_sku:null,has_more:false,dataset_version:'2026-09-20T00:01:00Z'}]);
@@ -151,7 +151,7 @@ test('grid loader rejects duplicates, manifest drift, and stalled cursors',async
 test('grid loader retries only the failed page and never restarts the dataset',async()=>{
   const version='2026-09-20T00:00:00Z';
   const fixture=gridLoaderContext([
-    {contract_version:5,total:1,dataset_version:version,recommended_chunk_size:1250,max_chunk_size:4000,tag_catalog:{},link_badges:[],page_cursors:[null]},
+    {contract_version:5,total:1,dataset_version:version,recommended_chunk_size:3000,max_chunk_size:4000,tag_catalog:{},link_badges:[],page_cursors:[null]},
     new Error('canceling statement due to statement timeout'),
     {contract_version:5,rows:[{sellpia_sku_code:'1'}],loaded:1,next_sku:null,has_more:false,dataset_version:version,server_ms:2},
     {contract_version:5,total:1,dataset_version:version}
