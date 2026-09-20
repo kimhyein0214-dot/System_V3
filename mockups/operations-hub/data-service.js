@@ -1038,7 +1038,7 @@
     const started=performance.now(),before={...matrixReadMetrics};
     const serverTimes=[],rpcTimes=[],pageDiagnostics=[];
     let dataAttempts=0,manifestAttempts=0,retryCount=0,loadedTotal=0;
-    const requestedChunk=Math.max(250,Math.min(4000,Number(chunkSize)||2000));
+    const requestedChunk=Math.max(250,Math.min(4000,Number(chunkSize)||3000));
     fullMatrixReadContext={mode:'grid-feed-v5',endpoints:{}};
     try{
       const token=requireOperationsHubSessionToken();
@@ -1056,7 +1056,7 @@
         const sku=cleanText(badge?.[0]),source=cleanText(badge?.[1]);if(!sku||!source)continue;
         (linkBadgeCatalog[sku]??={})[source]={max:Number(badge?.[2]||0),relation:cleanText(badge?.[3])||'single'};
       }
-      const recommended=Number(manifest.recommended_chunk_size)||2000;
+      const recommended=Number(manifest.recommended_chunk_size)||3000;
       const maxChunk=Math.max(250,Number(manifest.max_chunk_size)||4000);
       const safeChunk=Math.max(250,Math.min(maxChunk,Number(chunkSize)||recommended));
       if(safeChunk!==requestedChunk)throw Error('Matrix Grid manifest chunk contract가 일치하지 않습니다.');
@@ -1094,7 +1094,7 @@
           pageDiagnostics:[...pageDiagnostics].sort((a,b)=>a.page-b.page),endpoints:fullMatrixReadContext.endpoints||{}
         }});
       };
-      const workers=Array.from({length:Math.min(2,cursors.length)},async()=>{
+      const workers=Array.from({length:Math.min(1,cursors.length)},async()=>{
         while(!failed){const index=nextPage++;if(index>=cursors.length)return;try{await readPage(index);}catch(error){failed=true;throw error;}}
       });
       await Promise.all(workers);
@@ -1117,7 +1117,7 @@
         networkMs:matrixReadMetrics.networkMs-before.networkMs,clientRpcMeanMs:rpcTimes.length?rpcTimes.reduce((a,b)=>a+b,0)/rpcTimes.length:0,
         clientRpcMaxMs:rpcTimes.length?Math.max(...rpcTimes):0,serverMeanMs:serverTimes.length?serverTimes.reduce((a,b)=>a+b,0)/serverTimes.length:0,
         serverP50Ms:percentile(.5),serverP95Ms:percentile(.95),serverMaxMs:serverTimes.length?Math.max(...serverTimes):0,
-        chunkSize:safeChunk,pageConcurrency:Math.min(2,cursors.length),datasetVersion,
+        chunkSize:safeChunk,pageConcurrency:Math.min(1,cursors.length),datasetVersion,
         dataPages:cursors.length,dataAttempts,manifestAttempts,retryCount,failedAttempts:retryCount,
         pageDiagnostics,endpoints:fullMatrixReadContext.endpoints||{}
       }};
