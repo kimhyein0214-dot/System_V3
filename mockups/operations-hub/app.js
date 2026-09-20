@@ -1586,7 +1586,7 @@ function waitForMatrixRetry(delayMs, signal) {
 
 async function loadCanonicalMatrix({resetScroll=false,fullReload=false}={}){
  try{
-  if(fullReload&&matrixFullLoad)await matrixFullLoad;
+  if(matrixFullLoad){await matrixFullLoad;fullReload=false;}
   if(!matrixDataset||fullReload){if(!matrixFullLoad){matrixState.loading=true;setMatrixConnection('loading','전체 Matrix Grid feed 생성 중');const progress=p=>{setMatrixConnection('loading',`전체 ${formatNumber(p.loaded)} / ${formatNumber(p.total)} SKU · ${(p.elapsed/1000).toFixed(0)}초`);Object.assign(matrixPerformance,{loaded:p.loaded,total:p.total,initialMs:p.elapsed,...p.metrics});showMatrixPerformance();};matrixFullLoad=(async()=>{
     const forceLegacy=localStorage.getItem('system-v3-matrix-bootstrap-v1')==='legacy';
     if(forceLegacy){const result=await liveData.loadFullMatrixDataset({onProgress:progress});result.metrics={...result.metrics,mode:'legacy-explicit'};return result;}

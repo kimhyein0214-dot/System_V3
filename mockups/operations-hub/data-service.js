@@ -871,8 +871,69 @@
   }
 
   let fullMatrixReadContext=null;
-  function normalizeMatrixGridRow(input) {
+  function normalizeMatrixGridRow(input,tagCatalog={}) {
     const row={...(input||{})};
+    const compact=row.__grid_meta&&typeof row.__grid_meta==='object'?row.__grid_meta:null;
+    if(compact){
+      const profile=compact.profile&&typeof compact.profile==='object'?compact.profile:{};
+      const resolveTags=ids=>(Array.isArray(ids)?ids:[]).map(id=>{
+        const tag=tagCatalog?.[String(id)]||{};
+        return {tag_id:id,tag_name:tag.name||String(id),tag_color:tag.color||null,tag_group:tag.group||null};
+      });
+      row.__profile={
+        sellpia_sku_code:row.sellpia_sku_code,
+        sellpia_product_code:profile.product_code||null,
+        material:profile.material||null,
+        product_group:profile.product_group||null,
+        shape:profile.shape||null,
+        product_tags:resolveTags(profile.product_tag_ids),
+        sku_tags:resolveTags(profile.sku_tag_ids)
+      };
+      row.__grid_tag_ids=[...new Set([...row.__profile.product_tags,...row.__profile.sku_tags].map(tag=>String(tag.tag_id)))];
+      row.__sellerDrafts={};
+      for(const [key,value] of Object.entries(compact.drafts||{}))row.__sellerDrafts[key]={
+        change_id:value?.id||null,status:value?.status||null,after_value:value?.after??null,
+        price_base_after:value?.b??null,price_discounted_base_after:value?.d??null,
+        price_option_after:value?.o??null,price_final_after:value?.f??null,
+        price_discount_terms_after:value?.terms??null
+      };
+      row.__sellerProductLinkDrafts={};
+      for(const [source,value] of Object.entries(compact.link_drafts||{}))row.__sellerProductLinkDrafts[source]={
+        source_channel:source,sellpia_sku_code:row.sellpia_sku_code,
+        product_code:value?.code||null,product_name:value?.name||null
+      };
+      row.__linkBadges={};
+      for(const [source,value] of Object.entries(compact.link_badges||{}))row.__linkBadges[source]={
+        source_channel:source,listing_count:Number(row[`${source}_listing_count`]||0),
+        max_component_count:Number(value?.max||0),relation_type:value?.relation||'single'
+      };
+      row.__sellerPriceComponents={};
+      for(const [source,value] of Object.entries(compact.seller_prices||{}))row.__sellerPriceComponents[source]={
+        seller_product_code:row[`${source}_product_code`]||null,
+        seller_option_code:row[`${source}_option_code`]||null,
+        source_base_price:value?.b??null,source_discounted_base_price:value?.d??value?.b??null,
+        source_option_price:value?.o??0,source_final_price:value?.f??null,
+        source_discount_terms:Array.isArray(value?.t)?value.t:[]
+      };
+      row.__hubRulePrices={};row.__hubActivePriceRules={smartstore:false,makeshop:false,ably:false};row.__priceRuleAssignments={};
+      for(const [source,value] of Object.entries(compact.rule_prices||{})){
+        const names=Array.isArray(value?.n)?value.n:[];
+        row.__hubRulePrices[source]={platformBase:value?.b??null,discounted:value?.d??null,
+          platformOption:value?.o??null,platformFinal:value?.f??null,platformTerms:[],ruleNames:names,error:value?.e||null};
+        row.__hubActivePriceRules[source]=true;
+        row.__priceRuleAssignments[source]={set_name:names.join(' · '),color:value?.e?'#dc2626':'#1558c0'};
+      }
+      row.__hubInternalPrices={};
+      for(const [field,value] of Object.entries(compact.internal_prices||{})){
+        const names=Array.isArray(value?.n)?value.n:[],tagIds=Array.isArray(value?.t)?value.t:[];
+        row.__hubInternalPrices[field]={value:value?.v??null,error:value?.e||null,ruleNames:names,
+          activeOutputRules:names.map((name,index)=>({name,tag_name:name,tag_id:tagIds[index]||tagIds[0]||null,output_field:field,scope:''})),
+          stale:Boolean(value?.stale),provenanceMismatch:Boolean(value?.stale)};
+      }
+      row.own_code=row.sellpia_own_code||null;
+      row.display_name=[row.sellpia_product_name,row.sellpia_option_name].filter(Boolean).join(' · ');
+      delete row.__grid_meta;
+    }
     row.__profile=row.__profile&&typeof row.__profile==='object'?row.__profile:{};
     row.__sellerDrafts=row.__sellerDrafts&&typeof row.__sellerDrafts==='object'?row.__sellerDrafts:{};
     row.__sellerProductLinkDrafts=row.__sellerProductLinkDrafts&&typeof row.__sellerProductLinkDrafts==='object'?row.__sellerProductLinkDrafts:{};
@@ -930,7 +991,7 @@
       const requestAt=performance.now();
       const {data,error}=await withAbortSignal(db.rpc(name,args),signal);
       const clientMs=performance.now()-requestAt;
-      if(!error)return {data:data&&typeof data==='object'?data:{},clientMs,retries:attempt};
+      if(!error)return {data:data&&typeof data==='object'?data:{},clientMs,retries:attempt,attempts:attempt+1};
       lastError=readableDatabaseError(error);
       if(!matrixGridTransientError(lastError)||attempt===retryDelays.length-1)break;
       console.warn('[Matrix Grid feed] bounded page retry',{page,cursor,attempt:attempt+1,code:error?.code||'',message:error?.message||String(error)});
@@ -944,31 +1005,34 @@
   async function loadMatrixGridDataset({signal=null,onProgress=null,chunkSize=null}={}) {
     const started=performance.now(),before={...matrixReadMetrics};
     const rows=[],seen=new Set(),serverTimes=[],rpcTimes=[],pageDiagnostics=[];
-    let afterSku=null,requests=0;
-    fullMatrixReadContext={mode:'grid-feed-v2',endpoints:{}};
+    let afterSku=null,requests=0,dataAttempts=0,manifestAttempts=0,retryCount=0;
+    fullMatrixReadContext={mode:'grid-feed-v3',endpoints:{}};
     try{
       const token=requireOperationsHubSessionToken();
-      const manifestRead=await readMatrixGridRpc('hub_matrix_grid_manifest_v2',{p_session_token:token},{signal,page:0,cursor:null});
+      const manifestRead=await readMatrixGridRpc('hub_matrix_grid_manifest_v3',{p_session_token:token},{signal,page:0,cursor:null});
+      manifestAttempts+=manifestRead.attempts;retryCount+=manifestRead.retries;
       rpcTimes.push(manifestRead.clientMs);
       const manifest=manifestRead.data;
       const total=Number(manifest.total),datasetVersion=String(manifest.dataset_version||'');
-      if(!Number.isInteger(total)||total<0||!datasetVersion)throw Error('Matrix Grid manifest가 올바르지 않습니다.');
-      const recommended=Number(manifest.recommended_chunk_size)||3000;
-      const maxChunk=Math.max(250,Number(manifest.max_chunk_size)||5000);
+      if(Number(manifest.contract_version)!==3||!Number.isInteger(total)||total<0||!datasetVersion)throw Error('Matrix Grid v3 manifest가 올바르지 않습니다.');
+      const tagCatalog=manifest.tag_catalog&&typeof manifest.tag_catalog==='object'?manifest.tag_catalog:{};
+      const recommended=Number(manifest.recommended_chunk_size)||2000;
+      const maxChunk=Math.max(250,Number(manifest.max_chunk_size)||4000);
       const safeChunk=Math.max(250,Math.min(maxChunk,Number(chunkSize)||recommended));
       while(true){
         const page=requests+1,cursor=afterSku;
-        const read=await readMatrixGridRpc('hub_matrix_grid_feed_v2',{
+        const read=await readMatrixGridRpc('hub_matrix_grid_feed_v3',{
           p_session_token:token,p_dataset_version:datasetVersion,p_after_sku:afterSku,p_limit:safeChunk
         },{signal,page,cursor});
-        rpcTimes.push(read.clientMs);requests++;
+        dataAttempts+=read.attempts;retryCount+=read.retries;rpcTimes.push(read.clientMs);requests++;
         const result=read.data,part=Array.isArray(result.rows)?result.rows:[];
+        if(Number(result.contract_version)!==3)throw Error('Grid feed v3 contract가 일치하지 않습니다.');
         const responseVersion=String(result.dataset_version||'');
         if(responseVersion!==datasetVersion)throw Error('Grid feed 로딩 중 Matrix cache가 변경되었습니다. DB 새로고침 후 다시 시도해주세요.');
         if(Number(result.loaded)!==part.length)throw Error('Grid feed 응답 count가 일치하지 않습니다.');
         const normalizeAt=performance.now();
         for(const raw of part){
-          const row=normalizeMatrixGridRow(raw),sku=cleanText(row.sellpia_sku_code);
+          const row=normalizeMatrixGridRow(raw,tagCatalog),sku=cleanText(row.sellpia_sku_code);
           if(!sku||seen.has(sku))throw Error(`Grid feed SKU identity 중복/누락: ${sku||'(빈 SKU)'}`);
           seen.add(sku);rows.push(row);
         }
@@ -979,9 +1043,10 @@
           serverMs:Number.isFinite(serverMs)?serverMs:null,clientMs:read.clientMs,
           payloadBytes:Number.isFinite(payloadBytes)?payloadBytes:null,normalizeMs,retries:read.retries});
         onProgress?.({loaded:rows.length,total,elapsed:performance.now()-started,metrics:{
-          mode:'grid-feed-v2',requests:matrixReadMetrics.requests-before.requests,bytes:matrixReadMetrics.bytes-before.bytes,
+          mode:'grid-feed-v3',requests:matrixReadMetrics.requests-before.requests,bytes:matrixReadMetrics.bytes-before.bytes,
           networkMs:matrixReadMetrics.networkMs-before.networkMs,serverMeanMs:serverTimes.length?serverTimes.reduce((a,b)=>a+b,0)/serverTimes.length:0,
           serverMaxMs:serverTimes.length?Math.max(...serverTimes):0,chunkSize:safeChunk,datasetVersion,
+          dataPages:requests,dataAttempts,manifestAttempts,retryCount,failedAttempts:retryCount,
           currentPage:page,currentCursor:cursor,pageDiagnostics:[...pageDiagnostics],endpoints:fullMatrixReadContext.endpoints||{}
         }});
         if(!result.has_more)break;
@@ -990,7 +1055,8 @@
         afterSku=next;
         if(requests>25)throw Error('Grid feed 요청 수가 안전 한도 25회를 넘었습니다.');
       }
-      const finalManifestRead=await readMatrixGridRpc('hub_matrix_grid_manifest_v2',{p_session_token:token},{signal,page:requests+1,cursor:'manifest-recheck'});
+      const finalManifestRead=await readMatrixGridRpc('hub_matrix_grid_manifest_v3',{p_session_token:token},{signal,page:requests+1,cursor:'manifest-recheck'});
+      manifestAttempts+=finalManifestRead.attempts;retryCount+=finalManifestRead.retries;
       rpcTimes.push(finalManifestRead.clientMs);
       const finalManifest=finalManifestRead.data;
       if(Number(finalManifest.total)!==total||String(finalManifest.dataset_version||'')!==datasetVersion){
@@ -998,10 +1064,11 @@
       }
       if(rows.length!==total||seen.size!==total)throw Error(`Grid feed 전체 SKU 누락: ${rows.length.toLocaleString('ko-KR')} / ${total.toLocaleString('ko-KR')}`);
       return {rows,count:total,elapsed:performance.now()-started,metrics:{
-        mode:'grid-feed-v2',requests:matrixReadMetrics.requests-before.requests,bytes:matrixReadMetrics.bytes-before.bytes,
+        mode:'grid-feed-v3',requests:matrixReadMetrics.requests-before.requests,bytes:matrixReadMetrics.bytes-before.bytes,
         networkMs:matrixReadMetrics.networkMs-before.networkMs,clientRpcMeanMs:rpcTimes.length?rpcTimes.reduce((a,b)=>a+b,0)/rpcTimes.length:0,
         clientRpcMaxMs:rpcTimes.length?Math.max(...rpcTimes):0,serverMeanMs:serverTimes.length?serverTimes.reduce((a,b)=>a+b,0)/serverTimes.length:0,
         serverMaxMs:serverTimes.length?Math.max(...serverTimes):0,chunkSize:safeChunk,datasetVersion,
+        dataPages:requests,dataAttempts,manifestAttempts,retryCount,failedAttempts:retryCount,
         pageDiagnostics,endpoints:fullMatrixReadContext.endpoints||{}
       }};
     }finally{fullMatrixReadContext=null;}
