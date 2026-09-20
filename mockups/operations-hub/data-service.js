@@ -906,39 +906,83 @@
     return row;
   }
 
-  async function loadMatrixGridDataset({signal=null,onProgress=null,chunkSize=3000}={}) {
-    const safeChunk=Math.max(250,Math.min(4000,Number(chunkSize)||3000));
+  function matrixGridTransientError(error) {
+    const message=`${error?.code||''} ${error?.message||error}`.toLowerCase();
+    if(message.includes('40001')||message.includes('cache version')||message.includes('session')||message.includes('permission'))return false;
+    return /57014|statement timeout|canceling statement|fetch failed|failed to fetch|network|load failed|502|503|504/.test(message);
+  }
+
+  function waitMatrixGridRetry(delayMs,signal) {
+    return new Promise((resolve,reject)=>{
+      throwIfAborted(signal);
+      const timer=setTimeout(()=>{signal?.removeEventListener('abort',abort);resolve();},delayMs);
+      const abort=()=>{clearTimeout(timer);const error=Error('요청이 취소되었습니다.');error.name='AbortError';reject(error);};
+      signal?.addEventListener('abort',abort,{once:true});
+    });
+  }
+
+  async function readMatrixGridRpc(name,args,{signal,page,cursor}={}) {
+    const retryDelays=[0,350+Math.round(Math.random()*150),1250+Math.round(Math.random()*500)];
+    let lastError;
+    for(let attempt=0;attempt<retryDelays.length;attempt++){
+      if(retryDelays[attempt])await waitMatrixGridRetry(retryDelays[attempt],signal);
+      throwIfAborted(signal);
+      const requestAt=performance.now();
+      const {data,error}=await withAbortSignal(db.rpc(name,args),signal);
+      const clientMs=performance.now()-requestAt;
+      if(!error)return {data:data&&typeof data==='object'?data:{},clientMs,retries:attempt};
+      lastError=readableDatabaseError(error);
+      if(!matrixGridTransientError(lastError)||attempt===retryDelays.length-1)break;
+      console.warn('[Matrix Grid feed] bounded page retry',{page,cursor,attempt:attempt+1,code:error?.code||'',message:error?.message||String(error)});
+    }
+    const diagnostic=Error(`Matrix Grid feed ${page?`${page}페이지 `:''}실패${cursor?` · cursor ${cursor}`:''}: ${lastError?.message||lastError}`);
+    diagnostic.code=lastError?.code||'MATRIX_GRID_FEED_FAILED';
+    diagnostic.matrixGridDiagnostic={page:page||0,cursor:cursor||null,sqlState:lastError?.code||null,sourceError:lastError?.message||String(lastError)};
+    throw diagnostic;
+  }
+
+  async function loadMatrixGridDataset({signal=null,onProgress=null,chunkSize=null}={}) {
     const started=performance.now(),before={...matrixReadMetrics};
-    const rows=[],seen=new Set(),serverTimes=[],rpcTimes=[];
-    let afterSku=null,total=null,datasetVersion=null,requests=0;
-    fullMatrixReadContext={mode:'grid-feed',endpoints:{}};
+    const rows=[],seen=new Set(),serverTimes=[],rpcTimes=[],pageDiagnostics=[];
+    let afterSku=null,requests=0;
+    fullMatrixReadContext={mode:'grid-feed-v2',endpoints:{}};
     try{
+      const token=requireOperationsHubSessionToken();
+      const manifestRead=await readMatrixGridRpc('hub_matrix_grid_manifest_v2',{p_session_token:token},{signal,page:0,cursor:null});
+      rpcTimes.push(manifestRead.clientMs);
+      const manifest=manifestRead.data;
+      const total=Number(manifest.total),datasetVersion=String(manifest.dataset_version||'');
+      if(!Number.isInteger(total)||total<0||!datasetVersion)throw Error('Matrix Grid manifest가 올바르지 않습니다.');
+      const recommended=Number(manifest.recommended_chunk_size)||3000;
+      const maxChunk=Math.max(250,Number(manifest.max_chunk_size)||5000);
+      const safeChunk=Math.max(250,Math.min(maxChunk,Number(chunkSize)||recommended));
       while(true){
-        throwIfAborted(signal);
-        const requestAt=performance.now();
-        const {data,error}=await withAbortSignal(db.rpc('hub_matrix_grid_feed_v1',{
-          p_session_token:requireOperationsHubSessionToken(),p_after_sku:afterSku,p_limit:safeChunk
-        }),signal);
-        rpcTimes.push(performance.now()-requestAt);requests++;
-        if(error)throw readableDatabaseError(error);
-        const result=data&&typeof data==='object'?data:{};
-        const part=Array.isArray(result.rows)?result.rows:[];
-        const responseTotal=Number(result.total);
+        const page=requests+1,cursor=afterSku;
+        const read=await readMatrixGridRpc('hub_matrix_grid_feed_v2',{
+          p_session_token:token,p_dataset_version:datasetVersion,p_after_sku:afterSku,p_limit:safeChunk
+        },{signal,page,cursor});
+        rpcTimes.push(read.clientMs);requests++;
+        const result=read.data,part=Array.isArray(result.rows)?result.rows:[];
         const responseVersion=String(result.dataset_version||'');
-        if(!Number.isInteger(responseTotal)||responseTotal<0)throw Error('Grid feed 전체 count가 올바르지 않습니다.');
-        if(total===null){total=responseTotal;datasetVersion=responseVersion;}
-        else if(total!==responseTotal||datasetVersion!==responseVersion)throw Error('Grid feed 로딩 중 Matrix cache가 변경되었습니다. DB 새로고침 후 다시 시도해주세요.');
+        if(responseVersion!==datasetVersion)throw Error('Grid feed 로딩 중 Matrix cache가 변경되었습니다. DB 새로고침 후 다시 시도해주세요.');
         if(Number(result.loaded)!==part.length)throw Error('Grid feed 응답 count가 일치하지 않습니다.');
+        const normalizeAt=performance.now();
         for(const raw of part){
           const row=normalizeMatrixGridRow(raw),sku=cleanText(row.sellpia_sku_code);
           if(!sku||seen.has(sku))throw Error(`Grid feed SKU identity 중복/누락: ${sku||'(빈 SKU)'}`);
           seen.add(sku);rows.push(row);
         }
-        if(Number.isFinite(Number(result.server_ms)))serverTimes.push(Number(result.server_ms));
+        const normalizeMs=performance.now()-normalizeAt;
+        const serverMs=Number(result.server_ms),payloadBytes=Number(result.payload_bytes);
+        if(Number.isFinite(serverMs))serverTimes.push(serverMs);
+        pageDiagnostics.push({page,cursor,loaded:part.length,nextSku:cleanText(result.next_sku)||null,
+          serverMs:Number.isFinite(serverMs)?serverMs:null,clientMs:read.clientMs,
+          payloadBytes:Number.isFinite(payloadBytes)?payloadBytes:null,normalizeMs,retries:read.retries});
         onProgress?.({loaded:rows.length,total,elapsed:performance.now()-started,metrics:{
-          mode:'grid-feed',requests:matrixReadMetrics.requests-before.requests,bytes:matrixReadMetrics.bytes-before.bytes,
+          mode:'grid-feed-v2',requests:matrixReadMetrics.requests-before.requests,bytes:matrixReadMetrics.bytes-before.bytes,
           networkMs:matrixReadMetrics.networkMs-before.networkMs,serverMeanMs:serverTimes.length?serverTimes.reduce((a,b)=>a+b,0)/serverTimes.length:0,
-          serverMaxMs:serverTimes.length?Math.max(...serverTimes):0,chunkSize:safeChunk,endpoints:fullMatrixReadContext.endpoints||{}
+          serverMaxMs:serverTimes.length?Math.max(...serverTimes):0,chunkSize:safeChunk,datasetVersion,
+          currentPage:page,currentCursor:cursor,pageDiagnostics:[...pageDiagnostics],endpoints:fullMatrixReadContext.endpoints||{}
         }});
         if(!result.has_more)break;
         const next=cleanText(result.next_sku);
@@ -946,12 +990,19 @@
         afterSku=next;
         if(requests>25)throw Error('Grid feed 요청 수가 안전 한도 25회를 넘었습니다.');
       }
-      if(rows.length!==total||seen.size!==total)throw Error(`Grid feed 전체 SKU 누락: ${rows.length.toLocaleString('ko-KR')} / ${Number(total||0).toLocaleString('ko-KR')}`);
+      const finalManifestRead=await readMatrixGridRpc('hub_matrix_grid_manifest_v2',{p_session_token:token},{signal,page:requests+1,cursor:'manifest-recheck'});
+      rpcTimes.push(finalManifestRead.clientMs);
+      const finalManifest=finalManifestRead.data;
+      if(Number(finalManifest.total)!==total||String(finalManifest.dataset_version||'')!==datasetVersion){
+        throw Error('Grid feed 로딩 중 Matrix cache가 변경되었습니다. 기존 dataset을 유지하고 다시 시도해주세요.');
+      }
+      if(rows.length!==total||seen.size!==total)throw Error(`Grid feed 전체 SKU 누락: ${rows.length.toLocaleString('ko-KR')} / ${total.toLocaleString('ko-KR')}`);
       return {rows,count:total,elapsed:performance.now()-started,metrics:{
-        mode:'grid-feed',requests:matrixReadMetrics.requests-before.requests,bytes:matrixReadMetrics.bytes-before.bytes,
+        mode:'grid-feed-v2',requests:matrixReadMetrics.requests-before.requests,bytes:matrixReadMetrics.bytes-before.bytes,
         networkMs:matrixReadMetrics.networkMs-before.networkMs,clientRpcMeanMs:rpcTimes.length?rpcTimes.reduce((a,b)=>a+b,0)/rpcTimes.length:0,
         clientRpcMaxMs:rpcTimes.length?Math.max(...rpcTimes):0,serverMeanMs:serverTimes.length?serverTimes.reduce((a,b)=>a+b,0)/serverTimes.length:0,
-        serverMaxMs:serverTimes.length?Math.max(...serverTimes):0,chunkSize:safeChunk,datasetVersion,endpoints:fullMatrixReadContext.endpoints||{}
+        serverMaxMs:serverTimes.length?Math.max(...serverTimes):0,chunkSize:safeChunk,datasetVersion,
+        pageDiagnostics,endpoints:fullMatrixReadContext.endpoints||{}
       }};
     }finally{fullMatrixReadContext=null;}
   }
