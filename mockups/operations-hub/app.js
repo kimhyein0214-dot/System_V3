@@ -7030,6 +7030,10 @@ const sellerExportState = {
   filter:null,
   filteredSkus:null,
   filteredSkusPromise:null,
+  tagId:'',
+  tagSkus:null,
+  tagSkusPromise:null,
+  tagCatalogLoaded:false,
   includeStockDrafts:false,
   directMatrixStock:false,
   previewRequestId:0
@@ -7238,10 +7242,70 @@ async function collectSellerExportFilteredSkus() {
   return sellerExportState.filteredSkusPromise;
 }
 
+function updateSellerExportTagPicker() {
+  const isTag = selectedSellerExportScope() === 'tag';
+  const picker = document.getElementById('seller-export-tag-picker');
+  if (picker) picker.hidden = !isTag;
+  if (isTag) void loadSellerExportTags();
+}
+
+async function loadSellerExportTags() {
+  const select = document.getElementById('seller-export-tag-select');
+  const countNode = document.getElementById('seller-export-tag-count');
+  if (!select || sellerExportState.tagCatalogLoaded) return;
+  sellerExportState.tagCatalogLoaded = true;
+  select.disabled = true;
+  countNode.textContent = '태그 목록 확인 중';
+  try {
+    const result = await liveData.loadTagCatalog({search:''});
+    const tags = result.rows || [];
+    select.innerHTML = '<option value="">태그 선택</option>' + tags.map(tag => `<option value="${escapeHtml(tag.tag_id)}">${escapeHtml(tag.tag_name)} · ${formatNumber(tag.option_count || 0)} SKU</option>`).join('');
+    if (sellerExportState.tagId) select.value = sellerExportState.tagId;
+    countNode.textContent = tags.length ? '내보낼 태그를 선택하세요.' : '사용 가능한 태그가 없습니다.';
+  } catch (error) {
+    sellerExportState.tagCatalogLoaded = false;
+    countNode.textContent = `태그 목록 실패 · ${error?.message || error}`;
+  } finally {
+    select.disabled = false;
+  }
+}
+
+async function collectSellerExportTagSkus() {
+  const select = document.getElementById('seller-export-tag-select');
+  const tagId = String(select?.value || sellerExportState.tagId || '').trim();
+  if (!tagId) throw new Error('내보낼 태그를 선택해주세요.');
+  if (sellerExportState.tagId === tagId && sellerExportState.tagSkus) return sellerExportState.tagSkus;
+  if (sellerExportState.tagId === tagId && sellerExportState.tagSkusPromise) return sellerExportState.tagSkusPromise;
+  sellerExportState.tagId = tagId;
+  sellerExportState.tagSkus = null;
+  const countNode = document.getElementById('seller-export-tag-count');
+  sellerExportState.tagSkusPromise = (async()=>{
+    const all=[];let expected=null;
+    for(let page=1;;page++){
+      const result=await liveData.loadTagMembers({tagId,search:'',page,pageSize:1000});
+      const count=Number(result.count||0);
+      if(expected!==null&&expected!==count)throw new Error('태그 적용 범위가 조회 중 변경됐습니다. 다시 확인해주세요.');
+      expected=count;
+      all.push(...(result.rows||[]).map(row=>String(row.sellpia_sku_code||'').trim()).filter(Boolean));
+      countNode.textContent=`서버 확인 ${formatNumber(all.length)} / ${formatNumber(expected)} SKU`;
+      if(all.length>=expected)break;
+      if(!(result.rows||[]).length)throw new Error('태그 적용 SKU 조회가 중간에 누락됐습니다.');
+    }
+    const skus=[...new Set(all)];
+    if(skus.length!==expected)throw new Error('태그 적용 SKU의 중복 또는 누락을 확인해주세요.');
+    sellerExportState.tagSkus=skus;
+    const selected=select?.selectedOptions?.[0]?.textContent?.replace(/\s*·\s*[\d,]+\s*SKU\s*$/,'')||'선택 태그';
+    countNode.textContent=`${selected} · 서버 확인 ${formatNumber(skus.length)} SKU`;
+    return skus;
+  })().finally(()=>{sellerExportState.tagSkusPromise=null;});
+  return sellerExportState.tagSkusPromise;
+}
+
 async function resolveSellerExportScopeSkus() {
   const scope = selectedSellerExportScope();
   if (scope === 'selected') return [...sellerExportState.selectedSkus];
   if (scope === 'filtered') return collectSellerExportFilteredSkus();
+  if (scope === 'tag') return collectSellerExportTagSkus();
   return null;
 }
 
@@ -7269,9 +7333,21 @@ async function refreshSellerExportPreview() {
   }
   if (!includeStockDrafts) {
     const scope = selectedSellerExportScope();
-    const scopeLabels = {filtered:'현재 검색·필터 결과', selected:'선택한 셀 범위의 SKU', all:'전체 상품'};
+    const scopeLabels = {filtered:'현재 검색·필터 결과', selected:'선택한 셀 범위의 SKU', tag:'태그 적용 SKU', all:'전체 상품'};
     countNode.textContent = '저장된 매트릭스 가격 반영';
     detailNode.textContent = `${scopeLabels[scope]} · ${sources.map(source => CHANNEL_LABELS[source] || source).join('·')} · 재고 수정안 검증 없음`;
+    if(scope==='tag'){
+      try{
+        countNode.textContent='태그 대상 확인 중';
+        const skus=await collectSellerExportTagSkus();
+        if(requestId!==sellerExportState.previewRequestId)return;
+        countNode.textContent=`${formatNumber(skus.length)}개 SKU의 저장 가격 반영`;
+        detailNode.textContent=`태그 적용 SKU · ${sources.map(source => CHANNEL_LABELS[source] || source).join('·')} · 서버 범위 확인 완료`;
+      }catch(error){
+        if(requestId!==sellerExportState.previewRequestId)return;
+        countNode.textContent='태그 대상 확인 필요';detailNode.textContent=error?.message||String(error);
+      }
+    }
     return;
   }
   countNode.textContent = '재고 수정안 확인 중';
@@ -7286,7 +7362,7 @@ async function refreshSellerExportPreview() {
       if (requestId !== sellerExportState.previewRequestId) return;
       count = await liveData.countSellerDraftsForExport(sources, scopeSkus);
       if (requestId !== sellerExportState.previewRequestId) return;
-      const scopeLabels = {filtered:'현재 검색·필터 결과', selected:'선택한 셀 범위의 SKU', all:'전체 상품'};
+      const scopeLabels = {filtered:'현재 검색·필터 결과', selected:'선택한 셀 범위의 SKU', tag:'태그 적용 SKU', all:'전체 상품'};
       detailNode.textContent = `${scopeLabels[scope]} · ${sources.map(source => CHANNEL_LABELS[source] || source).join('·')}`;
     }
     countNode.textContent = `${formatNumber(count)}건 재고 수정안 · 저장된 가격 함께 반영`;
@@ -7811,6 +7887,9 @@ function openSellerExport({action = 'export', rows = []} = {}) {
   sellerExportState.filter = snapshotMatrixExportFilter();
   sellerExportState.filteredSkus = null;
   sellerExportState.filteredSkusPromise = null;
+  sellerExportState.tagId = '';
+  sellerExportState.tagSkus = null;
+  sellerExportState.tagSkusPromise = null;
   sellerExportState.includeStockDrafts = false;
   sellerExportState.directMatrixStock = false;
   sellerExportState.previewRequestId += 1;
@@ -7837,6 +7916,10 @@ function openSellerExport({action = 'export', rows = []} = {}) {
   const defaultScope = matrixHasActiveExportFilter() ? 'filtered' : (skus.length ? 'selected' : 'all');
   const defaultScopeInput = sellerExportModal.querySelector(`input[name="seller-export-scope"][value="${defaultScope}"]`);
   if (defaultScopeInput) defaultScopeInput.checked = true;
+  const tagSelect = document.getElementById('seller-export-tag-select');
+  if (tagSelect) tagSelect.value = '';
+  document.getElementById('seller-export-tag-count').textContent = '태그를 선택하면 전체 적용 SKU를 확인합니다.';
+  updateSellerExportTagPicker();
   document.getElementById('seller-export-title').textContent = action === 'draft' ? '셀피아 기준 재고 수정안' : '현재 데이터 내보내기';
   document.getElementById('seller-export-kicker').textContent = action === 'draft' ? '매트릭스 수정안 생성' : '판매처 원본 파일 생성';
   document.getElementById('seller-export-guide-title').textContent = action === 'draft'
@@ -7957,7 +8040,7 @@ async function runSellerExport() {
       const scope = selectedSellerExportScope();
       const scopeSkus = await resolveSellerExportScopeSkus();
       scopeSkusForRules=scopeSkus;
-      if (scope !== 'all' && !scopeSkus.length) throw new Error(scope === 'selected' ? '선택한 셀 범위의 SKU가 없습니다.' : '현재 검색·필터 결과에 해당하는 SKU가 없습니다.');
+      if (scope !== 'all' && !scopeSkus.length) throw new Error(scope === 'selected' ? '선택한 셀 범위의 SKU가 없습니다.' : scope === 'tag' ? '선택한 태그에 적용된 SKU가 없습니다.' : '현재 검색·필터 결과에 해당하는 SKU가 없습니다.');
       if (includeStockDrafts) review = await liveData.reviewSellerDraftsForExport({sources, skus:scopeSkus,onProgress:reviewProgress});
     }
     stopCancelledSellerExport();
@@ -8237,6 +8320,7 @@ window.SystemV3SellerExportBridge={
     sellerExportModal.querySelectorAll('.seller-export-source-check').forEach(input=>{input.checked=input.value===source;input.disabled=false;});
     const scope=sellerExportState.selectedSkus.length?'selected':'all';
     sellerExportModal.querySelectorAll('input[name="seller-export-scope"]').forEach(input=>{input.checked=input.value===scope;});
+    updateSellerExportTagPicker();
     await refreshSellerOriginalStates();
     const sourceInput=sellerExportModal.querySelector(`.seller-export-source-check[value="${source}"]`);
     if(!sourceInput||sourceInput.disabled||!sourceInput.checked)throw Error((CHANNEL_LABELS[source]||source)+' 최신 보관 원본이 없습니다.');
@@ -8305,7 +8389,12 @@ document.getElementById('seller-export-exclusions-download').addEventListener('c
 });
 document.getElementById('seller-export-run').addEventListener('click', runSellerExport);
 sellerExportModal.querySelectorAll('.seller-export-source-check').forEach(input => input.addEventListener('change', refreshSellerExportPreview));
-sellerExportModal.querySelectorAll('input[name="seller-export-scope"]').forEach(input => input.addEventListener('change', refreshSellerExportPreview));
+sellerExportModal.querySelectorAll('input[name="seller-export-scope"]').forEach(input => input.addEventListener('change', () => { updateSellerExportTagPicker(); refreshSellerExportPreview(); }));
+document.getElementById('seller-export-tag-select')?.addEventListener('change', event => {
+  sellerExportState.tagId=String(event.target.value||'');sellerExportState.tagSkus=null;sellerExportState.tagSkusPromise=null;
+  const scope=document.getElementById('seller-export-tag-scope');if(scope)scope.checked=true;
+  updateSellerExportTagPicker();refreshSellerExportPreview();
+});
 
 const matrixCsvModal = document.getElementById('matrix-csv-modal');
 const matrixCsvState = {running:false, cancelRequested:false};

@@ -7,7 +7,7 @@
     <title>System V3 · 상품 운영 허브</title>
     <link rel="preconnect" href="https://cdnjs.cloudflare.com" crossorigin>
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/pretendard/1.3.9/static/pretendard.css">
-    <link rel="stylesheet" href="./style.css?v=20260915-tag-matrix-v1">
+    <link rel="stylesheet" href="./style.css?v=20260920-seller-tag-scope-v1">
     <link rel="stylesheet" href="./ably-combinations.css?v=20260910-rule-destination-v111">
     <link rel="stylesheet" href="./workspaces-v91.css?v=20260910-rule-destination-v111">
     <link rel="stylesheet" href="./price-rule-lab.css?v=20260910-rule-destination-v111">
@@ -798,7 +798,9 @@
             <legend>내보내기 범위</legend>
             <label><input type="radio" name="seller-export-scope" value="filtered"><span><b>현재 검색·필터 결과</b><em id="seller-export-filtered-count">현재 조건에 해당하는 SKU만 반영</em></span></label>
             <label><input id="seller-export-selected-scope" type="radio" name="seller-export-scope" value="selected"><span><b>선택한 셀 범위의 SKU</b><em id="seller-export-selected-count">선택한 SKU 없음</em></span></label>
+            <label><input id="seller-export-tag-scope" type="radio" name="seller-export-scope" value="tag"><span><b>태그 적용 SKU</b><em id="seller-export-tag-count">태그를 선택하면 전체 적용 SKU를 확인합니다.</em></span></label>
             <label><input type="radio" name="seller-export-scope" value="all"><span><b>전체 상품</b><em>검색·필터와 관계없이 전체 SKU의 저장된 가격 반영</em></span></label>
+            <div id="seller-export-tag-picker" class="seller-export-tag-picker" hidden><label for="seller-export-tag-select">태그</label><select id="seller-export-tag-select"><option value="">태그 선택</option></select><span>실제 내보내기 범위는 서버에서 다시 확인합니다.</span></div>
           </fieldset>
           <div id="seller-export-preview" class="seller-export-preview"><span id="seller-export-preview-label">대상 수정안 · 실행 시 안전검사</span><b id="seller-export-preview-count">확인 중</b><em id="seller-export-preview-detail">선택한 판매처와 범위를 확인합니다.</em></div>
           <div id="seller-export-progress" class="seller-export-progress" hidden><div><b id="seller-export-progress-title">준비 중</b><span id="seller-export-progress-percent">0%</span></div><i><span id="seller-export-progress-bar"></span></i><p id="seller-export-progress-detail">원본을 확인합니다.</p></div>
@@ -995,7 +997,7 @@
     <link rel="stylesheet" href="./sellpia-patch-export.css?v=20260919-partial-export-v3">
     <script src="./sellpia-patch-export.js?v=20260920-sellpia-carrier-v1"></script>
     <script src="./matrix-dataset.js?v=20260920-matrix-grid-feed-v1"></script>
-<script src="./app.js?v=20260920-matrix-grid-feed-v1"></script>
+<script src="./app.js?v=20260920-seller-tag-scope-v1"></script>
     <script src="./mapping-import.js?v=20260910-rule-destination-v111"></script>
     <script src="./attributes-page.js?v=20260915-tag-matrix-v1"></script>
     <script src="./price-rule-lab.js?v=20260910-rule-destination-v111"></script>

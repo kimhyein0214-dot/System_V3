@@ -36,7 +36,7 @@ assert.match(lifecycleMigration, /queue\.status = 'validated'[\s\S]*?item\.statu
 assert.match(migration, /else[\s\S]*?sellpia_current_stock is distinct from t\.seller_stock/, 'inventory reconciliation must export only stock differences');
 assert.match(partialMigration, /blocking_reason is null[\s\S]*?then 'exported' else 'failed'/, 'valid rows must export while unresolved original rows remain failed');
 
-for (const id of ['matrix-match-stock-btn','matrix-export-btn','queue-export','queue-confirm-applied','seller-export-modal','seller-export-run','seller-export-scope','seller-export-preview','seller-export-selected-scope']) {
+for (const id of ['matrix-match-stock-btn','matrix-export-btn','queue-export','queue-confirm-applied','seller-export-modal','seller-export-run','seller-export-scope','seller-export-preview','seller-export-selected-scope','seller-export-tag-scope','seller-export-tag-picker','seller-export-tag-select']) {
   assert.match(html, new RegExp(`id="${id}"`), `export UI must include ${id}`);
 }
 assert.doesNotMatch(html, /id="seller-export-include-stock"/, 'direct export stock is display-only and must not have a calculation checkbox');
@@ -52,7 +52,7 @@ assert.match(html,/ably-playauto-export\.js\?v=20260917-carrier-redcells-v1/,'Ab
 assert.match(html,/seller-file-workflow-v2\.js\?v=[^"']+/,'seller file workflow remains cache-versioned');
 assert.match(html,/data-service\.js\?v=[^"']+/,'targeted carrier lookup data service remains cache-versioned');
 assert.doesNotMatch(html, /class="seller-export-files"/, 'export must reuse the latest stored originals instead of asking for files again');
-for (const scope of ['filtered','selected','all']) assert.match(html, new RegExp(`name="seller-export-scope" value="${scope}"`), `export scope must include ${scope}`);
+for (const scope of ['filtered','selected','tag','all']) assert.match(html, new RegExp(`name="seller-export-scope" value="${scope}"`), `export scope must include ${scope}`);
 assert.match(draftMigration, /source_storage_files jsonb[^]*?seller-originals/, 'seller snapshots must retain immutable original file references');
 assert.match(draftMigration, /save_operations_hub_seller_value_draft[^]*?stage_operations_hub_seller_inventory_match/, 'seller cells and bulk stock matching must create reviewable drafts');
 assert.match(aliasMigration, /source\.source_channel as export_source_channel[^]*?r\.export_source_channel/, 'queue source and expanded export source must never share an ambiguous alias');
@@ -67,6 +67,10 @@ assert.match(data, /loadSellerDraftRows\(\{sources = \[\], skus = null\}/, 'draf
 assert.match(data, /loadSellerDraftRows[\s\S]*?if\(batch\)q=q\.in\('sellpia_sku_code',batch\)/, 'draft lookup must filter saved changes by Sellpia SKU in bounded batches');
 assert.match(app, /matrixHasActiveExportFilter\(\)[^]*?defaultScope = matrixHasActiveExportFilter\(\) \? 'filtered'/, 'an active matrix filter must become the default export scope');
 assert.match(app, /scope === 'selected'[^]*?scope === 'filtered'[^]*?collectSellerExportFilteredSkus/, 'checked and filtered SKU scopes must resolve separately');
+assert.match(app, /scope === 'tag'[^]*?collectSellerExportTagSkus/, 'tag scope must resolve through the authoritative server member reader');
+assert.match(app, /loadTagMembers\(\{tagId,search:'',page,pageSize:1000\}\)/, 'tag scope must page through the complete server-side assignment set');
+assert.match(app, /expected!==null&&expected!==count[^]*?skus\.length!==expected/, 'tag scope must fail closed if membership changes or rows are missing');
+assert.match(app, /HubCurrentPriceExport\.refreshItems[\s\S]*?skus:scopeSkusForRules/, 'tag scope must reach the same bounded seller carrier resolver as other SKU scopes');
 assert.match(app, /let firstChunk = true[^]*?while \(firstChunk \|\| offset < filter\.total\)/, 'filtered export must query once even when the matrix total is still loading');
 assert.match(app, /const includeStockDrafts = Boolean\(sellerExportState\.rows\?\.length\)/, 'only an explicit saved-change export may validate queue rows');
 assert.match(app, /if \(sellerExportState\.rows\.length\)[\s\S]*?reviewSellerDraftsForExport\(\{sources, changeIds:/, 'explicit queue rows must retain their validation path');
