@@ -96,6 +96,13 @@ test('each seller card owns an independent authoritative tag scope',async()=>{
   }
   assert.match(js,/directScopeSkus\(source\)/);
   assert.match(js,/scopeSkus\('ably'\)/);
+  assert.match(js,/data-standard-recalculate="smartstore"/);
+  assert.match(js,/data-standard-recalculate="makeshop"/);
+  assert.match(js,/activeRulesOnly:true,maxAffectedSkus:5000/,'seller recovery recalculates only active seller rules inside a finite scope');
+  assert.match(js,/seller-export-timeout-recovery:\$\{source\}/);
+  assert.match(js,/SKU 직접 입력 또는 태그 적용 SKU/,'full unbounded recalculation must be rejected');
+  assert.match(data,/if \(chunk\.length>10\)[\s\S]*?loadSellerComponents\(chunk\.slice\(0,middle\)\)/,'seller component timeout recovery splits requests to ten-SKU bounds');
+  assert.match(data,/if \(retry<2\)[\s\S]*?retry\?500:200/,'small timed-out requests receive two bounded retries');
   assert.doesNotMatch(js,/id="export-scope-mode"/,'the hidden page-global scope must not control every seller card');
 
   const functionSource=js.slice(js.indexOf('async function scopeSkus('),js.indexOf('\n async function blobFile('));

@@ -2831,12 +2831,12 @@
         return data||[];
       } catch (error) {
         if (!timedOut(error)) throw error;
-        if (chunk.length>25) {
+        if (chunk.length>10) {
           const middle=Math.ceil(chunk.length/2);
           return [...await loadSellerComponents(chunk.slice(0,middle)),...await loadSellerComponents(chunk.slice(middle))];
         }
-        if (retry<1) {
-          await new Promise(resolve=>setTimeout(resolve,150));
+        if (retry<2) {
+          await new Promise(resolve=>setTimeout(resolve,retry?500:200));
           return loadSellerComponents(chunk,retry+1);
         }
         throw error;
@@ -2850,12 +2850,12 @@
         return await attachRepresentativePrices(await attachSellerDrafts(await attachSellerPriceComponents(part,undefined,components)));
       } catch (error) {
         if (!timedOut(error)) throw error;
-        if (chunk.length>25) {
+        if (chunk.length>10) {
           const middle=Math.ceil(chunk.length/2);
           return [...await loadChunk(chunk.slice(0,middle)),...await loadChunk(chunk.slice(middle))];
         }
-        if (retry<1) {
-          await new Promise(resolve=>setTimeout(resolve,150));
+        if (retry<2) {
+          await new Promise(resolve=>setTimeout(resolve,retry?500:200));
           return loadChunk(chunk,retry+1);
         }
         throw error;

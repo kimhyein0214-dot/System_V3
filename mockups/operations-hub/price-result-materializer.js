@@ -7,7 +7,7 @@
  function aborted(signal){if(signal?.aborted){const error=new Error('계산 결과 저장을 중단했습니다. 완료된 배치는 유지됩니다.');error.name='AbortError';throw error;}}
  const message=error=>String(error?.message||error);
  function versions(result){return [...new Map((result?.versions||[]).map(v=>[JSON.stringify([v.id,v.version,v.assignmentVersion]),{id:v.id,version:v.version,...(v.assignmentVersion!==undefined?{assignmentVersion:v.assignmentVersion}:{})}])).values()];}
- async function materialize({skus,sources=ALL_SOURCES,reason='price-input-change',requestId,signal,onProgress,activeRulesOnly=false,boundedSkus=null}={}){
+ async function materialize({skus,sources=ALL_SOURCES,reason='price-input-change',requestId,signal,onProgress,activeRulesOnly=false,boundedSkus=null,maxAffectedSkus=50000}={}){
   const D=g.SystemV3Data,M=g.HubRuleRegistry,P=g.HubPlatformRules;
   const selected=unique(sources);if(selected.some(source=>!ALL_SOURCES.includes(source)))throw Error('지원하지 않는 판매처입니다.');
   const seeds=unique(skus||[]);aborted(signal);
@@ -21,8 +21,9 @@
   const configs={},sourceErrors=new Map(),sourceExpanded=Object.fromEntries(selected.map(source=>[source,new Set()]));
   for(const source of selected){try{configs[source]=await P.settings(source);}catch(error){aborted(signal);sourceErrors.set(source,message(error));}}
   const descendants=new Map();for(const edge of registry.dependencies||[]){if(!descendants.has(edge.parent_sku))descendants.set(edge.parent_sku,[]);descendants.get(edge.parent_sku).push(edge.child_sku);}
+  const maximum=Math.min(50000,Math.max(seeds.length,Number(maxAffectedSkus)||50000));
   const affected=new Set(),queue=[];
-  function add(values){const pending=[...values];for(let i=0;i<pending.length;i++){const sku=pending[i];if(affected.has(sku))continue;if(bound&&!bound.has(sku))throw Error('지정한 bounded 계산 범위 밖의 의존 SKU: '+sku);affected.add(sku);queue.push(sku);if(affected.size>50000)throw Error('영향 SKU가 50,000개를 넘습니다. 작업 범위를 나누세요.');pending.push(...(descendants.get(sku)||[]));}summary.totalSkus=affected.size;}
+  function add(values){const pending=[...values];for(let i=0;i<pending.length;i++){const sku=pending[i];if(affected.has(sku))continue;if(bound&&!bound.has(sku))throw Error('지정한 bounded 계산 범위 밖의 의존 SKU: '+sku);affected.add(sku);queue.push(sku);if(affected.size>maximum)throw Error(`영향 SKU가 이 작업의 안전 한도 ${maximum.toLocaleString('ko-KR')}개를 넘습니다. 범위를 나누세요.`);pending.push(...(descendants.get(sku)||[]));}summary.totalSkus=affected.size;}
   add(seeds);
   // Close sibling and downstream dependencies before writing any result.
   // Each seed is queried once per source, in bounded requests.

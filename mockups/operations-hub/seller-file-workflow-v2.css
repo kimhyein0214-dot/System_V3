@@ -91,6 +91,7 @@
 .direct-stock-toggle{display:flex!important;flex-direction:row!important;align-items:center;gap:7px;padding:7px 8px;border:1px solid #e1e8f0;border-radius:8px;background:#fff;color:#52647a;font-size:10px;font-weight:700}
 .direct-stock-toggle input{margin:0}
 .direct-export-actions{display:grid;grid-template-columns:1fr 1fr;gap:7px}
+.direct-export-actions .wide{grid-column:1/-1}
 .direct-export-preview{padding:7px 8px;border-radius:8px;background:#f3f6fa;color:#52647a;font-size:10px;line-height:1.45}
 .direct-export-preview.success{background:#edf9f1;color:#17733a}
 .direct-export-preview.error{background:#fff1f1;color:#a12727}

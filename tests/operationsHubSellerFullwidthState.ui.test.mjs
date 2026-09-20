@@ -9,8 +9,10 @@ try{
  await page.route('**/*',route=>route.abort());
  await page.setContent('<div id="jobs"><div class="page-head"></div><section class="queue-batch-workspace">history</section></div>');
  await page.evaluate(()=>{
+  window.qa={recalculations:[]};
   window.SystemV3Data={loadAuxiliarySellerFiles:async()=>({rows:[]}),loadLatestSellerOriginalStatus:async()=>[]};
   window.SystemV3SellerExportBridge={previewCarrier:async()=>{throw Error('RPC scoped read · statement timeout');}};
+  window.HubPriceMaterializer={materialize:async payload=>{const {onProgress,...request}=payload;qa.recalculations.push(structuredClone(request));onProgress?.({phase:'persist',totalSkus:2,completedSkus:2,persistedRows:10,errorRows:0});return {generationId:77,totalSkus:2,completedSkus:2,persistedRows:10,errorRows:0,status:'complete'};}};
  });
  await page.addStyleTag({content:fs.readFileSync('mockups/operations-hub/seller-file-workflow-v2.css','utf8')});
  await page.addScriptTag({content:fs.readFileSync('mockups/operations-hub/seller-file-workflow-v2.js','utf8')});
@@ -19,6 +21,13 @@ try{
  assert.ok(boxes.every(box=>box.width>1400));assert.ok(boxes[0].y<boxes[1].y&&boxes[1].y<boxes[2].y);
  assert.equal(await page.locator('[data-seller-panel="ably"] #export-preview-v2').count(),1);
  assert.equal(await page.locator('.seller-export-history').getAttribute('open'),null);
+ await page.locator('[data-seller-scope-mode="smartstore"]').selectOption('manual');
+ await page.locator('[data-seller-scope-manual="smartstore"]').fill('S-1 S-2 S-1');
+ await page.locator('[data-standard-recalculate="smartstore"]').click();
+ await page.waitForFunction(()=>qa.recalculations.length===1);
+ const recovery=await page.evaluate(()=>{const {onProgress,...payload}=qa.recalculations[0];return payload;});
+ assert.deepEqual(recovery,{skus:['S-1','S-2'],sources:['smartstore'],reason:'seller-export-timeout-recovery:smartstore',activeRulesOnly:true,maxAffectedSkus:5000});
+ assert.match(await page.locator('[data-standard-result="smartstore"]').textContent(),/generation 77/);
  const panel=page.locator('[data-seller-panel="smartstore"]');
  await page.locator('[data-standard-carrier-input="smartstore"]').setInputFiles({name:'small.xlsx',mimeType:'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',buffer:Buffer.from('sample')});
  await page.waitForFunction(()=>document.querySelector('[data-seller-panel="smartstore"]').dataset.state==='error');

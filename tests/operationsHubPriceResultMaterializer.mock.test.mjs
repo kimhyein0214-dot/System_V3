@@ -82,5 +82,6 @@ function fixture(){
  let sellerRead=false;SystemV3Data.loadInternalFormulaProducts=async skus=>skus.map(s=>f.products[s]);SystemV3Data.loadFormulaProducts=async()=>{sellerRead=true;assert.equal(f.rows().filter(r=>r.scope==='').length,405,'every internal result precedes a heavy seller read');throw Error('seller timeout');};
  const r=await f.run({skus:seeds,sources:['smartstore'],boundedSkus:seeds});assert.ok(sellerRead);assert.equal(f.rows().filter(r=>r.scope===''&&r.status==='calculated').length,405);assert.equal(r.totalSkus,405);
  const bound=fixture();await assert.rejects(bound.run({sources:[],boundedSkus:['A']}),/범위 밖/);assert.equal(bound.qa.writes.length,0);
+ const limited=fixture();await assert.rejects(limited.run({sources:[],maxAffectedSkus:1}),/안전 한도 1개/);assert.equal(limited.qa.writes.length,0);
 }
 console.log('PASS materializer: internal-first405, finite bound, active dependency graph, platform errors, abort/write errors, and existing pricing contracts.');
