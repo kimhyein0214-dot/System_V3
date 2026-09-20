@@ -107,11 +107,15 @@ for(const source of ['smartstore','makeshop']){
   assert.equal(plan.canGenerate,true);
   assert.equal(plan.summary.warned,2);
   assert.equal(plan.summary.blocked,0);
-  assert.equal(plan.summary.changed,1);
-  assertWarningRow(plan,0);
+  assert.equal(plan.summary.changed,2);
+  assert.equal(plan.preview[0].shared_price_warning,true);
+  assert.equal(plan.preview[0].diff.price.changed,false);
+  assert.equal(plan.preview[0].diff.stock.changed,true);
+  assert.deepEqual(plain(plan.preview[0].changed_fields),['stock']);
   assertWarningRow(plan,1);
   assert.ok(plan.operations.length>0);
-  assert.ok(plan.operations.every(item=>item.seller_product_code==='OTHER'),'shared product base-price mutation must not indirectly change a warned option');
+  assert.ok(plan.operations.filter(item=>item.seller_product_code==='SHARED').every(item=>item.field_key==='sellpia_current_stock'),'shared price warning must retain only independent stock operations');
+  assert.ok(plan.operations.some(item=>item.seller_product_code==='OTHER'&&item.field_key==='sellpia_sale_price'));
  });
  test(`${source}: no active price Rule is normal original-price behavior and may still export stock zero`,()=>{
   const plan=harness().prepareCarrierItems(source,'carrier.xlsx',[carrier()],[snapshot('P','O',{active_price_rule:false,...calculated()})]);

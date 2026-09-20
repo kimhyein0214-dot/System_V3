@@ -1,23 +1,50 @@
-import test from 'node:test';import assert from 'node:assert/strict';import fs from 'node:fs';import vm from 'node:vm';import {chromium} from 'playwright';
-test('independent Sellpia panel exports 1/100/2690 SKUs, selected numeric columns, file A-only, DB search, stale and invalid guards',async()=>{
- const browser=await chromium.launch({channel:'msedge',headless:true});try{
-  const page=await browser.newPage(),errors=[];page.on('pageerror',e=>errors.push(e.message));await page.setContent('<div id="export-workflow-v2"><div class="export-channel-grid"><article>SMARTSTORE</article><article>MAKESHOP</article><article>ABLY</article></div></div>');await page.addScriptTag({path:process.env.XLSX_BROWSER_SCRIPT});await page.addScriptTag({path:'mockups/operations-hub/sellpia-patch-export.js'});
-  await page.evaluate(()=>{window.calls=[];window.fixture=Array.from({length:2690},(_,i)=>({sellpia_sku_code:'90000-'+(i+1),sellpia_source_purchase_price:50000,sellpia_purchase_price:99999,sellpia_source_sale_price:50000,sellpia_source_stock:3,system_stock:4,system_base_price:50000,__activeBaseOwner:true,__hubInternalPrices:{calculated_base_price:{value:110000,activeOutputRules:[{id:'2.2'}]}}}));window.SystemV3Data={loadSellpiaPatchRows:async args=>{calls.push(args);const codes=args.skus||fixture.slice(0,100).map(r=>r.sellpia_sku_code),rows=codes.map(s=>fixture.find(r=>r.sellpia_sku_code===s)||{sellpia_sku_code:s,__missing:true});args.onProgress?.({processed:rows.length,total:rows.length});return rows;}};SellpiaPatchExport.mount();});
-  assert.match(await page.locator('.export-channel-grid>article').first().innerText(),/SELLPIA/);
-  const inspect=async(selector='#sellpia-patch-download')=>{const [download]=await Promise.all([page.waitForEvent('download'),page.locator(selector).click()]);const context={};vm.createContext(context);vm.runInContext(fs.readFileSync(process.env.XLSX_BROWSER_SCRIPT,'utf8'),context);const book=context.XLSX.read(new Uint8Array(fs.readFileSync(await download.path())),{type:'array'}),s=book.Sheets[book.SheetNames[0]];return {grid:context.XLSX.utils.sheet_to_json(s,{header:1}),sheet:s};};
-  for(const count of [1,100,2690]){await page.locator('#sellpia-patch-scope').selectOption('manual');await page.locator('#sellpia-patch-skus').fill(Array.from({length:count},(_,i)=>'90000-'+(i+1)).join(count===100?',':'\n'));await page.locator('#sellpia-patch-preview-run').click();await page.waitForFunction(()=>!document.getElementById('sellpia-patch-download').disabled);const b=await inspect();assert.equal(b.grid.length,count+1);assert.deepEqual(Array.from(b.grid[0]),['Sellpia SKU','기준가격']);assert.equal(b.sheet.B2.t,'n');assert.equal(b.grid[1][1],110000);assert.ok(await page.locator('#sellpia-patch-preview tr').count()<=100);}
-  await page.locator('[data-patch-field=stock]').check();let b=await inspect();assert.deepEqual(Array.from(b.grid[0]),['Sellpia SKU','기준가격','재고']);assert.equal(b.grid[1][2],4);await page.locator('[data-patch-field=purchase]').check();b=await inspect();assert.deepEqual(Array.from(b.grid[0]),['Sellpia SKU','매입가','기준가격','재고']);assert.equal(b.grid[1][1],50000,'purchase override/inbound must never replace raw purchase');assert.equal(b.sheet.D2.t,'n');
-  await page.locator('#sellpia-patch-scope').selectOption('search');await page.locator('#sellpia-patch-search-type').selectOption('own_code');await page.locator('#sellpia-patch-search').fill('[CODE]');await page.locator('#sellpia-patch-search-run').click();await page.waitForFunction(()=>calls.at(-1)?.search==='[CODE]');assert.equal(await page.evaluate(()=>calls.at(-1).searchType),'own_code');
-  await page.locator('#sellpia-patch-scope').selectOption('file');const buffer=await page.evaluate(()=>{const s=XLSX.utils.aoa_to_sheet([['SKU','메모','메모'],['90000-1','free text'],['90000-2','anything']]);s.C2={t:'e',v:7};const w=XLSX.utils.book_new();XLSX.utils.book_append_sheet(w,s,'목록');return Array.from(new Uint8Array(XLSX.write(w,{type:'array',bookType:'xlsx'})));});await page.locator('#sellpia-patch-scope').selectOption('file');await page.locator('#sellpia-patch-file').setInputFiles({name:'test.xlsx',mimeType:'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',buffer:Buffer.from(buffer)});await page.waitForFunction(()=>calls.at(-1)?.skus?.length===2);await page.waitForFunction(()=>!document.getElementById('sellpia-patch-download').disabled);assert.match(await page.locator('#sellpia-patch-status').innerText(),/2 SKU/);
-  await page.locator('#sellpia-patch-scope').selectOption('file');await page.locator('#sellpia-patch-file').setInputFiles({name:'test.csv',mimeType:'text/csv',buffer:Buffer.from('\uFEFFSKU,메모\n90000-1,메모는 무시\n')});await page.waitForFunction(()=>calls.at(-1)?.skus?.length===1);
-  await page.locator('#sellpia-patch-scope').selectOption('manual');await page.locator('#sellpia-patch-skus').fill('90000-1 INVALID');assert.equal(await page.locator('#sellpia-patch-download').isDisabled(),true);await page.locator('#sellpia-patch-preview-run').click();await page.waitForFunction(()=>document.getElementById('sellpia-patch-status').textContent.includes('차단 3'));assert.equal(await page.locator('#sellpia-patch-download').isDisabled(),false,'valid SKU remains exportable');assert.equal(await page.locator('#sellpia-patch-blocked-download').isDisabled(),false);assert.match(await page.locator('#sellpia-patch-preview').innerText(),/원본에 없는 SKU/);assert.equal((await inspect()).grid.length,2);const blocked=await inspect('#sellpia-patch-blocked-download');assert.equal(blocked.grid.length,4);assert.deepEqual(Array.from(blocked.grid[0]),['Sellpia SKU','필드','현재 원본값','상태','차단 사유']);assert.equal(blocked.grid[1][3],'BLOCK');
-  await page.locator('[data-patch-field=base]').uncheck();await page.locator('#sellpia-patch-scope').selectOption('manual');await page.locator('#sellpia-patch-skus').fill('90000-1');await page.locator('#sellpia-patch-preview-run').click();await page.waitForFunction(()=>!document.getElementById('sellpia-patch-preview-run').disabled);assert.equal(await page.evaluate(()=>calls.at(-1).withResults),false,'unselected base must not request calculation proofs');await page.locator('[data-patch-field=base]').check();await page.waitForFunction(()=>!document.getElementById('sellpia-patch-preview-run').disabled);assert.equal(await page.evaluate(()=>calls.at(-1).withResults),true,'selecting base reloads proof before exporting');
-  const invalidA=await page.evaluate(()=>{const sh=XLSX.utils.aoa_to_sheet([['SKU'],['bad']]);sh.A2={t:'e',v:7};const w=XLSX.utils.book_new();XLSX.utils.book_append_sheet(w,sh,'SKU');return Array.from(new Uint8Array(XLSX.write(w,{type:'array',bookType:'xlsx'})));});await page.locator('#sellpia-patch-scope').selectOption('file');await page.locator('#sellpia-patch-file').setInputFiles({name:'A-error.xlsx',mimeType:'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',buffer:Buffer.from(invalidA)});await page.waitForFunction(()=>document.getElementById('sellpia-patch-status').textContent.includes('A2 SKU 오류 셀'));assert.equal(await page.locator('#sellpia-patch-download').isDisabled(),true);
-  await page.evaluate(()=>{fixture[0].__hubInternalPrices.calculated_base_price.stale=true;});await page.locator('#sellpia-patch-scope').selectOption('manual');await page.locator('#sellpia-patch-skus').fill('90000-1');await page.locator('#sellpia-patch-preview-run').click();await page.waitForFunction(()=>document.getElementById('sellpia-patch-status').textContent.includes('차단 1'));assert.equal(await page.locator('#sellpia-patch-download').isDisabled(),true,'all-blocked scope has no normal file');assert.equal(await page.locator('#sellpia-patch-blocked-download').isDisabled(),false);assert.match(await page.locator('#sellpia-patch-preview').innerText(),/재계산 필요/);assert.deepEqual(errors,[]);
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import vm from 'node:vm';
+import {chromium} from 'playwright';
+
+test('Sellpia UI requires the stored original carrier and separates counters and blocked rows',async()=>{
+ const browser=await chromium.launch({channel:'msedge',headless:true});
+ try{
+  const page=await browser.newPage(),errors=[];page.on('pageerror',error=>errors.push(error.message));
+  await page.setContent('<div id="export-workflow-v2"><div class="export-channel-grid"><article>SMARTSTORE</article></div></div>');
+  await page.addScriptTag({path:process.env.XLSX_BROWSER_SCRIPT});
+  await page.addScriptTag({path:'mockups/operations-hub/sellpia-patch-export.js'});
+  await page.evaluate(()=>{
+   window.downloads=[];window.carrierAvailable=false;
+   const fixture=sku=>({sellpia_sku_code:sku,sellpia_source_sale_price:1000,system_base_price:1500,sellpia_source_stock:3,system_stock:4,__activeBaseOwner:true,__hubInternalPrices:{calculated_base_price:{value:1500,activeOutputRules:[{id:'R'}]}}});
+   window.SystemV3Data={
+    loadLatestSellpiaOriginalStatus:async()=>({snapshotId:'S1',available:carrierAvailable,fileNames:['original.xlsx'],reason:'최신 Sellpia 전체 스냅샷은 DB 행만 저장되어 원본 carrier 파일이 없습니다.'}),
+    downloadLatestSellpiaOriginals:async()=>{if(!carrierAvailable)throw Error('최신 Sellpia 전체 스냅샷은 DB 행만 저장되어 원본 carrier 파일이 없습니다.');return {snapshotId:'S1',files:[new File(['x'],'original.xlsx')]};},
+    loadSellpiaPatchRows:async args=>args.skus.map(fixture),
+    loadTagCatalog:async()=>({rows:[]})
+   };
+   window.SystemV3SellpiaCarrierExport={
+    prepare:async(_files,plan)=>({blocks:[{sku:'90000-2',field:'identity',before:'',reason:'carrier mismatch'}],priceChangeCount:1,stockChangeCount:1,purchaseChangeCount:0,warningSkuCount:0,warningIdentityCount:0,excludedIdentityCount:1,changedSkuCount:1}),
+    build:async()=>({blob:new Blob(['carrier']),'name':'original_SystemV3반영.xlsx'})
+   };
+   window.SystemV3SellerExport={downloadBlob:(blob,name)=>downloads.push({blob:blob.size,name})};
+   window.HubPriceMaterializer={materialize:async()=>({generationId:1,completedSkus:1,errorRows:0})};
+   SellpiaPatchExport.mount();
+  });
+  assert.match(await page.locator('#sellpia-patch-status').innerText(),/DB 행만 저장/);
+  await page.locator('#sellpia-patch-skus').fill('90000-1 90000-2');await page.locator('#sellpia-patch-preview-run').click();
+  await page.waitForFunction(()=>document.querySelector('#sellpia-patch-status').textContent.includes('실패: 최신 Sellpia'));
+  assert.equal(await page.locator('#sellpia-patch-download').isDisabled(),true);
+  await page.evaluate(()=>carrierAvailable=true);await page.locator('#sellpia-patch-skus').fill('90000-1 90000-2');await page.locator('#sellpia-patch-preview-run').click();
+  await page.waitForFunction(()=>document.querySelector('#sellpia-patch-status').textContent.includes('가격 변경 1'));
+  assert.match(await page.locator('#sellpia-patch-status').innerText(),/재고 변경 1/);assert.match(await page.locator('#sellpia-patch-status').innerText(),/scope 제외 1/);
+  assert.equal(await page.locator('#sellpia-patch-blocked-download').isDisabled(),false);assert.match(await page.locator('#sellpia-patch-preview').innerText(),/carrier mismatch/);
+  await page.locator('#sellpia-patch-download').click();await page.waitForFunction(()=>downloads.length===1);assert.equal(await page.evaluate(()=>downloads[0].name),'original_SystemV3반영.xlsx');
+  assert.deepEqual(errors,[]);
  }finally{await browser.close();}
 });
+
 test('fingerprint timeout retry keeps all exact stamps; permission failures remain failures',async()=>{
  const code=fs.readFileSync('mockups/operations-hub/data-service.js','utf8'),calls=[];
- const context={fullMatrixReadContext:null,requireOperationsHubSessionToken:()=> 'operator',throwOperationsHubRpcError:e=>{if(e)throw Error(e.message);},db:{rpc:async(name,args)=>{calls.push(args.p_skus);return args.p_skus.length>4?{error:{message:'canceling statement due to statement timeout'}}:{data:Object.fromEntries(args.p_skus.map(s=>[s,'exact-'+s]))};}}};vm.createContext(context);vm.runInContext(code.slice(code.indexOf('  async function loadInputFingerprints('),code.indexOf('  async function loadSourceSnapshotPair(')),context);
- const skus=Array.from({length:57},(_,i)=>''+i),stamps=await context.loadInputFingerprints(skus,'');assert.equal(Object.keys(stamps).length,57);assert.ok(skus.every(s=>stamps[s]==='exact-'+s));context.db.rpc=async()=>({error:{message:'permission denied'}});await assert.rejects(context.loadInputFingerprints(skus,''),/permission denied/);
+ const context={fullMatrixReadContext:null,requireOperationsHubSessionToken:()=> 'operator',throwOperationsHubRpcError:error=>{if(error)throw Error(error.message);},db:{rpc:async(_name,args)=>{calls.push(args.p_skus);return args.p_skus.length>4?{error:{message:'canceling statement due to statement timeout'}}:{data:Object.fromEntries(args.p_skus.map(sku=>[sku,'exact-'+sku]))};}}};
+ vm.createContext(context);vm.runInContext(code.slice(code.indexOf('  async function loadInputFingerprints('),code.indexOf('  async function loadSourceSnapshotPair(')),context);
+ const skus=Array.from({length:57},(_,index)=>''+index),stamps=await context.loadInputFingerprints(skus,'');assert.equal(Object.keys(stamps).length,57);assert.ok(skus.every(sku=>stamps[sku]==='exact-'+sku));
+ context.db.rpc=async()=>({error:{message:'permission denied'}});await assert.rejects(context.loadInputFingerprints(skus,''),/permission denied/);
 });

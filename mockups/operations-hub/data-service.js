@@ -2448,6 +2448,46 @@
     return filesBySource;
   }
 
+  async function loadLatestSellpiaOriginalStatus() {
+    const {data,error}=await db
+      .from('sellpia_stock_snapshots')
+      .select('snapshot_id,source_file_name,source_file_size,metadata,completed_at,created_at')
+      .eq('upload_status','ready')
+      .order('completed_at',{ascending:false,nullsFirst:false})
+      .order('created_at',{ascending:false})
+      .limit(50);
+    if(error)throw error;
+    const latest=(data||[])[0]||null;
+    const snapshot=(data||[]).find(row=>cleanText(row.metadata?.upload_mode||'full')==='full')||null;
+    const files=Array.isArray(snapshot?.metadata?.source_storage_files)?snapshot.metadata.source_storage_files:[];
+    const currentSnapshotMatches=Boolean(snapshot&&latest&&snapshot.snapshot_id===latest.snapshot_id);
+    return {
+      snapshotId:snapshot?.snapshot_id||null,
+      completedAt:snapshot?.completed_at||snapshot?.created_at||null,
+      fileNames:files.length?files.map(file=>file.name):cleanText(snapshot?.source_file_name).split(' | ').filter(Boolean),
+      files,
+      available:Boolean(snapshot&&files.length&&currentSnapshotMatches),
+      reason:!snapshot?'ready 상태의 Sellpia 전체 원본이 없습니다.'
+        :!currentSnapshotMatches?'현재 Sellpia 상태는 부분 원본 병합 이후입니다. 현재 상태와 일치하는 전체 원본 carrier를 다시 업로드해주세요.'
+        :files.length?'':'최신 Sellpia 전체 스냅샷은 DB 행만 저장되어 원본 carrier 파일이 없습니다.'
+    };
+  }
+
+  async function downloadLatestSellpiaOriginals(onProgress) {
+    const status=await loadLatestSellpiaOriginalStatus();
+    if(!status.available)throw new Error(status.reason||'최신 Sellpia 전체 원본 carrier가 없습니다.');
+    const files=[];
+    for(let index=0;index<status.files.length;index++){
+      const stored=status.files[index];
+      onProgress?.({completed:index,total:status.files.length,name:stored.name});
+      const {data:blob,error}=await db.storage.from('seller-originals').download(stored.path);
+      if(error)throw error;
+      files.push(new File([blob],stored.name,{type:stored.type||blob.type||'application/octet-stream'}));
+    }
+    onProgress?.({completed:files.length,total:files.length});
+    return {snapshotId:status.snapshotId,completedAt:status.completedAt,files};
+  }
+
   async function prepareSellerExport({batchId, mode, changeIds = [], sources = []}) {
     if (cleanText(mode) !== 'change_queue') throw new Error('검토한 수정본 내보내기만 지원합니다.');
     const {data:summaryRows, error} = await db.rpc('prepare_operations_hub_change_export', {
@@ -3290,6 +3330,16 @@
     const sourceFileSize = selectedFiles.reduce((sum, file) => sum + Number(file.size || 0), 0);
     let snapshotId = null;
     try {
+      const sourceFilesMetadata=selectedFiles.map((file,index)=>({name:file.name,size:file.size,...preflight.files[index]}));
+      const baseMetadata={
+        parser_version:'operations-hub-sellpia-2026.09.20-carrier-v1',
+        source_files:sourceFilesMetadata,
+        selected_fields:fields,
+        upload_mode:uploadMode,
+        uploaded_row_count:normalizedRows.length,
+        row_number_min:preflight.firstRowNo,
+        row_number_max:preflight.lastRowNo
+      };
       const {data: snapshot, error: snapshotError} = await db
         .from('sellpia_stock_snapshots')
         .insert({
@@ -3300,20 +3350,27 @@
           invalid_row_count: 0,
           upload_status: 'uploading',
           uploaded_by: 'system_v1_frontend',
-          metadata: {
-            parser_version: 'operations-hub-sellpia-2026.09.01-v5',
-            source_files: selectedFiles.map((file, index) => ({name:file.name, size:file.size, ...preflight.files[index]})),
-            selected_fields: fields,
-            upload_mode: uploadMode,
-            uploaded_row_count: normalizedRows.length,
-            row_number_min: preflight.firstRowNo,
-            row_number_max: preflight.lastRowNo
-          }
+          metadata:baseMetadata
         })
         .select('snapshot_id')
         .single();
       if (snapshotError) throw snapshotError;
       snapshotId = snapshot.snapshot_id;
+
+      const storageFiles=[];
+      for(let index=0;index<selectedFiles.length;index++){
+        const file=selectedFiles[index];
+        const extension=file.name.includes('.')?`.${file.name.split('.').pop().toLowerCase().replace(/[^0-9a-z]/g,'')}`:'';
+        const path=`sellpia/${snapshotId}/${String(index+1).padStart(2,'0')}${extension}`;
+        onProgress?.({percent:23+Math.round(((index+1)/selectedFiles.length)*3),title:'Sellpia 원본 백업 중',detail:`${file.name} 파일을 원본 carrier 보관소에 저장합니다.`});
+        const {error:storageError}=await db.storage.from('seller-originals').upload(path,file,{contentType:file.type||'application/octet-stream',cacheControl:'3600',upsert:false});
+        if(storageError)throw storageError;
+        storageFiles.push({name:file.name,path,size:Number(file.size||0),type:file.type||'application/octet-stream'});
+      }
+      const {error:metadataError}=await db.from('sellpia_stock_snapshots')
+        .update({metadata:{...baseMetadata,source_storage_files:storageFiles}})
+        .eq('snapshot_id',snapshotId);
+      if(metadataError)throw metadataError;
 
       const chunkSize = 500;
       for (let offset = 0; offset < normalizedRows.length; offset += chunkSize) {
@@ -3684,10 +3741,42 @@
     if(!fields)throw new Error('지원하지 않는 판매처입니다.');
     const productCodes=[...new Set((identities||[]).map(item=>cleanText(item?.product_code??item?.seller_product_code)).filter(Boolean))];
     if(!productCodes.length)return {source:safeSource,rows:[]};
-    const [productField,optionField]=fields,rows=[],suppressed=new Set();
+    const [productField,optionField]=fields,rows=[],suppressed=new Set(),activeByIdentity=new Map();
     const mappingKey=(sku,product,option)=>JSON.stringify([cleanText(sku),cleanText(product),cleanText(option)]);
+    const identityKey=(product,option)=>JSON.stringify([cleanText(product),cleanText(option)]);
     for(let offset=0;offset<productCodes.length;offset+=100){
       const chunk=productCodes.slice(offset,offset+100);
+      const listings=[];
+      for(let from=0;;from+=1000){
+        const {data}=await carrierRead('carrier active seller listings',chunk.length,db.from('operations_hub_seller_listings')
+          .select('listing_id,product_code,option_code')
+          .eq('source_channel',safeSource)
+          .eq('is_active',true)
+          .in('product_code',chunk)
+          .order('listing_id',{ascending:true}).range(from,from+999),onQuery);
+        listings.push(...(data||[]));
+        if(!data||data.length<1000)break;
+      }
+      const listingById=new Map(listings.map(listing=>[String(listing.listing_id),listing]));
+      const listingIds=[...listingById.keys()];
+      for(let listingOffset=0;listingOffset<listingIds.length;listingOffset+=500){
+        const idChunk=listingIds.slice(listingOffset,listingOffset+500);
+        for(let from=0;;from+=1000){
+          const {data}=await carrierRead('carrier active listing components',idChunk.length,db.from('operations_hub_listing_components')
+            .select('listing_id,sellpia_sku_code')
+            .eq('is_active',true)
+            .in('listing_id',idChunk)
+            .order('component_id',{ascending:true}).range(from,from+999),onQuery);
+          for(const component of data||[]){
+            const listing=listingById.get(String(component.listing_id)),sku=cleanText(component.sellpia_sku_code);
+            if(!listing||!sku)continue;
+            const key=identityKey(listing.product_code,listing.option_code);
+            if(!activeByIdentity.has(key))activeByIdentity.set(key,new Set());
+            activeByIdentity.get(key).add(sku);
+          }
+          if(!data||data.length<1000)break;
+        }
+      }
       for(let from=0;;from+=1000){
         const {data}=await carrierRead('carrier link suppressions',chunk.length,db.from('operations_hub_link_suppressions')
           .select('sellpia_sku_code,product_code,option_code')
@@ -3706,8 +3795,16 @@
           sku:cleanText(row.sellpia_sku_code),
           product_code:cleanText(row[productField]),
           option_code:cleanText(row[optionField])
-        })).filter(row=>row.sku&&row.product_code&&!suppressed.has(mappingKey(row.sku,row.product_code,row.option_code))));
+        })).filter(row=>{
+          if(!row.sku||!row.product_code||suppressed.has(mappingKey(row.sku,row.product_code,row.option_code)))return false;
+          const active=activeByIdentity.get(identityKey(row.product_code,row.option_code));
+          return !active?.size||active.has(row.sku);
+        }));
         if(!data||data.length<1000)break;
+      }
+      for(const listing of listings){
+        const active=activeByIdentity.get(identityKey(listing.product_code,listing.option_code));
+        for(const sku of active||[])if(!suppressed.has(mappingKey(sku,listing.product_code,listing.option_code)))rows.push({sku,product_code:cleanText(listing.product_code),option_code:cleanText(listing.option_code)});
       }
     }
     const unique=new Map();
@@ -4138,6 +4235,8 @@
     reviewSellerDraftsForExport,
     loadLatestSellerOriginalStatus,
     downloadLatestSellerOriginals,
+    loadLatestSellpiaOriginalStatus,
+    downloadLatestSellpiaOriginals,
     prepareSellerExport,
     completeSellerExport,
     confirmChangesApplied,

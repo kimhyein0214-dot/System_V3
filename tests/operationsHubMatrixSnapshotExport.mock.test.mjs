@@ -203,14 +203,22 @@ test('snapshot reader paginates 14000 rows without legacy reads or staging',asyn
 test('carrier mapping lookup reads only requested seller product identities before snapshot',async()=>{
   const functionSource=dataSource.slice(dataSource.indexOf('  async function loadCarrierSellerMappings('),dataSource.indexOf('  async function loadSystemStocks('));
   const calls=[];
-  const context={carrierRead:async(label,count,query)=>query,cleanText:value=>String(value??'').trim(),readableDatabaseError:error=>error,db:{from:table=>({select:fields=>({in:(field,values)=>({order:()=>({range:async(from,to)=>{calls.push({table,fields,field,values,from,to});return {data:[{sellpia_sku_code:'SKU-1',smartstore_product_code:'P-1',smartstore_option_code:'O-1'}],error:null};}})})})})}};
+  const fixtures={
+   operations_hub_link_suppressions:[],
+   operations_hub_seller_listings:[{listing_id:10,product_code:'P-1',option_code:'O-1'}],
+   operations_hub_listing_components:[{listing_id:10,sellpia_sku_code:'SKU-1'}],
+   operations_hub_matrix_cached:[
+    {sellpia_sku_code:'SKU-1',smartstore_product_code:'P-1',smartstore_option_code:'O-1'},
+    {sellpia_sku_code:'LEGACY-1',smartstore_product_code:'P-1',smartstore_option_code:'O-1'},
+    {sellpia_sku_code:'SKU-2',smartstore_product_code:'P-1',smartstore_option_code:'O-2'}
+   ]
+  };
+  const context={carrierRead:async(_label,_count,query)=>query,cleanText:value=>String(value??'').trim(),readableDatabaseError:error=>error,db:{from(table){const state={table,fields:'',filters:[]};const query={select(fields){state.fields=fields;return query;},eq(field,value){state.filters.push(['eq',field,value]);return query;},in(field,values){state.filters.push(['in',field,values]);return query;},order(){return query;},range(from,to){calls.push({...state,from,to});return Promise.resolve({data:fixtures[table]||[],error:null});}};return query;}}};
   vm.createContext(context);vm.runInContext(functionSource+'\nthis.load=loadCarrierSellerMappings;',context);
   const result=await context.load({source:'smartstore',identities:[{product_code:'P-1',option_code:'O-1'},{product_code:'P-1',option_code:'O-2'}]});
-  assert.deepEqual(plain(result.rows),[{sku:'SKU-1',product_code:'P-1',option_code:'O-1'}]);
-  assert.equal(calls.length,1);
-  assert.deepEqual(plain(calls[0].values),['P-1']);
-  assert.equal(calls[0].table,'operations_hub_matrix_cached');
-  assert.equal(calls[0].field,'smartstore_product_code');
+  assert.deepEqual(plain(result.rows),[{sku:'SKU-1',product_code:'P-1',option_code:'O-1'},{sku:'SKU-2',product_code:'P-1',option_code:'O-2'}]);
+  assert.deepEqual([...new Set(calls.map(call=>call.table))].sort(),['operations_hub_link_suppressions','operations_hub_listing_components','operations_hub_matrix_cached','operations_hub_seller_listings'].sort());
+  assert.ok(calls.every(call=>call.filters.some(filter=>filter[0]==='in')),'every read remains bounded to product or listing identity');
 });
 
 test('carrier serializer receives the exact TransformationPlan operations',async()=>{

@@ -478,6 +478,44 @@
     return {blob,skippedItems,appliedItems};
   }
 
+  async function transformTabularXlsx(file,changes,{dataRowNumbers=null,keepOnlyRows=null,renumberColumn='',renumberStart=1}={}){
+    const parts=await xlsxParts(file), conflicts=[], applied=[];
+    const rows=new Set([...String(parts.sheetXml).matchAll(/<row\b[^>]*\br="(\d+)"/g)].map(match=>Number(match[1])));
+    let sheetXml=parts.sheetXml;
+    for(const change of changes||[]){
+      try{
+        const row=Number(change.row), column=clean(change.column).toUpperCase();
+        if(!Number.isInteger(row)||row<1||!column||!rows.has(row))throw exportConflict(change,`${file.name}: ${row || '?'}행을 원본에서 찾지 못했습니다.`);
+        const reference=`${column}${row}`, rowMatcher=new RegExp(`<row\\b[^>]*\\br="${row}"[^>]*>[\\s\\S]*?<\\/row>`), rowXml=sheetXml.match(rowMatcher)?.[0]||'';
+        const actual=cellValue(rowXml,reference,parts.shared);
+        if(change.expected!==undefined&&change.expected!==null&&!sameValue(actual,change.expected,change.numeric?'sellpia_sale_price':''))throw exportConflict(change,`${file.name} ${change.sku}: 보관 원본 값(${actual})과 DB 원본 값(${change.expected})이 다릅니다.`);
+        const next=setCellValue(rowXml,reference,change.value,change.numeric===false?'string':'number');
+        sheetXml=sheetXml.replace(rowMatcher,next);
+        applied.push({...change,reference});
+      }catch(error){if(error?.exportConflict)conflicts.push({change,reason:error.message});else throw error;}
+    }
+    let rowMap=null;
+    if(dataRowNumbers&&keepOnlyRows){
+      const ordered=[...dataRowNumbers].map(Number).filter(Number.isInteger).sort((a,b)=>a-b), kept=ordered.filter(row=>new Set(keepOnlyRows).has(row)), first=ordered[0];
+      rowMap=new Map(kept.map((row,index)=>[row,first+index]));
+      sheetXml=scopeWorksheetRows(sheetXml,ordered,kept);
+      if(renumberColumn){
+        kept.forEach((sourceRow,index)=>{
+          const row=rowMap.get(sourceRow), matcher=new RegExp(`<row\\b[^>]*\\br="${row}"[^>]*>[\\s\\S]*?<\\/row>`), xml=sheetXml.match(matcher)?.[0];
+          if(xml)sheetXml=sheetXml.replace(matcher,setCellValue(xml,`${renumberColumn}${row}`,Number(renumberStart)+index,'number'));
+        });
+      }
+    }
+    const highlights=applied.map(change=>{
+      const row=rowMap?.get(Number(change.row))||Number(change.row);
+      return `${clean(change.column).toUpperCase()}${row}`;
+    });
+    const highlighted=applyChangeHighlights(sheetXml,parts.stylesXml,highlights);
+    parts.zip.file(parts.sheetPath,highlighted.sheetXml);parts.zip.file(parts.stylesPath,highlighted.stylesXml);
+    const blob=await parts.zip.generateAsync({type:'blob',mimeType:'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',compression:'DEFLATE',compressionOptions:{level:6}});
+    return {blob,applied,conflicts};
+  }
+
   async function markCarrierWarnings(file,source,preview){
     const warnings=(preview||[]).filter(row=>row.status==='warn_keep_original'||row.shared_price_warning);
     if(!warnings.length)return file;
@@ -565,5 +603,5 @@
   }
   function downloadBlob(blob,name){const url=URL.createObjectURL(blob);const anchor=document.createElement('a');anchor.href=url;anchor.download=name;document.body.appendChild(anchor);anchor.click();anchor.remove();setTimeout(()=>URL.revokeObjectURL(url),30000);}
 
-  global.SystemV3SellerExport=Object.freeze({cellValue,setCellValue,applyChangeHighlights,markCarrierWarnings,preflightSharedPriceGroups,patchSmartstoreRow,patchMakeshopRow,scopeWorksheetRows,patchXlsxFile,transformSellerFile,patchCsvFile,buildExportArchive,downloadBlob,outputName,auditCsv,conflictCsv,discountTermsFingerprint});
+  global.SystemV3SellerExport=Object.freeze({cellValue,setCellValue,applyChangeHighlights,markCarrierWarnings,preflightSharedPriceGroups,patchSmartstoreRow,patchMakeshopRow,scopeWorksheetRows,patchXlsxFile,transformSellerFile,transformTabularXlsx,patchCsvFile,buildExportArchive,downloadBlob,outputName,auditCsv,conflictCsv,discountTermsFingerprint});
 })(typeof window!=='undefined'?window:globalThis);
