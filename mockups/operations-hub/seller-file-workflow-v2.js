@@ -1,7 +1,7 @@
 (function initSellerFileWorkflowV2(global){
  'use strict';
  const D=()=>global.SystemV3Data,A=()=>global.AblyPlayautoExport;
- const state={files:[],catalog:null,catalogKey:'',preview:null,previewFilter:'all',previewPage:1,role:null,loading:false,carrierFiles:new Map(),standardCarrierFiles:new Map(),standardCarrierPlans:new Map(),standardCarrierViews:new Map(),ablyJob:null,ablyJobSequence:0};
+ const state={files:[],catalog:null,catalogKey:'',preview:null,previewFilter:'all',previewPage:1,role:null,loading:false,carrierFiles:new Map(),standardCarrierFiles:new Map(),standardCarrierPlans:new Map(),standardCarrierViews:new Map(),tagCatalogRows:null,tagCatalogPromise:null,ablyJob:null,ablyJobSequence:0};
  const roles={
   playauto_product:{label:'PlayAuto · 판매가 + 옵션가',type:'product_price_option',hint:'쇼핑몰상품 시트',fileLabel:'쇼핑몰상품.xlsx'},
   playauto_option:{label:'PlayAuto · 옵션가 + 재고',type:'option_price_stock',hint:'옵션기본 시트 · V 추가 금액 / X *판매수량(실재고) / W 원본 보존',fileLabel:'옵션기본.xlsx'}
@@ -64,6 +64,46 @@
   });
   const historyNodes=[...page.children].filter(node=>node!==section&&!node.classList.contains('page-head'));
   if(historyNodes.length){const history=document.createElement('details');history.className='seller-export-history';const summary=document.createElement('summary');summary.textContent='작업 배치 · 과거 작업 · 감사 이력 펼치기';history.append(summary);historyNodes.forEach(node=>history.append(node));section.insertAdjacentElement('afterend',history);}
+ }
+
+ function sellerScopeMarkup(source){
+  return `<div class="seller-card-scope" data-seller-scope="${source}">
+   <label>대상 범위<select data-seller-scope-mode="${source}"><option value="all">파일에서 매칭되는 전체 SKU</option><option value="manual">SKU 직접 입력</option><option value="tag">태그 적용 SKU</option></select></label>
+   <label class="seller-card-scope-detail" data-seller-scope-manual-wrap="${source}" hidden>SKU 목록<textarea data-seller-scope-manual="${source}" placeholder="10000-1&#10;10000-2"></textarea></label>
+   <label class="seller-card-scope-detail" data-seller-scope-tag-wrap="${source}" hidden>태그<select data-seller-scope-tag="${source}"><option value="">태그 선택</option></select></label>
+   <small data-seller-scope-summary="${source}">파일에서 매칭되는 전체 SKU</small>
+  </div>`;
+ }
+
+ function updateSellerScopeSummary(source){
+  const mode=document.querySelector(`[data-seller-scope-mode="${source}"]`)?.value||'all',summary=document.querySelector(`[data-seller-scope-summary="${source}"]`);
+  if(!summary)return;
+  if(mode==='manual'){
+   const values=String(document.querySelector(`[data-seller-scope-manual="${source}"]`)?.value||'').split(/[,\s]+/).map(value=>value.trim()).filter(Boolean);
+   summary.textContent=values.length?`직접 입력 ${n(new Set(values).size)} SKU`:'SKU를 입력해주세요.';
+   return;
+  }
+  if(mode==='tag'){
+   const select=document.querySelector(`[data-seller-scope-tag="${source}"]`),option=select?.selectedOptions?.[0];
+   summary.textContent=select?.value?(option?.textContent||'선택 태그'):'태그를 선택해주세요.';
+   return;
+  }
+  summary.textContent='파일에서 매칭되는 전체 SKU';
+ }
+
+ function bindSellerScope(section,source){
+  const mode=section.querySelector(`[data-seller-scope-mode="${source}"]`),manual=section.querySelector(`[data-seller-scope-manual="${source}"]`),tag=section.querySelector(`[data-seller-scope-tag="${source}"]`);
+  if(!mode)return;
+  mode.onchange=()=>{
+   const manualWrap=section.querySelector(`[data-seller-scope-manual-wrap="${source}"]`),tagWrap=section.querySelector(`[data-seller-scope-tag-wrap="${source}"]`);
+   if(manualWrap)manualWrap.hidden=mode.value!=='manual';
+   if(tagWrap)tagWrap.hidden=mode.value!=='tag';
+   if(mode.value==='tag')void loadTags(source);
+   updateSellerScopeSummary(source);
+  };
+  if(manual)manual.oninput=()=>updateSellerScopeSummary(source);
+  if(tag)tag.onchange=()=>updateSellerScopeSummary(source);
+  updateSellerScopeSummary(source);
  }
 
  function setStatus(text,kind=''){
@@ -201,15 +241,11 @@
   if(!page||!head||document.getElementById('export-workflow-v2'))return;
   page.querySelector('.export-hub')?.remove();
   const section=document.createElement('section');section.id='export-workflow-v2';section.className='export-workflow-v2';
-  section.innerHTML=`<header><h3>판매처 파일 내보내기</h3><p>스마트스토어·메이크샵은 변경분 또는 선택한 공식 수정파일을 변환합니다. 에이블리 옵션가·재고 수정파일은 Storage에 올리지 않고 브라우저에서 즉시 변환합니다.</p></header>
-   <div class="export-scope-v2">
-    <label>대상 범위<select id="export-scope-mode"><option value="all">파일에서 매칭되는 전체 SKU</option><option value="manual">SKU 직접 입력</option><option value="tag">태그 적용 SKU</option></select></label>
-    <div><label id="export-scope-manual-wrap" class="export-scope-detail" hidden>SKU 목록<textarea id="export-scope-manual" placeholder="10000-1&#10;10000-2"></textarea></label><label id="export-scope-tag-wrap" class="export-scope-detail" hidden>태그<select id="export-scope-tag"><option value="">태그 선택</option></select></label></div>
-   </div>
-   <div class="export-channel-grid">
-     <article class="export-channel-card" data-standard-source="smartstore"><header><h4>스마트스토어</h4><span>원본 양식</span></header><p>현재 매트릭스와 다른 안전 상품 묶음만 생성하거나, 직접 받은 공식 부분 수정 XLSX를 메모리에서 변환합니다.</p><div class="export-role-status" data-standard-status="smartstore">원본 상태 확인 중…</div><div class="export-role-status matrix-stock-state" data-matrix-stock-status="smartstore">재고 상태 확인 전 · 새 수정안을 계산하지 않습니다.</div><input type="file" data-standard-carrier-input="smartstore" accept=".xlsx,.xls"><div class="direct-export-actions"><button class="btn" type="button" data-standard-full-preview="smartstore">전체 원본 미리보기</button><button class="btn primary" type="button" data-standard-full-run="smartstore">전체 원본 XLSX 생성</button><button class="btn" type="button" data-standard-preview="smartstore">변경분 미리보기</button><button class="btn primary" type="button" data-standard-run="smartstore">변경분 XLSX 생성</button><button class="btn" type="button" data-standard-carrier-pick="smartstore">수정파일 선택</button><button class="btn primary" type="button" data-standard-carrier-run="smartstore" aria-disabled="true">선택 파일 변환</button></div><div class="direct-export-progress" data-standard-progress="smartstore" hidden><div class="direct-export-progress-head"><b data-progress-title>파일 생성 준비</b><span data-progress-percent>0%</span></div><div class="direct-export-progress-track"><i data-progress-bar style="width:0%"></i></div><small data-progress-detail>대상 범위와 원본을 확인합니다.</small></div><div class="direct-export-preview" data-standard-result="smartstore">변경분을 확인하거나 공식 수정파일을 선택하세요.</div></article>
-    <article class="export-channel-card" data-standard-source="makeshop"><header><h4>메이크샵</h4><span>원본 양식</span></header><p>현재 매트릭스와 다른 안전 상품 묶음만 생성하거나, 직접 받은 공식 부분 수정 XLSX를 메모리에서 변환합니다.</p><div class="export-role-status" data-standard-status="makeshop">원본 상태 확인 중…</div><div class="export-role-status matrix-stock-state" data-matrix-stock-status="makeshop">재고 상태 확인 전 · 새 수정안을 계산하지 않습니다.</div><input type="file" data-standard-carrier-input="makeshop" accept=".xlsx,.xls"><div class="direct-export-actions"><button class="btn" type="button" data-standard-full-preview="makeshop">전체 원본 미리보기</button><button class="btn primary" type="button" data-standard-full-run="makeshop">전체 원본 XLSX 생성</button><button class="btn" type="button" data-standard-preview="makeshop">변경분 미리보기</button><button class="btn primary" type="button" data-standard-run="makeshop">변경분 XLSX 생성</button><button class="btn" type="button" data-standard-carrier-pick="makeshop">수정파일 선택</button><button class="btn primary" type="button" data-standard-carrier-run="makeshop" aria-disabled="true">선택 파일 변환</button></div><div class="direct-export-progress" data-standard-progress="makeshop" hidden><div class="direct-export-progress-head"><b data-progress-title>파일 생성 준비</b><span data-progress-percent>0%</span></div><div class="direct-export-progress-track"><i data-progress-bar style="width:0%"></i></div><small data-progress-detail>대상 범위와 원본을 확인합니다.</small></div><div class="direct-export-preview" data-standard-result="makeshop">변경분을 확인하거나 공식 수정파일을 선택하세요.</div></article>
-    <article class="export-channel-card"><header><h4>에이블리 · PlayAuto 빠른 변환</h4><span>전용 양식</span></header><p>두 공식 수정파일 모두 Storage에 저장하지 않고 브라우저 메모리에서 미리보기 후 변환합니다. 장기 원본은 별도로 유지됩니다.</p><div class="export-role-status">에이블리 할인은 공식 파일에 지원 컬럼이 없어 자동 반영하지 않습니다. 판매처 관리자에서 수동 관리하세요.</div>
+   section.innerHTML=`<header><h3>판매처 파일 내보내기</h3><p>각 판매처 카드에서 파일 전체·직접 입력·태그 적용 SKU 범위를 선택합니다. 스마트스토어·메이크샵은 변경분 또는 선택한 공식 수정파일을 변환합니다.</p></header>
+    <div class="export-channel-grid">
+      <article class="export-channel-card" data-standard-source="smartstore"><header><h4>스마트스토어</h4><span>원본 양식</span></header><p>현재 매트릭스와 다른 안전 상품 묶음만 생성하거나, 직접 받은 공식 부분 수정 XLSX를 메모리에서 변환합니다.</p><div class="export-role-status" data-standard-status="smartstore">원본 상태 확인 중…</div><div class="export-role-status matrix-stock-state" data-matrix-stock-status="smartstore">재고 상태 확인 전 · 새 수정안을 계산하지 않습니다.</div>${sellerScopeMarkup('smartstore')}<input type="file" data-standard-carrier-input="smartstore" accept=".xlsx,.xls"><div class="direct-export-actions"><button class="btn" type="button" data-standard-full-preview="smartstore">전체 원본 미리보기</button><button class="btn primary" type="button" data-standard-full-run="smartstore">전체 원본 XLSX 생성</button><button class="btn" type="button" data-standard-preview="smartstore">변경분 미리보기</button><button class="btn primary" type="button" data-standard-run="smartstore">변경분 XLSX 생성</button><button class="btn" type="button" data-standard-carrier-pick="smartstore">수정파일 선택</button><button class="btn primary" type="button" data-standard-carrier-run="smartstore" aria-disabled="true">선택 파일 변환</button></div><div class="direct-export-progress" data-standard-progress="smartstore" hidden><div class="direct-export-progress-head"><b data-progress-title>파일 생성 준비</b><span data-progress-percent>0%</span></div><div class="direct-export-progress-track"><i data-progress-bar style="width:0%"></i></div><small data-progress-detail>대상 범위와 원본을 확인합니다.</small></div><div class="direct-export-preview" data-standard-result="smartstore">변경분을 확인하거나 공식 수정파일을 선택하세요.</div></article>
+      <article class="export-channel-card" data-standard-source="makeshop"><header><h4>메이크샵</h4><span>원본 양식</span></header><p>현재 매트릭스와 다른 안전 상품 묶음만 생성하거나, 직접 받은 공식 부분 수정 XLSX를 메모리에서 변환합니다.</p><div class="export-role-status" data-standard-status="makeshop">원본 상태 확인 중…</div><div class="export-role-status matrix-stock-state" data-matrix-stock-status="makeshop">재고 상태 확인 전 · 새 수정안을 계산하지 않습니다.</div>${sellerScopeMarkup('makeshop')}<input type="file" data-standard-carrier-input="makeshop" accept=".xlsx,.xls"><div class="direct-export-actions"><button class="btn" type="button" data-standard-full-preview="makeshop">전체 원본 미리보기</button><button class="btn primary" type="button" data-standard-full-run="makeshop">전체 원본 XLSX 생성</button><button class="btn" type="button" data-standard-preview="makeshop">변경분 미리보기</button><button class="btn primary" type="button" data-standard-run="makeshop">변경분 XLSX 생성</button><button class="btn" type="button" data-standard-carrier-pick="makeshop">수정파일 선택</button><button class="btn primary" type="button" data-standard-carrier-run="makeshop" aria-disabled="true">선택 파일 변환</button></div><div class="direct-export-progress" data-standard-progress="makeshop" hidden><div class="direct-export-progress-head"><b data-progress-title>파일 생성 준비</b><span data-progress-percent>0%</span></div><div class="direct-export-progress-track"><i data-progress-bar style="width:0%"></i></div><small data-progress-detail>대상 범위와 원본을 확인합니다.</small></div><div class="direct-export-preview" data-standard-result="makeshop">변경분을 확인하거나 공식 수정파일을 선택하세요.</div></article>
+      <article class="export-channel-card"><header><h4>에이블리 · PlayAuto 빠른 변환</h4><span>전용 양식</span></header><p>두 공식 수정파일 모두 Storage에 저장하지 않고 브라우저 메모리에서 미리보기 후 변환합니다. 장기 원본은 별도로 유지됩니다.</p><div class="export-role-status">에이블리 할인은 공식 파일에 지원 컬럼이 없어 자동 반영하지 않습니다. 판매처 관리자에서 수동 관리하세요.</div>${sellerScopeMarkup('ably')}
       <div class="export-role-status" data-export-file="playauto_product"></div>
       <div class="export-role-status" data-export-file="playauto_option"></div>
       <input type="file" data-carrier-input="playauto_product" accept=".xlsx,.xls"><input type="file" data-carrier-input="playauto_option" accept=".xlsx,.xls"><div class="ably-export-actions"><button class="btn" type="button" data-carrier-pick="playauto_product">판매가 + 옵션가 파일 선택</button><button class="btn" type="button" data-carrier-pick="playauto_option">옵션가 + 재고 파일 선택</button><button class="btn wide" type="button" data-page-upload-ably>장기 원본 관리</button></div>
@@ -224,8 +260,7 @@
   // UI preview release: canary controls are not mounted, including URL opt-in.
   document.getElementById('export-workflow-status').hidden=true;
 
-  const mode=document.getElementById('export-scope-mode');
-  mode.onchange=()=>{document.getElementById('export-scope-manual-wrap').hidden=mode.value!=='manual';document.getElementById('export-scope-tag-wrap').hidden=mode.value!=='tag';if(mode.value==='tag')void loadTags();};
+  for(const source of ['smartstore','makeshop','ably'])bindSellerScope(section,source);
   if(!section.dataset.progressBound){section.dataset.progressBound='1';global.addEventListener('system-v3-seller-export-progress',event=>{const d=event.detail||{};if(d.source)standardProgress(d.source,d.percent,d.title,d.detail,d.percent>=100?'done':'running');});}
   section.querySelectorAll('[data-standard-full-preview]').forEach(btn=>btn.onclick=()=>{const source=btn.dataset.standardFullPreview;standardLastActions.set(source,()=>previewStandard(source,'full_original'));void previewStandard(source,'full_original');});
   section.querySelectorAll('[data-standard-full-run]').forEach(btn=>btn.onclick=()=>{const source=btn.dataset.standardFullRun;standardLastActions.set(source,()=>runStandard(source,'full_original'));void runStandard(source,'full_original');});
@@ -253,8 +288,8 @@
   }
  }
 
- async function directScopeSkus(){
-  const scope=await scopeSkus();
+ async function directScopeSkus(source){
+  const scope=await scopeSkus(source);
   return scope?[...scope]:null;
  }
 
@@ -330,7 +365,7 @@
   const button=document.querySelector('[data-standard-preview="'+source+'"]');if(button)button.disabled=true;global.__systemV3DirectExportBusy=true;
   standardResult(source,'매트릭스 가격·재고와 원본 위치를 검증하는 중…');
   standardProgress(source,3,'변경분 조회','현재 매트릭스 표시값과 최신 원본을 비교합니다.');
-  try{const skus=await directScopeSkus();const result=mode==='full_original'?await bridge.previewFullOriginal({source,skus}):await bridge.previewChangedOnly({source,skus});const stock=document.querySelector('[data-matrix-stock-status="'+source+'"]');if(stock){stock.className='export-role-status matrix-stock-state ready';stock.textContent='carrier 대상 '+n(result.diagnostics?.sku_count)+' SKU · DB 조회 '+n(result.diagnostics?.query_count)+'회 · 전체 snapshot 없음';}standardResult(source,[result.count,result.detail,'재고는 현재 수정안/판매처 반영 상태만 사용'].filter(Boolean).join(' · '),'success');setStatus((source==='smartstore'?'스마트스토어':'메이크샵')+(mode==='full_original'?' 전체 원본 미리보기 완료':' 변경분 미리보기 완료'),'success');}
+  try{const skus=await directScopeSkus(source);const result=mode==='full_original'?await bridge.previewFullOriginal({source,skus}):await bridge.previewChangedOnly({source,skus});const stock=document.querySelector('[data-matrix-stock-status="'+source+'"]');if(stock){stock.className='export-role-status matrix-stock-state ready';stock.textContent='carrier 대상 '+n(result.diagnostics?.sku_count)+' SKU · DB 조회 '+n(result.diagnostics?.query_count)+'회 · 전체 snapshot 없음';}standardResult(source,[result.count,result.detail,'재고는 현재 수정안/판매처 반영 상태만 사용'].filter(Boolean).join(' · '),'success');setStatus((source==='smartstore'?'스마트스토어':'메이크샵')+(mode==='full_original'?' 전체 원본 미리보기 완료':' 변경분 미리보기 완료'),'success');}
   catch(error){standardResult(source,error?.message||String(error),'error');setStatus('미리보기 실패: '+(error?.message||error),'error');}
   finally{global.__systemV3DirectExportBusy=false;if(button)button.disabled=false;}
  }
@@ -340,7 +375,7 @@
   const button=document.querySelector('[data-standard-run="'+source+'"]');if(button)button.disabled=true;global.__systemV3DirectExportBusy=true;
   if(typeof lockStandardGeneration==='function')lockStandardGeneration(source,true);
   standardProgress(source,3,'파일 생성 준비','현재 매트릭스 표시값과 최신 원본 위치를 읽습니다.');standardResult(source,'매트릭스에 보이는 값으로 파일을 생성하는 중…');setStatus('판매처 파일 생성 중…');
-  try{const skus=await directScopeSkus();const result=mode==='full_original'?await bridge.runFullOriginal({source,skus}):await bridge.runChangedOnly({source,skus});const stock=document.querySelector('[data-matrix-stock-status="'+source+'"]');if(stock){stock.className='export-role-status matrix-stock-state ready';stock.textContent='carrier 대상 '+n(result.diagnostics?.sku_count)+' SKU · DB 조회 '+n(result.diagnostics?.query_count)+'회 · 전체 snapshot 없음';}standardProgress(source,100,mode==='full_original'?'전체 원본 파일 생성 완료':'변경분 파일 생성 완료',mode==='full_original'?'원본의 모든 데이터 행을 유지하고 안전한 변경 셀만 반영했습니다.':'실제 변경이 있는 상품 묶음만 연속 행으로 남겼습니다.','done');standardResult(source,[result.title,result.progressDetail].filter(Boolean).join(' · ')||'변경분 파일 생성 완료','success');setStatus(mode==='full_original'?'전체 원본 파일 생성 완료':'변경분 파일 생성 완료','success');}
+  try{const skus=await directScopeSkus(source);const result=mode==='full_original'?await bridge.runFullOriginal({source,skus}):await bridge.runChangedOnly({source,skus});const stock=document.querySelector('[data-matrix-stock-status="'+source+'"]');if(stock){stock.className='export-role-status matrix-stock-state ready';stock.textContent='carrier 대상 '+n(result.diagnostics?.sku_count)+' SKU · DB 조회 '+n(result.diagnostics?.query_count)+'회 · 전체 snapshot 없음';}standardProgress(source,100,mode==='full_original'?'전체 원본 파일 생성 완료':'변경분 파일 생성 완료',mode==='full_original'?'원본의 모든 데이터 행을 유지하고 안전한 변경 셀만 반영했습니다.':'실제 변경이 있는 상품 묶음만 연속 행으로 남겼습니다.','done');standardResult(source,[result.title,result.progressDetail].filter(Boolean).join(' · ')||'변경분 파일 생성 완료','success');setStatus(mode==='full_original'?'전체 원본 파일 생성 완료':'변경분 파일 생성 완료','success');}
   catch(error){standardProgress(source,100,'파일 생성 중단',error?.message||String(error),'error');standardResult(source,error?.message||String(error),'error');setStatus('파일 생성 실패: '+(error?.message||error),'error');}
   finally{global.__systemV3DirectExportBusy=false;if(button)button.disabled=false;if(typeof lockStandardGeneration==='function')lockStandardGeneration(source,false);}
  }
@@ -382,25 +417,29 @@
   }
  }
 
- async function loadTags(){
-  const select=document.getElementById('export-scope-tag');if(!select||select.dataset.loaded==='1')return;
-  try{const result=await D().loadTagCatalog({search:''});select.innerHTML='<option value="">태그 선택</option>'+(result.rows||[]).map(tag=>`<option value="${esc(tag.tag_id)}">${esc(tag.tag_name)} · ${n(tag.option_count)} SKU</option>`).join('');select.dataset.loaded='1';}
-  catch(error){setStatus(`태그 목록 조회 실패: ${error?.message||error}`,'error');}
+ async function loadTags(source){
+  const select=document.querySelector(`[data-seller-scope-tag="${source}"]`);if(!select||select.dataset.loaded==='1')return;
+  try{
+   if(!state.tagCatalogRows){state.tagCatalogPromise=state.tagCatalogPromise||D().loadTagCatalog({search:''});const result=await state.tagCatalogPromise;state.tagCatalogRows=result.rows||[];}
+   const current=select.value;select.innerHTML='<option value="">태그 선택</option>'+state.tagCatalogRows.map(tag=>`<option value="${esc(tag.tag_id)}">${esc(tag.tag_name)} · ${n(tag.option_count)} SKU</option>`).join('');select.value=current;select.dataset.loaded='1';updateSellerScopeSummary(source);
+  }catch(error){state.tagCatalogPromise=null;setStatus(`태그 목록 조회 실패: ${error?.message||error}`,'error');}
  }
 
- async function scopeSkus(){
-  const mode=document.getElementById('export-scope-mode')?.value||'all';
+ async function scopeSkus(source='ably'){
+  const mode=document.querySelector(`[data-seller-scope-mode="${source}"]`)?.value||'all';
   if(mode==='all')return null;
   if(mode==='manual'){
-   const values=String(document.getElementById('export-scope-manual')?.value||'').split(/[,\s]+/).map(v=>v.trim()).filter(Boolean);
+   const values=String(document.querySelector(`[data-seller-scope-manual="${source}"]`)?.value||'').split(/[,\s]+/).map(v=>v.trim()).filter(Boolean);
    if(!values.length)throw Error('내보낼 SKU를 입력해주세요.');
    return new Set(values);
   }
-  const tagId=document.getElementById('export-scope-tag')?.value;if(!tagId)throw Error('태그를 선택해주세요.');
-  const rows=[];let page=1;
-  while(true){const result=await D().loadTagMembers({tagId,page,pageSize:1000,search:''});rows.push(...(result.rows||[]));if(rows.length>=Number(result.count||0)||(result.rows||[]).length<1000)break;page++;}
+  const tagId=document.querySelector(`[data-seller-scope-tag="${source}"]`)?.value;if(!tagId)throw Error('태그를 선택해주세요.');
+  const rows=[];let page=1,expected=null;
+  while(true){const result=await D().loadTagMembers({tagId,page,pageSize:1000,search:''}),count=Number(result.count||0);if(expected===null)expected=count;else if(expected!==count)throw Error('태그 적용 SKU가 조회 중 변경되었습니다. 다시 시도해주세요.');rows.push(...(result.rows||[]));if(rows.length>=expected||(result.rows||[]).length<1000)break;page++;}
   if(!rows.length)throw Error('선택한 태그에 적용된 SKU가 없습니다.');
-  return new Set(rows.map(row=>row.sellpia_sku_code));
+  const skus=new Set(rows.map(row=>row.sellpia_sku_code).filter(Boolean));
+  if(skus.size!==expected)throw Error(`태그 적용 SKU 검증 실패 · 기대 ${n(expected)} / 확인 ${n(skus.size)}`);
+  return skus;
  }
 
  async function blobFile(record){
@@ -427,7 +466,7 @@
    const [mappingResult,catalogRows,scope]=await Promise.all([
     D().loadCarrierSellerMappings({source:'ably',identities:parsed.items,onQuery}),
     catalog(parsed.items.map(item=>item.sellpia_product_code),true,onQuery),
-    scopeSkus()
+    scopeSkus('ably')
    ]);
    job.check();
    const resolved=await job.mapRows(parsed.items,item=>A().resolveRows([item],catalogRows,mappingResult.rows||[])[0]);

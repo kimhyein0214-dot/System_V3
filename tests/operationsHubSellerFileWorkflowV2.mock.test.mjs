@@ -89,6 +89,42 @@ test('Smartstore and Makeshop share paged TransformationPlan preview and seriali
   assert.match(app,/가격\/재고 상태가 변경되었습니다\. 미리보기를 다시 확인해주세요/);
 });
 
+test('each seller card owns an independent authoritative tag scope',async()=>{
+  for(const source of ['smartstore','makeshop','ably']){
+    assert.match(js,new RegExp(`sellerScopeMarkup\\('${source}'\\)`),`${source} card must expose its own scope picker`);
+    assert.match(js,new RegExp(`data-seller-scope-mode=\\"\\$\\{source\\}\\"`));
+  }
+  assert.match(js,/directScopeSkus\(source\)/);
+  assert.match(js,/scopeSkus\('ably'\)/);
+  assert.doesNotMatch(js,/id="export-scope-mode"/,'the hidden page-global scope must not control every seller card');
+
+  const functionSource=js.slice(js.indexOf('async function scopeSkus('),js.indexOf('\n async function blobFile('));
+  const controls={
+    smartstore:{mode:'tag',tag:'tag-smart'},
+    makeshop:{mode:'manual',manual:'M-1 M-2 M-1'},
+    ably:{mode:'all'}
+  };
+  const calls=[];
+  const document={querySelector(selector){
+    const match=selector.match(/data-seller-scope-(mode|manual|tag)="([^"]+)"/);
+    if(!match)return null;
+    const [,kind,source]=match,value=controls[source]?.[kind];
+    return value===undefined?null:{value};
+  }};
+  const D=()=>({loadTagMembers:async({tagId,page,pageSize})=>{
+    calls.push({tagId,page,pageSize});
+    const rows=Array.from({length:1200},(_,index)=>({sellpia_sku_code:`S-${index+1}`}));
+    return {count:1200,rows:rows.slice((page-1)*pageSize,page*pageSize)};
+  }});
+  const n=value=>String(value);
+  const scopeSkus=Function('document','D','n',`${functionSource}; return scopeSkus;`)(document,D,n);
+
+  assert.equal((await scopeSkus('smartstore')).size,1200);
+  assert.deepEqual(calls.map(call=>call.page),[1,2]);
+  assert.deepEqual([...await scopeSkus('makeshop')],['M-1','M-2']);
+  assert.equal(await scopeSkus('ably'),null);
+});
+
 test('carrier generate click always reports a blocked reason or runs the connected serializer',async()=>{
   const functionSource=js.slice(js.indexOf('async function runStandardCarrier('),js.indexOf('\n function renderExportStatuses('));
   const messages=[],progress=[],button={disabled:false,attrs:new Map(),setAttribute(name,value){this.attrs.set(name,value);},removeAttribute(name){this.attrs.delete(name);}};
