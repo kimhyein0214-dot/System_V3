@@ -37,7 +37,7 @@ function row(sku,sourceRowNo=6,extra={}){
 }
 function target(sku,extra={}){return {sku,active_price_rule:false,seller_stock:0,...extra};}
 function calculated(generation=27){
- return {active_price_rule:true,registration_price:3000,registration_status:'calculated',registration_generation_id:generation,discount_price:3000,discount_status:'calculated',discount_generation_id:generation,option_price:100,option_status:'calculated',option_generation_id:generation,final_price:3100,final_status:'calculated',final_generation_id:generation};
+ return {active_price_rule:true,current_effective_price:{platformBase:3000,platformDiscount:0,platformOption:100,platformFinal:3100,platformTerms:[],versions:[{id:'current-rule',version:generation}]}};
 }
 function assertNoOp(item){
  assert.equal(item._status,'warn_keep_original');
@@ -49,7 +49,7 @@ function assertNoOp(item){
 
 test('Ably option carrier: per-SKU generations are independent while missing/error rows stay protected',async()=>{
  const items=[row('SAFE-1',6),row('MISSING-1',7),row('ERROR-1',8),row('STALE-1',9),row('LATEST-1',10)];
- const targets=[target('SAFE-1'),target('MISSING-1',{active_price_rule:true}),target('ERROR-1',{active_price_rule:true,registration_status:'error',registration_error:'canceling statement due to statement timeout'}),target('STALE-1',calculated(26)),target('LATEST-1',calculated(27))];
+ const targets=[target('SAFE-1'),target('MISSING-1',{active_price_rule:true,current_effective_error:'현재 target 없음'}),target('ERROR-1',{active_price_rule:true,current_effective_error:'현재 Rule 계산 실패',registration_status:'error',registration_error:'과거 statement timeout'}),target('STALE-1',calculated(26)),target('LATEST-1',calculated(27))];
  const h=harness({items,targets}),preview=await h.run();
  assert.ok(preview,h.messages.at(-1)?.text);
  assert.equal(preview.counts.warned,2);
@@ -59,7 +59,7 @@ test('Ably option carrier: per-SKU generations are independent while missing/err
  assert.equal(preview.output[0].target_stock,0);
  assert.deepEqual(plain(preview.output[0]._changedFields),['stock']);
  for(const index of [1,2])assertNoOp(preview.output[index]);
- assert.deepEqual(preview.output.slice(1,4).map(item=>item._priceState.code),['original_fallback','timeout_error','calculated_complete']);
+ assert.deepEqual(preview.output.slice(1,4).map(item=>item._priceState.code),['timeout_error','timeout_error','calculated_complete']);
  assert.equal(preview.output[3].target_option_price,100);
  assert.equal(preview.output[3].target_stock,0);
  assert.equal(preview.output[4].target_option_price,100);

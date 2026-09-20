@@ -13,11 +13,14 @@ const migration=fs.readFileSync('supabase/migrations/20260914032904_matrix_expor
 function exportHarness(rows){
   const calls=[];
   const context={console,SystemV3Data:{
-    loadMatrixExportSnapshot:async options=>{calls.push(options);return {snapshotId:'snapshot-1',rows:structuredClone(rows)};},
+    loadMatrixExportSnapshot(){throw Error('historical matrix export snapshot must not gate current export');},
+    loadCarrierSellerMappings:async()=>({rows:structuredClone(rows.filter(row=>row.source_row_no).map(row=>({sku:row.sku,product_code:row.product_code,option_code:row.option_code})))}),
+    loadCarrierMatrixTargets:async options=>{calls.push(options);return {rows:structuredClone(rows.filter(row=>options.skus.includes(row.sku)))};},
     loadStoredMatrixPrices(){throw Error('legacy price read must not run');},
     loadMatrixStocksForExport(){throw Error('system-stock export must not run');}
   },SystemV3SellerParsers:{parseSellerFiles:async()=>({normalizedRows:rows.filter(row=>row.source_row_no).map(row=>({
     product_code:row.product_code,option_code:row.option_code,source_row_no:row.source_row_no,
+    stock:row.source_stock,
     base_price:row.source_base_price,discounted_base_price:row.source_discounted_base_price,
     option_price:row.source_option_price,final_price:row.source_final_price,
     discount_terms:row.source_discount_terms,raw_payload:{source_file_name:row.source_file_name}
@@ -45,7 +48,7 @@ const plain=value=>JSON.parse(JSON.stringify(value));
 
 test('matrix and direct export share draft-first visible values',async()=>{
   const draft={after_value:5500,price_base_after:5200,price_discounted_base_after:5000,price_option_after:500,price_final_after:5500,price_discount_terms_after:[{term_key:'basic',is_baseline:true,value:200,unit:'amount'}]};
-  const calculated={registration_price:9000,registration_status:'calculated',registration_generation_id:4,discount_price:9000,discount_status:'calculated',discount_generation_id:4,option_price:0,option_status:'calculated',option_generation_id:4,final_price:9000,final_status:'calculated',final_generation_id:4};
+  const calculated={active_price_rule:true,current_effective_price:{platformBase:9000,platformDiscount:0,platformOption:0,platformFinal:9000,platformTerms:[],versions:[{id:'live',version:4}]},registration_status:'error',registration_error:'historical timeout'};
   const h=exportHarness([row({...calculated,price_draft:draft,stock_draft:{after_value:12}})]);
   const resolved=h.api.matrixPriceTarget(row({...calculated,price_draft:draft}));
   assert.deepEqual([resolved.origin,resolved.base,resolved.discounted,resolved.option,resolved.final],['draft',5200,5000,500,5500]);
@@ -68,7 +71,7 @@ test('no stock draft preserves seller stock even when system stock differs',asyn
 test('stock draft zero is exported, while a blank source cell stays untouched',async()=>{
   const h=exportHarness([
     row({sku:'ZERO',stock_draft:{after_value:0}}),
-    row({sku:'BLANK',source_stock:null,stock_draft:{after_value:7},source_row_no:4})
+    row({sku:'BLANK',product_code:'P-2',option_code:'O-2',source_stock:null,stock_draft:{after_value:7},source_row_no:4})
   ]);
   const result=await h.api.refreshItems([],files,{sources:['smartstore'],includeMatrixStock:true});
   assert.equal(result.items.length,1);
@@ -79,7 +82,7 @@ test('stock draft zero is exported, while a blank source cell stays untouched',a
 
 test('timeout, error and mixed-generation calculated tuples preserve original price',async()=>{
   const timeout=row({registration_status:'error',registration_error:'canceling statement due to statement timeout',discount_status:'error',option_status:'error',final_status:'error'});
-  const mixed=row({sku:'MIXED',registration_price:5100,registration_status:'calculated',registration_generation_id:1,discount_price:5100,discount_status:'calculated',discount_generation_id:1,option_price:0,option_status:'calculated',option_generation_id:2,final_price:5100,final_status:'calculated',final_generation_id:2});
+  const mixed=row({sku:'MIXED',product_code:'P-2',option_code:'O-2',source_row_no:4,registration_price:5100,registration_status:'calculated',registration_generation_id:1,discount_price:5100,discount_status:'calculated',discount_generation_id:1,option_price:0,option_status:'calculated',option_generation_id:2,final_price:5100,final_status:'calculated',final_generation_id:2});
   const h=exportHarness([timeout,mixed]);
   const result=await h.api.refreshItems([],files,{sources:['smartstore'],includeMatrixStock:true});
   assert.deepEqual(plain(result.items),[]);
@@ -123,25 +126,25 @@ test('official carrier scope uses exact identity and only visible draft or calcu
   assert.equal(duplicate.excludedItems.length,2,'duplicate carrier identities must fail closed rather than fuzzy-write');
 });
 
-test('carrier TransformationPlan distinguishes complete, stale, timeout and original fallback prices',()=>{
-  const calculated={registration_price:5100,registration_status:'calculated',registration_generation_id:12,discount_price:5000,discount_status:'calculated',discount_generation_id:12,option_price:100,option_status:'calculated',option_generation_id:12,final_price:5100,final_status:'calculated',final_generation_id:12};
+test('carrier TransformationPlan uses current targets and treats historical timeout as diagnostics only',()=>{
+  const current={active_price_rule:true,current_effective_price:{platformBase:5100,platformDiscount:100,platformOption:100,platformFinal:5100,platformTerms:[],versions:[{id:'live',version:12}]}};
   const carrier=(product,rowNo)=>({product_code:product,option_code:'O-1',source_row_no:rowNo,base_price:5000,discounted_base_price:5000,option_price:0,final_price:5000,stock:8,discount_terms:[]});
-  const result=exportHarness([]).api.prepareCarrierItems('smartstore','carrier.xlsx',[carrier('OK',1),carrier('STALE',2),carrier('TIMEOUT',3),carrier('FALLBACK',4)],[
-    row({sku:'OK',product_code:'OK',...calculated}),
-    row({sku:'STALE',product_code:'STALE',...calculated,latest_generation_id:12,registration_generation_id:11,discount_generation_id:11,option_generation_id:11,final_generation_id:11}),
-    row({sku:'TIMEOUT',product_code:'TIMEOUT',registration_status:'error',registration_error:'canceling statement due to statement timeout'}),
-    row({sku:'FALLBACK',product_code:'FALLBACK'})
+  const result=exportHarness([]).api.prepareCarrierItems('smartstore','carrier.xlsx',[carrier('OK',1),carrier('CURRENT-FAIL',2),carrier('OLD-TIMEOUT',3),carrier('FALLBACK',4)],[
+    row({sku:'OK',product_code:'OK',...current}),
+    row({sku:'CURRENT-FAIL',product_code:'CURRENT-FAIL',active_price_rule:true,current_effective_error:'현재 Rule 입력이 없습니다.'}),
+    row({sku:'OLD-TIMEOUT',product_code:'OLD-TIMEOUT',...current,registration_status:'error',registration_error:'3일 전 statement timeout'}),
+    row({sku:'FALLBACK',product_code:'FALLBACK',active_price_rule:false})
   ]);
-  assert.deepEqual(plain(result.preview.map(item=>item.price_state.code)),['calculated_complete','latest_generation_unreflected','timeout_error','original_fallback']);
-  assert.equal(result.latest_generation_id,12);
-  assert.deepEqual(plain(result.summary.price_states),{calculated_complete:1,latest_generation_unreflected:1,timeout_error:1,original_fallback:1});
+  assert.deepEqual(plain(result.preview.map(item=>item.price_state.code)),['calculated_complete','timeout_error','calculated_complete','original_fallback']);
+  assert.deepEqual(plain(result.summary.price_states),{calculated_complete:2,latest_generation_unreflected:0,timeout_error:1,original_fallback:1});
   assert.equal(result.canGenerate,true,'unsafe price rows are whole-row warnings, not file blockers');
-  assert.equal(result.summary.warned,3);
+  assert.equal(result.summary.warned,1);
   assert.equal(result.summary.blocked,0);
   assert.equal(result.safety.price_complete,false);
-  assert.equal(result.preview[1].diff.price.after.final,5000,'stale price keeps the carrier original');
-  assert.equal(result.preview[2].diff.price.after.final,5000,'timeout price keeps the carrier original');
-  assert.equal(result.items.filter(item=>['STALE','TIMEOUT','FALLBACK'].includes(item.sellpia_sku_code)&&item.field_key==='sellpia_sale_price').length,0,'unsafe price candidates must never enter serializer items');
+  assert.equal(result.preview[1].diff.price.after.final,5000,'a current target failure keeps the carrier original');
+  assert.equal(result.preview[2].diff.price.after.final,5100,'historical timeout does not block a complete current tuple');
+  assert.equal(result.items.some(item=>item.sellpia_sku_code==='OLD-TIMEOUT'&&item.field_key==='sellpia_sale_price'),true);
+  assert.equal(result.preview[2].price_state.diagnostic.errors[0],'3일 전 statement timeout');
 });
 
 test('complete price draft wins over stale or failed calculation metadata',()=>{
@@ -154,7 +157,7 @@ test('complete price draft wins over stale or failed calculation metadata',()=>{
 });
 
 test('fully calculated carrier plan is eligible for the connected XLSX serializer',()=>{
-  const calculated={registration_price:5100,registration_status:'calculated',registration_generation_id:12,discount_price:5000,discount_status:'calculated',discount_generation_id:12,option_price:100,option_status:'calculated',option_generation_id:12,final_price:5100,final_status:'calculated',final_generation_id:12};
+  const calculated={active_price_rule:true,current_effective_price:{platformBase:5100,platformDiscount:100,platformOption:100,platformFinal:5100,platformTerms:[],versions:[{id:'live',version:12}]}};
   const result=exportHarness([]).api.prepareCarrierItems('smartstore','carrier.xlsx',[{product_code:'P-1',option_code:'O-1',source_row_no:7,base_price:5000,discounted_base_price:5000,option_price:0,final_price:5000,stock:8,discount_terms:[]}],[row(calculated)]);
   assert.equal(result.canGenerate,true);
   assert.equal(result.safety.can_generate_xlsx,true);
@@ -163,7 +166,7 @@ test('fully calculated carrier plan is eligible for the connected XLSX serialize
   assert.equal(result.operations,result.items);
 });
 
-test('location is required only for an actual visible write',async()=>{
+test('carrier row location is authoritative for an actual visible write',async()=>{
   const h=exportHarness([
     row({sku:'NOOP',source_file_name:null,source_row_no:null,stock_draft:{after_value:8}}),
     row({sku:'WRITE',source_file_name:null,source_row_no:null,stock_draft:{after_value:9}}),
@@ -171,15 +174,15 @@ test('location is required only for an actual visible write',async()=>{
   ]);
   const result=await h.api.refreshItems([],files,{sources:['smartstore'],includeMatrixStock:true});
   assert.equal(result.items.length,0);
-  assert.deepEqual(plain(result.excludedItems.map(item=>item.item.sellpia_sku_code)),['WRITE','ROWZERO']);
+  assert.deepEqual(plain(result.excludedItems),[],'rows absent from the parsed carrier cannot become write targets');
   assert.equal(h.api.validSourceLocation({source_file_name:'a.xlsx',source_row_no:null}),false);
   assert.equal(h.api.validSourceLocation({source_file_name:'a.xlsx',source_row_no:1}),true);
 });
 
-test('direct export fails closed when snapshot RPC support is unavailable',async()=>{
+test('direct export fails closed when the current carrier projection is unavailable',async()=>{
   const context={console,SystemV3Data:{loadStoredMatrixPrices(){throw Error('must not run');}}};
   vm.createContext(context);vm.runInContext(mathSource,context);vm.runInContext(exportSource,context);
-  await assert.rejects(context.HubCurrentPriceExport.refreshItems([],new Map(),{sources:['smartstore'],includeMatrixStock:true}),/스냅샷/);
+  await assert.rejects(context.HubCurrentPriceExport.refreshItems([],new Map(),{sources:['smartstore'],includeMatrixStock:true}),/projection/);
 });
 
 test('snapshot reader paginates 14000 rows without legacy reads or staging',async()=>{

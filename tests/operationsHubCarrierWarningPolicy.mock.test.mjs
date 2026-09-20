@@ -21,7 +21,7 @@ function snapshot(product='P',option='O',extra={}){
  return {sku:`${product}-${option}`,product_code:product,option_code:option,active_price_rule:true,seller_stock:0,source_stock:8,source_base_price:5000,source_discounted_base_price:5000,source_option_price:0,source_final_price:5000,source_discount_terms:[],...extra};
 }
 function calculated(generation=27){
- return {registration_price:5500,registration_status:'calculated',registration_generation_id:generation,discount_price:5500,discount_status:'calculated',discount_generation_id:generation,option_price:0,option_status:'calculated',option_generation_id:generation,final_price:5500,final_status:'calculated',final_generation_id:generation};
+ return {current_effective_price:{platformBase:5500,platformDiscount:0,platformOption:0,platformFinal:5500,platformTerms:[],versions:[{id:'current-rule',version:generation}]}};
 }
 function assertPriceWarningRow(plan,index=0,{stockChanged=true}={}){
  const row=plan.preview[index];
@@ -45,19 +45,19 @@ for(const source of ['smartstore','makeshop']){
   assert.equal(plan.summary.changed,1);
   assert.deepEqual(plain(plan.operations.map(item=>[item.field_key,item.after_value])),[['sellpia_current_stock',0]]);
   assertPriceWarningRow(plan);
-  assert.equal(plan.preview[0].price_state.code,'original_fallback');
+  assert.equal(plan.preview[0].price_state.code,'timeout_error');
  });
  test(`${source}: timeout/error preserves price but does not freeze independent stock`,()=>{
-  const plan=harness().prepareCarrierItems(source,'carrier.xlsx',[carrier()],[snapshot('P','O',{registration_status:'error',registration_error:'canceling statement due to statement timeout'})]);
+  const plan=harness().prepareCarrierItems(source,'carrier.xlsx',[carrier()],[snapshot('P','O',{current_effective_error:'현재 Rule 입력이 없습니다.',registration_status:'error',registration_error:'과거 statement timeout'})]);
   assert.equal(plan.canGenerate,true);
   assert.equal(plan.summary.warned,1);
   assert.equal(plan.summary.blocked,0);
   assert.equal(plan.preview[0].price_state.code,'timeout_error');
   assertPriceWarningRow(plan);
  });
- test(`${source}: complete per-SKU generations remain current even when another SKU has a newer generation`,()=>{
+ test(`${source}: current per-SKU projection is independent of historical generation ordering`,()=>{
   const plan=harness().prepareCarrierItems(source,'carrier.xlsx',[carrier('OLD'),carrier('NEW','O',7)],[snapshot('OLD','O',calculated(26)),snapshot('NEW','O',calculated(27))]);
-  assert.equal(plan.latest_generation_id,27);
+  assert.equal(plan.latest_generation_id,null);
   assert.equal(plan.canGenerate,true);
   assert.equal(plan.summary.warned,0);
   assert.equal(plan.summary.blocked,0);
@@ -105,7 +105,7 @@ for(const source of ['smartstore','makeshop']){
   assert.equal(plan.preview[0].status,'blocked');
  });
  test(`${source}: one warning quarantines its shared-price product but not unrelated products`,()=>{
-  const plan=harness().prepareCarrierItems(source,'carrier.xlsx',[carrier('SHARED','A'),carrier('SHARED','B',7),carrier('OTHER','C',8)],[snapshot('SHARED','A',calculated()),snapshot('SHARED','B',{registration_status:'error',registration_error:'statement timeout'}),snapshot('OTHER','C',calculated())]);
+  const plan=harness().prepareCarrierItems(source,'carrier.xlsx',[carrier('SHARED','A'),carrier('SHARED','B',7),carrier('OTHER','C',8)],[snapshot('SHARED','A',calculated()),snapshot('SHARED','B',{current_effective_error:'현재 Rule 계산 실패',registration_status:'error',registration_error:'과거 statement timeout'}),snapshot('OTHER','C',calculated())]);
   assert.equal(plan.canGenerate,true);
   assert.equal(plan.summary.warned,2);
   assert.equal(plan.summary.blocked,0);

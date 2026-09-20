@@ -16,33 +16,41 @@ function fixture(){
  const calls=[];
  const rows=sources.flatMap(source=>['A','B','C','D'].map((sku,i)=>({sellpia_sku_code:sku,source_channel:source,seller_product_code:i<2?'P':'Q',seller_option_code:sku,base_price:i<2?5000:9000,discounted_base_price:i<2?5000:9000,option_price:i%2?2000:0,final_price:5000+i*2000,discount_terms:[],rule_versions:[{id:'stored-rule',version:9}],price_version:9,generation_id:'stored-generation',status:'ready'})));
  const missing=[];
- const originals=Object.fromEntries(sources.map(source=>[source,['A','B','C','D'].map((sku,i)=>({product_code:i<2?'P':'Q',option_code:sku,base_price:9000,option_price:0,final_price:9000,discount_terms:[],source_row_no:i+2,raw_payload:{source_file_name:source+'.csv'}}))]));
+ const originals=Object.fromEntries(sources.map(source=>[source,['A','B','C','D'].map((sku,i)=>({product_code:i<2?'P':'Q',option_code:sku,base_price:9000,discounted_base_price:9000,option_price:0,final_price:9000,discount_terms:[],source_row_no:i+2,raw_payload:{source_file_name:source+'.csv'}}))]));
  const files=new Map(sources.map(source=>[source,[{name:source+'.csv'}]]));
- globalThis.SystemV3Data={loadStoredMatrixPrices:async options=>{calls.push(options);return {rows:clone(rows.filter(r=>options.sources.includes(r.source_channel)&&(options.skus===null||options.skus.includes(r.sellpia_sku_code)))),missing:clone(missing)};},ruleRegistry:forbidden('ruleRegistry'),workDocument:forbidden('workDocument'),loadFormulaProducts:forbidden('loadFormulaProducts'),loadRulePlatformSiblings:forbidden('loadRulePlatformSiblings'),loadAllFilteredSkus:forbidden('loadAllFilteredSkus'),loadProductsBySkus:forbidden('loadProductsBySkus')};
+ globalThis.SystemV3Data={
+  async loadCarrierSellerMappings({source}){return {rows:clone(rows.filter(r=>r.source_channel===source).map(r=>({sku:r.sellpia_sku_code,product_code:r.seller_product_code,option_code:r.seller_option_code})))};},
+  async loadCarrierMatrixTargets({source,skus}){calls.push({source,skus:[...skus]});return {rows:clone(rows.filter(r=>r.source_channel===source&&skus.includes(r.sellpia_sku_code)).map(r=>({
+   sku:r.sellpia_sku_code,active_price_rule:true,
+   current_effective_price:r.current_error?null:{platformBase:r.base_price,platformDiscount:Number(r.base_price)-Number(r.discounted_base_price),platformOption:r.option_price,platformFinal:r.final_price,platformTerms:r.discount_terms,versions:r.rule_versions},
+   current_effective_error:r.current_error||(r.final_price===null||r.final_price===undefined||r.final_price===''||!Number.isFinite(Number(r.final_price))?'현재 가격 target 계산 실패':null)
+  })))};},
+  ruleRegistry:forbidden('ruleRegistry'),workDocument:forbidden('workDocument'),loadFormulaProducts:forbidden('loadFormulaProducts'),loadRulePlatformSiblings:forbidden('loadRulePlatformSiblings'),loadAllFilteredSkus:forbidden('loadAllFilteredSkus'),loadProductsBySkus:forbidden('loadProductsBySkus')
+ };
  globalThis.SystemV3SellerParsers={parseSellerFiles:async(source,files)=>{assert.equal(files[0].name,source+'.csv');return {normalizedRows:clone(originals[source])};}};
  const stock={export_item_id:91,sellpia_sku_code:'A',source_channel:'ably',field_key:'sellpia_current_stock',seller_product_code:'P',seller_option_code:'A',source_file_name:'ably.csv',source_row_no:2,expected_source_value:40,after_value:7};
  return {calls,rows,missing,originals,files,stock};
 }
 {
- const f=fixture(),stored=f.rows.find(r=>r.source_channel==='ably'&&r.sellpia_sku_code==='A');Object.assign(stored,{base_price:5000,discounted_base_price:4800,option_price:300,final_price:5100,discount_terms:[{term_key:'basic',value:200,unit:'amount',is_baseline:true}]});
+ const f=fixture(),stored=f.rows.find(r=>r.source_channel==='ably'&&r.sellpia_sku_code==='A');Object.assign(stored,{base_price:5000,discounted_base_price:4800,option_price:300,final_price:5100,discount_terms:[{term_key:'basic',value:200,unit:'amount',is_baseline:true}],error:'3일 전 materialization timeout'});
  const r=await api.refreshItems([f.stock],f.files,{sources:['ably'],skus:['A']});assert.deepEqual(r.excludedItems,[]);assert.equal(r.items[0],f.stock);
- const i=r.items[1];assert.deepEqual([i.target_base_price,i.target_discounted_base_price,i.target_option_price,i.target_final_price],[5000,4800,300,5100]);assert.equal(i.expected_source_value,9000);assert.equal(i.stored_matrix_price,true);assert.deepEqual(i.rule_versions,[{id:'stored-rule',version:9}]);assert.equal(i.generation_id,'stored-generation');assert.equal(f.calls.length,1);assert.deepEqual(f.calls[0].skus,['A']);
- stored.option_price=-300;stored.final_price=4500;const next=await api.refreshItems([],f.files,{sources:['ably'],skus:['A']});assert.equal(next.items[0].target_option_price,-300);assert.equal(next.items[0].target_final_price,4500,'latest stored values read without recalculation');
+ const i=r.items[1];assert.deepEqual([i.target_base_price,i.target_discounted_base_price,i.target_option_price,i.target_final_price],[5000,4800,300,5100]);assert.equal(i.expected_source_value,9000);assert.equal(i.stored_matrix_price,true);assert.deepEqual(i.rule_versions,[{id:'stored-rule',version:9}]);assert.equal(i.generation_id,undefined,'historical materialization generation is not an export prerequisite');assert.equal(r.excludedItems.length,0,'historical timeout is diagnostic and does not retain the original when current target is complete');assert.equal(f.calls.length,1);assert.deepEqual(f.calls[0].skus,['A'],'the authoritative selected scope is evaluated without widening to sibling Rules');
+ stored.option_price=-300;stored.final_price=4500;const next=await api.refreshItems([],f.files,{sources:['ably'],skus:['A']});assert.equal(next.items[0].target_option_price,-300);assert.equal(next.items[0].target_final_price,4500,'current effective projection is recomputed without materialization');
 }
 {
- const f=fixture(),all=await api.refreshItems([],f.files,{});assert.equal(all.items.length,12);assert.equal(all.excludedItems.length,0);assert.equal(f.calls.length,1);assert.equal(f.calls[0].skus,null,'adapter resolves all scope without loading catalog here');
- const queue=[{...f.stock,field_key:'sellpia_sale_price',target_final_price:6200}],explicit=await api.refreshItems(queue,new Map(),{includeRules:false});assert.equal(explicit.items[0],queue[0]);assert.equal(f.calls.length,1,'explicit queue must not call any price read or calculation');
- const empty=await api.refreshItems([f.stock],new Map(),{skus:[]});assert.deepEqual(empty.items,[f.stock]);assert.equal(f.calls.length,1);
+ const f=fixture(),all=await api.refreshItems([],f.files,{});assert.equal(all.items.length,9,'unchanged current targets produce no operation');assert.equal(all.excludedItems.length,0);assert.equal(f.calls.length,3);assert.ok(f.calls.every(call=>call.skus.length===4),'each carrier is evaluated from its bounded mapped SKU set');
+ const queue=[{...f.stock,field_key:'sellpia_sale_price',target_final_price:6200}],explicit=await api.refreshItems(queue,new Map(),{includeRules:false});assert.equal(explicit.items[0],queue[0]);assert.equal(f.calls.length,3,'explicit queue must not call any price read or calculation');
+ const empty=await api.refreshItems([f.stock],new Map(),{skus:[]});assert.deepEqual(empty.items,[f.stock]);assert.equal(f.calls.length,3);
 }
 {
- const f=fixture();f.rows.find(r=>r.source_channel==='ably'&&r.sellpia_sku_code==='A').error='stored price error';f.rows.find(r=>r.source_channel==='ably'&&r.sellpia_sku_code==='B').final_price=null;
+ const f=fixture();f.rows.find(r=>r.source_channel==='ably'&&r.sellpia_sku_code==='A').current_error='current price error';f.rows.find(r=>r.source_channel==='ably'&&r.sellpia_sku_code==='B').final_price=null;
  f.missing.push({source_channel:'ably',sellpia_sku_code:'MISSING',reason:'not materialized'});
  const stale={...f.stock,field_key:'sellpia_sale_price',after_value:99999},r=await api.refreshItems([f.stock,stale],f.files,{sources:['ably']});
- assert.equal(r.items[0],f.stock);assert.deepEqual(r.items.filter(i=>i.field_key==='sellpia_sale_price').map(i=>i.sellpia_sku_code),['C','D']);assert.equal(r.excludedItems.length,2);assert.ok(!r.excludedItems.some(e=>/not materialized/.test(e.reason)),'a wholly uncalculated row keeps the original and is not an exclusion');assert.ok(!r.items.some(i=>i.after_value===99999),'missing/error rows must not reuse a stale prepared price');
+ assert.equal(r.items[0],f.stock);assert.deepEqual(r.items.filter(i=>i.field_key==='sellpia_sale_price').map(i=>i.sellpia_sku_code),['D'],'unchanged C produces no operation');assert.equal(r.excludedItems.length,2);assert.ok(!r.excludedItems.some(e=>/not materialized/.test(e.reason)),'a wholly uncalculated row keeps the original and is not an exclusion');assert.ok(!r.items.some(i=>i.after_value===99999),'current target errors must not reuse a stale prepared price');
 }
 {
- const f=fixture();const a=f.rows.find(r=>r.source_channel==='ably'&&r.sellpia_sku_code==='A');f.rows.push({...a,sellpia_sku_code:'SAME'});const r=await api.refreshItems([],f.files,{sources:['ably']});assert.equal(r.items.length,4);assert.deepEqual(r.items.find(i=>i.sellpia_sku_code==='A').target_component_skus,['A','SAME']);
- f.rows.at(-1).option_price=100;f.rows.at(-1).final_price=5100;const conflict=await api.refreshItems([],f.files,{sources:['ably']});assert.equal(conflict.excludedItems.length,2);assert.ok(conflict.items.every(i=>i.seller_option_code!=='A'));
+ const f=fixture();const a=f.rows.find(r=>r.source_channel==='ably'&&r.sellpia_sku_code==='A');f.rows.push({...a,sellpia_sku_code:'SAME'});const r=await api.refreshItems([],f.files,{sources:['ably']});assert.equal(r.items.length,2);assert.equal(r.excludedItems.length,1);assert.ok(r.items.every(i=>i.seller_option_code!=='A'),'identity ambiguity blocks the carrier row even when values happen to match');
+ f.rows.at(-1).option_price=100;f.rows.at(-1).final_price=5100;const conflict=await api.refreshItems([],f.files,{sources:['ably']});assert.equal(conflict.excludedItems.length,1);assert.ok(conflict.items.every(i=>i.seller_option_code!=='A'));
 }
 {
  const f=fixture();f.originals.makeshop.push({product_code:'P',option_code:'',base_price:9000,final_price:null,source_row_no:1,raw_payload:{source_file_name:'makeshop.csv'}});
@@ -53,7 +61,7 @@ function fixture(){
 }
 {
  const f=fixture(),count=23760;f.rows.length=0;f.originals.ably.length=0;
- for(let n=0;n<count;n++){f.rows.push({source_channel:'ably',sellpia_sku_code:'SKU-'+n,seller_product_code:'P'+n,seller_option_code:'1',base_price:1000,discounted_base_price:1000,option_price:0,final_price:1000,discount_terms:[]});f.originals.ably.push({product_code:'P'+n,option_code:'1',base_price:9000,final_price:9000,source_row_no:n+2,raw_payload:{source_file_name:'ably.csv'}});}
+ for(let n=0;n<count;n++){f.rows.push({source_channel:'ably',sellpia_sku_code:'SKU-'+n,seller_product_code:'P'+n,seller_option_code:'1',base_price:1000,discounted_base_price:1000,option_price:0,final_price:1000,discount_terms:[]});f.originals.ably.push({product_code:'P'+n,option_code:'1',base_price:9000,discounted_base_price:9000,option_price:0,final_price:9000,discount_terms:[],source_row_no:n+2,raw_payload:{source_file_name:'ably.csv'}});}
  const r=await api.refreshItems([],f.files,{sources:['ably']});assert.equal(r.items.length,count);assert.equal(r.excludedItems.length,0);assert.equal(f.calls.length,1);assert.equal(new Set(r.items.map(i=>i.export_item_id)).size,count);
 }
 
@@ -87,4 +95,4 @@ if(JSZip&&existsSync(xlsxPath)){
  assert.equal(Number(storedRows[1][15]),7);assert.equal(storedArchive.appliedItems.length,2);assert.equal(storedArchive.skippedItems.length,0);
  for(let r=1;r<rows.length;r++)for(let col=0;col<rows[r].length;col++)if(r!==1||![4,5,6,15].includes(col))assert.equal(storedRows[r][col]??'',String(rows[r][col]),'unrelated actual CSV cell preserved');
 }
-console.log('PASS stored-matrix export: no formula/registry/product reads; exact saved tuple and versions; null/all and selected scope; explicit queue unchanged; uncalculated rows preserve originals while stored errors stay excluded; same-value coalescing; unmapped final preservation;23760 rows; actual CSV/ZIP group rollback and stock preservation.');
+console.log('PASS current effective export: bounded carrier mapping; current tuple without materialization gate; exact selected scope; sibling-final preservation; identity conflicts blocked; 23760 rows; actual CSV/ZIP group rollback and stock preservation.');

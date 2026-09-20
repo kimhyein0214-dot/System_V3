@@ -4033,47 +4033,50 @@
     if(!['smartstore','makeshop','ably'].includes(safeSource))throw new Error('지원하지 않는 판매처입니다.');
     const codes=[...new Set((skus||[]).map(cleanText).filter(Boolean))];
     if(!codes.length)return {source:safeSource,rows:[]};
-    const calculated={rows:[]},drafts=[],priceRules=new Set(),stocks=new Map();
-    // One bounded read preserves current drafts/rules and prices in one transaction.
-    // No full registry, managed view, source snapshot or stale cache fallback.
+    const drafts=[],priceRules=new Set(),stocks=new Map();
+    // The RPC returns current facts/instructions only. Historical materialized
+    // calculation rows are audit data and must never gate a current export.
     for(let offset=0;offset<codes.length;offset+=200){
       const chunk=codes.slice(offset,offset+200);
-      const {data}=await carrierRead('hub_carrier_targets_read_v1',chunk.length,db.rpc('hub_carrier_targets_read_v1',{
+      const {data}=await carrierRead('hub_carrier_effective_inputs_read_v1',chunk.length,db.rpc('hub_carrier_effective_inputs_read_v1',{
         p_session_token:requireOperationsHubSessionToken(),p_source:safeSource,p_skus:chunk
       }),onQuery);
-      if(!data||!Array.isArray(data.matrix_rows)||!Array.isArray(data.calculated_rows)||!Array.isArray(data.drafts)||!Array.isArray(data.active_price_skus))throw new Error('carrier 목표값 응답 형식이 올바르지 않습니다.');
-      calculated.rows.push(...data.calculated_rows);drafts.push(...data.drafts);
+      if(!data||!Array.isArray(data.matrix_rows)||!Array.isArray(data.drafts)||!Array.isArray(data.active_price_skus))throw new Error('carrier 현재 입력 응답 형식이 올바르지 않습니다.');
+      drafts.push(...data.drafts);
       for(const sku of data.active_price_skus)priceRules.add(JSON.stringify([sku,safeSource]));
       for(const row of data.matrix_rows)stocks.set(row.sku,row.seller_stock);
-    }
-    const calculatedBySku=new Map();
-    for(const row of calculated.rows||[]){
-      const sku=cleanText(row.sku);if(!sku)continue;
-      if(!calculatedBySku.has(sku))calculatedBySku.set(sku,new Map());
-      calculatedBySku.get(sku).set(cleanText(row.field),row);
     }
     const draftByKey=new Map();
     for(const draft of drafts){
       const key=JSON.stringify([cleanText(draft.sellpia_sku_code),cleanText(draft.field_key)]);
       if(!draftByKey.has(key))draftByKey.set(key,draft);
     }
+    const priceSkus=codes.filter(sku=>priceRules.has(JSON.stringify([sku,safeSource]))||draftByKey.has(JSON.stringify([sku,'sellpia_sale_price'])));
+    const currentBySku=new Map(),currentErrors=new Map();
+    if(priceSkus.length){
+      if(!global.HubPlatformRules?.calculate)throw new Error('현재 가격 projection을 사용할 수 없습니다.');
+      try{
+        const result=await global.HubPlatformRules.calculate(priceSkus,safeSource);
+        for(const row of result.rows||[])if(!row.error)currentBySku.set(cleanText(row.sku),{
+          platformBase:row.platformBase,platformDiscount:row.platformDiscount,platformOption:row.platformOption,
+          platformFinal:row.platformFinal,platformTerms:Array.isArray(row.platformTerms)?row.platformTerms:[],versions:Array.isArray(row.versions)?row.versions:[]
+        });
+        for(const failure of result.errors||[])if(failure?.sku&&!currentErrors.has(cleanText(failure.sku)))currentErrors.set(cleanText(failure.sku),cleanText(failure.error)||'현재 가격 target 계산 실패');
+      }catch(error){for(const sku of priceSkus)currentErrors.set(sku,cleanText(error?.message||error)||'현재 가격 target 계산 실패');}
+      for(const sku of priceSkus)if(!currentBySku.has(sku)&&!currentErrors.has(sku))currentErrors.set(sku,'현재 가격 target을 산출하지 못했습니다.');
+    }
     const rows=codes.map(sku=>{
-      const grouped=calculatedBySku.get(sku)||new Map(),get=field=>grouped.get(field)||{};
-      const registration=get('platform_registration_price'),discount=get('platform_discount_price'),option=get('platform_option_price'),final=get('platform_final_price');
       return {
         sku,
         active_price_rule:priceRules.has(JSON.stringify([sku,safeSource])),
         seller_stock:stocks.get(sku)??null,
         stock_draft:draftByKey.get(JSON.stringify([sku,'sellpia_current_stock']))||null,
         price_draft:draftByKey.get(JSON.stringify([sku,'sellpia_sale_price']))||null,
-        registration_price:registration.value??null,registration_status:registration.status??null,registration_error:registration.error??null,registration_details:registration.result_details??null,registration_generation_id:registration.generation_id??null,
-        discount_price:discount.value??null,discount_status:discount.status??null,discount_error:discount.error??null,discount_details:discount.result_details??null,discount_generation_id:discount.generation_id??null,
-        option_price:option.value??null,option_status:option.status??null,option_error:option.error??null,option_details:option.result_details??null,option_generation_id:option.generation_id??null,
-        final_price:final.value??null,final_status:final.status??null,final_error:final.error??null,final_details:final.result_details??null,final_generation_id:final.generation_id??null,
-        rule_versions:Array.isArray(final.rule_versions)?final.rule_versions:[]
+        current_effective_price:currentBySku.get(sku)||null,
+        current_effective_error:currentErrors.get(sku)||null
       };
     });
-    return {source:safeSource,rows,missingSkus:calculated.missingSkus||[]};
+    return {source:safeSource,rows,missingSkus:[]};
   }
 
   async function summarizeMatrixStocksForExport({source,skus=null}={}) {

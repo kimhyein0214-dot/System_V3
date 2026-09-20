@@ -8,12 +8,14 @@ const flow=fs.readFileSync('mockups/operations-hub/seller-file-workflow-v2.js','
 const current=fs.readFileSync('mockups/operations-hub/current-price-export.js','utf8');
 const migration=fs.readFileSync('supabase/migrations/20260914032904_matrix_export_snapshot_v4_live_drafts.sql','utf8');
 
-test('matrix direct export reads a snapshot and never stages inventory',()=>{
+test('matrix direct export uses the bounded current carrier projection and never stages inventory',()=>{
   assert.match(data,/rpc\('hub_matrix_export_snapshot_v1'/);
   assert.match(data,/loadMatrixExportSnapshot[\s\S]*?while\(true\)/);
   assert.match(app,/directMatrixStock\s*=\s*true/);
-  assert.match(current,/includeMatrixStock[\s\S]*?refreshMatrixSnapshotItems/);
-  assert.match(current,/매트릭스 스냅샷 내보내기 기능을 불러오지 못했습니다/);
+  assert.match(current,/includeMatrixStock&&!price\(item\)/);
+  assert.match(current,/loadCarrierSellerMappings/);
+  assert.match(current,/loadCarrierMatrixTargets/);
+  assert.doesNotMatch(current,/includeMatrixStock\)\s*\{[\s\S]{0,200}refreshMatrixSnapshotItems/);
   assert.doesNotMatch(flow,/prepareReliableInventory|beginReliableExportJob|stageSellerInventoryDraftBatch/);
   assert.doesNotMatch(flow,/data-standard-stock=/);
   assert.match(migration,/operations_hub_active_seller_drafts sd/);
