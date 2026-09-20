@@ -871,8 +871,40 @@
   }
 
   let fullMatrixReadContext=null;
+  function decodeMatrixGridV4(input) {
+    if(!Array.isArray(input))return input&&typeof input==='object'?input:{};
+    const seller=(source,value,row)=>{
+      if(!Array.isArray(value))return;
+      [row[`${source}_product_code`],row[`${source}_option_code`],row[`${source}_name`],
+        row[`${source}_option_name`],row[`${source}_match_tier`],row[`${source}_listing_count`],
+        row[`${source}_name_is_draft`],row[`${source}_stock`],row[`${source}_price`]]=value;
+    };
+    const row={
+      sellpia_sku_code:input[0],image_url:input[1],sellpia_product_name:input[2],sellpia_option_name:input[3],
+      sellpia_own_code:input[4],sellpia_current_stock:input[5],sellpia_sale_price:input[6],sellpia_inventory_at:input[7],
+      sellpia_override_image_url:input[8],sellpia_override_updated_at:input[9],sellpia_purchase_price:input[10],
+      sellpia_source_purchase_price:input[11],sellpia_order_unit:input[12],sellpia_source_order_unit:input[13],
+      sellpia_minimum_order_unit:input[14],sellpia_source_minimum_order_unit:input[15],
+      sellpia_purchase_price_updated_at:input[16],sellpia_order_unit_updated_at:input[17],
+      sellpia_minimum_order_unit_updated_at:input[18],system_base_price:input[19],system_stock:input[20],
+      system_price_updated_at:input[21],system_stock_updated_at:input[22],system_updated_at:input[23],updated_at:input[24],
+      actual_inbound_cost:input[28],actual_inbound_cost_mode:input[29],inbound_cost_formula_tag_name:input[30],
+      inbound_cost_formula_tag_color:input[31],is_dependent_combination_sku:Boolean(input[32]),__grid_compact:true
+    };
+    seller('smartstore',input[25],row);seller('makeshop',input[26],row);seller('ably',input[27],row);
+    const flags=Array.isArray(input[33])?input[33]:[];
+    [row.__grid_stale,row.__grid_conflict,row.__grid_pending,row.__grid_stock_mismatch,row.__grid_price_mismatch]=flags.map(Boolean);
+    const meta=Array.isArray(input[34])?input[34]:[],profile=Array.isArray(meta[0])?meta[0]:[];
+    row.__grid_meta={
+      profile:{product_code:profile[0]??null,material:profile[1]??null,product_group:profile[2]??null,shape:profile[3]??null,
+        product_tag_ids:Array.isArray(profile[4])?profile[4]:[],sku_tag_ids:Array.isArray(profile[5])?profile[5]:[]},
+      drafts:meta[1]||{},link_drafts:meta[2]||{},link_badges:meta[3]||{},seller_prices:meta[4]||{},
+      rule_prices:meta[5]||{},internal_prices:meta[6]||{}
+    };
+    return row;
+  }
   function normalizeMatrixGridRow(input,tagCatalog={}) {
-    const row={...(input||{})};
+    const row={...decodeMatrixGridV4(input)};
     const compact=row.__grid_meta&&typeof row.__grid_meta==='object'?row.__grid_meta:null;
     if(compact){
       const profile=compact.profile&&typeof compact.profile==='object'?compact.profile:{};
@@ -1004,58 +1036,68 @@
 
   async function loadMatrixGridDataset({signal=null,onProgress=null,chunkSize=null}={}) {
     const started=performance.now(),before={...matrixReadMetrics};
-    const rows=[],seen=new Set(),serverTimes=[],rpcTimes=[],pageDiagnostics=[];
-    let afterSku=null,requests=0,dataAttempts=0,manifestAttempts=0,retryCount=0;
-    fullMatrixReadContext={mode:'grid-feed-v3',endpoints:{}};
+    const serverTimes=[],rpcTimes=[],pageDiagnostics=[];
+    let dataAttempts=0,manifestAttempts=0,retryCount=0,loadedTotal=0;
+    const requestedChunk=Math.max(250,Math.min(4000,Number(chunkSize)||2000));
+    fullMatrixReadContext={mode:'grid-feed-v4',endpoints:{}};
     try{
       const token=requireOperationsHubSessionToken();
-      const manifestRead=await readMatrixGridRpc('hub_matrix_grid_manifest_v3',{p_session_token:token},{signal,page:0,cursor:null});
+      const manifestRead=await readMatrixGridRpc('hub_matrix_grid_manifest_v4',{
+        p_session_token:token,p_chunk_size:requestedChunk
+      },{signal,page:0,cursor:null});
       manifestAttempts+=manifestRead.attempts;retryCount+=manifestRead.retries;
       rpcTimes.push(manifestRead.clientMs);
       const manifest=manifestRead.data;
       const total=Number(manifest.total),datasetVersion=String(manifest.dataset_version||'');
-      if(Number(manifest.contract_version)!==3||!Number.isInteger(total)||total<0||!datasetVersion)throw Error('Matrix Grid v3 manifest가 올바르지 않습니다.');
+      if(Number(manifest.contract_version)!==4||!Number.isInteger(total)||total<0||!datasetVersion)throw Error('Matrix Grid v4 manifest가 올바르지 않습니다.');
       const tagCatalog=manifest.tag_catalog&&typeof manifest.tag_catalog==='object'?manifest.tag_catalog:{};
       const recommended=Number(manifest.recommended_chunk_size)||2000;
       const maxChunk=Math.max(250,Number(manifest.max_chunk_size)||4000);
       const safeChunk=Math.max(250,Math.min(maxChunk,Number(chunkSize)||recommended));
-      while(true){
-        const page=requests+1,cursor=afterSku;
-        const read=await readMatrixGridRpc('hub_matrix_grid_feed_v3',{
-          p_session_token:token,p_dataset_version:datasetVersion,p_after_sku:afterSku,p_limit:safeChunk
+      if(safeChunk!==requestedChunk)throw Error('Matrix Grid manifest chunk contract가 일치하지 않습니다.');
+      const cursors=Array.isArray(manifest.page_cursors)?manifest.page_cursors:[];
+      const expectedPages=total?Math.ceil(total/safeChunk):0;
+      if(cursors.length!==expectedPages||expectedPages>25||(expectedPages&&cursors[0]!==null))throw Error('Grid feed keyset cursor manifest가 올바르지 않습니다.');
+      if(new Set(cursors.slice(1).map(cleanText)).size!==Math.max(0,cursors.length-1))throw Error('Grid feed keyset cursor가 중복되었습니다.');
+      const pageResults=Array(cursors.length);let nextPage=0,failed=false;
+      const readPage=async index=>{
+        const page=index+1,cursor=cursors[index]==null?null:cleanText(cursors[index]);
+        const read=await readMatrixGridRpc('hub_matrix_grid_feed_v4',{
+          p_session_token:token,p_dataset_version:datasetVersion,p_after_sku:cursor,p_limit:safeChunk
         },{signal,page,cursor});
-        dataAttempts+=read.attempts;retryCount+=read.retries;rpcTimes.push(read.clientMs);requests++;
+        dataAttempts+=read.attempts;retryCount+=read.retries;rpcTimes.push(read.clientMs);
         const result=read.data,part=Array.isArray(result.rows)?result.rows:[];
-        if(Number(result.contract_version)!==3)throw Error('Grid feed v3 contract가 일치하지 않습니다.');
-        const responseVersion=String(result.dataset_version||'');
-        if(responseVersion!==datasetVersion)throw Error('Grid feed 로딩 중 Matrix cache가 변경되었습니다. DB 새로고침 후 다시 시도해주세요.');
-        if(Number(result.loaded)!==part.length)throw Error('Grid feed 응답 count가 일치하지 않습니다.');
-        const normalizeAt=performance.now();
-        for(const raw of part){
-          const row=normalizeMatrixGridRow(raw,tagCatalog),sku=cleanText(row.sellpia_sku_code);
-          if(!sku||seen.has(sku))throw Error(`Grid feed SKU identity 중복/누락: ${sku||'(빈 SKU)'}`);
-          seen.add(sku);rows.push(row);
-        }
-        const normalizeMs=performance.now()-normalizeAt;
-        const serverMs=Number(result.server_ms),payloadBytes=Number(result.payload_bytes);
+        if(Number(result.contract_version)!==4)throw Error('Grid feed v4 contract가 일치하지 않습니다.');
+        if(String(result.dataset_version||'')!==datasetVersion)throw Error('Grid feed 로딩 중 Matrix cache가 변경되었습니다. DB 새로고침 후 다시 시도해주세요.');
+        if(Number(result.loaded)!==part.length||part.length>(safeChunk))throw Error('Grid feed 응답 count가 일치하지 않습니다.');
+        const expectedNext=index+1<cursors.length?cleanText(cursors[index+1]):null;
+        const actualNext=cleanText(result.next_sku)||null;
+        if(actualNext!==expectedNext||Boolean(result.has_more)!==Boolean(expectedNext))throw Error('Grid feed keyset cursor가 진행되지 않았습니다.');
+        const normalizeAt=performance.now(),normalized=part.map(raw=>normalizeMatrixGridRow(raw,tagCatalog));
+        const normalizeMs=performance.now()-normalizeAt,serverMs=Number(result.server_ms),payloadBytes=Number(result.payload_bytes);
         if(Number.isFinite(serverMs))serverTimes.push(serverMs);
-        pageDiagnostics.push({page,cursor,loaded:part.length,nextSku:cleanText(result.next_sku)||null,
+        pageResults[index]=normalized;loadedTotal+=normalized.length;
+        pageDiagnostics.push({page,cursor,loaded:part.length,nextSku:actualNext,
           serverMs:Number.isFinite(serverMs)?serverMs:null,clientMs:read.clientMs,
           payloadBytes:Number.isFinite(payloadBytes)?payloadBytes:null,normalizeMs,retries:read.retries});
-        onProgress?.({loaded:rows.length,total,elapsed:performance.now()-started,metrics:{
-          mode:'grid-feed-v3',requests:matrixReadMetrics.requests-before.requests,bytes:matrixReadMetrics.bytes-before.bytes,
+        onProgress?.({loaded:loadedTotal,total,elapsed:performance.now()-started,metrics:{
+          mode:'grid-feed-v4',requests:matrixReadMetrics.requests-before.requests,bytes:matrixReadMetrics.bytes-before.bytes,
           networkMs:matrixReadMetrics.networkMs-before.networkMs,serverMeanMs:serverTimes.length?serverTimes.reduce((a,b)=>a+b,0)/serverTimes.length:0,
           serverMaxMs:serverTimes.length?Math.max(...serverTimes):0,chunkSize:safeChunk,datasetVersion,
-          dataPages:requests,dataAttempts,manifestAttempts,retryCount,failedAttempts:retryCount,
-          currentPage:page,currentCursor:cursor,pageDiagnostics:[...pageDiagnostics],endpoints:fullMatrixReadContext.endpoints||{}
+          dataPages:cursors.length,dataAttempts,manifestAttempts,retryCount,failedAttempts:retryCount,
+          completedPages:pageResults.filter(Boolean).length,currentPage:page,currentCursor:cursor,
+          pageDiagnostics:[...pageDiagnostics].sort((a,b)=>a.page-b.page),endpoints:fullMatrixReadContext.endpoints||{}
         }});
-        if(!result.has_more)break;
-        const next=cleanText(result.next_sku);
-        if(!part.length||!next||next===afterSku)throw Error('Grid feed keyset cursor가 진행되지 않았습니다.');
-        afterSku=next;
-        if(requests>25)throw Error('Grid feed 요청 수가 안전 한도 25회를 넘었습니다.');
-      }
-      const finalManifestRead=await readMatrixGridRpc('hub_matrix_grid_manifest_v3',{p_session_token:token},{signal,page:requests+1,cursor:'manifest-recheck'});
+      };
+      const workers=Array.from({length:Math.min(3,cursors.length)},async()=>{
+        while(!failed){const index=nextPage++;if(index>=cursors.length)return;try{await readPage(index);}catch(error){failed=true;throw error;}}
+      });
+      await Promise.all(workers);
+      const rows=pageResults.flat(),seen=new Set();
+      for(const row of rows){const sku=cleanText(row.sellpia_sku_code);if(!sku||seen.has(sku))throw Error(`Grid feed SKU identity 중복/누락: ${sku||'(빈 SKU)'}`);seen.add(sku);}
+      const finalManifestRead=await readMatrixGridRpc('hub_matrix_grid_manifest_v4',{
+        p_session_token:token,p_chunk_size:safeChunk
+      },{signal,page:cursors.length+1,cursor:'manifest-recheck'});
       manifestAttempts+=finalManifestRead.attempts;retryCount+=finalManifestRead.retries;
       rpcTimes.push(finalManifestRead.clientMs);
       const finalManifest=finalManifestRead.data;
@@ -1063,12 +1105,15 @@
         throw Error('Grid feed 로딩 중 Matrix cache가 변경되었습니다. 기존 dataset을 유지하고 다시 시도해주세요.');
       }
       if(rows.length!==total||seen.size!==total)throw Error(`Grid feed 전체 SKU 누락: ${rows.length.toLocaleString('ko-KR')} / ${total.toLocaleString('ko-KR')}`);
+      pageDiagnostics.sort((a,b)=>a.page-b.page);serverTimes.sort((a,b)=>a-b);
+      const percentile=p=>serverTimes.length?serverTimes[Math.min(serverTimes.length-1,Math.ceil(serverTimes.length*p)-1)]:0;
       return {rows,count:total,elapsed:performance.now()-started,metrics:{
-        mode:'grid-feed-v3',requests:matrixReadMetrics.requests-before.requests,bytes:matrixReadMetrics.bytes-before.bytes,
+        mode:'grid-feed-v4',requests:matrixReadMetrics.requests-before.requests,bytes:matrixReadMetrics.bytes-before.bytes,
         networkMs:matrixReadMetrics.networkMs-before.networkMs,clientRpcMeanMs:rpcTimes.length?rpcTimes.reduce((a,b)=>a+b,0)/rpcTimes.length:0,
         clientRpcMaxMs:rpcTimes.length?Math.max(...rpcTimes):0,serverMeanMs:serverTimes.length?serverTimes.reduce((a,b)=>a+b,0)/serverTimes.length:0,
-        serverMaxMs:serverTimes.length?Math.max(...serverTimes):0,chunkSize:safeChunk,datasetVersion,
-        dataPages:requests,dataAttempts,manifestAttempts,retryCount,failedAttempts:retryCount,
+        serverP50Ms:percentile(.5),serverP95Ms:percentile(.95),serverMaxMs:serverTimes.length?Math.max(...serverTimes):0,
+        chunkSize:safeChunk,pageConcurrency:Math.min(3,cursors.length),datasetVersion,
+        dataPages:cursors.length,dataAttempts,manifestAttempts,retryCount,failedAttempts:retryCount,
         pageDiagnostics,endpoints:fullMatrixReadContext.endpoints||{}
       }};
     }finally{fullMatrixReadContext=null;}
