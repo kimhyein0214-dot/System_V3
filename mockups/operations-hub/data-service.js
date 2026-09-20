@@ -45,6 +45,8 @@
 
   const db = requireClient();
   const sellerParsers = global.SystemV3SellerParsers;
+  const ORIGINAL_FILES_FUNCTION = `${SUPABASE_URL}/functions/v1/operations-hub-original-files`;
+  const originalBoundaryDiagnostics = [];
   let operationsHubSessionToken = '';
 
   function authPayload(data) {
@@ -68,6 +70,53 @@
   function requireOperationsHubSessionToken() {
     if (!operationsHubSessionToken) throw operationsHubAuthError('운영 로그인이 필요합니다.', 'missing_session');
     return operationsHubSessionToken;
+  }
+
+  function recordOriginalBoundaryDiagnostic(kind, detail = {}) {
+    const entry={kind,at:new Date().toISOString(),...detail};
+    originalBoundaryDiagnostics.push(entry);
+    if(originalBoundaryDiagnostics.length>50)originalBoundaryDiagnostics.shift();
+    if(kind.includes('fallback')) console.warn('[Operations Hub original boundary]',kind,detail?.message||detail);
+    if(typeof global.dispatchEvent==='function'&&typeof global.CustomEvent==='function')global.dispatchEvent(new global.CustomEvent('hub-original-boundary-diagnostic',{detail:entry}));
+    return entry;
+  }
+
+  async function originalBoundaryRequest(action, payload = {}) {
+    const token=requireOperationsHubSessionToken();
+    const response=await global.fetch(ORIGINAL_FILES_FUNCTION,{
+      method:'POST',
+      headers:{'Content-Type':'application/json','apikey':SUPABASE_KEY,'x-operations-hub-session':token},
+      body:JSON.stringify({action,...payload})
+    });
+    let result={};
+    try{result=await response.json();}catch(error){throw new Error(`원본 파일 보안 경계 응답을 해석하지 못했습니다. HTTP ${response.status}`);}
+    if(!response.ok||!result?.ok){
+      if(response.status===401){setOperationsHubSessionToken('');throw operationsHubAuthError(result?.error||'운영 세션이 만료되었습니다.','permission_denied');}
+      const boundaryError=new Error(result?.error||`원본 파일 보안 경계 요청 실패: HTTP ${response.status}`);
+      boundaryError.code=result?.code||'ORIGINAL_BOUNDARY_ERROR';boundaryError.secureBoundary=true;boundaryError.httpStatus=response.status;
+      throw boundaryError;
+    }
+    return result.data||{};
+  }
+
+  async function sha256File(file) {
+    if(!global.crypto?.subtle||!file?.arrayBuffer)return null;
+    const digest=await global.crypto.subtle.digest('SHA-256',await file.arrayBuffer());
+    return [...new Uint8Array(digest)].map(value=>value.toString(16).padStart(2,'0')).join('');
+  }
+
+  async function downloadSignedFiles(files = [], onProgress, source = '') {
+    const result=[];
+    for(let index=0;index<files.length;index++){
+      const stored=files[index];
+      onProgress?.({completed:index,total:files.length,source,name:stored.name,boundary:'signed-read-v1'});
+      const response=await global.fetch(stored.signed_url,{cache:'no-store'});
+      if(!response.ok)throw new Error(`${stored.name||'원본 파일'} signed download 실패: HTTP ${response.status}`);
+      const blob=await response.blob();
+      result.push(new File([blob],stored.name,{type:stored.type||blob.type||'application/octet-stream'}));
+    }
+    onProgress?.({completed:result.length,total:files.length,source,boundary:'signed-read-v1'});
+    return result;
   }
 
   function throwOperationsHubRpcError(error) {
@@ -2399,7 +2448,7 @@
     return {changeIds:eligible, excluded};
   }
 
-  async function loadLatestSellerOriginalStatus(sources = ['smartstore','makeshop','ably']) {
+  async function loadLatestSellerOriginalStatusDirect(sources = ['smartstore','makeshop','ably']) {
     const selectedSources = (sources || []).map(cleanText).filter(Boolean);
     const {data, error} = await db
       .from('seller_inventory_snapshots')
@@ -2426,8 +2475,22 @@
     });
   }
 
-  async function downloadLatestSellerOriginals(sources = [], onProgress) {
-    const statuses = await loadLatestSellerOriginalStatus(sources);
+  async function loadLatestSellerOriginalStatus(sources = ['smartstore','makeshop','ably']) {
+    const selectedSources=(sources||[]).map(cleanText).filter(Boolean);
+    try{
+      const rows=await Promise.all(selectedSources.map(source=>originalBoundaryRequest('read-manifest',{kind:'seller',source,include_urls:false})));
+      recordOriginalBoundaryDiagnostic('secure-read-ok',{sources:selectedSources.join(','),count:rows.length});
+      return rows.map(row=>({source:row.source,snapshotId:row.snapshot_id||null,completedAt:row.completed_at||null,files:Array.isArray(row.files)?row.files:[],fileNames:(row.files||[]).map(file=>file.name),available:Boolean(row.available),boundary:'signed-read-v1',reason:row.reason||''}));
+    }catch(error){
+      if(error?.operationsHubAuthRequired)throw error;
+      recordOriginalBoundaryDiagnostic('secure-read-fallback',{sources:selectedSources.join(','),message:String(error?.message||error)});
+      const rows=await loadLatestSellerOriginalStatusDirect(selectedSources);
+      return rows.map(row=>({...row,boundary:'direct-anon-fallback'}));
+    }
+  }
+
+  async function downloadLatestSellerOriginalsDirect(sources = [], onProgress) {
+    const statuses = await loadLatestSellerOriginalStatusDirect(sources);
     const missing = statuses.filter(status => !status.available);
     if (missing.length) throw new Error(`${missing.map(status => status.source).join(', ')} 최신 원본 파일이 시스템에 보관되어 있지 않습니다.`);
     const filesBySource = new Map();
@@ -2448,7 +2511,26 @@
     return filesBySource;
   }
 
-  async function loadLatestSellpiaOriginalStatus() {
+  async function downloadLatestSellerOriginals(sources = [], onProgress) {
+    const selectedSources=(sources||[]).map(cleanText).filter(Boolean);
+    try{
+      const filesBySource=new Map();let completed=0;
+      for(const source of selectedSources){
+        const manifest=await originalBoundaryRequest('read-manifest',{kind:'seller',source,include_urls:true});
+        if(!manifest.available)throw new Error(manifest.reason||`${source} 최신 원본 파일이 시스템에 보관되어 있지 않습니다.`);
+        const files=await downloadSignedFiles(manifest.files,progress=>onProgress?.({...progress,completed:completed+Number(progress.completed||0),total:selectedSources.length}),source);
+        completed+=files.length;filesBySource.set(source,files);
+      }
+      recordOriginalBoundaryDiagnostic('secure-download-ok',{sources:selectedSources.join(','),files:completed});
+      return filesBySource;
+    }catch(error){
+      if(error?.operationsHubAuthRequired)throw error;
+      recordOriginalBoundaryDiagnostic('secure-download-fallback',{sources:selectedSources.join(','),message:String(error?.message||error)});
+      return downloadLatestSellerOriginalsDirect(selectedSources,onProgress);
+    }
+  }
+
+  async function loadLatestSellpiaOriginalStatusDirect() {
     const {data,error}=await db
       .from('sellpia_stock_snapshots')
       .select('snapshot_id,source_file_name,source_file_size,metadata,completed_at,created_at')
@@ -2473,8 +2555,20 @@
     };
   }
 
-  async function downloadLatestSellpiaOriginals(onProgress) {
-    const status=await loadLatestSellpiaOriginalStatus();
+  async function loadLatestSellpiaOriginalStatus() {
+    try{
+      const row=await originalBoundaryRequest('read-manifest',{kind:'sellpia',include_urls:false});
+      recordOriginalBoundaryDiagnostic('secure-read-ok',{sources:'sellpia',count:Number(row?.files?.length||0)});
+      return {snapshotId:row.snapshot_id||null,completedAt:row.completed_at||null,fileNames:(row.files||[]).map(file=>file.name),files:row.files||[],available:Boolean(row.available),reason:row.reason||'',boundary:'signed-read-v1'};
+    }catch(error){
+      if(error?.operationsHubAuthRequired)throw error;
+      recordOriginalBoundaryDiagnostic('secure-read-fallback',{sources:'sellpia',message:String(error?.message||error)});
+      return {...await loadLatestSellpiaOriginalStatusDirect(),boundary:'direct-anon-fallback'};
+    }
+  }
+
+  async function downloadLatestSellpiaOriginalsDirect(onProgress) {
+    const status=await loadLatestSellpiaOriginalStatusDirect();
     if(!status.available)throw new Error(status.reason||'최신 Sellpia 전체 원본 carrier가 없습니다.');
     const files=[];
     for(let index=0;index<status.files.length;index++){
@@ -2486,6 +2580,20 @@
     }
     onProgress?.({completed:files.length,total:files.length});
     return {snapshotId:status.snapshotId,completedAt:status.completedAt,files};
+  }
+
+  async function downloadLatestSellpiaOriginals(onProgress) {
+    try{
+      const manifest=await originalBoundaryRequest('read-manifest',{kind:'sellpia',include_urls:true});
+      if(!manifest.available)throw new Error(manifest.reason||'최신 Sellpia 전체 원본 carrier가 없습니다.');
+      const files=await downloadSignedFiles(manifest.files,onProgress,'sellpia');
+      recordOriginalBoundaryDiagnostic('secure-download-ok',{sources:'sellpia',files:files.length});
+      return {snapshotId:manifest.snapshot_id,completedAt:manifest.completed_at,files,boundary:'signed-read-v1'};
+    }catch(error){
+      if(error?.operationsHubAuthRequired)throw error;
+      recordOriginalBoundaryDiagnostic('secure-download-fallback',{sources:'sellpia',message:String(error?.message||error)});
+      return {...await downloadLatestSellpiaOriginalsDirect(onProgress),boundary:'direct-anon-fallback'};
+    }
   }
 
   async function prepareSellerExport({batchId, mode, changeIds = [], sources = []}) {
@@ -3318,126 +3426,71 @@
     const parsed = await parseSellpiaUploadFiles(selectedFiles, {mode:fields.mode}, onProgress);
     const {normalizedRows, preflight} = parsed;
     const uploadMode = preflight.uploadMode;
-
-    onProgress?.({
-      percent:22,
-      title:'DB 작업 생성 중',
-      detail:uploadMode === 'patch'
-        ? `${normalizedRows.length.toLocaleString('ko-KR')}개 SKU를 기존 셀피아 원본에 부분 병합할 준비를 합니다.`
-        : `${normalizedRows.length.toLocaleString('ko-KR')}개 SKU를 새 전체 스냅샷으로 준비합니다.`
-    });
-    const sourceFileName = selectedFiles.map(file => file.name).join(' | ');
-    const sourceFileSize = selectedFiles.reduce((sum, file) => sum + Number(file.size || 0), 0);
-    let snapshotId = null;
+    let intentId=null,snapshotId=null,ready=false;
     try {
-      const sourceFilesMetadata=selectedFiles.map((file,index)=>({name:file.name,size:file.size,...preflight.files[index]}));
-      const baseMetadata={
-        parser_version:'operations-hub-sellpia-2026.09.20-carrier-v1',
-        source_files:sourceFilesMetadata,
-        selected_fields:fields,
-        upload_mode:uploadMode,
-        uploaded_row_count:normalizedRows.length,
-        row_number_min:preflight.firstRowNo,
-        row_number_max:preflight.lastRowNo
-      };
-      const {data: snapshot, error: snapshotError} = await db
-        .from('sellpia_stock_snapshots')
-        .insert({
-          source_file_name: sourceFileName,
-          source_file_size: sourceFileSize,
-          source_row_count: normalizedRows.length,
-          valid_row_count: 0,
-          invalid_row_count: 0,
-          upload_status: 'uploading',
-          uploaded_by: 'system_v1_frontend',
-          metadata:baseMetadata
-        })
-        .select('snapshot_id')
-        .single();
-      if (snapshotError) throw snapshotError;
-      snapshotId = snapshot.snapshot_id;
-
-      const storageFiles=[];
+      onProgress?.({percent:21,title:'보안 upload manifest 준비 중',detail:'원본 파일 checksum을 순서대로 계산합니다.'});
+      const sourceFilesMetadata=[];
       for(let index=0;index<selectedFiles.length;index++){
         const file=selectedFiles[index];
-        const extension=file.name.includes('.')?`.${file.name.split('.').pop().toLowerCase().replace(/[^0-9a-z]/g,'')}`:'';
-        const path=`sellpia/${snapshotId}/${String(index+1).padStart(2,'0')}${extension}`;
-        onProgress?.({percent:23+Math.round(((index+1)/selectedFiles.length)*3),title:'Sellpia 원본 백업 중',detail:`${file.name} 파일을 원본 carrier 보관소에 저장합니다.`});
-        const {error:storageError}=await db.storage.from('seller-originals').upload(path,file,{contentType:file.type||'application/octet-stream',cacheControl:'3600',upsert:false});
-        if(storageError)throw storageError;
-        storageFiles.push({name:file.name,path,size:Number(file.size||0),type:file.type||'application/octet-stream'});
+        sourceFilesMetadata.push({name:file.name,size:Number(file.size||0),mime_type:file.type||'application/octet-stream',sha256:await sha256File(file),...preflight.files[index]});
+        onProgress?.({percent:21+Math.round(((index+1)/selectedFiles.length)*2),title:'보안 upload manifest 준비 중',detail:`${index+1}/${selectedFiles.length} checksum 준비 완료`});
       }
-      const {error:metadataError}=await db.from('sellpia_stock_snapshots')
-        .update({metadata:{...baseMetadata,source_storage_files:storageFiles}})
-        .eq('snapshot_id',snapshotId);
-      if(metadataError)throw metadataError;
+
+      const requestId=global.crypto?.randomUUID?.();
+      if(!requestId)throw new Error('브라우저에서 안전한 업로드 request_id를 생성할 수 없습니다.');
+      const intent=await originalBoundaryRequest('upload-init',{
+        request_id:requestId,upload_mode:uploadMode,files:sourceFilesMetadata,
+        source_row_count:normalizedRows.length,
+        selected_fields:{inventory:Boolean(fields.inventory),price:Boolean(fields.price),basePrice:Boolean(fields.basePrice),purchasePrice:Boolean(fields.purchasePrice),basic:Boolean(fields.basic),status:Boolean(fields.status)}
+      });
+      intentId=intent.intent_id;snapshotId=intent.snapshot_id;
+      if(!intentId||!snapshotId||!Array.isArray(intent.manifest)||intent.manifest.length!==selectedFiles.length)throw new Error('서버 upload intent 응답이 완전하지 않습니다.');
+
+      for(const signed of intent.manifest){
+        const index=Number(signed.ordinal)-1,file=selectedFiles[index];
+        if(!file||!signed.path||!signed.token)throw new Error('signed upload manifest가 선택 파일과 일치하지 않습니다.');
+        onProgress?.({percent:24+Math.round(((index+1)/selectedFiles.length)*5),title:'SELLPIA 원본 보안 업로드 중',detail:`${file.name} 파일을 immutable carrier 경로에 저장합니다.`});
+        const {error:uploadError}=await db.storage.from('seller-originals').uploadToSignedUrl(signed.path,signed.token,file,{contentType:file.type||'application/octet-stream',upsert:false});
+        if(uploadError)throw uploadError;
+      }
+      const uploaded=await originalBoundaryRequest('upload-finalize',{intent_id:intentId});
+      if(uploaded.status!=='uploaded'&&!['parsing','ready'].includes(uploaded.status))throw new Error('서버가 업로드된 원본 manifest를 검증하지 못했습니다.');
 
       const chunkSize = 500;
       for (let offset = 0; offset < normalizedRows.length; offset += chunkSize) {
-        const chunk = normalizedRows.slice(offset, offset + chunkSize).map(row => ({snapshot_id:snapshotId, ...row}));
-        const {error} = await db.from('sellpia_stock_snapshot_rows').insert(chunk);
+        const chunk = normalizedRows.slice(offset, offset + chunkSize);
+        const {error}=await db.rpc('hub_sellpia_upload_rows_v1',{p_session_token:requireOperationsHubSessionToken(),p_intent_id:intentId,p_rows:chunk});
         if (error) throw error;
         const loaded = Math.min(offset + chunk.length, normalizedRows.length);
         onProgress?.({
-          percent: 22 + Math.round((loaded / normalizedRows.length) * 72),
-          title:'셀피아 DB 저장 중',
+          percent: 30 + Math.round((loaded / normalizedRows.length) * 64),
+          title:'셀피아 DB 보안 import 중',
           detail:`${loaded.toLocaleString('ko-KR')} / ${normalizedRows.length.toLocaleString('ko-KR')} SKU 저장 완료`
         });
       }
 
-      let finalRowCount = normalizedRows.length;
-      let affectedSkus = normalizedRows.map(row=>row.sellpia_sku_code);
-      if (uploadMode === 'patch') {
-        if (fields.price || fields.purchasePrice) {
-          const {data:priceAffected,error:affectedError}=await db.rpc('operations_hub_sellpia_patch_price_affected_skus',{
-            p_patch_snapshot_id:snapshotId,
-            p_selected_fields:{price:Boolean(fields.price),basePrice:Boolean(fields.basePrice),purchasePrice:Boolean(fields.purchasePrice)}
-          });
-          if(affectedError)throw readableDatabaseError(affectedError);
-          affectedSkus=Array.isArray(priceAffected)?priceAffected:[];
-        } else {
-          affectedSkus=[];
-        }
-        onProgress?.({percent:95, title:'셀피아 부분 원본 병합 중', detail:'선택하지 않은 필드와 파일에 없는 SKU를 직전 전체 원본에서 유지합니다.'});
-        const {data: mergeResult, error: mergeError} = await db.rpc('finalize_operations_hub_sellpia_patch', {
-          p_patch_snapshot_id:snapshotId,
-          p_selected_fields:{
-            inventory:Boolean(fields.inventory),
-            price:Boolean(fields.price),
-            basic:Boolean(fields.basic),
-            status:Boolean(fields.status)
-          }
-        });
-        if (mergeError) throw mergeError;
-        finalRowCount = Number(mergeResult?.row_count || normalizedRows.length);
-      } else {
-        const {error: completeError} = await db
-          .from('sellpia_stock_snapshots')
-          .update({
-            valid_row_count: normalizedRows.length,
-            invalid_row_count: 0,
-            upload_status: 'ready',
-            completed_at: new Date().toISOString()
-          })
-          .eq('snapshot_id', snapshotId);
-        if (completeError) throw completeError;
-      }
+      let affectedSkus=normalizedRows.map(row=>row.sellpia_sku_code);
+      if(uploadMode==='patch'&&(fields.price||fields.purchasePrice)){
+        const {data:priceAffected,error:affectedError}=await db.rpc('operations_hub_sellpia_patch_price_affected_skus',{p_patch_snapshot_id:snapshotId,p_selected_fields:{price:Boolean(fields.price),basePrice:Boolean(fields.basePrice),purchasePrice:Boolean(fields.purchasePrice)}});
+        if(affectedError)throw readableDatabaseError(affectedError);
+        affectedSkus=Array.isArray(priceAffected)?priceAffected:[];
+      }else if(uploadMode==='patch')affectedSkus=[];
+
+      onProgress?.({percent:95,title:uploadMode==='patch'?'셀피아 부분 원본 병합 중':'셀피아 snapshot 완료 중',detail:'서버가 object manifest와 저장 행 수를 다시 확인합니다.'});
+      const {data:completeData,error:completeError}=await db.rpc('hub_sellpia_upload_complete_v1',{p_session_token:requireOperationsHubSessionToken(),p_intent_id:intentId});
+      if(completeError)throw readableDatabaseError(completeError);
+      const completed=Array.isArray(completeData)?completeData[0]:completeData;
+      if(completed?.status!=='ready')throw new Error('SELLPIA snapshot이 ready 상태로 완료되지 않았습니다.');
+      ready=true;
+      const finalRowCount=Number(completed?.row_count||normalizedRows.length);
       onProgress?.({percent:97, title:'매트릭스 연결 중', detail:'최신 셀피아 스냅샷을 통합 매트릭스에 반영합니다.'});
       return {
-        snapshotId,
-        uploadMode,
+        snapshotId,intentId,uploadMode,boundary:'signed-upload-v1',
         uploadedRowCount:normalizedRows.length,
-        rowCount:finalRowCount,
-        affectedSkus
+        rowCount:finalRowCount,affectedSkus
       };
     } catch (error) {
-      if (snapshotId) {
-        await db.from('sellpia_stock_snapshots').update({
-          upload_status:'failed',
-          upload_note:String(error?.message || error).slice(0, 1000),
-          completed_at:new Date().toISOString()
-        }).eq('snapshot_id', snapshotId);
-      }
+      if(intentId&&!ready)try{await originalBoundaryRequest('upload-abort',{intent_id:intentId,reason:String(error?.message||error).slice(0,1000)});}catch(cleanupError){recordOriginalBoundaryDiagnostic('secure-upload-cleanup-failed',{intentId,message:String(cleanupError?.message||cleanupError)});}
       throw error;
     }
   }
@@ -3682,11 +3735,23 @@
     return data||{source_channel:sourceChannel,rows:[]};
   }
 
-  async function downloadAuxiliarySellerFile(storagePath) {
-    const safePath=cleanText(storagePath);if(!safePath)throw new Error('다운로드할 보관 파일 경로가 없습니다.');
-    const {data,error}=await db.storage.from('seller-originals').download(safePath);
-    if(error)throw error;
-    return data;
+  async function downloadAuxiliarySellerFile(fileIdentity) {
+    const record=fileIdentity&&typeof fileIdentity==='object'?fileIdentity:{storage_path:cleanText(fileIdentity)};
+    try{
+      if(!record.file_id)throw new Error('secure auxiliary download에는 file_id가 필요합니다.');
+      const manifest=await originalBoundaryRequest('read-manifest',{kind:'auxiliary',file_id:record.file_id,include_urls:true});
+      const stored=manifest?.files?.[0];if(!stored?.signed_url)throw new Error('auxiliary signed URL을 받지 못했습니다.');
+      const response=await global.fetch(stored.signed_url,{cache:'no-store'});if(!response.ok)throw new Error(`auxiliary signed download 실패: HTTP ${response.status}`);
+      recordOriginalBoundaryDiagnostic('secure-download-ok',{sources:`${manifest.source}:${manifest.source_role}`,files:1});
+      return response.blob();
+    }catch(error){
+      if(error?.operationsHubAuthRequired)throw error;
+      const safePath=cleanText(record.storage_path);if(!safePath)throw error;
+      recordOriginalBoundaryDiagnostic('secure-download-fallback',{sources:'auxiliary',message:String(error?.message||error)});
+      const {data,directError}=await db.storage.from('seller-originals').download(safePath);
+      if(directError)throw directError;
+      return data;
+    }
   }
 
   async function loadPlayautoSellpiaCatalog(productCodes=null,onQuery=null) {
@@ -4112,6 +4177,7 @@
     checkOperationsHubSession,
     logoutOperationsHub,
     setOperationsHubSessionToken,
+    getOriginalBoundaryDiagnostics:()=>originalBoundaryDiagnostics.map(entry=>({...entry})),
     loadProducts,
     loadFullMatrixDataset,
     loadProductsBySkus,

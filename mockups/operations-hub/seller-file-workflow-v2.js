@@ -404,7 +404,7 @@
  }
 
  async function blobFile(record){
-  const blob=await D().downloadAuxiliarySellerFile(record.storage_path);
+  const blob=await D().downloadAuxiliarySellerFile(record);
   return new File([blob],record.file_name,{type:record.mime_type||blob.type||'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'});
  }
 

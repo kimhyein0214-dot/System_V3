@@ -3,6 +3,7 @@ import fs from 'node:fs';
 
 const migration = fs.readFileSync(new URL('../supabase/migrations/20260820150000_sellpia_authoritative_matrix.sql', import.meta.url), 'utf8');
 const patchMigration = fs.readFileSync(new URL('../supabase/migrations/20260820220000_operations_hub_sellpia_patch_upload.sql', import.meta.url), 'utf8');
+const secureUploadMigration = fs.readFileSync(new URL('../supabase/migrations/20260920025225_operations_hub_original_upload_boundary_v1.sql', import.meta.url), 'utf8');
 const dataService = fs.readFileSync(new URL('../mockups/operations-hub/data-service.js', import.meta.url), 'utf8');
 const sellpiaParser = fs.readFileSync(new URL('../mockups/operations-hub/sellpia-source-parser.js', import.meta.url), 'utf8');
 const app = fs.readFileSync(new URL('../mockups/operations-hub/app.js', import.meta.url), 'utf8');
@@ -47,7 +48,8 @@ assert.match(app, /\['sellpia','smartstore','makeshop','ably'\][\s\S]*isPatchabl
 assert.match(dataService, /parseSellpiaUploadFiles\(selectedFiles, \{mode:fields\.mode\}, onProgress\)/, 'Sellpia upload must pass the chosen mode into the shared parser boundary');
 assert.match(sellpiaParser, /const mode = options\.mode === 'patch' \? 'patch' : 'full'/, 'the shared parser must normalize the selected mode before validating file count and rows');
 assert.match(sellpiaParser, /mode === 'full' && row\.source_row_no !== index \+ 1/, 'only a full Sellpia replacement requires a complete continuous row sequence');
-assert.match(dataService, /finalize_operations_hub_sellpia_patch[\s\S]*p_selected_fields/, 'Sellpia patch upload must finalize through the database merge RPC');
+assert.match(dataService, /hub_sellpia_upload_complete_v1[\s\S]*p_intent_id/, 'Sellpia patch upload must finalize through the session-gated completion RPC');
+assert.match(secureUploadMigration, /v_intent\.upload_mode='patch'[\s\S]*finalize_operations_hub_sellpia_patch\(v_intent\.snapshot_id,v_intent\.selected_fields\)/, 'the secure completion RPC must invoke the existing patch merge with the verified intent fields');
 assert.match(patchMigration, /security invoker[\s\S]*v_base_snapshot_id[\s\S]*upload_status = 'ready'/, 'patch merge must use the latest ready Sellpia snapshot under caller permissions');
 for (const selectedFieldFlag of ['v_inventory', 'v_price', 'v_basic', 'v_status']) {
   assert.match(
