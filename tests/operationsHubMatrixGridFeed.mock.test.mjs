@@ -9,6 +9,7 @@ const migration=fs.readFileSync('supabase/migrations/20260920143340_hub_matrix_g
 const jsonChunkFix=fs.readFileSync('supabase/migrations/20260920144902_fix_hub_matrix_grid_feed_v2_json_chunks.sql','utf8');
 const compactV3=fs.readFileSync('supabase/migrations/20260920151322_hub_matrix_grid_feed_v3.sql','utf8');
 const compactV4=fs.readFileSync('supabase/migrations/20260920152623_hub_matrix_grid_feed_v4.sql','utf8');
+const compactV5=fs.readFileSync('supabase/migrations/20260921101200_hub_matrix_grid_feed_v5.sql','utf8');
 
 function functionArgumentCounts(sql,functionName){
   const counts=[];
@@ -102,37 +103,47 @@ test('grid feed v4 is additive, positional, read-only, and publishes keyset curs
   assert.doesNotMatch(compactV4,/\b(insert|update|delete|merge|truncate)\b/i);
 });
 
+test('grid feed v5 computes link badges once in the manifest and keeps data pages read-only',()=>{
+  assert.match(compactV5,/hub_matrix_grid_manifest_v5/);
+  assert.match(compactV5,/hub_matrix_grid_feed_v5/);
+  assert.match(compactV5,/hub_matrix_grid_guard_v5/);
+  assert.equal((compactV5.match(/get_operations_hub_sku_link_badges_v2/g)||[]).length,1);
+  assert.match(compactV5,/'link_badges', v_link_badges/);
+  assert.doesNotMatch(compactV5, /link_badge_rows as materialized/);
+  assert.doesNotMatch(compactV5,/\b(insert|update|delete|merge|truncate)\b/i);
+});
+
 test('grid loader completes manifest plus keyset pages and rechecks the manifest',async()=>{
   const version='2026-09-20T00:00:00Z';
   const first=Array.from({length:250},(_,index)=>({sellpia_sku_code:`${String(index+1).padStart(3,'0')}`}));
   const {context,calls}=gridLoaderContext([
-    {contract_version:4,total:251,dataset_version:version,recommended_chunk_size:250,max_chunk_size:4000,tag_catalog:{},page_cursors:[null,'250']},
-    {contract_version:4,rows:first,loaded:250,next_sku:'250',has_more:true,dataset_version:version,server_ms:3,payload_bytes:100},
-    {contract_version:4,rows:[{sellpia_sku_code:'251'}],loaded:1,next_sku:null,has_more:false,dataset_version:version,server_ms:2,payload_bytes:50},
-    {contract_version:4,total:251,dataset_version:version,page_cursors:[null,'250']}
+    {contract_version:5,total:251,dataset_version:version,recommended_chunk_size:250,max_chunk_size:4000,tag_catalog:{},link_badges:[],page_cursors:[null,'250']},
+    {contract_version:5,rows:first,loaded:250,next_sku:'250',has_more:true,dataset_version:version,server_ms:3,payload_bytes:100},
+    {contract_version:5,rows:[{sellpia_sku_code:'251'}],loaded:1,next_sku:null,has_more:false,dataset_version:version,server_ms:2,payload_bytes:50},
+    {contract_version:5,total:251,dataset_version:version}
   ]);
   const result=await context.loadMatrixGridDataset({chunkSize:250});
   assert.equal(result.count,251);
   assert.equal(result.rows.at(-1).sellpia_sku_code,'251');
-  assert.equal(JSON.stringify(calls.map(call=>call.name)),JSON.stringify(['hub_matrix_grid_manifest_v4','hub_matrix_grid_feed_v4','hub_matrix_grid_feed_v4','hub_matrix_grid_manifest_v4']));
+  assert.equal(JSON.stringify(calls.map(call=>call.name)),JSON.stringify(['hub_matrix_grid_manifest_v5','hub_matrix_grid_feed_v5','hub_matrix_grid_feed_v5','hub_matrix_grid_guard_v5']));
   assert.equal(calls[1].args.p_after_sku,null);
   assert.equal(calls[2].args.p_after_sku,'250');
   assert.equal(calls[1].args.p_dataset_version,version);
-  assert.equal(result.metrics.mode,'grid-feed-v4');
+  assert.equal(result.metrics.mode,'grid-feed-v5');
   assert.equal(result.metrics.pageDiagnostics.length,2);
   assert.equal(typeof result.metrics.pageDiagnostics[0].normalizeMs,'number');
 });
 
 test('grid loader rejects duplicates, manifest drift, and stalled cursors',async()=>{
-  const manifest={contract_version:4,total:2,dataset_version:'2026-09-20T00:00:00Z',recommended_chunk_size:2000,max_chunk_size:4000,tag_catalog:{},page_cursors:[null]};
-  let fixture=gridLoaderContext([manifest,{contract_version:4,rows:[{sellpia_sku_code:'1'},{sellpia_sku_code:'1'}],loaded:2,next_sku:null,has_more:false,dataset_version:manifest.dataset_version},{contract_version:4,total:2,dataset_version:manifest.dataset_version,page_cursors:[null]}]);
+  const manifest={contract_version:5,total:2,dataset_version:'2026-09-20T00:00:00Z',recommended_chunk_size:1250,max_chunk_size:4000,tag_catalog:{},link_badges:[],page_cursors:[null]};
+  let fixture=gridLoaderContext([manifest,{contract_version:5,rows:[{sellpia_sku_code:'1'},{sellpia_sku_code:'1'}],loaded:2,next_sku:null,has_more:false,dataset_version:manifest.dataset_version},{contract_version:5,total:2,dataset_version:manifest.dataset_version}]);
   await assert.rejects(fixture.context.loadMatrixGridDataset(),/중복/);
-  fixture=gridLoaderContext([manifest,{contract_version:4,rows:[{sellpia_sku_code:'1'},{sellpia_sku_code:'2'}],loaded:2,next_sku:null,has_more:false,dataset_version:'2026-09-20T00:01:00Z'}]);
+  fixture=gridLoaderContext([manifest,{contract_version:5,rows:[{sellpia_sku_code:'1'},{sellpia_sku_code:'2'}],loaded:2,next_sku:null,has_more:false,dataset_version:'2026-09-20T00:01:00Z'}]);
   await assert.rejects(fixture.context.loadMatrixGridDataset(),/cache가 변경/);
   fixture=gridLoaderContext([
     {...manifest,total:251,recommended_chunk_size:250,page_cursors:[null,'250']},
-    {contract_version:4,rows:[],loaded:0,next_sku:'wrong',has_more:true,dataset_version:manifest.dataset_version},
-    {contract_version:4,rows:[{sellpia_sku_code:'251'}],loaded:1,next_sku:null,has_more:false,dataset_version:manifest.dataset_version}
+    {contract_version:5,rows:[],loaded:0,next_sku:'wrong',has_more:true,dataset_version:manifest.dataset_version},
+    {contract_version:5,rows:[{sellpia_sku_code:'251'}],loaded:1,next_sku:null,has_more:false,dataset_version:manifest.dataset_version}
   ]);
   await assert.rejects(fixture.context.loadMatrixGridDataset({chunkSize:250}),/cursor가 진행/);
 });
@@ -140,19 +151,20 @@ test('grid loader rejects duplicates, manifest drift, and stalled cursors',async
 test('grid loader retries only the failed page and never restarts the dataset',async()=>{
   const version='2026-09-20T00:00:00Z';
   const fixture=gridLoaderContext([
-    {contract_version:4,total:1,dataset_version:version,recommended_chunk_size:2000,max_chunk_size:4000,tag_catalog:{},page_cursors:[null]},
+    {contract_version:5,total:1,dataset_version:version,recommended_chunk_size:1250,max_chunk_size:4000,tag_catalog:{},link_badges:[],page_cursors:[null]},
     new Error('canceling statement due to statement timeout'),
-    {contract_version:4,rows:[{sellpia_sku_code:'1'}],loaded:1,next_sku:null,has_more:false,dataset_version:version,server_ms:2},
-    {contract_version:4,total:1,dataset_version:version,page_cursors:[null]}
+    {contract_version:5,rows:[{sellpia_sku_code:'1'}],loaded:1,next_sku:null,has_more:false,dataset_version:version,server_ms:2},
+    {contract_version:5,total:1,dataset_version:version}
   ]);
   const result=await fixture.context.loadMatrixGridDataset();
   assert.equal(result.count,1);
-  assert.equal(fixture.calls.filter(call=>call.name==='hub_matrix_grid_feed_v4').length,2);
-  assert.equal(fixture.calls.filter(call=>call.name==='hub_matrix_grid_manifest_v4').length,2);
+  assert.equal(fixture.calls.filter(call=>call.name==='hub_matrix_grid_feed_v5').length,2);
+  assert.equal(fixture.calls.filter(call=>call.name==='hub_matrix_grid_manifest_v5').length,1);
+  assert.equal(fixture.calls.filter(call=>call.name==='hub_matrix_grid_guard_v5').length,1);
   assert.equal(result.metrics.pageDiagnostics[0].retries,1);
 });
 
-test('grid v4 positional row restores the existing renderer contract',()=>{
+test('grid v5 positional row and manifest link catalog restore the existing renderer contract',()=>{
   const fixture=gridLoaderContext([]);
   const positional=Array(35).fill(null);
   positional[0]='5566-1';positional[4]='OWN';positional[25]=['P',null,null,null,'MANUAL_LINKED',2,false,null,null];
@@ -160,11 +172,11 @@ test('grid v4 positional row restores the existing renderer contract',()=>{
   positional[34]=[
       ['5566',null,null,null,['T1'],['T2']],
       {'smartstore:sellpia_sale_price':{id:'D',status:'pending',b:4000,d:2000,o:0,f:2000}},
-      {},{smartstore:{max:2,relation:'bundle'}},{smartstore:{b:2800,d:2800,o:0,f:2800}},
+      {},null,{smartstore:{b:2800,d:2800,o:0,f:2800}},
       {smartstore:{b:4000,d:2000,o:0,f:2000,n:['가격 Rule']}},
       {calculated_base_price:{v:59000,n:['2.2배'],t:['T2']}}
   ];
-  const row=fixture.context.normalizeMatrixGridRow(positional,{T1:{name:'상품 태그',color:'#111',group:'일반'},T2:{name:'2.2배',color:'#222',group:'수식'}});
+  const row=fixture.context.normalizeMatrixGridRow(positional,{T1:{name:'상품 태그',color:'#111',group:'일반'},T2:{name:'2.2배',color:'#222',group:'수식'}},{'5566-1':{smartstore:{max:2,relation:'bundle'}}});
   assert.equal(row.__profile.product_tags[0].tag_name,'상품 태그');
   assert.equal(row.__profile.sku_tags[0].tag_name,'2.2배');
   assert.equal(row.__sellerDrafts['smartstore:sellpia_sale_price'].price_base_after,4000);
