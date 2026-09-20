@@ -6,6 +6,34 @@ import vm from 'node:vm';
 const service=fs.readFileSync('mockups/operations-hub/data-service.js','utf8');
 const app=fs.readFileSync('mockups/operations-hub/app.js','utf8');
 const migration=fs.readFileSync('supabase/migrations/20260920143340_hub_matrix_grid_feed_v2.sql','utf8');
+const jsonChunkFix=fs.readFileSync('supabase/migrations/20260920144902_fix_hub_matrix_grid_feed_v2_json_chunks.sql','utf8');
+
+function functionArgumentCounts(sql,functionName){
+  const counts=[];
+  const needle=`${functionName}(`;
+  for(let start=sql.indexOf(needle);start>=0;start=sql.indexOf(needle,start+1)){
+    let cursor=start+needle.length;
+    let depth=1;
+    let quoted=false;
+    let count=1;
+    for(;cursor<sql.length&&depth;cursor+=1){
+      const char=sql[cursor];
+      if(quoted){
+        if(char==="'"){
+          if(sql[cursor+1]==="'")cursor+=1;
+          else quoted=false;
+        }
+        continue;
+      }
+      if(char==="'"){quoted=true;continue;}
+      if(char==='(')depth+=1;
+      else if(char===')')depth-=1;
+      else if(char===','&&depth===1)count+=1;
+    }
+    counts.push(count);
+  }
+  return counts;
+}
 
 function gridLoaderContext(responses){
   const calls=[];
@@ -40,6 +68,14 @@ test('grid feed v2 separates manifest, enforces one cache version, and remains r
   assert.match(migration,/v_current_version is distinct from p_dataset_version/);
   assert.doesNotMatch(migration,/cache\.profile_json|cache\.seller_drafts_json/);
   assert.doesNotMatch(migration,/\b(insert|update|delete|merge|truncate)\b/i);
+});
+
+test('grid feed row projection stays below PostgreSQL function argument limit',()=>{
+  const argumentCounts=functionArgumentCounts(jsonChunkFix,'jsonb_build_object');
+  assert.ok(argumentCounts.length>10);
+  assert.ok(Math.max(...argumentCounts)<=100,`jsonb_build_object max arguments: ${Math.max(...argumentCounts)}`);
+  assert.match(jsonChunkFix,/\)\s*\|\| jsonb_build_object\([\s\S]*?\)\s*\|\| jsonb_build_object\(/);
+  assert.doesNotMatch(jsonChunkFix,/\b(insert|update|delete|merge|truncate)\b/i);
 });
 
 test('grid loader completes manifest plus keyset pages and rechecks the manifest',async()=>{
