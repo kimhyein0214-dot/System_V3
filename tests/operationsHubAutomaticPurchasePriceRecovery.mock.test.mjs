@@ -15,11 +15,12 @@ assert.match(migration, /revoke all on function[\s\S]*grant execute[\s\S]*to ano
 
 assert.match(dataService, /read_operations_hub_pending_purchase_price_recalculation_v2[\s\S]*pendingCount[\s\S]*affected_skus/, 'the data service must normalize the bounded pending scope');
 assert.match(app, /pendingPurchasePriceRecoveryPromise[\s\S]*return pendingPurchasePriceRecoveryPromise/, 'automatic recovery must be single-flight');
-assert.match(app, /PENDING_PURCHASE_PRICE_RECOVERY_BATCH_SIZE = 100[\s\S]*materializeHubPrices\(pending\.skus,[\s\S]*automatic-purchase-price-recovery/, 'pending calculations must resume in bounded materialization batches');
+assert.match(app, /PENDING_PURCHASE_PRICE_RECOVERY_BATCH_SIZE = 100[\s\S]*materializeHubPrices\(pending\.skus,[\s\S]*sources:\[\][\s\S]*automatic-purchase-price-recovery/, 'pending calculations must resume the internal price chain in bounded materialization batches');
+assert.doesNotMatch(app, /materializeHubPrices\(pending\.skus,[\s\S]{0,300}sources:\['smartstore'/, 'purchase-price recovery must not expand into unrelated seller materialization');
 assert.match(app, /markMatrixAffected\(affected\)[\s\S]*if \(matrixDataset\) await refreshMatrixSkus\(affected\)/, 'completed batches must patch affected Matrix rows without a full reload');
 assert.match(app, /pending\.pendingCount >= previousPendingCount && batchKey === previousBatchKey/, 'a persistently failing batch must stop after proving no forward progress');
 assert.match(app, /pendingPurchasePriceRecoveryNextAttemptAt = Date\.now\(\) \+ 5 \* 60 \* 1000/, 'persistent errors must back off instead of retrying continuously');
 assert.match(app, /refreshLiveData\(\{resetPage:true\}\)\.finally\(\(\) => schedulePendingPurchasePriceRecovery\(\)\)/, 'login startup must resume unfinished calculations after initial reads settle');
-assert.match(html, /data-service\.js\?v=20260921-auto-price-recovery-v1[\s\S]*app\.js\?v=20260921-auto-price-recovery-v1/, 'changed frontend assets must be cache-busted');
+assert.match(html, /data-service\.js\?v=20260921-auto-price-recovery-v2[\s\S]*app\.js\?v=20260921-auto-price-recovery-v2/, 'changed frontend assets must be cache-busted');
 
 console.log('Operations Hub automatic purchase-price recovery contract: passed');

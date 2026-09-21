@@ -2701,6 +2701,12 @@ async function resumePendingPurchasePriceCalculations({silent=false} = {}) {
       previousBatchKey = batchKey;
       if (!silent && batchNo === 0) showToast(`미완료 가격 계산 ${formatNumber(initialPending)}건을 자동으로 이어서 처리합니다.`);
       const calculation = await materializeHubPrices(pending.skus,{
+        // Purchase-price recovery only needs the internal dependency chain
+        // (actual_inbound_cost -> calculated_base_price). Seller exports
+        // calculate their current effective tuple from the same live inputs,
+        // so re-materializing every linked seller tuple here only delays the
+        // source refresh and can turn a bounded recovery into a multi-minute job.
+        sources:[],
         reason:'automatic-purchase-price-recovery'
       });
       const affected = calculation?.affectedSkus || pending.skus;
