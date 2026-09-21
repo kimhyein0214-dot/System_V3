@@ -1885,9 +1885,27 @@ async function refreshLiveData(options = {}) {
 
 async function refreshMatrixSkus(skus = []) {
   const targets = [...new Set(skus.map(sku => String(sku || '').trim()).filter(Boolean))];
-  if (!targets.length || !liveData?.loadProductsBySkus) return [];
-  const patchAt=performance.now(),rows=[];for(let i=0;i<targets.length;i+=200)rows.push(...await liveData.loadProductsBySkus(targets.slice(i,i+200)));
-  if(matrixDataset){matrixDataset.patch(rows);matrixPerformance.patchMs=performance.now()-patchAt;const replacements=new Map(rows.map(r=>[r.sellpia_sku_code,r]));matrixState.rows=matrixState.rows.map(r=>replacements.get(r.sellpia_sku_code)||r);renderLiveMatrixRows(matrixState.rows);return rows;}
+  if (!targets.length || !(liveData?.loadMatrixGridRowsBySkus||liveData?.loadProductsBySkus)) return [];
+  const patchAt=performance.now(),rows=matrixDataset&&liveData?.loadMatrixGridRowsBySkus
+    ?await liveData.loadMatrixGridRowsBySkus(targets)
+    :await (async()=>{const values=[];for(let i=0;i<targets.length;i+=200)values.push(...await liveData.loadProductsBySkus(targets.slice(i,i+200)));return values;})();
+  if(matrixDataset){
+    if(rows.length!==targets.length)throw Error('Matrix 대상 SKU 일부가 누락되어 부분 갱신하지 않았습니다.');
+    matrixDataset.patch(rows);matrixPerformance.patchMs=performance.now()-patchAt;
+    const selectedAt=performance.now();
+    matrixState.rows=matrixDataset.select({...matrixState,skus:matrixState.codeListSkus,
+      searchType:document.getElementById('matrix-search-type')?.value||'all',
+      seller:document.getElementById('matrix-client-seller')?.value,
+      tagId:document.getElementById('matrix-client-tag')?.value,
+      state:document.getElementById('matrix-client-state')?.value});
+    matrixPerformance.filterMs=performance.now()-selectedAt;
+    matrixState.total=matrixState.rows.length;matrixState.directCount=matrixState.total;matrixState.relatedCount=0;
+    renderLiveMatrixRows(matrixState.rows);
+    document.getElementById('matrix-total-count').textContent=formatNumber(matrixState.total);
+    document.getElementById('matrix-range').textContent=`${formatNumber(matrixState.total)} 결과 / 전체 ${formatNumber(matrixDataset.rows.length)} SKU · 메모리 유지`;
+    showMatrixPerformance();
+    return rows;
+  }
   const refreshedBySku = new Map(rows.map(product => [String(product.sellpia_sku_code || '').trim(), product]));
   matrixState.rows = matrixState.rows.map(product => refreshedBySku.get(String(product.sellpia_sku_code || '').trim()) || product);
   renderLiveMatrixRows(matrixState.rows);
@@ -3363,8 +3381,22 @@ async function flushPendingSellpiaChanges({automatic = false} = {}) {
     const priceInputSkus = [...new Set(snapshot.filter(change => ['system_base_price','sellpia_purchase_price'].includes(change.fieldKey)).map(change => change.sku))];
     let calculationError = '';
     if (priceInputSkus.length) {
-      try { calculationError = materializationWarning(await materializeHubPrices(priceInputSkus,{reason:'sellpia-price-input-save'})); }
+      try { calculationError = materializationWarning(await materializeHubPrices(priceInputSkus,{reason:'sellpia-price-input-save',sources:snapshot.some(change=>change.fieldKey==='system_base_price')?['smartstore','makeshop','ably']:[]})); }
       catch (error) { calculationError = error?.message || String(error); console.error('saved Sellpia value price materialization failed', error); }
+    }
+    // The saved input and materialized result must be read back together from
+    // the same compact Grid projection.  Never reload all 23k SKUs for one edit.
+    const savedSkus=[...new Set(snapshot.map(change=>change.sku))];
+    markMatrixAffected(savedSkus);
+    if(matrixDataset){
+      try{
+        const versions=new Map(savedSkus.map(sku=>[sku,matrixDirtyVersions.get(sku)]));
+        await refreshMatrixSkus(savedSkus);
+        savedSkus.forEach(sku=>{if(matrixDirtyVersions.get(sku)===versions.get(sku))matrixDirtySkus.delete(sku);});
+      }catch(error){
+        console.error('saved Sellpia SKU targeted Matrix refresh failed',error);
+        calculationError=[calculationError,`Matrix 부분 갱신 실패: ${error?.message||error}`].filter(Boolean).join(' · ');
+      }
     }
     removeSavedCellState(snapshot);
     changeModal.hidden = true;
@@ -12519,6 +12551,10 @@ uploadButton.addEventListener('click', async () => {
         await liveData.waitForSellpiaMatrixRebuild(result.snapshotId, showUploadProgress);
       } catch (rebuildError) {
         console.warn('sellpia matrix rebuild is still pending', rebuildError);
+        // The server accepted the snapshot, but it is not safe to patch from
+        // cache until its rebuild is visible. The next explicit DB refresh
+        // must retry the authoritative full read after this exceptional case.
+        matrixSourceReloadNeeded=true;
         showUploadProgress({
           percent:98,
           title:'업로드 완료 · 매트릭스 재구성 대기',
@@ -12544,6 +12580,12 @@ uploadButton.addEventListener('click', async () => {
       } catch (calculationError) {
         calculationWarning = `원본은 저장됐지만 가격 저장 실패: ${calculationError?.message || calculationError}`;
       }
+    }
+    if(sourceSelect.value==='sellpia'&&result.uploadMode==='patch'){
+      const changed=[...new Set((result.matrixAffectedSkus||[]).map(String))];
+      if(matrixDataset&&changed.length===Number(result.uploadedRowCount)&&changed.every(sku=>matrixDataset.bySku.has(sku)))
+        markMatrixAffected(changed);
+      else matrixSourceReloadNeeded=true; // New/removed membership needs a full bootstrap.
     }
     const rowLabel = ['sellpia','survey'].includes(sourceSelect.value) ? 'SKU' : '상품·옵션';
     showUploadProgress({

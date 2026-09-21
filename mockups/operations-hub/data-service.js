@@ -1127,6 +1127,39 @@
     }finally{fullMatrixReadContext=null;}
   }
 
+  async function loadMatrixGridRowsBySkus(skus=[],{signal=null}={}) {
+    const requested=[...new Set((Array.isArray(skus)?skus:[]).map(cleanText).filter(Boolean))];
+    if(!requested.length)return [];
+    const token=requireOperationsHubSessionToken(),rows=[],seen=new Set(),versions=new Set();
+    for(let offset=0;offset<requested.length;offset+=200){
+      const batch=requested.slice(offset,offset+200);
+      const read=await readMatrixGridRpc('hub_matrix_grid_rows_v5',{
+        p_session_token:token,p_skus:batch
+      },{signal,page:Math.floor(offset/200)+1,cursor:'targeted-skus'});
+      const response=read.data,part=Array.isArray(response.rows)?response.rows:[];
+      if(Number(response.contract_version)!==5||Number(response.requested)!==batch.length||Number(response.loaded)!==part.length)
+        throw Error('Matrix targeted row 응답 계약이 일치하지 않습니다.');
+      if(!cleanText(response.dataset_version))throw Error('Matrix targeted row 버전이 없습니다.');
+      versions.add(cleanText(response.dataset_version));
+      if(versions.size>1)throw Error('부분 갱신 중 Matrix cache 버전이 변경됐습니다. 다시 시도해주세요.');
+      const tagCatalog=response.tag_catalog&&typeof response.tag_catalog==='object'?response.tag_catalog:{};
+      const badges={};
+      for(const badge of Array.isArray(response.link_badges)?response.link_badges:[]){
+        const sku=cleanText(badge?.[0]),source=cleanText(badge?.[1]);if(!sku||!source)continue;
+        (badges[sku]??={})[source]={max:Number(badge?.[2]||0),relation:cleanText(badge?.[3])||'single'};
+      }
+      const batchSet=new Set(batch),missing=Array.isArray(response.missing_skus)?response.missing_skus:[];
+      if(missing.length)throw Error(`Matrix SKU membership 변경: ${missing.slice(0,5).join(', ')} · 전체 DB 새로고침이 필요합니다.`);
+      for(const raw of part){
+        const row=normalizeMatrixGridRow(raw,tagCatalog,badges),sku=cleanText(row.sellpia_sku_code);
+        if(!batchSet.has(sku)||seen.has(sku))throw Error(`Matrix targeted row SKU 중복/범위 오류: ${sku||'(빈 SKU)'}`);
+        seen.add(sku);rows.push(row);
+      }
+      if(part.length!==batch.length)throw Error('Matrix targeted row 누락 · 전체 DB 새로고침이 필요합니다.');
+    }
+    return rows;
+  }
+
   async function loadFullMatrixDataset({signal=null,onProgress=null}={}) {
     fullMatrixReadContext={};try{
     const started=performance.now(),before={...matrixReadMetrics},identity=await loadAllFilteredSkus({status:'all'}),codes=identity.skus;
@@ -2833,21 +2866,39 @@
       .eq('upload_status','ready')
       .order('completed_at',{ascending:false,nullsFirst:false})
       .order('created_at',{ascending:false})
-      .limit(50);
+      .order('snapshot_id',{ascending:false})
+      .limit(1);
     if(error)throw error;
     const latest=(data||[])[0]||null;
-    const snapshot=(data||[]).find(row=>cleanText(row.metadata?.upload_mode||'full')==='full')||null;
+    let snapshot=latest;
+    const visited=new Set();
+    for(let depth=0;snapshot;depth++){
+      if(depth>=256||visited.has(snapshot.snapshot_id))throw Error('Sellpia 원본 carrier 계보가 손상되었거나 너무 깁니다.');
+      visited.add(snapshot.snapshot_id);
+      const mode=cleanText(snapshot.metadata?.upload_mode||'full').toLowerCase();
+      if(mode==='full')break;
+      if(mode!=='patch')throw Error('지원하지 않는 Sellpia 원본 snapshot 종류입니다.');
+      const parentId=cleanText(snapshot.metadata?.base_snapshot_id);
+      if(!parentId||visited.has(parentId))throw Error('Sellpia 원본 carrier 계보가 불완전합니다.');
+      const {data:parent,error:parentError}=await db.from('sellpia_stock_snapshots')
+        .select('snapshot_id,source_file_name,source_file_size,metadata,completed_at,created_at')
+        .eq('snapshot_id',parentId).eq('upload_status','ready').maybeSingle();
+      if(parentError)throw parentError;
+      if(!parent)throw Error('Sellpia 부분 갱신의 기준 원본을 찾지 못했습니다.');
+      snapshot=parent;
+    }
     const files=Array.isArray(snapshot?.metadata?.source_storage_files)?snapshot.metadata.source_storage_files:[];
-    const currentSnapshotMatches=Boolean(snapshot&&latest&&snapshot.snapshot_id===latest.snapshot_id);
+    const paths=files.map(file=>cleanText(file.path));
+    const validFiles=files.length===3&&new Set(paths).size===3&&paths.every(path=>path.startsWith(`sellpia/${snapshot.snapshot_id}/`));
     return {
       snapshotId:snapshot?.snapshot_id||null,
+      stateSnapshotId:latest?.snapshot_id||null,
       completedAt:snapshot?.completed_at||snapshot?.created_at||null,
       fileNames:files.length?files.map(file=>file.name):cleanText(snapshot?.source_file_name).split(' | ').filter(Boolean),
       files,
-      available:Boolean(snapshot&&files.length&&currentSnapshotMatches),
+      available:Boolean(snapshot&&validFiles),
       reason:!snapshot?'ready 상태의 Sellpia 전체 원본이 없습니다.'
-        :!currentSnapshotMatches?'현재 Sellpia 상태는 부분 원본 병합 이후입니다. 현재 상태와 일치하는 전체 원본 carrier를 다시 업로드해주세요.'
-        :files.length?'':'최신 Sellpia 전체 스냅샷은 DB 행만 저장되어 원본 carrier 파일이 없습니다.'
+        :validFiles?'':'Sellpia 전체 원본 carrier 3개가 보관되지 않았습니다.'
     };
   }
 
@@ -2855,7 +2906,7 @@
     try{
       const row=await originalBoundaryRequest('read-manifest',{kind:'sellpia',include_urls:false});
       recordOriginalBoundaryDiagnostic('secure-read-ok',{sources:'sellpia',count:Number(row?.files?.length||0)});
-      return {snapshotId:row.snapshot_id||null,completedAt:row.completed_at||null,fileNames:(row.files||[]).map(file=>file.name),files:row.files||[],available:Boolean(row.available),reason:row.reason||'',boundary:'signed-read-v1'};
+      return {snapshotId:row.snapshot_id||null,stateSnapshotId:row.state_snapshot_id||null,completedAt:row.completed_at||null,fileNames:(row.files||[]).map(file=>file.name),files:row.files||[],available:Boolean(row.available),reason:row.reason||'',boundary:'signed-read-v1'};
     }catch(error){
       if(error?.operationsHubAuthRequired)throw error;
       recordOriginalBoundaryDiagnostic('secure-read-fallback',{sources:'sellpia',message:String(error?.message||error)});
@@ -2875,7 +2926,7 @@
       files.push(new File([blob],stored.name,{type:stored.type||blob.type||'application/octet-stream'}));
     }
     onProgress?.({completed:files.length,total:files.length});
-    return {snapshotId:status.snapshotId,completedAt:status.completedAt,files};
+    return {snapshotId:status.snapshotId,stateSnapshotId:status.stateSnapshotId,completedAt:status.completedAt,files};
   }
 
   async function downloadLatestSellpiaOriginals(onProgress) {
@@ -2884,7 +2935,7 @@
       if(!manifest.available)throw new Error(manifest.reason||'최신 Sellpia 전체 원본 carrier가 없습니다.');
       const files=await downloadSignedFiles(manifest.files,onProgress,'sellpia');
       recordOriginalBoundaryDiagnostic('secure-download-ok',{sources:'sellpia',files:files.length});
-      return {snapshotId:manifest.snapshot_id,completedAt:manifest.completed_at,files,boundary:'signed-read-v1'};
+      return {snapshotId:manifest.snapshot_id,stateSnapshotId:manifest.state_snapshot_id||null,completedAt:manifest.completed_at,files,boundary:'signed-read-v1'};
     }catch(error){
       if(error?.operationsHubAuthRequired)throw error;
       recordOriginalBoundaryDiagnostic('secure-download-fallback',{sources:'sellpia',message:String(error?.message||error)});
@@ -3008,16 +3059,19 @@
     for(let i=0;i<codes.length;i+=200){const {data:part,error:e}=await db.from(MATRIX_VIEW).select('sellpia_sku_code,sellpia_product_name,sellpia_option_name').in('sellpia_sku_code',codes.slice(i,i+200));if(e)throw e;rows.push(...part);}
     return rows;
   }
-  async function loadSellpiaPatchRows({skus=null,search='',searchType='sku',withResults=true,snapshotId=null,onProgress}={}) {
+  async function loadSellpiaPatchRows({skus=null,search='',searchType='sku',withResults=true,snapshotId=null,stateSnapshotId=null,onProgress}={}) {
     const expectedSnapshotId=cleanText(snapshotId);
+    const expectedStateId=cleanText(stateSnapshotId);
+    if(expectedSnapshotId&&!expectedStateId)throw Error('현재 Sellpia 상태 snapshot을 확인할 수 없습니다. 원본 미리보기를 다시 실행하세요.');
     const rows=[];let count=0,limit=withResults?50:500;
     do {
       const args={p_session_token:requireOperationsHubSessionToken(),p_skus:skus,p_search:search,p_search_type:searchType,p_offset:rows.length,p_limit:limit,p_with_results:withResults};
-      if(expectedSnapshotId)args.p_snapshot_id=expectedSnapshotId;
-      const {data,error}=await db.rpc(expectedSnapshotId?'hub_sellpia_patch_read_v2':'hub_sellpia_patch_read_v1',args);
+      if(expectedSnapshotId){args.p_snapshot_id=expectedSnapshotId;args.p_state_snapshot_id=expectedStateId;}
+      const {data,error}=await db.rpc(expectedSnapshotId?'hub_sellpia_patch_read_v3':'hub_sellpia_patch_read_v1',args);
       if(error&&/statement timeout|canceling statement/i.test(error.message)&&limit>1){limit=Math.ceil(limit/2);continue;}
       throwOperationsHubRpcError(error);
       if(expectedSnapshotId&&cleanText(data?.snapshot_id)!==expectedSnapshotId)throw Error('Sellpia 원본 snapshot이 조회 중 변경됐습니다. 다시 미리보기하세요.');
+      if(expectedStateId&&cleanText(data?.state_snapshot_id)!==expectedStateId)throw Error('Sellpia 현재 상태가 조회 중 변경됐습니다. 다시 미리보기하세요.');
       count=data.count;rows.push(...data.rows);
       onProgress?.({processed:rows.length,total:count});
       if(!data.rows.length)break;
@@ -3788,7 +3842,10 @@
       return {
         snapshotId,intentId,uploadMode,boundary:'signed-upload-v1',
         uploadedRowCount:normalizedRows.length,
-        rowCount:finalRowCount,affectedSkus
+        rowCount:finalRowCount,affectedSkus,
+        // Calculation scope and Matrix refresh scope are different: stock-only
+        // patches still change the displayed rows but need no price calculation.
+        matrixAffectedSkus:uploadMode==='patch'?normalizedRows.map(row=>row.sellpia_sku_code):[]
       };
     } catch (error) {
       if(intentId&&!ready)try{await originalBoundaryRequest('upload-abort',{intent_id:intentId,reason:String(error?.message||error).slice(0,1000)});}catch(cleanupError){recordOriginalBoundaryDiagnostic('secure-upload-cleanup-failed',{intentId,message:String(cleanupError?.message||cleanupError)});}
@@ -4289,6 +4346,13 @@
     });
     return {source:safeSource,rows,missingSkus:[]};
   }
+  async function deleteUnusedProductTag({id,expectedName}) {
+    const {data,error}=await db.rpc('hub_product_tag_safe_delete_v1',{
+      p_session_token:requireOperationsHubSessionToken(),p_tag_id:id,p_expected_name:cleanText(expectedName)
+    });
+    if(error)throw readableDatabaseError(error);
+    return data;
+  }
 
   async function summarizeMatrixStocksForExport({source,skus=null}={}) {
     const snapshot=await loadMatrixExportSnapshot({source,skus});
@@ -4484,6 +4548,7 @@
     getOriginalBoundaryDiagnostics:()=>originalBoundaryDiagnostics.map(entry=>({...entry})),
     loadProducts,
     loadMatrixGridDataset,
+    loadMatrixGridRowsBySkus,
     loadPendingPurchasePriceRecalculations,
     loadFullMatrixDataset,
     loadProductsBySkus,
@@ -4535,6 +4600,7 @@
     loadSiblingOptions,
     updateProductTag,
     renameProductTag,
+    deleteUnusedProductTag,
     ensureProductProfile,
     saveProductProfile,
     createProductTag,
@@ -4619,7 +4685,8 @@
     waitForSellpiaMatrixRebuild,
     uploadSellerSnapshot,
   };
-  for(const [name,fn] of Object.entries(api)){if(typeof fn!=='function'||! /^(save|apply|remove|bulkImport|syncTag|rename|assign|delete|cancel|upsertCalculated|uploadSellpiaSnapshot|uploadSellerSnapshot|productPrice|ruleRegistry)/.test(name))continue;api[name]=async function(...args){const result=await fn(...args);if(args[0]?.preview===true||(['productPrice','ruleRegistry'].includes(name)&&['list','rules','read','members','inspect'].includes(args[0])))return result;if(/^(uploadSellpiaSnapshot|uploadSellerSnapshot)$/.test(name))global.dispatchEvent(new CustomEvent('hub-matrix-source-reloaded'));const codes=new Set();const visit=(v,depth=0)=>{if(depth>5||v==null)return;if(Array.isArray(v)){for(const x of v)if(typeof x==='string'&&/^[^\s]+-\d+$/.test(x))codes.add(x);else visit(x,depth+1);}else if(typeof v==='object')for(const [k,x] of Object.entries(v)){if(['sku','sellpia_sku_code'].includes(k)&&typeof x==='string')codes.add(x);else if(['skus','affectedSkus','affected_skus','rows','assignments','applied'].includes(k))visit(x,depth+1);}};args.forEach(a=>visit(a));visit(result);const tag=args[0]?.tagId||args[0]?.tag_id||(/renameProductTag/.test(name)?args[0]?.id:null);if(tag&&/rename|saveTag/.test(name)&&global.HubMatrixClient?.dataset)global.HubMatrixClient.dataset.tagSkus(tag).forEach(s=>codes.add(s));if(global.HubMatrixClient?.dataset){const input=typeof args[0]==='object'?args[0]:args[1],ids=new Set([input?.id,input?.rule_id,result?.id,result?.rule?.id].filter(Boolean).map(String)),product=input?.product_code;for(const row of global.HubMatrixClient.dataset.rows){const owners=[...Object.values(row.__hubInternalPrices||{}).flatMap(r=>[...(r.activeOutputRules||[]),...(r.versions||[])]),...Object.values(row.__hubRulePrices||{}).flatMap(r=>r.versions||[]),row.__hubRepresentativePrice?.rule].filter(Boolean);if(owners.some(o=>ids.has(String(o.id||o.rule_id)))||product&&String(row.__profile?.sellpia_product_code)===String(product))codes.add(row.sellpia_sku_code);}}
+  for(const [name,fn] of Object.entries(api)){if(typeof fn!=='function'||! /^(save|apply|remove|bulkImport|syncTag|rename|assign|delete|cancel|upsertCalculated|uploadSellpiaSnapshot|uploadSellerSnapshot|productPrice|ruleRegistry)/.test(name))continue;api[name]=async function(...args){const result=await fn(...args);if(args[0]?.preview===true||(['productPrice','ruleRegistry'].includes(name)&&['list','rules','read','members','inspect'].includes(args[0])))return result;const isSellpiaPatch=name==='uploadSellpiaSnapshot'&&result?.uploadMode==='patch';if(isSellpiaPatch)return result; // The upload UI publishes affected rows only after the server's Matrix rebuild completes.
+    if(/^(uploadSellpiaSnapshot|uploadSellerSnapshot)$/.test(name))global.dispatchEvent(new CustomEvent('hub-matrix-source-reloaded'));const codes=new Set();const visit=(v,depth=0)=>{if(depth>5||v==null)return;if(Array.isArray(v)){for(const x of v)if(typeof x==='string'&&/^[^\s]+-\d+$/.test(x))codes.add(x);else visit(x,depth+1);}else if(typeof v==='object')for(const [k,x] of Object.entries(v)){if(['sku','sellpia_sku_code'].includes(k)&&typeof x==='string')codes.add(x);else if(['skus','affectedSkus','affected_skus','rows','assignments','applied'].includes(k))visit(x,depth+1);}};args.forEach(a=>visit(a));visit(result);const tag=args[0]?.tagId||args[0]?.tag_id||(/renameProductTag/.test(name)?args[0]?.id:null);if(tag&&/rename|saveTag/.test(name)&&global.HubMatrixClient?.dataset)global.HubMatrixClient.dataset.tagSkus(tag).forEach(s=>codes.add(s));if(global.HubMatrixClient?.dataset){const input=typeof args[0]==='object'?args[0]:args[1],ids=new Set([input?.id,input?.rule_id,result?.id,result?.rule?.id].filter(Boolean).map(String)),product=input?.product_code;for(const row of global.HubMatrixClient.dataset.rows){const owners=[...Object.values(row.__hubInternalPrices||{}).flatMap(r=>[...(r.activeOutputRules||[]),...(r.versions||[])]),...Object.values(row.__hubRulePrices||{}).flatMap(r=>r.versions||[]),row.__hubRepresentativePrice?.rule].filter(Boolean);if(owners.some(o=>ids.has(String(o.id||o.rule_id)))||product&&String(row.__profile?.sellpia_product_code)===String(product))codes.add(row.sellpia_sku_code);}}
     if(codes.size)global.dispatchEvent(new CustomEvent('hub-matrix-affected',{detail:{skus:[...codes]}}));return result&&typeof result==='object'&&!Array.isArray(result)&&codes.size?{...result,affected_skus:[...codes]}:result;};}
   global.SystemV3Data=Object.freeze(api);
 })(window);

@@ -1,8 +1,9 @@
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { createClient } from "npm:@supabase/supabase-js@2.57.4";
+import { resolveSellpiaCarrierLineage } from "./carrier-lineage.mjs";
 
 const BUCKET = "seller-originals";
-const VERSION = "2026.09.20-secure-v1";
+const VERSION = "2026.09.21-secure-carrier-lineage-v2";
 const MAX_FILE_BYTES = 25 * 1024 * 1024;
 const MAX_TOTAL_BYTES = 60 * 1024 * 1024;
 const DOWNLOAD_TTL_SECONDS = 300;
@@ -237,23 +238,31 @@ async function sellerReadManifest(body: Record<string, unknown>) {
 async function sellpiaReadManifest(body: Record<string, unknown>) {
   const { data: latestRows, error: latestError } = await adminClient.from("sellpia_stock_snapshots")
     .select("snapshot_id,source_file_name,source_file_size,metadata,completed_at,created_at")
-    .eq("upload_status", "ready").order("completed_at", { ascending: false, nullsFirst: false }).order("created_at", { ascending: false }).limit(50);
+    .eq("upload_status", "ready").order("completed_at", { ascending: false, nullsFirst: false }).order("created_at", { ascending: false }).order("snapshot_id", { ascending: false }).limit(50);
   if (latestError) throw latestError;
   const rows = latestRows || [];
   const latest = rows[0] || null;
-  const requested = cleanText(body.snapshot_id);
-  const snapshot = requested ? rows.find((row) => row.snapshot_id === requested) : rows.find((row) => cleanText(row.metadata?.upload_mode || "full") === "full");
+  const indexed = new Map(rows.map((row) => [row.snapshot_id, row]));
+  const readReadySnapshot = async (id: string) => {
+    if (indexed.has(id)) return indexed.get(id);
+    const { data, error } = await adminClient.from("sellpia_stock_snapshots")
+      .select("snapshot_id,source_file_name,source_file_size,metadata,completed_at,created_at")
+      .eq("snapshot_id", id).eq("upload_status", "ready").maybeSingle();
+    if (error) throw error;
+    return data;
+  };
+  const lineage = await resolveSellpiaCarrierLineage(latest, readReadySnapshot, cleanText(body.snapshot_id));
+  const snapshot = lineage.carrier;
   const files = asArray(snapshot?.metadata?.source_storage_files);
-  const currentMatches = Boolean(snapshot && latest && snapshot.snapshot_id === latest.snapshot_id);
   if (snapshot) for (const file of files) validateStoredPath("sellpia", snapshot.snapshot_id, cleanText(file.path));
-  const available = Boolean(snapshot && files.length && currentMatches);
-  const reason = !snapshot ? "ready 상태의 Sellpia 전체 원본이 없습니다."
-    : !currentMatches ? "현재 Sellpia 상태와 일치하는 전체 원본 carrier를 다시 업로드해주세요."
-    : files.length ? "" : "최신 Sellpia 전체 snapshot에 원본 carrier reference가 없습니다.";
+  const available = Boolean(snapshot && files.length === 3 && new Set(files.map((file) => cleanText(file.path))).size === 3);
+  const reason = lineage.reason || (available ? "" : "Sellpia 전체 snapshot에 원본 carrier 3개 참조가 없습니다.");
   const includeUrls = body.include_urls !== false;
   return {
     source: "sellpia", snapshot_id: snapshot?.snapshot_id || null,
     completed_at: snapshot?.completed_at || snapshot?.created_at || null,
+    state_snapshot_id: lineage.stateSnapshotId,
+    state_completed_at: latest?.completed_at || latest?.created_at || null,
     available, reason, files: available && includeUrls ? await signDownloadFiles(files) : files,
   };
 }

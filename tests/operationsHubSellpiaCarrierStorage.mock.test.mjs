@@ -8,19 +8,20 @@ const functionSource=source.slice(source.indexOf('  async function loadLatestSel
   .replace('loadLatestSellpiaOriginalStatusDirect','loadLatestSellpiaOriginalStatus');
 
 async function statusFor(rows){
- const chain={select(){return this;},eq(){return this;},order(){return this;},limit(){return Promise.resolve({data:rows,error:null});}};
+ const chain={id:null,select(){return this;},eq(key,value){if(key==='snapshot_id')this.id=value;return this;},order(){return this;},limit(){return Promise.resolve({data:rows.slice(0,1),error:null});},maybeSingle(){return Promise.resolve({data:rows.find(row=>row.snapshot_id===this.id)||null,error:null});}};
  const context={cleanText:value=>String(value??'').trim(),db:{from:()=>chain}};
  vm.createContext(context);vm.runInContext(functionSource,context);return context.loadLatestSellpiaOriginalStatus();
 }
 
-test('Sellpia carrier status accepts only the current ready full snapshot with stored files',async()=>{
- const stored=[{name:'source.csv',path:'sellpia/S/01.csv'}];
- const current=await statusFor([{snapshot_id:'FULL',source_file_name:'source.csv',metadata:{upload_mode:'full',source_storage_files:stored},completed_at:'2026-09-20'}]);
+test('Sellpia carrier status follows the exact full ancestor of a ready patch',async()=>{
+ const stored=[1,2,3].map(i=>({name:`source-${i}.csv`,path:`sellpia/FULL/0${i}.csv`}));
+ const current=await statusFor([{snapshot_id:'FULL',metadata:{upload_mode:'full',source_storage_files:stored},completed_at:'2026-09-20'}]);
  assert.equal(current.available,true);assert.equal(current.snapshotId,'FULL');
- const legacy=await statusFor([{snapshot_id:'FULL',source_file_name:'source.csv',metadata:{upload_mode:'full'},completed_at:'2026-09-20'}]);
- assert.equal(legacy.available,false);assert.match(legacy.reason,/DB 행만 저장/);
- const patched=await statusFor([{snapshot_id:'PATCH',metadata:{upload_mode:'patch'},completed_at:'2026-09-20'},{snapshot_id:'FULL',metadata:{upload_mode:'full',source_storage_files:stored},completed_at:'2026-09-19'}]);
- assert.equal(patched.available,false);assert.match(patched.reason,/부분 원본 병합/);
+ const legacy=await statusFor([{snapshot_id:'FULL',metadata:{upload_mode:'full'},completed_at:'2026-09-20'}]);
+ assert.equal(legacy.available,false);assert.match(legacy.reason,/carrier 3개/);
+ const patched=await statusFor([{snapshot_id:'PATCH',metadata:{upload_mode:'patch',base_snapshot_id:'FULL'},completed_at:'2026-09-20'},{snapshot_id:'FULL',metadata:{upload_mode:'full',source_storage_files:stored},completed_at:'2026-09-19'}]);
+ assert.equal(patched.available,true);assert.equal(patched.snapshotId,'FULL');assert.equal(patched.stateSnapshotId,'PATCH');
+ await assert.rejects(statusFor([{snapshot_id:'PATCH',metadata:{upload_mode:'patch',base_snapshot_id:'MISSING'}}]),/기준 원본/);
 });
 
 test('future Sellpia uploads use session-gated exact signed paths before row ingestion',()=>{

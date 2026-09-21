@@ -80,6 +80,7 @@
       <button class="btn" id="tag-edit-rule" type="button" disabled>수식 관리</button>
       <button class="btn tag-manager-danger" id="tag-remove-selected" type="button" disabled>선택 해제</button>
       <button class="btn tag-manager-danger" id="tag-clear-all" type="button" disabled>전체 적용 해제</button>
+      <button class="btn tag-manager-danger" id="tag-delete-unused" type="button" disabled>태그 삭제</button>
     </div>
     <div id="tag-manager-status" class="tag-manager-status">태그를 선택하세요.</div>
    </aside>`;
@@ -177,6 +178,12 @@
   const ruleList=document.getElementById('tag-rule-list');
   if(ruleList)ruleList.innerHTML=tag?(state.rules.length?state.rules.map(rule=>{const view=ruleDisplay(rule);return `<i class="tag-rule-item"><span class="tag-rule-item-head"><b class="tag-rule-destination">${esc(view.destination)} 저장</b><small>${esc(rule.name)}${view.code?' · '+esc(view.code):''}</small></span><strong class="tag-rule-formula"><small>계산식</small>${esc(view.formula)}</strong><span class="tag-rule-result">결과 → ${esc(view.target)}</span></i>`;}).join(''):'<i>연결된 수식 없음</i>'):'<i>태그를 선택하면 표시됩니다.</i>';
   for(const id of ['tag-download-current','tag-download-blank','tag-edit-rule','tag-clear-all','tag-rename'])document.getElementById(id).disabled=!tag;
+  const deleteButton=document.getElementById('tag-delete-unused');
+  if(deleteButton){
+   const inUse=Number(tag?.option_count||0)+Number(tag?.product_count||0)>0||Number(tag?.rule_count||0)>0;
+   deleteButton.disabled=!tag||inUse;
+   deleteButton.title=!tag?'태그를 먼저 선택하세요.':inUse?'적용된 SKU·상품 및 연결 수식을 먼저 해제해야 삭제할 수 있습니다.':'사용하지 않는 태그를 비활성화합니다. 과거 기록은 보존됩니다.';
+  }
   document.getElementById('tag-upload-sync').disabled=false;
   const chosen=state.rows.filter(row=>state.selected.has(row.sellpia_sku_code));
   document.getElementById('tag-recalculate-selected').disabled=!tag||!chosen.length;
@@ -300,6 +307,22 @@
   catch(error){setStatus(`태그 이름 수정 실패: ${error?.message||error}`,'error');}
  }
 
+ async function deleteUnusedTag(){
+  const tag=currentTag();if(!tag)return;
+  if(Number(tag.option_count||0)+Number(tag.product_count||0)+Number(tag.rule_count||0)>0){
+   setStatus('적용 중인 SKU·상품 태그와 연결 수식을 먼저 해제해야 태그를 삭제할 수 있습니다.','error');return;
+  }
+  if(!global.confirm(`'${tag.tag_name}' 태그를 삭제할까요? 사용하지 않는 태그만 비활성화하며 과거 기록은 보존합니다.`))return;
+  const button=document.getElementById('tag-delete-unused');button.disabled=true;
+  try{
+   await D().deleteUnusedProductTag({id:tag.tag_id,expectedName:tag.tag_name});
+   state.selectedTagId='';state.tag=null;state.selected.clear();state.rules=[];
+   await loadCatalog({keepSelection:false});
+   setStatus(`'${tag.tag_name}' 태그를 삭제했습니다. 과거 기록은 보존됩니다.`,'success');
+   global.dispatchEvent(new CustomEvent('hub-tags-changed',{detail:{tagId:tag.tag_id,deleted:true}}));
+  }catch(error){setStatus(`태그 삭제 실패: ${error?.message||error}`,'error');renderSelected();}
+ }
+
  async function removeSelected(){
   const tag=currentTag(),skus=state.rows.filter(row=>row.__tagApplied&&state.selected.has(row.sellpia_sku_code)).map(row=>row.sellpia_sku_code);if(!tag||!skus.length)return;
   if(!global.confirm(`${tag.tag_name} 태그를 선택한 ${n(skus.length)}개 SKU에서 해제할까요? 태그와 수식 자체는 삭제하지 않습니다.`))return;
@@ -347,6 +370,7 @@
   document.getElementById('tag-edit-rule').onclick=()=>void editRule();
   document.getElementById('tag-remove-selected').onclick=()=>void removeSelected();
   document.getElementById('tag-clear-all').onclick=()=>void clearAll();
+  document.getElementById('tag-delete-unused').onclick=()=>void deleteUnusedTag();
  }
 
  async function openTag(tagId){

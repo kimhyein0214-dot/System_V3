@@ -13,8 +13,10 @@ test('Sellpia carrier proof reads raw price from the exact ready snapshot',()=>{
  assert.doesNotMatch(migration,/'sellpia_source_sale_price',c\.sellpia_sale_price/);
 });
 
-test('Sellpia patch caller binds every page to the carrier snapshot',()=>{
- assert.match(service,/hub_sellpia_patch_read_v2/);
+test('Sellpia patch caller binds every page to carrier and current state snapshots',()=>{
+ assert.match(service,/hub_sellpia_patch_read_v3/);
  assert.match(service,/args\.p_snapshot_id=expectedSnapshotId/);
+ assert.match(service,/args\.p_state_snapshot_id=expectedStateId/);
  assert.match(service,/data\?\.snapshot_id\)!==expectedSnapshotId/);
+ assert.match(service,/data\?\.state_snapshot_id\)!==expectedStateId/);
 });
