@@ -266,6 +266,8 @@ function stopAuthenticatedOperationsHubData() {
   operationsAuthState.intervals = [];
   if (operationsAuthState.expiryTimer) window.clearTimeout(operationsAuthState.expiryTimer);
   operationsAuthState.expiryTimer = null;
+  if (pendingPurchasePriceRecoveryTimer) window.clearTimeout(pendingPurchasePriceRecoveryTimer);
+  pendingPurchasePriceRecoveryTimer = null;
   matrixState.requestController?.abort();
 }
 
@@ -300,8 +302,12 @@ function scheduleOperationsAuthExpiry() {
 
 function startAuthenticatedOperationsHubData() {
   if (!operationsAuthState.authenticated || operationsAuthState.intervals.length) return;
-  refreshLiveData({resetPage:true});
+  void refreshLiveData({resetPage:true}).finally(() => schedulePendingPurchasePriceRecovery());
   operationsAuthState.intervals.push(window.setInterval(() => Promise.all([loadLiveSourceStatus(), loadLiveDashboardMetrics()]), 60000));
+  operationsAuthState.intervals.push(window.setInterval(() => {
+    if (document.hidden || matrixState.loading || sellpiaSaveInFlight || pendingChanges.length) return;
+    schedulePendingPurchasePriceRecovery({silent:true});
+  }, 120000));
   operationsAuthState.intervals.push(window.setInterval(() => {
     const dashboardVisible = document.getElementById('dashboard')?.classList.contains('active-page');
     if (document.hidden || !dashboardVisible || matrixState.loading || sellpiaSaveInFlight || pendingChanges.length) return;
@@ -2647,6 +2653,73 @@ function materializationWarning(result) {
   return result?.status === 'partial'
     ? `가격 저장 오류 ${formatNumber(result.errorRows || 0)}건 · 오류 값은 내보내기에서 제외됩니다.`
     : '';
+}
+
+const PENDING_PURCHASE_PRICE_RECOVERY_BATCH_SIZE = 100;
+const PENDING_PURCHASE_PRICE_RECOVERY_MAX_BATCHES = 50;
+let pendingPurchasePriceRecoveryPromise = null;
+let pendingPurchasePriceRecoveryTimer = null;
+let pendingPurchasePriceRecoveryNextAttemptAt = 0;
+
+function schedulePendingPurchasePriceRecovery({silent=false, delay=250} = {}) {
+  if (!operationsAuthState.authenticated || !liveData?.loadPendingPurchasePriceRecalculations) return null;
+  if (pendingPurchasePriceRecoveryPromise || pendingPurchasePriceRecoveryTimer) return pendingPurchasePriceRecoveryPromise;
+  if (Date.now() < pendingPurchasePriceRecoveryNextAttemptAt) return null;
+  pendingPurchasePriceRecoveryTimer = window.setTimeout(() => {
+    pendingPurchasePriceRecoveryTimer = null;
+    void resumePendingPurchasePriceCalculations({silent});
+  }, Math.max(0, Number(delay) || 0));
+  return null;
+}
+
+async function resumePendingPurchasePriceCalculations({silent=false} = {}) {
+  if (pendingPurchasePriceRecoveryPromise) return pendingPurchasePriceRecoveryPromise;
+  if (!operationsAuthState.authenticated || !liveData?.loadPendingPurchasePriceRecalculations) return null;
+  if (bulkSourceRefreshState?.running || sellpiaSaveInFlight || pendingChanges.length) {
+    schedulePendingPurchasePriceRecovery({silent,delay:2000});
+    return null;
+  }
+  pendingPurchasePriceRecoveryPromise = (async() => {
+    let initialPending = 0;
+    let completed = 0;
+    let previousPendingCount = Number.POSITIVE_INFINITY;
+    let previousBatchKey = '';
+    for (let batchNo = 0; batchNo < PENDING_PURCHASE_PRICE_RECOVERY_MAX_BATCHES; batchNo += 1) {
+      const pending = await liveData.loadPendingPurchasePriceRecalculations({limit:PENDING_PURCHASE_PRICE_RECOVERY_BATCH_SIZE});
+      if (batchNo === 0) initialPending = pending.pendingCount;
+      if (!pending.skus.length) {
+        if (pending.pendingCount) throw new Error(`가격 재계산 대기 ${formatNumber(pending.pendingCount)}건의 SKU 목록을 확인하지 못했습니다.`);
+        if (initialPending && !silent) showToast(`미완료 가격 계산 자동 복구 완료 · ${formatNumber(completed)} SKU`);
+        return {initialPending,completed,remaining:0};
+      }
+      if (!initialPending) initialPending = pending.pendingCount;
+      const batchKey = pending.skus.join('\n');
+      if (pending.pendingCount >= previousPendingCount && batchKey === previousBatchKey) {
+        throw new Error(`가격 재계산 ${formatNumber(pending.pendingCount)}건이 같은 오류로 남았습니다.`);
+      }
+      previousPendingCount = pending.pendingCount;
+      previousBatchKey = batchKey;
+      if (!silent && batchNo === 0) showToast(`미완료 가격 계산 ${formatNumber(initialPending)}건을 자동으로 이어서 처리합니다.`);
+      const calculation = await materializeHubPrices(pending.skus,{
+        reason:'automatic-purchase-price-recovery'
+      });
+      const affected = calculation?.affectedSkus || pending.skus;
+      completed += pending.skus.length;
+      markMatrixAffected(affected);
+      if (matrixDataset) await refreshMatrixSkus(affected);
+    }
+    const remaining = await liveData.loadPendingPurchasePriceRecalculations({limit:1});
+    if (remaining.pendingCount) throw new Error(`가격 재계산 대기 ${formatNumber(remaining.pendingCount)}건이 안전 배치 한도를 초과했습니다.`);
+    return {initialPending,completed,remaining:0};
+  })().catch(error => {
+    pendingPurchasePriceRecoveryNextAttemptAt = Date.now() + 5 * 60 * 1000;
+    console.error('automatic purchase price recovery failed', error);
+    if (!silent) showToast(`미완료 가격 계산 자동 복구 지연 · ${error?.message || error}`);
+    return {error:error?.message || String(error)};
+  }).finally(() => {
+    pendingPurchasePriceRecoveryPromise = null;
+  });
+  return pendingPurchasePriceRecoveryPromise;
 }
 
 window.addEventListener('hub-rules-changed', async event => {

@@ -1389,6 +1389,22 @@
     }
   }
 
+  async function loadPendingPurchasePriceRecalculations({limit = 100} = {}) {
+    const safeLimit = Math.min(200, Math.max(1, Number(limit) || 100));
+    const {data, error} = await db.rpc('read_operations_hub_pending_purchase_price_recalculation_v2', {
+      p_session_token:requireOperationsHubSessionToken(),
+      p_limit:safeLimit
+    });
+    if (error) throwOperationsHubRpcError(error);
+    const result = data && typeof data === 'object' && !Array.isArray(data) ? data : {};
+    return {
+      pendingCount:Math.max(0, Number(result.pending_count) || 0),
+      batchCount:Math.max(0, Number(result.batch_count) || 0),
+      skus:[...new Set((Array.isArray(result.affected_skus) ? result.affected_skus : [])
+        .map(value => cleanText(value)).filter(Boolean))]
+    };
+  }
+
   async function runSelectedSourceRefreshBatch({
     requestId,
     targets = [],
@@ -4468,6 +4484,7 @@
     getOriginalBoundaryDiagnostics:()=>originalBoundaryDiagnostics.map(entry=>({...entry})),
     loadProducts,
     loadMatrixGridDataset,
+    loadPendingPurchasePriceRecalculations,
     loadFullMatrixDataset,
     loadProductsBySkus,
     loadProductThumbnailsBySkus,
