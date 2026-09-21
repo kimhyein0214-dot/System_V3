@@ -802,7 +802,12 @@
             <label><input type="radio" name="seller-export-scope" value="all"><span><b>전체 상품</b><em>검색·필터와 관계없이 전체 SKU의 저장된 가격 반영</em></span></label>
             <div id="seller-export-tag-picker" class="seller-export-tag-picker" hidden><label for="seller-export-tag-select">태그</label><select id="seller-export-tag-select"><option value="">태그 선택</option></select><span>실제 내보내기 범위는 서버에서 다시 확인합니다.</span></div>
           </fieldset>
+          <fieldset id="seller-export-price-mode" class="seller-export-scope"><legend>가격 계산</legend>
+            <label><input type="radio" name="seller-export-price-mode" value="rules" checked><span><b>수식 적용</b><em>기존 방식 그대로</em></span></label>
+            <label><input type="radio" name="seller-export-price-mode" value="sellpia_source"><span><b>셀피아 판매가 기준</b><em>스마트스토어 · 태그/선택 SKU 가격만 우회 계산</em></span></label>
+          </fieldset>
           <div id="seller-export-preview" class="seller-export-preview"><span id="seller-export-preview-label">대상 수정안 · 실행 시 안전검사</span><b id="seller-export-preview-count">확인 중</b><em id="seller-export-preview-detail">선택한 판매처와 범위를 확인합니다.</em></div>
+          <div id="seller-export-source-price-detail" class="direct-export-preview" hidden></div>
           <div id="seller-export-progress" class="seller-export-progress" hidden><div><b id="seller-export-progress-title">준비 중</b><span id="seller-export-progress-percent">0%</span></div><i><span id="seller-export-progress-bar"></span></i><p id="seller-export-progress-detail">원본을 확인합니다.</p></div>
           <details id="seller-export-exclusions" class="seller-export-progress" hidden>
             <summary id="seller-export-exclusions-title">제외 사유 보기</summary>
@@ -812,7 +817,7 @@
             <div style="max-height:220px;overflow:auto"><table style="width:100%;font-size:12px"><thead><tr><th>판매처</th><th>셀피아 SKU</th><th>상품 / 옵션코드</th><th>제외 사유</th></tr></thead><tbody id="seller-export-exclusions-rows"></tbody></table></div>
           </details>
         </div>
-        <div class="modal-foot"><button class="btn" id="seller-export-cancel">취소</button><button class="btn primary" id="seller-export-run">최신 가격 파일 만들기</button></div>
+        <div class="modal-foot"><button class="btn" id="seller-export-cancel">취소</button><button class="btn" id="seller-export-price-preview" hidden>셀피아 가격 미리보기</button><button class="btn primary" id="seller-export-run">최신 가격 파일 만들기</button></div>
       </section>
     </div>
     <div id="matrix-csv-modal" class="modal-backdrop" hidden>
@@ -992,12 +997,12 @@
     <script src="./baseline-identity-shadow.js?v=20260917-shadow-preview-v1"></script>
     <script src="./matrix-shadow.js?v=20260919-full-scope-v12"></script>
     <script src="./baseline-canary.js?v=20260917-shadow-preview-v1"></script>
-  <script src="./data-service.js?v=20260921-tag-search-rounding-v2"></script>
+  <script src="./data-service.js?v=20260921-sellpia-source-overlay-v1"></script>
     <script src="./channels-page.js?v=20260910-rule-destination-v111"></script>
     <link rel="stylesheet" href="./sellpia-patch-export.css?v=20260919-partial-export-v3">
     <script src="./sellpia-patch-export.js?v=20260921-sellpia-current-carrier-v1"></script>
     <script src="./matrix-dataset.js?v=20260921-matrix-grid-feed-v5d"></script>
-  <script src="./app.js?v=20260921-queue-resilience-v2"></script>
+  <script src="./app.js?v=20260921-sellpia-source-overlay-v1"></script>
     <script src="./mapping-import.js?v=20260910-rule-destination-v111"></script>
     <script src="./attributes-page.js?v=20260915-tag-matrix-v1"></script>
     <script src="./price-rule-lab.js?v=20260910-rule-destination-v111"></script>
@@ -1013,12 +1018,12 @@
 <script src="./rule-registry.js?v=20260921-inbound-won-round-v1"></script>
 <script src="./platform-rule-service.js?v=20260915-settings-direct-v1"></script>
 <script src="./price-result-materializer.js?v=20260921-bounded-source-refresh-v1"></script>
-<script src="./current-price-export.js?v=20260920-current-price-projection-v1"></script>
+<script src="./current-price-export.js?v=20260921-sellpia-source-overlay-v1"></script>
 <script src="./representative-price.js?v=20260917-tags-representative-ui-v1"></script>
 <script src="./representative-price-workspace.js?v=20260917-tags-representative-ui-v1"></script>
 <script src="./rule-workspace.js?v=20260918-tag-partial-v2"></script>
       <script src="./ui-cleanup-v1.js?v=20260915-tag-matrix-v1"></script>
       <script src="./tag-management-v2.js?v=20260921-tag-retire-search-v2"></script>
-      <script src="./seller-file-workflow-v2.js?v=20260920-seller-timeout-recovery-v1"></script>
+      <script src="./seller-file-workflow-v2.js?v=20260921-sellpia-source-overlay-v1"></script>
   </body>
 </html>

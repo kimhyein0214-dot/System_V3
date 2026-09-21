@@ -4258,6 +4258,31 @@
     return {source:safeSource,rows:[...unique.values()]};
   }
 
+  // The source-price overlay must read the uploaded Sellpia value, never the
+  // operational override or a calculated Matrix price.
+  async function loadSellpiaSourcePricesForExport({skus=[],onQuery=null}={}) {
+    requireOperationsHubSessionToken();
+    const requested=[...new Set((skus||[]).map(cleanText).filter(Boolean))],rows=[];
+    for(let offset=0;offset<requested.length;offset+=100){
+      const batch=requested.slice(offset,offset+100);
+      const {data}=await carrierRead('latest Sellpia source sale prices',batch.length,
+        db.from('operations_hub_matrix_system_live')
+          .select('sellpia_sku_code,sellpia_source_sale_price,sellpia_source_updated_at')
+          .in('sellpia_sku_code',batch),onQuery);
+      rows.push(...(data||[]));
+    }
+    const bySku=new Map();
+    for(const row of rows){
+      const sku=cleanText(row.sellpia_sku_code),value=row.sellpia_source_sale_price;
+      if(bySku.has(sku)||!requested.includes(sku))throw Error(`셀피아 원본 판매가 조회 identity 오류: ${sku}`);
+      if(value===null||value===undefined||value===''||!Number.isSafeInteger(Number(value))||Number(value)<=0||!row.sellpia_source_updated_at)
+        throw Error(`셀피아 최신 원본 판매가를 확인할 수 없습니다: ${sku}`);
+      bySku.set(sku,Number(value));
+    }
+    for(const sku of requested)if(!bySku.has(sku))throw Error(`셀피아 최신 원본 SKU가 없습니다: ${sku}`);
+    return bySku;
+  }
+
   async function loadSystemStocks(skus=[]) {
     const codes=[...new Set((skus||[]).map(cleanText).filter(Boolean))],rows=[];
     for(let offset=0;offset<codes.length;offset+=500){
@@ -4572,6 +4597,7 @@
     downloadAuxiliarySellerFile,
     loadPlayautoSellpiaCatalog,
     loadCarrierSellerMappings,
+    loadSellpiaSourcePricesForExport,
     loadSystemStocks,
     loadMatrixStocksForExport,
     loadMatrixExportSnapshot,

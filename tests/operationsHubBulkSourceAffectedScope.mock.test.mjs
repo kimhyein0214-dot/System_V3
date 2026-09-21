@@ -25,6 +25,6 @@ assert.doesNotMatch(app.slice(app.indexOf('async function applyBulkSourceRefresh
 assert.match(app, /row\.affectedSkus\.length > 0[\s\S]*materializeHubPrices\(priceSkus/, 'recovery SKUs must run even when the source write count is zero');
 assert.match(app, /incompleteScope[\s\S]*affectedSkus\.length !== \(row\.calculationRecovery \? row\.calculationRecoveryCount : row\.changedCount\)/, 'the client must prove that every changed or recovered SKU entered the bounded calculation scope');
 assert.match(materializer, /summary\.affectedSkus=\[\.\.\.affected\]/, 'the materializer must return expanded dependency SKUs for row patching');
-assert.match(html, /data-service\.js\?v=20260921-tag-search-rounding-v2[\s\S]*app\.js\?v=20260921-queue-resilience-v2[\s\S]*price-result-materializer\.js\?v=20260921-bounded-source-refresh-v1/, 'the deployed page must cache-bust every changed source-refresh asset');
+assert.match(html, /data-service\.js\?v=20260921-sellpia-source-overlay-v1[\s\S]*app\.js\?v=20260921-sellpia-source-overlay-v1[\s\S]*price-result-materializer\.js\?v=20260921-bounded-source-refresh-v1/, 'the deployed page must cache-bust every changed source-refresh asset');
 
 console.log('Operations Hub bulk source refresh exact affected scope contract: passed');
