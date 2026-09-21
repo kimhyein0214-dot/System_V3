@@ -114,6 +114,7 @@
    await new Promise(resolve=>setTimeout(resolve,0));aborted(signal);
   }
   }
+  summary.affectedSkus=[...affected];
   summary.status=summary.errorRows?'partial':'complete';progress('complete');return summary;
  }
  g.HubPriceMaterializer={materialize};

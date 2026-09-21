@@ -1359,7 +1359,20 @@
     if (safeRequestId) params.p_request_id = safeRequestId;
     const {data, error} = await db.rpc('refresh_operations_hub_master_column_from_source_v1', params);
     if (error) throwOperationsHubRpcError(error);
-    return data || {};
+    const result = data || {};
+    const row = Array.isArray(result) ? result[0] : result;
+    if (dryRun !== false || Number(row?.affected_count || 0) < 1) return result;
+    try {
+      const {data:scope, error:scopeError} = await db.rpc('read_operations_hub_bulk_source_refresh_affected_skus_v1', {
+        p_session_token:requireOperationsHubSessionToken(),
+        p_request_id:safeRequestId || row?.request_id,
+        p_field_key:safeField
+      });
+      if (scopeError) throwOperationsHubRpcError(scopeError);
+      return {...row, affected_skus:Array.isArray(scope?.affected_skus) ? scope.affected_skus : []};
+    } catch (scopeError) {
+      return {...row, affected_skus:[], affected_skus_error:readableDatabaseError(scopeError)?.message || String(scopeError)};
+    }
   }
 
   async function runSelectedSourceRefreshBatch({

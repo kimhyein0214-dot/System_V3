@@ -4770,6 +4770,8 @@ function normalizeBulkSourceRefreshResult(result, fieldKey, requestId, dryRun) {
     changedCount:Number(row.affected_count ?? row.changed_count ?? 0),
     unchangedCount:Number(row.skipped_count ?? row.unchanged_count ?? 0),
     missingCount:Number(row.source_missing_count ?? row.missing_source_count ?? 0),
+    affectedSkus:[...new Set((Array.isArray(row.affected_skus) ? row.affected_skus : []).map(value=>String(value||'').trim()).filter(Boolean))],
+    affectedSkusError:String(row.affected_skus_error || ''),
     dryRun:row.dry_run === undefined ? Boolean(dryRun) : Boolean(row.dry_run),
     completedAt:row.completed_at || ''
   };
@@ -4915,14 +4917,18 @@ async function applyBulkSourceRefresh() {
       renderBulkSourceRefreshProgress();
     }
     const changedCount = completed.reduce((sum, row) => sum + row.changedCount, 0);
-    if (completed.some(row => ['system_base_price','sellpia_purchase_price'].includes(row.fieldKey))) {
+    const refreshSkus = new Set(completed.flatMap(row=>row.affectedSkus));
+    const priceRefreshes = completed.filter(row => ['system_base_price','sellpia_purchase_price'].includes(row.fieldKey) && row.changedCount > 0);
+    if (priceRefreshes.length) {
       bulkSourceRefreshState.phase = 'price_calculation';
       bulkSourceRefreshState.priceProgress = {status:'running', completed:0, total:0, phase:'계산 대상 조회'};
       renderBulkSourceRefreshProgress();
       try {
-        const target = await liveData.loadAllFilteredSkus({status:'all'});
-        bulkSourceRefreshState.priceProgress.total = Number(target?.skus?.length || 0);
-        const calculation = await materializeHubPrices(target.skus,{
+        const incompleteScope = priceRefreshes.find(row=>row.affectedSkusError || row.affectedSkus.length !== row.changedCount);
+        if (incompleteScope) throw new Error(incompleteScope.affectedSkusError || `${BULK_SOURCE_REFRESH_FIELDS[incompleteScope.fieldKey]?.label || incompleteScope.fieldKey} 변경 SKU ${formatNumber(incompleteScope.changedCount)}건 중 ${formatNumber(incompleteScope.affectedSkus.length)}건만 확인됐습니다.`);
+        const priceSkus = [...new Set(priceRefreshes.flatMap(row=>row.affectedSkus))];
+        bulkSourceRefreshState.priceProgress.total = priceSkus.length;
+        const calculation = await materializeHubPrices(priceSkus,{
           reason:'bulk-source-price-refresh',
           onProgress:progress=>{
             bulkSourceRefreshState.priceProgress.completed = Number(progress?.completed ?? progress?.completedSkus ?? 0);
@@ -4931,6 +4937,7 @@ async function applyBulkSourceRefresh() {
             renderBulkSourceRefreshProgress();
           }
         });
+        for (const sku of calculation?.affectedSkus || priceSkus) refreshSkus.add(sku);
         calculationWarning = materializationWarning(calculation);
         bulkSourceRefreshState.priceProgress.completed = Number(calculation?.completedSkus ?? calculation?.totalSkus ?? bulkSourceRefreshState.priceProgress.completed);
         bulkSourceRefreshState.priceProgress.total = Number(calculation?.totalSkus ?? bulkSourceRefreshState.priceProgress.total);
@@ -4947,7 +4954,10 @@ async function applyBulkSourceRefresh() {
     bulkSourceRefreshState.matrixStatus = 'running';
     renderBulkSourceRefreshProgress();
     try {
-      await loadLiveMatrix();
+      if (refreshSkus.size) {
+        markMatrixAffected(refreshSkus);
+        await refreshHubPriceProjection();
+      }
       bulkSourceRefreshState.matrixStatus = 'completed';
       void loadLiveDashboardMetrics();
     } catch (error) {

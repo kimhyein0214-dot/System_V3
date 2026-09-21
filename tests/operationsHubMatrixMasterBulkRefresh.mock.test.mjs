@@ -35,13 +35,16 @@ assert.match(app, /bulkSourceRefreshConfirmationPhrase[\s\S]*전체 원본값 �
 assert.match(html, /id="bulk-source-refresh-progress"[\s\S]*id="bulk-source-refresh-progress-summary"[\s\S]*id="bulk-source-refresh-progress-phases"/, 'bulk refresh modal must provide the phase progress surface');
 assert.match(app, /const bulkSourceRefreshState = \{[\s\S]*startedAt:null[\s\S]*phase:'idle'[\s\S]*fieldStatuses:\{\}[\s\S]*priceProgress:[\s\S]*matrixStatus:'pending'[\s\S]*finalStatus:'idle'/, 'bulk refresh state must retain execution progress');
 assert.match(app, /function renderBulkSourceRefreshProgress\(\)[\s\S]*bulk-source-refresh-progress-summary[\s\S]*bulk-source-refresh-progress-phases/, 'bulk refresh progress must be rendered into the modal');
-assert.match(app, /materializeHubPrices\(target\.skus,\{[\s\S]*reason:'bulk-source-price-refresh'[\s\S]*onProgress:progress=>[\s\S]*completedSkus[\s\S]*totalSkus/, 'bulk refresh must reuse materializer progress callback');
+assert.doesNotMatch(app, /applyBulkSourceRefresh[\s\S]*loadAllFilteredSkus\(\{status:'all'\}\)/, 'bulk refresh must not recalculate the full Matrix catalog');
+assert.match(app, /const priceSkus = \[\.\.\.new Set\(priceRefreshes\.flatMap\(row=>row\.affectedSkus\)\)\][\s\S]*materializeHubPrices\(priceSkus,\{[\s\S]*reason:'bulk-source-price-refresh'[\s\S]*onProgress:progress=>[\s\S]*completedSkus[\s\S]*totalSkus/, 'bulk refresh must materialize only exact source-changed SKUs and retain progress');
+assert.match(app, /markMatrixAffected\(refreshSkus\)[\s\S]*refreshHubPriceProjection\(\)/, 'bulk refresh must patch affected Matrix rows instead of rebuilding the full dataset');
 assert.match(app, /bulkSourceRefreshState\.finalStatus = warnings\.length \? 'completed_with_warning' : 'completed'/);
 assert.match(app, /bulkSourceRefreshState\.finalStatus = completed\.length \? 'completed_with_warning' : 'failed'/);
 const applyBody = app.slice(app.indexOf('async function applyBulkSourceRefresh()'), app.indexOf("document.getElementById('matrix-bulk-source-refresh-btn')"));
 assert.doesNotMatch(applyBody, /closeBulkSourceRefresh\(\)/, 'successful refresh must leave the completion summary open');
 assert.match(dataService, /async function refreshMasterColumnFromSource\(/, 'data service must expose the DB-owned bulk refresh RPC adapter');
 assert.match(dataService, /refresh_operations_hub_master_column_from_source_v1/);
+assert.match(dataService, /read_operations_hub_bulk_source_refresh_affected_skus_v1[\s\S]*affected_skus/);
 
 assert.match(app, /systemOperationalCell\(product, 'sellpia_purchase_price', '매입가', product\.sellpia_source_purchase_price\)/);
 assert.match(app, /systemOperationalCell\(product, 'sellpia_order_unit', '발주단위', product\.sellpia_source_order_unit\)/);
