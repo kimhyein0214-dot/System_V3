@@ -4772,6 +4772,9 @@ function normalizeBulkSourceRefreshResult(result, fieldKey, requestId, dryRun) {
     missingCount:Number(row.source_missing_count ?? row.missing_source_count ?? 0),
     affectedSkus:[...new Set((Array.isArray(row.affected_skus) ? row.affected_skus : []).map(value=>String(value||'').trim()).filter(Boolean))],
     affectedSkusError:String(row.affected_skus_error || ''),
+    calculationRecovery:Boolean(row.calculation_recovery),
+    calculationRecoveryCount:Number(row.calculation_recovery_count || 0),
+    calculationSourceRequestId:String(row.calculation_source_request_id || ''),
     dryRun:row.dry_run === undefined ? Boolean(dryRun) : Boolean(row.dry_run),
     completedAt:row.completed_at || ''
   };
@@ -4918,14 +4921,17 @@ async function applyBulkSourceRefresh() {
     }
     const changedCount = completed.reduce((sum, row) => sum + row.changedCount, 0);
     const refreshSkus = new Set(completed.flatMap(row=>row.affectedSkus));
-    const priceRefreshes = completed.filter(row => ['system_base_price','sellpia_purchase_price'].includes(row.fieldKey) && row.changedCount > 0);
+    const priceRefreshes = completed.filter(row => ['system_base_price','sellpia_purchase_price'].includes(row.fieldKey) && row.affectedSkus.length > 0);
     if (priceRefreshes.length) {
       bulkSourceRefreshState.phase = 'price_calculation';
       bulkSourceRefreshState.priceProgress = {status:'running', completed:0, total:0, phase:'계산 대상 조회'};
       renderBulkSourceRefreshProgress();
       try {
-        const incompleteScope = priceRefreshes.find(row=>row.affectedSkusError || row.affectedSkus.length !== row.changedCount);
-        if (incompleteScope) throw new Error(incompleteScope.affectedSkusError || `${BULK_SOURCE_REFRESH_FIELDS[incompleteScope.fieldKey]?.label || incompleteScope.fieldKey} 변경 SKU ${formatNumber(incompleteScope.changedCount)}건 중 ${formatNumber(incompleteScope.affectedSkus.length)}건만 확인됐습니다.`);
+        const incompleteScope = priceRefreshes.find(row=>row.affectedSkusError || row.affectedSkus.length !== (row.calculationRecovery ? row.calculationRecoveryCount : row.changedCount));
+        if (incompleteScope) {
+          const expected = incompleteScope.calculationRecovery ? incompleteScope.calculationRecoveryCount : incompleteScope.changedCount;
+          throw new Error(incompleteScope.affectedSkusError || `${BULK_SOURCE_REFRESH_FIELDS[incompleteScope.fieldKey]?.label || incompleteScope.fieldKey} 계산 대상 ${formatNumber(expected)}건 중 ${formatNumber(incompleteScope.affectedSkus.length)}건만 확인됐습니다.`);
+        }
         const priceSkus = [...new Set(priceRefreshes.flatMap(row=>row.affectedSkus))];
         bulkSourceRefreshState.priceProgress.total = priceSkus.length;
         const calculation = await materializeHubPrices(priceSkus,{

@@ -1361,15 +1361,26 @@
     if (error) throwOperationsHubRpcError(error);
     const result = data || {};
     const row = Array.isArray(result) ? result[0] : result;
-    if (dryRun !== false || Number(row?.affected_count || 0) < 1) return result;
+    if (dryRun !== false) return result;
     try {
-      const {data:scope, error:scopeError} = await db.rpc('read_operations_hub_bulk_source_refresh_affected_skus_v1', {
-        p_session_token:requireOperationsHubSessionToken(),
-        p_request_id:safeRequestId || row?.request_id,
-        p_field_key:safeField
-      });
+      const changedCount = Number(row?.affected_count || 0);
+      const recovery = changedCount < 1 && ['system_base_price','sellpia_purchase_price'].includes(safeField);
+      if (!changedCount && !recovery) return result;
+      const rpc = recovery
+        ? 'read_operations_hub_bulk_source_refresh_recovery_skus_v1'
+        : 'read_operations_hub_bulk_source_refresh_affected_skus_v1';
+      const args = recovery
+        ? {p_session_token:requireOperationsHubSessionToken(), p_field_key:safeField}
+        : {p_session_token:requireOperationsHubSessionToken(), p_request_id:safeRequestId || row?.request_id, p_field_key:safeField};
+      const {data:scope, error:scopeError} = await db.rpc(rpc, args);
       if (scopeError) throwOperationsHubRpcError(scopeError);
-      return {...row, affected_skus:Array.isArray(scope?.affected_skus) ? scope.affected_skus : []};
+      return {
+        ...row,
+        affected_skus:Array.isArray(scope?.affected_skus) ? scope.affected_skus : [],
+        calculation_recovery:recovery && Number(scope?.recovery_count || 0) > 0,
+        calculation_recovery_count:Number(scope?.recovery_count || 0),
+        calculation_source_request_id:scope?.request_id || null
+      };
     } catch (scopeError) {
       return {...row, affected_skus:[], affected_skus_error:readableDatabaseError(scopeError)?.message || String(scopeError)};
     }
