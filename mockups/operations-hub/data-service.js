@@ -1038,7 +1038,7 @@
     const started=performance.now(),before={...matrixReadMetrics};
     const serverTimes=[],rpcTimes=[],pageDiagnostics=[];
     let dataAttempts=0,manifestAttempts=0,retryCount=0,loadedTotal=0;
-    const requestedChunk=Math.max(250,Math.min(4000,Number(chunkSize)||3000));
+    const requestedChunk=Math.max(250,Math.min(4000,Number(chunkSize)||2000));
     fullMatrixReadContext={mode:'grid-feed-v5',endpoints:{}};
     try{
       const token=requireOperationsHubSessionToken();
@@ -1056,9 +1056,12 @@
         const sku=cleanText(badge?.[0]),source=cleanText(badge?.[1]);if(!sku||!source)continue;
         (linkBadgeCatalog[sku]??={})[source]={max:Number(badge?.[2]||0),relation:cleanText(badge?.[3])||'single'};
       }
-      const recommended=Number(manifest.recommended_chunk_size)||3000;
       const maxChunk=Math.max(250,Number(manifest.max_chunk_size)||4000);
-      const safeChunk=Math.max(250,Math.min(maxChunk,Number(chunkSize)||recommended));
+      // The manifest builds its keyset cursors from p_chunk_size.  Keep the
+      // browser's bounded request size authoritative instead of silently
+      // switching back to a larger server recommendation after the cursors
+      // have already been generated.
+      const safeChunk=Math.max(250,Math.min(maxChunk,requestedChunk));
       if(safeChunk!==requestedChunk)throw Error('Matrix Grid manifest chunk contract가 일치하지 않습니다.');
       const cursors=Array.isArray(manifest.page_cursors)?manifest.page_cursors:[];
       const expectedPages=total?Math.ceil(total/safeChunk):0;

@@ -24,8 +24,7 @@ test('topbar health and refresh controls are backed by live state', () => {
 test('global refresh reports each real read contract and preserves disconnected picking', () => {
   const html = read('mockups/operations-hub/index.html');
   const app = read('mockups/operations-hub/app.js');
-  assert.match(app, /loadLiveMatrix\(\{\.\.\.options,fullReload:Boolean\(options\.fullReload\|\|matrixSourceReloadNeeded\)\}\),\s*loadLiveSourceStatus\(\),\s*loadLiveDashboardMetrics\(\)/s);
-  assert.match(app, /loadMappingSyncStatus\(\{markDisplayed:true\}\)/);
+  assert.match(app, /const matrix = shouldLoadMatrix[\s\S]*?await loadLiveMatrix\(\{\.\.\.options,fullReload:Boolean\(options\.fullReload\|\|matrixSourceReloadNeeded\)\}\)[\s\S]*?const \[source, metrics, mapping\] = await Promise\.all\(\[[\s\S]*?loadLiveSourceStatus\(\),\s*loadLiveDashboardMetrics\(\),\s*loadMappingSyncStatus\(\{markDisplayed:true\}\)/s);
   assert.match(app, /picking == null\s*\? '주문 DB 연결 대기'/s);
   assert.match(app, /document\.getElementById\('live-today-picked'\)\.textContent = '-'/);
   assert.match(html, /판매처 상태 확인[\s\S]*?원본·내보내기 준비 현황 조회/);

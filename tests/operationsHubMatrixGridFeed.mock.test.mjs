@@ -195,11 +195,18 @@ test('programming and contract errors do not retry',async()=>{
 });
 
 test('frontend uses Grid feed without automatic legacy load amplification and lazily hydrates drawer detail',()=>{
-  assert.match(app,/hasOwnProperty\.call\(liveData,'loadMatrixGridDataset'\)[\s\S]*?liveData\.loadMatrixGridDataset\(\{onProgress:progress\}\)/);
+  assert.match(app,/hasOwnProperty\.call\(liveData,'loadMatrixGridDataset'\)[\s\S]*?liveData\.loadMatrixGridDataset\(\{onProgress:progress,chunkSize:2000\}\)/);
   assert.doesNotMatch(app,/Grid feed 실패 · 기존 전체 조회로 안전 전환/);
   assert.match(app,/legacy fallback is disabled/);
   assert.match(app,/forceLegacy[\s\S]*?loadFullMatrixDataset/);
   assert.match(app,/if\(liveData\.loadFullMatrixDataset\)[\s\S]*?mode:'legacy-capability'/);
   assert.match(app,/liveProduct\.__grid_compact[\s\S]*?loadProductsBySkus\(\[selectedSku\]\)[\s\S]*?matrixDataset\.patch\(\[details\[0\]\]\)/);
   assert.match(app,/if\(matrixFullLoad\)\{await matrixFullLoad;fullReload=false;\}/);
+});
+
+test('grid bootstrap uses stable 2,000-row sequential pages and defers status reads',()=>{
+  assert.match(service,/Number\(chunkSize\)\|\|2000/);
+  assert.match(service,/const safeChunk=Math\.max\(250,Math\.min\(maxChunk,requestedChunk\)\)/);
+  assert.match(service,/length:Math\.min\(1,cursors\.length\)/);
+  assert.match(app,/const matrix = shouldLoadMatrix[\s\S]*?await loadLiveMatrix[\s\S]*?const \[source, metrics, mapping\] = await Promise\.all/);
 });

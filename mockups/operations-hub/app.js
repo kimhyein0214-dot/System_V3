@@ -1590,7 +1590,7 @@ async function loadCanonicalMatrix({resetScroll=false,fullReload=false}={}){
   if(!matrixDataset||fullReload){if(!matrixFullLoad){matrixState.loading=true;setMatrixConnection('loading','전체 Matrix Grid feed 생성 중');const progress=p=>{setMatrixConnection('loading',`전체 ${formatNumber(p.loaded)} / ${formatNumber(p.total)} SKU · ${(p.elapsed/1000).toFixed(0)}초`);Object.assign(matrixPerformance,{loaded:p.loaded,total:p.total,initialMs:p.elapsed,...p.metrics});showMatrixPerformance();};matrixFullLoad=(async()=>{
     const forceLegacy=localStorage.getItem('system-v3-matrix-bootstrap-v1')==='legacy';
     if(forceLegacy){const result=await liveData.loadFullMatrixDataset({onProgress:progress});result.metrics={...result.metrics,mode:'legacy-explicit'};return result;}
-    if(Object.prototype.hasOwnProperty.call(liveData,'loadMatrixGridDataset'))return liveData.loadMatrixGridDataset({onProgress:progress});
+    if(Object.prototype.hasOwnProperty.call(liveData,'loadMatrixGridDataset'))return liveData.loadMatrixGridDataset({onProgress:progress,chunkSize:2000});
     if(liveData.loadFullMatrixDataset){const result=await liveData.loadFullMatrixDataset({onProgress:progress});result.metrics={...result.metrics,mode:'legacy-capability'};return result;}
     throw new Error('Matrix Grid feed를 사용할 수 없습니다. 기존 전체 조회는 자동 실행하지 않습니다.');
   })().then(result=>{const assembledAt=performance.now();const replacement=new window.HubMatrixDataset.Dataset(result.rows,result.count);matrixDataset=replacement;matrixPerformance.assemblyMs=performance.now()-assembledAt;matrixPerformance.initialMs=result.elapsed;matrixPerformance.count=result.count;Object.assign(matrixPerformance,result.metrics);matrixPerformance.heapBytes=performance.memory?.usedJSHeapSize||null;matrixSourceReloadNeeded=false;}).finally(()=>{matrixFullLoad=null;matrixState.loading=false;});}await matrixFullLoad;}
@@ -1856,12 +1856,20 @@ async function refreshLiveData(options = {}) {
   beginSystemRefresh();
   let result = {matrix:false, source:false, metrics:false, mapping:false};
   try {
-    const [matrix, source, metrics] = await Promise.all([
-      (liveData?.loadMatrixGridDataset||liveData?.loadFullMatrixDataset)&&window.HubMatrixDataset&&!matrixDataset&&!options.fullReload&&!document.getElementById('matching')?.classList.contains('active-page')?Promise.resolve(false):loadLiveMatrix({...options,fullReload:Boolean(options.fullReload||matrixSourceReloadNeeded)}),
+    const shouldLoadMatrix = !((liveData?.loadMatrixGridDataset||liveData?.loadFullMatrixDataset)
+      && window.HubMatrixDataset && !matrixDataset && !options.fullReload
+      && !document.getElementById('matching')?.classList.contains('active-page'));
+    // A full Grid page is the heaviest read in the application.  Do not make
+    // status/metric views compete with it for the same statement-timeout
+    // budget; refresh those small cards immediately after the Grid settles.
+    const matrix = shouldLoadMatrix
+      ? await loadLiveMatrix({...options,fullReload:Boolean(options.fullReload||matrixSourceReloadNeeded)})
+      : false;
+    const [source, metrics, mapping] = await Promise.all([
       loadLiveSourceStatus(),
-      loadLiveDashboardMetrics()
+      loadLiveDashboardMetrics(),
+      loadMappingSyncStatus({markDisplayed:true})
     ]);
-    const mapping = await loadMappingSyncStatus({markDisplayed:true});
     result = {matrix:matrix === true, source:source === true, metrics:metrics === true, mapping:Boolean(mapping)};
     return result;
   } finally {
