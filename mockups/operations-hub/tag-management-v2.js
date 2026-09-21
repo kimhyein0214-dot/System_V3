@@ -141,8 +141,8 @@
   try{
    let result;
    if(state.memberSearch){
-    result=await D().loadProducts({page:state.page,pageSize:state.pageSize,search:state.memberSearch,searchSources:['sellpia'],status:'all',sort:'sku_asc'});
-    state.rows=(result.rows||[]).map(row=>({...row,__tagApplied:[...(row.__profile?.product_tags||[]),...(row.__profile?.sku_tags||[])].some(tag=>String(tag?.tag_id??tag)===String(state.selectedTagId))}));
+    result=await D().loadTagMemberSearch({tagId:state.selectedTagId,page:state.page,pageSize:state.pageSize,search:state.memberSearch});
+    state.rows=(result.rows||[]).map(row=>({...row,__tagApplied:row.tag_applied===true}));
    }else{
     result=await D().loadTagMembers({tagId:state.selectedTagId,page:state.page,pageSize:state.pageSize,search:''});
     state.rows=(result.rows||[]).map(row=>({...row,__tagApplied:true}));state.appliedCount=Number(result.count||0);
@@ -180,9 +180,8 @@
   for(const id of ['tag-download-current','tag-download-blank','tag-edit-rule','tag-clear-all','tag-rename'])document.getElementById(id).disabled=!tag;
   const deleteButton=document.getElementById('tag-delete-unused');
   if(deleteButton){
-   const inUse=Number(tag?.option_count||0)+Number(tag?.product_count||0)>0||Number(tag?.rule_count||0)>0;
-   deleteButton.disabled=!tag||inUse;
-   deleteButton.title=!tag?'태그를 먼저 선택하세요.':inUse?'적용된 SKU·상품 및 연결 수식을 먼저 해제해야 삭제할 수 있습니다.':'사용하지 않는 태그를 비활성화합니다. 과거 기록은 보존됩니다.';
+   deleteButton.disabled=!tag;
+   deleteButton.title=!tag?'태그를 먼저 선택하세요.':'미리보기 후 연결된 SKU·상품·수식을 한 번에 해제하고 태그를 비활성화합니다. 과거 기록은 보존됩니다.';
   }
   document.getElementById('tag-upload-sync').disabled=false;
   const chosen=state.rows.filter(row=>state.selected.has(row.sellpia_sku_code));
@@ -309,18 +308,26 @@
 
  async function deleteUnusedTag(){
   const tag=currentTag();if(!tag)return;
-  if(Number(tag.option_count||0)+Number(tag.product_count||0)+Number(tag.rule_count||0)>0){
-   setStatus('적용 중인 SKU·상품 태그와 연결 수식을 먼저 해제해야 태그를 삭제할 수 있습니다.','error');return;
-  }
-  if(!global.confirm(`'${tag.tag_name}' 태그를 삭제할까요? 사용하지 않는 태그만 비활성화하며 과거 기록은 보존합니다.`))return;
   const button=document.getElementById('tag-delete-unused');button.disabled=true;
+  let retired=false;
   try{
-   await D().deleteUnusedProductTag({id:tag.tag_id,expectedName:tag.tag_name});
+   setStatus(`'${tag.tag_name}' 태그의 연결 범위를 확인하는 중…`);
+   const preview=await D().retireProductTagCascade({id:tag.tag_id,expectedName:tag.tag_name,preview:true});
+   const rules=Number(preview.rule_count||0)+Number(preview.product_rule_count||0);
+   const prompt=`'${tag.tag_name}' 태그를 삭제할까요?\n\n연결된 옵션 SKU ${n(preview.option_count)}건, 상품 ${n(preview.product_count)}건, 기존 연결 ${n(preview.legacy_count)}건과 수식 ${n(rules)}개를 한 번에 해제합니다.\n영향 SKU ${n(preview.affected_sku_count)}개를 다시 계산합니다. 과거 기록은 보존됩니다.`;
+   if(!global.confirm(prompt)){setStatus('태그 삭제를 취소했습니다.');return;}
+   const result=await D().retireProductTagCascade({id:tag.tag_id,expectedName:tag.tag_name,preview:false,expectedOptionCount:preview.option_count,expectedProductCount:preview.product_count,expectedRuleCount:rules});
+   retired=true;
+   const skus=result.affected_skus||[];
+   setStatus(`태그 연결 해제 완료 · 영향 SKU ${n(skus.length)}개 수식 재계산 중…`);
+   const calculation=await recalc(skus,'tag-manager-retire-cascade');
+   const calculationError=calculation.error||(calculation.result?.errorRows?`${n(calculation.result.errorRows)}개 계산 결과 오류`:null);
    state.selectedTagId='';state.tag=null;state.selected.clear();state.rules=[];
    await loadCatalog({keepSelection:false});
-   setStatus(`'${tag.tag_name}' 태그를 삭제했습니다. 과거 기록은 보존됩니다.`,'success');
-   global.dispatchEvent(new CustomEvent('hub-tags-changed',{detail:{tagId:tag.tag_id,deleted:true}}));
-  }catch(error){setStatus(`태그 삭제 실패: ${error?.message||error}`,'error');renderSelected();}
+   setStatus(calculationError?`'${tag.tag_name}' 태그 연결은 해제됐습니다. 영향 SKU 계산 확인 필요: ${calculationError}`:`'${tag.tag_name}' 태그와 모든 연결을 해제하고 영향 SKU ${n(skus.length)}개를 다시 계산했습니다.`,calculationError?'error':'success');
+   global.dispatchEvent(new CustomEvent('hub-tags-changed',{detail:{tagId:tag.tag_id,deleted:true,skus}}));
+  }catch(error){setStatus(`${retired?'태그 연결은 해제됐지만 후속 새로고침/계산 실패':'태그 삭제 실패'}: ${error?.message||error}`,'error');renderSelected();}
+  finally{renderSelected();}
  }
 
  async function removeSelected(){

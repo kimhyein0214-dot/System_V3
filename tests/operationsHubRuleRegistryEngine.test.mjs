@@ -95,3 +95,14 @@ test('decimal multiply and ordered currency ceiling do not add an extra 500 at e
  assert.equal(HubRuleRegistry.transform(42500,config),93500);assert.equal(HubRuleRegistry.transform(42501,config),94000);assert.equal(HubRuleRegistry.transform(26750,config),59000);
  assert.throws(()=>HubRuleRegistry.transform(37119,{steps:[{op:'divide',value:2}]}),/안전한 정수/);
 });
+test('actual inbound cost rounds fractional won after any assigned formula',()=>{
+ const inbound=rule('half','actual_inbound_cost','purchase_price','self',[{op:'divide',value:2}]);
+ const base=rule('double','calculated_base_price','actual_inbound_cost','self',[{op:'multiply',value:2.2},{op:'round',unit:500,rounding:'up'}]);
+ const graph={products:{'6699-1':{sellpia_source_purchase_price:37119},'6699-2':{sellpia_source_purchase_price:37119}},rules:[inbound,base],assignments:['6699-1','6699-2'].flatMap(sku=>[assignment(sku,inbound),assignment(sku,base)])};
+ const evaluator=H.createEvaluator(graph);
+ for(const sku of ['6699-1','6699-2']){
+  assert.equal(evaluator.evaluate(sku,'actual_inbound_cost').value,18560);
+  assert.equal(evaluator.evaluate(sku,'calculated_base_price').value,41000);
+ }
+ assert.throws(()=>H.transform(37119,{steps:[{op:'divide',value:2}]}),/정수/,'other price stages still require an explicit rounding rule');
+});

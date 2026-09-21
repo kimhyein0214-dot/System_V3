@@ -68,16 +68,19 @@
   if(mode==='nearest'){if(rest<0n){whole--;rest+=q.d;}if(rest*2n>=q.d)whole++;}
   return times({n:whole,d:1n},unit);
  }
- function transformValue(base,config){
+ function transformFraction(base,config){
   let value=fraction(base);
   for(const step of config.steps){const n=step.op==='round'?null:fraction(step.value);switch(step.op){case 'add':value=plus(value,n);break;case 'subtract':value=plus(value,{n:-n.n,d:n.d});break;case 'multiply':value=times(value,n);break;case 'divide':value=times(value,{n:n.d,d:n.n});break;case 'set':value=n;break;case 'round':value=rounded(value,fraction(step.unit),step.rounding);break;}}
   if(config.min!==''&&config.min!=null){const min=fraction(Number(config.min));if(compare(value,min)<0n)value=min;}
   if(config.max!==''&&config.max!=null){const max=fraction(Number(config.max));if(compare(value,max)>0n)value=max;}
   if(config.unit!=null||config.rounding!=null)value=rounded(value,fraction(Number(config.unit??1)),config.rounding||'nearest');
-  return Number(value.n)/Number(value.d);
+  return value;
  }
- function transform(base,config,{allowNegative=false}={}){
-  validateConfig(config);const value=transformValue(numeric(base,'기준값'),config);
+ function transformValue(base,config){const value=transformFraction(base,config);return Number(value.n)/Number(value.d);}
+ function transform(base,config,{allowNegative=false,roundToWon=false}={}){
+  validateConfig(config);const input=numeric(base,'기준값');
+  const exact=roundToWon?rounded(transformFraction(input,config),fraction(1),'nearest'):null;
+  const value=roundToWon?Number(exact.n)/Number(exact.d):transformValue(input,config);
   if(!Number.isSafeInteger(value)||!allowNegative&&value<0)throw Error(allowNegative?'계산값은 안전한 정수여야 합니다.':'계산값은 0 이상의 안전한 정수여야 합니다.');return value;
  }
  function inverse(value,config){
@@ -137,7 +140,7 @@
     if(isPlatform(sourceField)&&!validScope(sourceScope))throw Error(sku+': 참조 판매처를 확인하세요.');
    }
    const input=evaluate(sourceSku,sourceField,sourceScope,[...stack,k]);
-   const value=transform(input.value,rule.config,{allowNegative:field==='platform_option_price'});
+   const value=transform(input.value,rule.config,{allowNegative:field==='platform_option_price',roundToWon:field==='actual_inbound_cost'});
    const result={value,base:input.value,rule,formula:`${sourceSku} ${fields[sourceField]} ${stepsText(rule.config.steps).replace(/\n/g,' ')}`,versions:[...input.versions,{id:rule.id,version:rule.version,assignmentVersion:assignment.version}],trace:[...input.trace,{sku,field,scope,value,rule_id:rule.id,version:rule.version}]};cache.set(k,result);return result;
   }
   return {evaluate};

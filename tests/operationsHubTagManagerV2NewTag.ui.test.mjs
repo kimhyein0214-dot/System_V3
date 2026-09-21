@@ -10,14 +10,14 @@ try{
   await page.setContent('<main id="attributes"><div class="attributes-title"></div><div class="attributes-quick-actions"></div><div class="attributes-layout"></div></main>');
   await page.addStyleTag({path:fileURLToPath(new URL('tag-management-v2.css',root))});
   await page.evaluate(()=>{
-    window.qa={created:[],formulaDrafts:[],tagImports:[],renamed:[],saved:[],calculations:[],applied:[{sellpia_sku_code:'applied-1',own_sku:'OWN-1',sellpia_product_name:'기존 상품',sellpia_option_name:'블랙'}],catalog:[
+    window.qa={created:[],formulaDrafts:[],tagImports:[],renamed:[],saved:[],calculations:[],searchReads:[],applied:[{sellpia_sku_code:'applied-1',own_sku:'OWN-1',sellpia_product_name:'기존 상품',sellpia_option_name:'블랙'}],catalog:[
       {tag_id:'plain',tag_name:'귀걸이',tag_color:'#eeeeee',tag_group:'운영',rule_count:0,option_count:3},
       {tag_id:'formula',tag_name:'소스_2000',tag_color:'#dbeafe',tag_group:'가격 수식',rule_count:2,option_count:0}
     ]};
     window.SystemV3Data={
       loadTagCatalog:async()=>({rows:structuredClone(qa.catalog)}),
       loadTagMembers:async()=>({rows:structuredClone(qa.applied),count:qa.applied.length}),
-      loadProducts:async()=>({rows:[{sellpia_sku_code:'applied-1',__profile:{sku_tags:[{tag_id:'formula'}],product_tags:[]}},{sellpia_sku_code:'new-2',sellpia_product_name:'추가 상품',sellpia_option_name:'실버',__profile:{sku_tags:[],product_tags:[]}}],count:2}),
+      loadTagMemberSearch:async payload=>{qa.searchReads.push(structuredClone(payload));return {rows:[{sellpia_sku_code:'applied-1',tag_applied:true},{sellpia_sku_code:'new-2',sellpia_product_name:'추가 상품',sellpia_option_name:'실버',tag_applied:false}],count:2};},
       saveProductProfile:async payload=>{qa.saved.push(structuredClone(payload));qa.applied.push({sellpia_sku_code:payload.sku,sellpia_product_name:'추가 상품',sellpia_option_name:'실버'});qa.catalog.find(tag=>tag.tag_id==='formula').option_count=qa.applied.length;return {};},
       ensureProductProfile:async()=>({sku_tags:[],product_tags:[]}),
       renameProductTag:async payload=>{qa.renamed.push(structuredClone(payload));const tag=qa.catalog.find(item=>item.tag_id===payload.id);
@@ -53,6 +53,7 @@ try{
   await page.locator('[data-tag-kind="all"]').click();await page.locator('[data-tag-id="plain"]').click();await page.locator('[data-tag-id="formula"]').click();
   await page.waitForFunction(()=>document.getElementById('tag-selected-name').textContent.includes('소스_2500'));
   await page.locator('#tag-member-query').fill('new-2');await page.locator('#tag-member-search button[type="submit"]').click();await page.waitForFunction(()=>document.querySelectorAll('[data-tag-member]').length===2);
+  assert.deepEqual(await page.evaluate(()=>qa.searchReads[0]),{tagId:'formula',page:1,pageSize:100,search:'new-2'});
   await page.locator('[data-tag-member="new-2"]').check();assert.equal(await page.locator('#tag-apply-selected').isEnabled(),true);
   await page.locator('#tag-apply-selected').click();await page.waitForFunction(()=>qa.saved.length===1);
   assert.deepEqual(await page.evaluate(()=>qa.saved[0].skuTagIds),['formula']);

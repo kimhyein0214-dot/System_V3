@@ -1842,7 +1842,15 @@
     if (cleanText(batchId)) query = query.eq('change_batch_id', cleanText(batchId));
     const {data, error, count} = await query;
     if (error) throw error;
-    return {rows:await attachChangeExportAudit(data || []), count:Number(count || 0)};
+    // The export receipt badge is optional metadata. If its lookup is delayed,
+    // keep the bounded queue page usable, but never claim an unverified file
+    // exists (the "confirm applied" action depends on that proof).
+    try {
+      return {rows:await attachChangeExportAudit(data || []), count:Number(count || 0), auditError:''};
+    } catch (auditError) {
+      console.warn('change queue export audit lookup failed', auditError);
+      return {rows:data || [], count:Number(count || 0), auditError:auditError?.message || String(auditError)};
+    }
   }
 
   async function loadChangeBatchSummaries({sources = ['smartstore','ably'], limit = 20} = {}) {
@@ -4057,6 +4065,21 @@
     return data||{rows:[],count:0,page:1,page_size:pageSize};
   }
 
+  async function loadTagMemberSearch({tagId,search='',page=1,pageSize=100} = {}) {
+    if(!tagId)throw new Error('조회할 태그를 선택해주세요.');
+    const query=cleanText(search);
+    if(!query||query.length>100)throw new Error('검색어는 1~100자여야 합니다.');
+    const {data,error}=await db.rpc('hub_tag_member_search_v2',{
+      p_session_token:requireOperationsHubSessionToken(),
+      p_tag_id:tagId,
+      p_search:query,
+      p_page:Math.max(1,Number(page)||1),
+      p_page_size:Math.max(1,Math.min(Number(pageSize)||100,100))
+    });
+    if(error)throw readableDatabaseError(error);
+    return data||{rows:[],count:0,page:1,page_size:pageSize};
+  }
+
   async function removeTagMembers({tagId,skus=[]} = {}) {
     const codes=[...new Set((skus||[]).map(cleanText).filter(Boolean))];
     if(!tagId)throw new Error('해제할 태그를 선택해주세요.');
@@ -4354,6 +4377,21 @@
     return data;
   }
 
+  async function retireProductTagCascade({id,expectedName,preview=true,expectedOptionCount=null,expectedProductCount=null,expectedRuleCount=null}={}) {
+    if(!id||!cleanText(expectedName))throw new Error('삭제할 태그를 다시 선택해주세요.');
+    const {data,error}=await db.rpc('hub_product_tag_retire_cascade_v2',{
+      p_session_token:requireOperationsHubSessionToken(),
+      p_tag_id:id,
+      p_expected_name:cleanText(expectedName),
+      p_preview:preview!==false,
+      p_expected_option_count:expectedOptionCount,
+      p_expected_product_count:expectedProductCount,
+      p_expected_rule_count:expectedRuleCount
+    });
+    if(error)throw readableDatabaseError(error);
+    return data||{};
+  }
+
   async function summarizeMatrixStocksForExport({source,skus=null}={}) {
     const snapshot=await loadMatrixExportSnapshot({source,skus});
     let applied=0,draft=0,unapplied=0,missing=0,sourceMissing=0;
@@ -4527,6 +4565,7 @@
     syncTagAssignments,
     loadTagCatalog,
     loadTagMembers,
+    loadTagMemberSearch,
     removeTagMembers,
     uploadAuxiliarySellerFile,
     loadAuxiliarySellerFiles,
@@ -4601,6 +4640,7 @@
     updateProductTag,
     renameProductTag,
     deleteUnusedProductTag,
+    retireProductTagCascade,
     ensureProductProfile,
     saveProductProfile,
     createProductTag,

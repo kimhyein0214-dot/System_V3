@@ -21,7 +21,8 @@ test('tag-centric manager exposes saved-assignment download and member editing',
   assert.match(js,/결과 →/);
   assert.match(js,/선택 SKU에 현재 태그 적용/);
   assert.match(js,/renameProductTag/);
-  assert.match(js,/loadProducts\(\{page:state\.page/);
+  assert.match(js,/loadTagMemberSearch\(\{tagId:state\.selectedTagId,page:state\.page/);
+  assert.doesNotMatch(js,/loadProducts\(\{page:state\.page/);
   assert.match(js,/→ 그대로 사용/);
   assert.match(js,/data-tag-kind="plain"[^>]*>일반 태그/);
   assert.match(js,/data-tag-kind="formula"[^>]*>수식 태그/);
@@ -52,5 +53,5 @@ test('tag-centric manager exposes saved-assignment download and member editing',
   assert.doesNotMatch(rules,/D\.ruleRegistry\('save'/);
   assert.match(html,/tag-management-v2\.css/);
   assert.match(html,/rule-workspace\.js\?v=20260918-tag-partial-v2/);
-  assert.match(html,/tag-management-v2\.js\?v=20260921-safe-tag-delete-v1/);
+  assert.match(html,/tag-management-v2\.js\?v=20260921-tag-retire-search-v2/);
 });

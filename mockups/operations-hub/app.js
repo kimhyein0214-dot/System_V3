@@ -6870,7 +6870,7 @@ const QUEUE_EVENT_LABELS = {
   created:'변경 생성', validated:'검증 완료', processing:'파일 생성 시작', exported:'원본 내보냄', applied:'반영 완료',
   failed:'실패', cancelled:'취소', retried:'재시도 등록', status_changed:'상태 변경'
 };
-const queueState = {rows:[], batches:[], targetIssues:[], loading:false, selectedChangeId:null, selectedBatchId:null};
+const queueState = {rows:[], batches:[], targetIssues:[], loading:false, stale:false, selectedChangeId:null, selectedBatchId:null};
 const queueBody = document.getElementById('queue-body');
 
 function queueScopeSources() {
@@ -6985,7 +6985,7 @@ function selectedQueueRows() {
 }
 
 function updateQueueSelection() {
-  const selected = selectedQueueRows();
+  const selected = queueState.stale ? [] : selectedQueueRows();
   document.getElementById('queue-selected-count').textContent = selected.length;
   document.getElementById('queue-validate').disabled = !selected.some(row => ['pending','failed'].includes(row.status));
   document.getElementById('queue-cancel').disabled = !selected.some(row => ['pending','validated','failed'].includes(row.status));
@@ -6997,11 +6997,14 @@ async function loadChangeQueue({silent = false} = {}) {
   if (!liveData?.loadChangeQueue || queueState.loading) return;
   if (silent && window.__systemV3DirectExportBusy) return;
   queueState.loading = true;
+  queueState.stale = true;
+  queueBody.querySelectorAll('.queue-row-check').forEach(check => { check.checked = false; check.disabled = true; });
+  updateQueueSelection();
   const badge = document.getElementById('queue-live-status');
   if (!silent) {
     badge.className = 'live-data-badge loading';
     badge.textContent = 'DB 조회 중';
-    queueBody.innerHTML = '<tr class="queue-empty"><td colspan="10">내보내기 준비 목록을 불러오는 중입니다.</td></tr>';
+    if (!queueState.rows.length) queueBody.innerHTML = '<tr class="queue-empty"><td colspan="10">내보내기 준비 목록을 불러오는 중입니다.</td></tr>';
   }
   try {
     const scopeSources = queueScopeSources();
@@ -7011,12 +7014,14 @@ async function loadChangeQueue({silent = false} = {}) {
       batchId:queueState.selectedBatchId
     });
     if(silent){
+      queueState.stale = false;
       renderChangeQueue(queue.rows);
       document.getElementById('queue-result-count').textContent = `${formatNumber(queue.count)}건 중 ${formatNumber(queue.rows.length)}건 표시`;
       const currentCountNode=document.getElementById('queue-context-current-count');
       if(currentCountNode)currentCountNode.textContent=formatNumber(queue.count)+' 작업건';
-      badge.className='live-data-badge connected';
-      if(!/^DB LIVE/.test(badge.textContent||''))badge.textContent='DB LIVE';
+      badge.className=queue.auditError?'live-data-badge loading':'live-data-badge connected';
+      badge.textContent=queue.auditError?'DB 목록 조회 완료 · 파일 이력 지연':'DB LIVE';
+      badge.title=queue.auditError?`내보내기 파일 이력 조회 실패: ${queue.auditError}`:'';
       return;
     }
     const secondary=await Promise.allSettled([
@@ -7030,6 +7035,7 @@ async function loadChangeQueue({silent = false} = {}) {
     const targetIssues=secondary[2].status==='fulfilled'?secondary[2].value:null;
     const dashboardMetrics=secondary[3].status==='fulfilled'?secondary[3].value:null;
     const secondaryFailed=secondary.filter(item=>item.status==='rejected').length;
+    queueState.stale = false;
     renderChangeQueue(queue.rows);
     if(batches)renderQueueBatches(batches);
     if(targetIssues)renderQueueTargetSafety(targetIssues);
@@ -7056,16 +7062,22 @@ async function loadChangeQueue({silent = false} = {}) {
     if(currentCountNode)currentCountNode.textContent=formatNumber(queue.count)+' 작업건';
     if(statusNode)statusNode.textContent=(queueState.selectedBatchId?'선택 배치 · ':'')+statusLabel;
     if(sourceNode)sourceNode.textContent=sourceLabel;
-    badge.className = secondaryFailed ? 'live-data-badge loading' : 'live-data-badge connected';
-    badge.textContent = totalSku ? `DB LIVE · 전체 ${formatNumber(totalSku)} SKU` : 'DB LIVE';
-    badge.title=secondaryFailed
-      ? `주 작업목록은 정상입니다. 부가 집계 ${secondaryFailed}개가 일시 지연되어 이전 값을 유지합니다.`
-      : '이 숫자는 작업 큐가 아니라 System V3 전체 SKU 수입니다.';
+    badge.className = secondaryFailed || queue.auditError ? 'live-data-badge loading' : 'live-data-badge connected';
+    badge.textContent = queue.auditError ? 'DB 목록 조회 완료 · 파일 이력 지연' : totalSku ? `DB LIVE · 전체 ${formatNumber(totalSku)} SKU` : 'DB LIVE';
+    badge.title=queue.auditError
+      ? `내보내기 파일 이력 조회 실패: ${queue.auditError}`
+      : secondaryFailed
+        ? `주 작업목록은 정상입니다. 부가 집계 ${secondaryFailed}개가 일시 지연되어 이전 값을 유지합니다.`
+        : '이 숫자는 작업 큐가 아니라 System V3 전체 SKU 수입니다.';
   } catch (error) {
     console.error('change queue load failed', error);
+    queueState.stale = true;
+    queueBody.querySelectorAll('.queue-row-check').forEach(check => { check.checked = false; check.disabled = true; });
+    updateQueueSelection();
     badge.className = 'live-data-badge error';
-    badge.textContent = 'DB 조회 오류';
-    queueBody.innerHTML = `<tr class="queue-empty"><td colspan="10">내보내기 준비 목록을 불러오지 못했습니다. ${escapeHtml(error?.message || error)}</td></tr>`;
+    badge.textContent = queueState.rows.length ? 'DB 조회 실패 · 이전 목록 유지' : 'DB 조회 오류';
+    badge.title = `${error?.message || error} · 새로고침으로 다시 조회하세요.`;
+    if (!queueState.rows.length) queueBody.innerHTML = `<tr class="queue-empty"><td colspan="10">내보내기 준비 목록을 불러오지 못했습니다. ${escapeHtml(error?.message || error)} · 새로고침으로 다시 시도하세요.</td></tr>`;
   } finally {
     queueState.loading = false;
   }
