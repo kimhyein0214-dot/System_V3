@@ -52,7 +52,7 @@ function gridLoaderContext(responses){
     withAbortSignal:query=>query,
     requireOperationsHubSessionToken:()=> 'operator-session',
     readableDatabaseError:error=>Error(error.message||String(error)),
-    db:{rpc:async(name,args)=>{calls.push({name,args});const next=responses.shift();return next instanceof Error?{error:{message:next.message}}:{data:next,error:null};}}
+    db:{rpc:async(name,args)=>{calls.push({name,args});if(name==='hub_matrix_grid_link_badges_v1'&&!responses[0]?.badgeResponse)return {data:{contract_version:1,dataset_version:args.p_dataset_version,requested:args.p_skus.length,link_badges:[],server_ms:1},error:null};const next=responses.shift();return next instanceof Error?{error:{message:next.message}}:{data:next?.badgeResponse||next,error:null};}}
   };
   vm.createContext(context);
   const start=service.indexOf('  function decodeMatrixGridV4');
@@ -115,27 +115,31 @@ test('grid feed v5 computes link badges once in the manifest and keeps data page
 
 test('grid loader completes manifest plus keyset pages and rechecks the manifest',async()=>{
   const version='2026-09-20T00:00:00Z';
-  const first=Array.from({length:250},(_,index)=>({sellpia_sku_code:`${String(index+1).padStart(3,'0')}`}));
+  const first=Array.from({length:250},(_,index)=>({sellpia_sku_code:`${String(index+1).padStart(3,'0')}`,__grid_meta:{}}));
   const {context,calls}=gridLoaderContext([
-    {contract_version:5,total:251,dataset_version:version,recommended_chunk_size:250,max_chunk_size:4000,tag_catalog:{},link_badges:[],page_cursors:[null,'250']},
+    {contract_version:6,total:251,dataset_version:version,recommended_chunk_size:250,max_chunk_size:4000,tag_catalog:{},page_cursors:[null,'250']},
     {contract_version:5,rows:first,loaded:250,next_sku:'250',has_more:true,dataset_version:version,server_ms:3,payload_bytes:100},
+    {badgeResponse:{contract_version:1,dataset_version:version,requested:250,link_badges:[['001','smartstore',2,'bundle']],server_ms:2}},
     {contract_version:5,rows:[{sellpia_sku_code:'251'}],loaded:1,next_sku:null,has_more:false,dataset_version:version,server_ms:2,payload_bytes:50},
     {contract_version:5,total:251,dataset_version:version}
   ]);
   const result=await context.loadMatrixGridDataset({chunkSize:250});
   assert.equal(result.count,251);
   assert.equal(result.rows.at(-1).sellpia_sku_code,'251');
-  assert.equal(JSON.stringify(calls.map(call=>call.name)),JSON.stringify(['hub_matrix_grid_manifest_v5','hub_matrix_grid_feed_v5','hub_matrix_grid_feed_v5','hub_matrix_grid_guard_v5']));
+  assert.equal(JSON.stringify(calls.map(call=>call.name)),JSON.stringify(['hub_matrix_grid_manifest_v6','hub_matrix_grid_feed_v5','hub_matrix_grid_link_badges_v1','hub_matrix_grid_feed_v5','hub_matrix_grid_link_badges_v1','hub_matrix_grid_guard_v5']));
   assert.equal(calls[1].args.p_after_sku,null);
-  assert.equal(calls[2].args.p_after_sku,'250');
+  assert.equal(calls[3].args.p_after_sku,'250');
   assert.equal(calls[1].args.p_dataset_version,version);
+  assert.equal(calls[2].args.p_skus.length,250);
+  assert.equal(result.rows[0].__linkBadges.smartstore.relation_type,'bundle');
   assert.equal(result.metrics.mode,'grid-feed-v5');
+  assert.equal(result.metrics.badgeAttempts,2);
   assert.equal(result.metrics.pageDiagnostics.length,2);
   assert.equal(typeof result.metrics.pageDiagnostics[0].normalizeMs,'number');
 });
 
 test('grid loader rejects duplicates, manifest drift, and stalled cursors',async()=>{
-  const manifest={contract_version:5,total:2,dataset_version:'2026-09-20T00:00:00Z',recommended_chunk_size:3000,max_chunk_size:4000,tag_catalog:{},link_badges:[],page_cursors:[null]};
+  const manifest={contract_version:6,total:2,dataset_version:'2026-09-20T00:00:00Z',recommended_chunk_size:3000,max_chunk_size:4000,tag_catalog:{},page_cursors:[null]};
   let fixture=gridLoaderContext([manifest,{contract_version:5,rows:[{sellpia_sku_code:'1'},{sellpia_sku_code:'1'}],loaded:2,next_sku:null,has_more:false,dataset_version:manifest.dataset_version},{contract_version:5,total:2,dataset_version:manifest.dataset_version}]);
   await assert.rejects(fixture.context.loadMatrixGridDataset(),/중복/);
   fixture=gridLoaderContext([manifest,{contract_version:5,rows:[{sellpia_sku_code:'1'},{sellpia_sku_code:'2'}],loaded:2,next_sku:null,has_more:false,dataset_version:'2026-09-20T00:01:00Z'}]);
@@ -151,7 +155,7 @@ test('grid loader rejects duplicates, manifest drift, and stalled cursors',async
 test('grid loader retries only the failed page and never restarts the dataset',async()=>{
   const version='2026-09-20T00:00:00Z';
   const fixture=gridLoaderContext([
-    {contract_version:5,total:1,dataset_version:version,recommended_chunk_size:3000,max_chunk_size:4000,tag_catalog:{},link_badges:[],page_cursors:[null]},
+    {contract_version:6,total:1,dataset_version:version,recommended_chunk_size:3000,max_chunk_size:4000,tag_catalog:{},page_cursors:[null]},
     new Error('canceling statement due to statement timeout'),
     {contract_version:5,rows:[{sellpia_sku_code:'1'}],loaded:1,next_sku:null,has_more:false,dataset_version:version,server_ms:2},
     {contract_version:5,total:1,dataset_version:version}
@@ -159,9 +163,20 @@ test('grid loader retries only the failed page and never restarts the dataset',a
   const result=await fixture.context.loadMatrixGridDataset();
   assert.equal(result.count,1);
   assert.equal(fixture.calls.filter(call=>call.name==='hub_matrix_grid_feed_v5').length,2);
-  assert.equal(fixture.calls.filter(call=>call.name==='hub_matrix_grid_manifest_v5').length,1);
+  assert.equal(fixture.calls.filter(call=>call.name==='hub_matrix_grid_manifest_v6').length,1);
   assert.equal(fixture.calls.filter(call=>call.name==='hub_matrix_grid_guard_v5').length,1);
   assert.equal(result.metrics.pageDiagnostics[0].retries,1);
+});
+
+test('bounded badge lookup rejects version drift without publishing a partial Matrix',async()=>{
+  const version='2026-09-20T00:00:00Z';
+  const fixture=gridLoaderContext([
+    {contract_version:6,total:1,dataset_version:version,max_chunk_size:4000,tag_catalog:{},page_cursors:[null]},
+    {contract_version:5,rows:[{sellpia_sku_code:'1'}],loaded:1,next_sku:null,has_more:false,dataset_version:version},
+    {badgeResponse:{contract_version:1,dataset_version:'2026-09-20T00:01:00Z',requested:1,link_badges:[]}}
+  ]);
+  await assert.rejects(fixture.context.loadMatrixGridDataset(),/연결 배지 응답 contract/);
+  assert.equal(fixture.calls.filter(call=>call.name==='hub_matrix_grid_guard_v5').length,0);
 });
 
 test('grid v5 positional row and manifest link catalog restore the existing renderer contract',()=>{

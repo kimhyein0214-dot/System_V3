@@ -1037,25 +1037,20 @@
   async function loadMatrixGridDataset({signal=null,onProgress=null,chunkSize=null}={}) {
     const started=performance.now(),before={...matrixReadMetrics};
     const serverTimes=[],rpcTimes=[],pageDiagnostics=[];
-    let dataAttempts=0,manifestAttempts=0,retryCount=0,loadedTotal=0;
+    let dataAttempts=0,badgeAttempts=0,manifestAttempts=0,retryCount=0,loadedTotal=0;
     const requestedChunk=Math.max(250,Math.min(4000,Number(chunkSize)||2000));
     fullMatrixReadContext={mode:'grid-feed-v5',endpoints:{}};
     try{
       const token=requireOperationsHubSessionToken();
-      const manifestRead=await readMatrixGridRpc('hub_matrix_grid_manifest_v5',{
+      const manifestRead=await readMatrixGridRpc('hub_matrix_grid_manifest_v6',{
         p_session_token:token,p_chunk_size:requestedChunk
       },{signal,page:0,cursor:null});
       manifestAttempts+=manifestRead.attempts;retryCount+=manifestRead.retries;
       rpcTimes.push(manifestRead.clientMs);
       const manifest=manifestRead.data;
       const total=Number(manifest.total),datasetVersion=String(manifest.dataset_version||'');
-      if(Number(manifest.contract_version)!==5||!Number.isInteger(total)||total<0||!datasetVersion)throw Error('Matrix Grid v5 manifest가 올바르지 않습니다.');
+      if(Number(manifest.contract_version)!==6||!Number.isInteger(total)||total<0||!datasetVersion)throw Error('Matrix Grid v6 manifest가 올바르지 않습니다.');
       const tagCatalog=manifest.tag_catalog&&typeof manifest.tag_catalog==='object'?manifest.tag_catalog:{};
-      const linkBadgeCatalog={};
-      for(const badge of Array.isArray(manifest.link_badges)?manifest.link_badges:[]){
-        const sku=cleanText(badge?.[0]),source=cleanText(badge?.[1]);if(!sku||!source)continue;
-        (linkBadgeCatalog[sku]??={})[source]={max:Number(badge?.[2]||0),relation:cleanText(badge?.[3])||'single'};
-      }
       const maxChunk=Math.max(250,Number(manifest.max_chunk_size)||4000);
       // The manifest builds its keyset cursors from p_chunk_size.  Keep the
       // browser's bounded request size authoritative instead of silently
@@ -1081,18 +1076,36 @@
         const expectedNext=index+1<cursors.length?cleanText(cursors[index+1]):null;
         const actualNext=cleanText(result.next_sku)||null;
         if(actualNext!==expectedNext||Boolean(result.has_more)!==Boolean(expectedNext))throw Error('Grid feed keyset cursor가 진행되지 않았습니다.');
+        const pageSkus=part.map(raw=>cleanText(Array.isArray(raw)?raw[0]:raw?.sellpia_sku_code));
+        if(pageSkus.some(sku=>!sku)||new Set(pageSkus).size!==pageSkus.length)throw Error(`Grid feed ${page}페이지 SKU identity 중복/누락`);
+        let badgeRead=null,linkBadgeCatalog={};
+        if(pageSkus.length){
+          badgeRead=await readMatrixGridRpc('hub_matrix_grid_link_badges_v1',{
+            p_session_token:token,p_dataset_version:datasetVersion,p_skus:pageSkus
+          },{signal,page,cursor});
+          badgeAttempts+=badgeRead.attempts;retryCount+=badgeRead.retries;rpcTimes.push(badgeRead.clientMs);
+          const badges=badgeRead.data;
+          if(Number(badges.contract_version)!==1||String(badges.dataset_version||'')!==datasetVersion||Number(badges.requested)!==pageSkus.length||!Array.isArray(badges.link_badges))throw Error('Grid feed 연결 배지 응답 contract가 일치하지 않습니다.');
+          const allowed=new Set(pageSkus);
+          for(const badge of badges.link_badges){
+            const sku=cleanText(badge?.[0]),source=cleanText(badge?.[1]);
+            if(!allowed.has(sku)||!source||(linkBadgeCatalog[sku]||{})[source])throw Error('Grid feed 연결 배지 SKU/source가 일치하지 않습니다.');
+            (linkBadgeCatalog[sku]??={})[source]={max:Number(badge?.[2]||0),relation:cleanText(badge?.[3])||'single'};
+          }
+        }
         const normalizeAt=performance.now(),normalized=part.map(raw=>normalizeMatrixGridRow(raw,tagCatalog,linkBadgeCatalog));
         const normalizeMs=performance.now()-normalizeAt,serverMs=Number(result.server_ms),payloadBytes=Number(result.payload_bytes);
         if(Number.isFinite(serverMs))serverTimes.push(serverMs);
         pageResults[index]=normalized;loadedTotal+=normalized.length;
         pageDiagnostics.push({page,cursor,loaded:part.length,nextSku:actualNext,
           serverMs:Number.isFinite(serverMs)?serverMs:null,clientMs:read.clientMs,
-          payloadBytes:Number.isFinite(payloadBytes)?payloadBytes:null,normalizeMs,retries:read.retries});
+          payloadBytes:Number.isFinite(payloadBytes)?payloadBytes:null,normalizeMs,retries:read.retries,
+          badgeClientMs:badgeRead?.clientMs??0,badgeServerMs:badgeRead?Number(badgeRead.data.server_ms):0,badgeRetries:badgeRead?.retries??0});
         onProgress?.({loaded:loadedTotal,total,elapsed:performance.now()-started,metrics:{
           mode:'grid-feed-v5',requests:matrixReadMetrics.requests-before.requests,bytes:matrixReadMetrics.bytes-before.bytes,
           networkMs:matrixReadMetrics.networkMs-before.networkMs,serverMeanMs:serverTimes.length?serverTimes.reduce((a,b)=>a+b,0)/serverTimes.length:0,
           serverMaxMs:serverTimes.length?Math.max(...serverTimes):0,chunkSize:safeChunk,datasetVersion,
-          dataPages:cursors.length,dataAttempts,manifestAttempts,retryCount,failedAttempts:retryCount,
+          dataPages:cursors.length,dataAttempts,badgeAttempts,manifestAttempts,retryCount,failedAttempts:retryCount,
           completedPages:pageResults.filter(Boolean).length,currentPage:page,currentCursor:cursor,
           pageDiagnostics:[...pageDiagnostics].sort((a,b)=>a.page-b.page),endpoints:fullMatrixReadContext.endpoints||{}
         }});
@@ -1121,7 +1134,7 @@
         clientRpcMaxMs:rpcTimes.length?Math.max(...rpcTimes):0,serverMeanMs:serverTimes.length?serverTimes.reduce((a,b)=>a+b,0)/serverTimes.length:0,
         serverP50Ms:percentile(.5),serverP95Ms:percentile(.95),serverMaxMs:serverTimes.length?Math.max(...serverTimes):0,
         chunkSize:safeChunk,pageConcurrency:Math.min(1,cursors.length),datasetVersion,
-        dataPages:cursors.length,dataAttempts,manifestAttempts,retryCount,failedAttempts:retryCount,
+        dataPages:cursors.length,dataAttempts,badgeAttempts,manifestAttempts,retryCount,failedAttempts:retryCount,
         pageDiagnostics,endpoints:fullMatrixReadContext.endpoints||{}
       }};
     }finally{fullMatrixReadContext=null;}
@@ -4187,7 +4200,7 @@
     if(!fields)throw new Error('지원하지 않는 판매처입니다.');
     const productCodes=[...new Set((identities||[]).map(item=>cleanText(item?.product_code??item?.seller_product_code)).filter(Boolean))];
     if(!productCodes.length)return {source:safeSource,rows:[]};
-    const [productField,optionField]=fields,rows=[],suppressed=new Set(),activeByIdentity=new Map();
+    const rows=[],suppressed=new Set(),activeByIdentity=new Map();
     const mappingKey=(sku,product,option)=>JSON.stringify([cleanText(sku),cleanText(product),cleanText(option)]);
     const identityKey=(product,option)=>JSON.stringify([cleanText(product),cleanText(option)]);
     for(let offset=0;offset<productCodes.length;offset+=100){
@@ -4233,14 +4246,17 @@
         if(!data||data.length<1000)break;
       }
       for(let from=0;;from+=1000){
-        const {data}=await carrierRead('carrier seller identity',chunk.length,db.from('operations_hub_matrix_cached')
-          .select(`sellpia_sku_code,${productField},${optionField}`)
-          .in(productField,chunk)
-          .order('sellpia_sku_code',{ascending:true}).range(from,from+999),onQuery);
+        const {data}=await carrierRead('carrier seller identity',chunk.length,db.rpc('hub_carrier_seller_identity_read_v1',{
+          p_session_token:requireOperationsHubSessionToken(),
+          p_source_channel:safeSource,
+          p_product_codes:chunk,
+          p_offset:from,
+          p_limit:1000
+        }),onQuery);
         rows.push(...(data||[]).map(row=>({
           sku:cleanText(row.sellpia_sku_code),
-          product_code:cleanText(row[productField]),
-          option_code:cleanText(row[optionField])
+          product_code:cleanText(row.product_code),
+          option_code:cleanText(row.option_code)
         })).filter(row=>{
           if(!row.sku||!row.product_code||suppressed.has(mappingKey(row.sku,row.product_code,row.option_code)))return false;
           const active=activeByIdentity.get(identityKey(row.product_code,row.option_code));
