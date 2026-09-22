@@ -45,7 +45,7 @@ const localAssets = [...html.matchAll(/(?:href|src)="(\.\/[^\"]+)"/g)].map(match
 assert.ok(localAssets.length >= 18, 'the export page must retain its local asset bundle');
 assert.ok(localAssets.every(asset => /\?v=[^&\"]+$/.test(asset)), 'all local export assets must be versioned');
 assert.match(html,/discount-price-math\.js\?v=20260914-matrix-visible-export-v2/,'shared matrix display math keeps its deployed version');
-assert.match(html,/seller-export-adapter\.js\?v=20260922-partial-price-blocks-v1/,'worksheet XML serializer uses the partial warning export version');
+assert.match(html,/seller-export-adapter\.js\?v=20260922-changed-only-row-fix-v2/,'worksheet XML serializer uses the changed-only row repair version');
 assert.match(html,/app\.js\?v=[^"']+/,'carrier guard remains cache-versioned');
 assert.match(html,/current-price-export\.js\?v=20260922-partial-price-blocks-v1/,'current Effective Target resolver uses a fresh deployed version');
 assert.match(html,/ably-playauto-export\.js\?v=20260922-partial-blocks-v1/,'Ably warning color serializer uses a fresh deployed version');
@@ -161,7 +161,8 @@ assert.match(highlighted.stylesXml, /<xf (?=[^>]*numFmtId="4")(?=[^>]*fontId="2"
 assert.match(highlighted.sheetXml, /<c r="F3" s="2">/, 'a changed styled cell must point to its derived review style');
 assert.match(highlighted.sheetXml, /<c r="S3" s="3">/, 'a changed unstyled cell must point to a derived default review style');
 assert.match(highlighted.sheetXml, /<c r="G3" s="1">/, 'an untouched cell must keep its original style');
-assert.match(adapterSource, /applyChangeHighlights\(scoped,stylesXml,appliedHighlights\)/, 'the XLSX export path must scope changed-only rows before highlighting only successfully applied cell references');
+assert.match(adapterSource, /highlights=remapHighlights\(appliedHighlights,result\.rowMap\)/, 'changed-only export must remap original cell references to compacted rows');
+assert.match(adapterSource, /applyChangeHighlights\(scoped,stylesXml,highlights\)/, 'the XLSX export path must highlight the successfully applied compacted cells');
 
 const multilineSheetFixture = '<worksheet><sheetData><row r="3"><c r="S3" t="inlineStr"><is><t xml:space="preserve">2\n9</t></is></c></row></sheetData></worksheet>';
 const multilineHighlighted = adapter.applyChangeHighlights(multilineSheetFixture, styleFixture, [{reference:'S3',lineIndex:1}]);

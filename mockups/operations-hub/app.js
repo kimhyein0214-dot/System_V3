@@ -8449,7 +8449,11 @@ async function prepareChangedOnlyExport(source,skus=null,{download=false,onProgr
     const keepRowsForItems=items=>{
       const changedProducts=new Set(items.map(item=>String(item.seller_product_code||'')).filter(Boolean));
       if(priceMode==='sellpia_source')for(const row of plan.preview||[])if(row.status==='blocked')changedProducts.add(String(row.product_code||''));
-      return new Set(parsed.normalizedRows.filter(row=>changedProducts.has(String(row.product_code||''))).map(row=>Number(row.source_row_no)).filter(Number.isInteger));
+      const rows=new Set(parsed.normalizedRows.filter(row=>changedProducts.has(String(row.product_code||''))).map(row=>Number(row.source_row_no)).filter(Number.isInteger));
+      // MakeShop's second row holds the English field keys required by its
+      // official import template, even though the parser can see it as data.
+      if(source==='makeshop')rows.add(2);
+      return rows;
     };
     const transformOptions=items=>mode==='changed_only'?{dataRowNumbers:allDataRows,keepOnlyRows:keepRowsForItems(items)}:{};
     mark=clock();

@@ -439,9 +439,13 @@
       const changes=byRow.get(Number(rowNo)); if(!changes) return rowXml;
       return items[0].source_channel==='smartstore'?patchSmartstoreRow(rowXml,changes,shared,onConflict,recordApplied):patchMakeshopRow(rowXml,changes,shared,onConflict,recordApplied);
     });
-    let scoped=patched;
-    if(dataRowNumbers&&keepOnlyRows)scoped=scopeWorksheetRows(scoped,dataRowNumbers,keepOnlyRows);
-    const highlighted=applyChangeHighlights(scoped,stylesXml,appliedHighlights);
+    let scoped=patched,highlights=appliedHighlights;
+    if(dataRowNumbers&&keepOnlyRows){
+      const result=scopeWorksheetRowsWithMap(scoped,dataRowNumbers,keepOnlyRows);
+      scoped=result.sheetXml;
+      highlights=remapHighlights(appliedHighlights,result.rowMap);
+    }
+    const highlighted=applyChangeHighlights(scoped,stylesXml,highlights);
     assertWorksheetXmlWellFormed(highlighted.sheetXml);
     zip.file(sheetPath,highlighted.sheetXml); zip.file(stylesPath,highlighted.stylesXml); return zip.generateAsync({type:'blob',compression:'DEFLATE',compressionOptions:{level:6}});
   }
@@ -452,27 +456,52 @@
     output=output.replace(new RegExp('\\br="([A-Z]+)'+fromRow+'"','g'),(_,column)=>'r="'+column+toRow+'"');
     return output;
   }
-  function scopeWorksheetRows(sheetXml,dataRowNumbers,keepOnlyRows){
-    const dataRows=[...(dataRowNumbers||[])].map(Number).filter(Number.isInteger).sort((a,b)=>a-b),kept=new Set([...(keepOnlyRows||[])].map(Number));
-    if(!dataRows.length)return String(sheetXml);
-    const first=dataRows[0],last=dataRows[dataRows.length-1],keptRows=dataRows.filter(row=>kept.has(row));
-    const rowMap=new Map(keptRows.map((row,index)=>[row,first+index]));
-    const removed=dataRows.length-keptRows.length;
+  function scopeWorksheetRowsWithMap(sheetXml,dataRowNumbers,keepOnlyRows){
+    const dataRows=[...new Set([...(dataRowNumbers||[])].map(Number).filter(row=>Number.isInteger(row)&&row>0))].sort((a,b)=>a-b);
+    if(!dataRows.length)return {sheetXml:String(sheetXml),rowMap:null};
+    const first=dataRows[0],last=dataRows[dataRows.length-1];
+    const kept=new Set([...(keepOnlyRows||[])].map(Number).filter(row=>Number.isInteger(row)&&row>0));
+    const rowMap=new Map();
+    let nextRow=first-1,previousSourceRow=0,lastTargetRow=0;
     let output=String(sheetXml).replace(/<row\b[^>]*\br="(\d+)"[^>]*>[\s\S]*?<\/row>/g,(rowXml,rowNo)=>{
-      const row=Number(rowNo);
-      if(dataRows.includes(row)){if(!kept.has(row))return '';return remapWorksheetRow(rowXml,row,rowMap.get(row));}
-      if(row>last&&removed>0)return remapWorksheetRow(rowXml,row,row-removed);
-      return rowXml;
+      const sourceRow=Number(rowNo);
+      if(sourceRow<=previousSourceRow)throw new Error('원본 XLSX의 행 번호가 중복되거나 순서가 바뀌었습니다.');
+      previousSourceRow=sourceRow;
+      // Parsed data rows omit auxiliary/empty physical rows. Keeping those
+      // at old IDs while compacting selected rows corrupts the worksheet.
+      if(sourceRow>=first&&sourceRow<=last&&!kept.has(sourceRow))return '';
+      const targetRow=sourceRow<first?sourceRow:++nextRow;
+      lastTargetRow=targetRow;
+      rowMap.set(sourceRow,targetRow);
+      return remapWorksheetRow(rowXml,sourceRow,targetRow);
     });
-    const rowRefs=[...output.matchAll(/<row\b[^>]*\br="(\d+)"/g)].map(match=>Number(match[1])).filter(Number.isInteger);
-    if(rowRefs.length){
-      const maxRow=Math.max(...rowRefs);
-      output=output.replace(/<dimension\b([^>]*\bref=")([A-Z]+)1:([A-Z]+)\d+("[^>]*)\/?>(?:<\/dimension>)?/i,(_,head,left,right,tail)=>'<dimension'+head+left+'1:'+right+maxRow+tail.replace(/\/\s*$/,'')+'/>');
+    if(lastTargetRow){
+      output=output.replace(/<dimension\b([^>]*\bref=")([A-Z]+)1:([A-Z]+)\d+("[^>]*)\/?>(?:<\/dimension>)?/i,(_,head,left,right,tail)=>'<dimension'+head+left+'1:'+right+lastTargetRow+tail.replace(/\/\s*$/,'')+'/>');
     }
-    return output;
+    return {sheetXml:output,rowMap};
+  }
+  function scopeWorksheetRows(sheetXml,dataRowNumbers,keepOnlyRows){
+    return scopeWorksheetRowsWithMap(sheetXml,dataRowNumbers,keepOnlyRows).sheetXml;
+  }
+  function remapHighlights(highlights,rowMap){
+    if(!rowMap)return highlights;
+    return highlights.map(highlight=>{
+      const reference=typeof highlight==='string'?highlight:highlight.reference;
+      const match=String(reference||'').match(/^([A-Z]+)(\d+)$/);
+      const row=match&&rowMap.get(Number(match[2]));
+      if(!row)throw new Error('변경 셀 '+(reference||'?')+'이 변경분 파일의 선택 행에서 누락됐습니다.');
+      const nextReference=match[1]+row;
+      return typeof highlight==='string'?nextReference:{...highlight,reference:nextReference};
+    });
   }
   function assertWorksheetXmlWellFormed(xml){
     if(/<dimension\b[^>]*\/\/>/i.test(xml))throw new Error('XLSX worksheet dimension XML이 잘못되어 파일 생성을 중단했습니다.');
+    let previousRow=0;
+    for(const match of String(xml).matchAll(/<row\b[^>]*\br="(\d+)"/g)){
+      const row=Number(match[1]);
+      if(row<=previousRow)throw new Error('XLSX worksheet 행 번호가 중복되거나 순서가 바뀌어 파일 생성을 중단했습니다.');
+      previousRow=row;
+    }
     if(typeof global.DOMParser==='function'){
       const parsed=new global.DOMParser().parseFromString(xml,'application/xml');
       if(parsed.getElementsByTagName('parsererror').length||parsed.documentElement?.localName==='parsererror')
