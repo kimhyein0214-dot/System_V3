@@ -11,7 +11,7 @@ const priceSource=fs.readFileSync(new URL('../mockups/operations-hub/current-pri
 const ablySource=fs.readFileSync(new URL('../mockups/operations-hub/ably-playauto-export.js',import.meta.url),'utf8');
 const plain=value=>JSON.parse(JSON.stringify(value));
 
-function harness({items,targets=[],role='playauto_option',priceMode='rules',selectedSkus=null,sourcePrices={}}){
+function harness({items,targets=[],role='playauto_option',priceMode='rules',selectedSkus=null,sourcePrices={},carrierCatalog=null,carrierMappings=[]}){
  const fields=new Map(['title','detail','bar','cancel'].map(key=>[key,{textContent:'',style:{},disabled:false}]));
  const progress={hidden:true,dataset:{},querySelector:selector=>fields.get(selector.match(/progress-(\w+)/)?.[1])};
  const previewNode={hidden:true};
@@ -27,10 +27,10 @@ function harness({items,targets=[],role='playauto_option',priceMode='rules',sele
  const createAblyJob=Function('global','state','document','n','renderExportStatuses','setStatus',`${helpers};return createAblyJob;`)(global,state,document,n,()=>{},setStatus);
  const roles={playauto_option:{label:'옵션가 + 재고',type:'option_price_stock'},playauto_product:{label:'판매가 + 옵션가',type:'product_price_option'}};
  const file={name:'carrier.xlsx',arrayBuffer:async()=>new ArrayBuffer(1)};
- const A=()=>({readTemplate:async()=>({type:roles[role].type,items}),resolveRows:rows=>rows.map(item=>({...item,resolution:item.resolution||{sku:item.sku,method:'direct_sku'}})),prepareSellpiaSourceProductRows:(rows,prices)=>global.AblyPlayautoExport.prepareSellpiaSourceProductRows(rows,prices)});
+ const A=()=>({readTemplate:async()=>({type:roles[role].type,items}),resolveRows:(rows,_catalog,_mappings,options)=>rows.map(item=>({...item,resolution:carrierCatalog?global.AblyPlayautoExport.resolveSellpiaSku(item,carrierCatalog,carrierMappings,options):item.resolution||{sku:item.sku,method:'direct_sku'}})),prepareSellpiaSourceProductRows:(rows,prices)=>global.AblyPlayautoExport.prepareSellpiaSourceProductRows(rows,prices)});
  const calls=[];
- const D=()=>({loadCarrierSellerMappings:async()=>({rows:[]}),loadCarrierMatrixTargets:async options=>{calls.push(options);return {rows:targets};},loadSellpiaSourcePricesForExport:async()=>new Map(Object.entries(sourcePrices))});
- const preview=Function('state','roles','setStatus','createAblyJob','document','global','blobFile','A','D','catalog','scopeSkus','renderPreview','n',`${previewSource};return preview;`)(state,roles,setStatus,createAblyJob,document,global,async()=>file,A,D,async()=>[],async()=>selectedSkus?new Set(selectedSkus):null,()=>{rendered++;},n);
+ const D=()=>({loadCarrierSellerMappings:async()=>({rows:carrierMappings}),loadCarrierMatrixTargets:async options=>{calls.push(options);return {rows:targets};},loadSellpiaSourcePricesForExport:async()=>new Map(Object.entries(sourcePrices))});
+ const preview=Function('state','roles','setStatus','createAblyJob','document','global','blobFile','A','D','catalog','scopeSkus','renderPreview','n',`${previewSource};return preview;`)(state,roles,setStatus,createAblyJob,document,global,async()=>file,A,D,async()=>carrierCatalog||[],async()=>selectedSkus?new Set(selectedSkus):null,()=>{rendered++;},n);
  state.carrierFiles.set(role,file);
  return {run:()=>preview(role),state,calls,timers,messages,rendered:()=>rendered};
 }
@@ -49,6 +49,15 @@ test('Ably Sellpia mode isolates a blocked physical row and retains another safe
  const h=harness({role:'playauto_product',priceMode:'sellpia_source',items,selectedSkus:['P-1','Q-1'],sourcePrices:{'Q-1':45000}}),preview=await h.run();
  assert.ok(preview);assert.equal(preview.counts.blocked,2);assert.equal(preview.counts.changed,1);assert.ok(preview.output.filter(item=>item.source_row_no===6).every(item=>item._status==='conflict'));
  assert.equal(preview.output.find(item=>item.source_row_no===7).target_base_price,45000);
+});
+test('Ably Sellpia product preview prefers a catalog-validated P SKU over stale seller mapping',async()=>{
+ const items=[row('11360-1',32,{template_type:'product_price_option',seller_management_code:'sellpia_11360',sellpia_product_code:'11360',seller_product_code:'66356790',primary_option_name:'옐로우골드/6mm',secondary_option_value:'기본',direct_sellpia_sku_code:'11360-1',option_index:0,base_price:62500}),row('11360-2',32,{template_type:'product_price_option',seller_management_code:'sellpia_11360',sellpia_product_code:'11360',seller_product_code:'66356790',primary_option_name:'로즈골드/6mm',secondary_option_value:'기본',direct_sellpia_sku_code:'11360-2',option_index:1,base_price:62500})];
+ const carrierCatalog=['11360-1','11360-2'].map(sku=>({sellpia_product_code:'11360',sellpia_sku_code:sku}));
+ const h=harness({role:'playauto_product',priceMode:'sellpia_source',items,selectedSkus:['11360-1','11360-2'],sourcePrices:{'11360-1':70000,'11360-2':73000},carrierCatalog,carrierMappings:[{product_code:'66356790',option_code:'',sku:'11360-2'}]});
+ const preview=await h.run();assert.ok(preview,h.messages.at(-1)?.text);
+ assert.deepEqual(plain(preview.output.map(item=>item.resolution.sku)),['11360-1','11360-2']);
+ assert.equal(preview.counts.mappingOverrides,1);assert.equal(preview.counts.blocked,0);
+ assert.deepEqual(plain(preview.output.map(item=>item.target_base_price+item.target_option_price)),[70000,73000]);
 });
 function row(sku,sourceRowNo=6,extra={}){
  return {sku,sellpia_product_code:sku.split('-')[0],seller_management_code:'sellpia_'+sku.split('-')[0],primary_option_name:sku,secondary_option_value:'',source_row_no:sourceRowNo,option_index:Number(sku.split('-')[1])||0,base_price:2800,option_price:0,sales_quantity:3,available_stock:888,...extra};

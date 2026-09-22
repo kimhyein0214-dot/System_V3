@@ -28,6 +28,45 @@ assert.equal(A.isNoBallAnchor('(기본)'),false);
 assert.equal(A.isNoBallAnchor('14K 헤비 잠금볼'),false);
 
 {
+ const productCatalog=['11360-1','11360-2'].map(sku=>({sellpia_product_code:'11360',sellpia_sku_code:sku}));
+ const source=A.parseProductRows([headers,sourceRow('11360',[
+  option('옐로우골드','일반'),option('로즈골드','일반')
+ ],['11360-1','11360-2'],[0,0])]).map(item=>({...item,seller_product_code:'66356790'}));
+ const staleMapping=[{product_code:'66356790',option_code:'',sku:'11360-2'}];
+ assert.deepEqual(Array.from(A.resolveRows(source,productCatalog,staleMapping),item=>item.resolution.sku),['11360-2','11360-2'],'Rules mode keeps the existing mapping precedence');
+ const resolved=A.resolveRows(source,productCatalog,staleMapping,{preferDirectProductSku:true});
+ assert.deepEqual(Array.from(resolved,item=>item.resolution.sku),['11360-1','11360-2']);
+ assert.equal(resolved[0].resolution.mapping_override,true);
+ assert.equal(resolved[0].resolution.mapped_sku,'11360-2');
+ const planned=resolved.map(item=>({...item,_inScope:true,_status:'ready',_error:''}));
+ A.prepareSellpiaSourceProductRows(planned,new Map([['11360-1',62500],['11360-2',75500]]));
+ assert.deepEqual(finals(planned),[62500,75500]);assert.ok(planned.every(item=>item._status==='ready'));
+ const wrongProduct=A.resolveSellpiaSku({...source[0],direct_sellpia_sku_code:'11359-1'},[...productCatalog,{sellpia_product_code:'11359',sellpia_sku_code:'11359-1'}],staleMapping,{preferDirectProductSku:true});
+ assert.equal(wrongProduct.method,'direct_sku_invalid');assert.match(wrongProduct.error,/해당 셀피아 상품/);
+ const missing=A.resolveSellpiaSku({...source[0],direct_sellpia_sku_code:'11360-99'},productCatalog,staleMapping,{preferDirectProductSku:true});
+ assert.equal(missing.method,'direct_sku_invalid');
+ const duplicate=A.resolveSellpiaSku(source[0],[productCatalog[0],productCatalog[0]],staleMapping,{preferDirectProductSku:true});
+ assert.equal(duplicate.method,'direct_sku_invalid');
+ const malformed=A.resolveSellpiaSku({...source[0],direct_sellpia_sku_code:'',direct_sellpia_sku_error:'P열 SKU 형식 오류'},productCatalog,staleMapping,{preferDirectProductSku:true});
+ assert.equal(malformed.method,'direct_sku_invalid');
+ const noDirect=A.resolveSellpiaSku({...source[0],direct_sellpia_sku_code:''},productCatalog,staleMapping,{preferDirectProductSku:true});
+ assert.equal(noDirect.sku,'11360-2','blank P value keeps legacy mapping fallback');
+}
+{
+ const productCatalog=['11043-1','11043-2','11043-3','11043-4'].map(sku=>({sellpia_product_code:'11043',sellpia_sku_code:sku}));
+ const source=A.parseProductRows([headers,sourceRow('11043',[
+  option('골드/6mm','no-ball'),option('골드/8mm','no-ball'),option('핑크골드/6mm','no-ball'),option('핑크골드/8mm','no-ball'),
+  option('골드/6mm','14K 헤비 잠금볼'),option('골드/8mm','14K 헤비 잠금볼'),option('핑크골드/6mm','14K 헤비 잠금볼'),option('핑크골드/8mm','14K 헤비 잠금볼')
+ ],['11043-1','11043-2','11043-3','11043-4','11043-1','11043-2','11043-3','11043-4'],[0,3500,0,3500,15000,18500,15000,18500],92500)]).map(item=>({...item,seller_product_code:'27992202'}));
+ const resolved=A.resolveRows(source,productCatalog,[{product_code:'27992202',option_code:'',sku:'11043-1'}],{preferDirectProductSku:true});
+ assert.deepEqual(Array.from(resolved,item=>item.resolution.sku),['11043-1','11043-2','11043-3','11043-4','11043-1','11043-2','11043-3','11043-4']);
+ const prepared=resolved.map(item=>({...item,_inScope:item.resolution.sku==='11043-2',_status:'ready',_error:''}));
+ A.prepareSellpiaSourceProductRows(prepared,new Map([['11043-2',100000]]));
+ assert.ok(prepared.every(item=>item._status==='ready'));
+ assert.deepEqual(finals(prepared),[92500,100000,92500,96000,107500,115000,107500,111000]);
+}
+
+{
  const rows=items([sourceRow()]);
  assert.deepEqual(finals(rows),[82000,97000]);assert.deepEqual(Array.from(rows,row=>row.carrier_variant_role),['anchor','addon']);
  assert.equal(rows[1].carrier_anchor_sku,'11445-1');assert.equal(rows[1].carrier_addon_delta,15000);
