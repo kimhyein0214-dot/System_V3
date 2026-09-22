@@ -482,7 +482,14 @@
 
   async function transformSellerFile(file,items,options={}){
     const skippedItems=[],appliedItems=[];
-    if(!Array.isArray(items)||!items.length)return {blob:new Blob([await file.arrayBuffer()],{type:file.type||'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'}),skippedItems,appliedItems};
+    if(!Array.isArray(items)||!items.length){
+      if(options.dataRowNumbers&&options.keepOnlyRows){
+        const parts=await xlsxParts(file),scoped=scopeWorksheetRows(parts.sheetXml,options.dataRowNumbers,options.keepOnlyRows);
+        assertWorksheetXmlWellFormed(scoped);parts.zip.file(parts.sheetPath,scoped);
+        return {blob:await parts.zip.generateAsync({type:'blob',mimeType:'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',compression:'DEFLATE'}),skippedItems,appliedItems};
+      }
+      return {blob:new Blob([await file.arrayBuffer()],{type:file.type||'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'}),skippedItems,appliedItems};
+    }
     const blob=await patchXlsxFile(file,items,entry=>skippedItems.push(entry),item=>appliedItems.push(item),options);
     return {blob,skippedItems,appliedItems};
   }
@@ -541,7 +548,7 @@
   }
 
   async function markCarrierWarnings(file,source,preview){
-    const warnings=(preview||[]).filter(row=>row.status==='warn_keep_original'||row.shared_price_warning);
+    const warnings=(preview||[]).filter(row=>row.status==='warn_keep_original'||row.status==='blocked'||row.shared_price_warning);
     if(!warnings.length)return file;
     if(!['smartstore','makeshop'].includes(source))throw new Error('지원되지 않는 carrier 강조 양식입니다.');
     const parts=await xlsxParts(file),references=[];

@@ -8389,7 +8389,7 @@ async function prepareChangedOnlyExport(source,skus=null,{download=false,onProgr
   const filesBySource=await liveData.downloadLatestSellerOriginals([source]);
   timings.download_ms=Math.round(clock()-mark);
   const files=filesBySource.get(source)||[];if(!files.length)throw Error(`${CHANNEL_LABELS[source]||source} 최신 보관 원본이 없습니다.`);
-  const outputs=[],skipped=[],plans=[],sourcePriceProofs=new Map(),matchedSelectedSkus=new Set(),selectedIdentityBySku=new Map();let carrierRows=0,matchedSkuCount=0;
+  const outputs=[],skipped=[],plans=[],sourcePriceProofs=new Map(),matchedSelectedSkus=new Set(),selectedIdentityBySku=new Map(),crossFileBlockedProducts=new Map(),fileContexts=[];let carrierRows=0,matchedSkuCount=0;
   const onQuery=query=>{queries.push(query);onProgress?.(`${source} · ${query.query} · 대상 ${formatNumber(query.scope_count)} · ${formatNumber(query.latency_ms)}ms`);};
   for(const file of files){
     mark=clock();
@@ -8399,6 +8399,15 @@ async function prepareChangedOnlyExport(source,skus=null,{download=false,onProgr
     mark=clock();
     const mapped=await liveData.loadCarrierSellerMappings({source,identities:parsed.normalizedRows,onQuery});
     timings.mapping_ms+=Math.round(clock()-mark);
+    fileContexts.push({file,parsed,mapped});
+    if(priceMode==='sellpia_source')for(const row of mapped.rows||[]){
+      if(!requested.has(String(row.sku||'').trim()))continue;
+      const identity=`${file.name}:${identityKey(row)}`,previous=selectedIdentityBySku.get(row.sku);
+      if(previous&&previous.identity!==identity){const reason=`${row.sku}: 여러 판매처 원본 옵션에 연결되어 상품 가격을 원본 유지합니다.`;crossFileBlockedProducts.set(previous.product,reason);crossFileBlockedProducts.set(String(row.product_code||''),reason);}
+      else selectedIdentityBySku.set(row.sku,{identity,product:String(row.product_code||'')});
+    }
+  }
+  for(const {file,parsed,mapped} of fileContexts){
     let mappingRows=mapped.rows||[];
     const mappedIdentities=new Set(mappingRows.map(identityKey));
     let scopedCarrierRows;
@@ -8416,11 +8425,7 @@ async function prepareChangedOnlyExport(source,skus=null,{download=false,onProgr
     mark=clock();
     const targets=priceMode==='rules'&&matchedSkus.length?await liveData.loadCarrierMatrixTargets({source,skus:matchedSkus,onQuery}):{rows:[]};
     const selectedMapped=priceMode==='sellpia_source'?matchedSkus.filter(sku=>requested.has(sku)):[];
-    for(const row of mappingRows)if(priceMode==='sellpia_source'&&requested.has(row.sku)){
-      const identity=`${file.name}:${identityKey(row)}`;
-      if(selectedIdentityBySku.has(row.sku)&&selectedIdentityBySku.get(row.sku)!==identity)throw Error(`${row.sku}: 여러 판매처 원본 옵션에 연결되어 있어 가격 내보내기를 중단합니다.`);
-      selectedIdentityBySku.set(row.sku,identity);matchedSelectedSkus.add(row.sku);
-    }
+    for(const row of mappingRows)if(priceMode==='sellpia_source'&&requested.has(row.sku))matchedSelectedSkus.add(row.sku);
     const sourcePrices=priceMode==='sellpia_source'?await liveData.loadSellpiaSourcePricesForExport({skus:selectedMapped,onQuery}):null;
     if(sourcePrices)for(const [sku,value] of sourcePrices){if(sourcePriceProofs.has(sku)&&sourcePriceProofs.get(sku)!==value)throw Error(`${sku}: 파일 간 셀피아 원본 가격이 다릅니다.`);sourcePriceProofs.set(sku,value);}
     timings.target_ms+=Math.round(clock()-mark);
@@ -8428,7 +8433,7 @@ async function prepareChangedOnlyExport(source,skus=null,{download=false,onProgr
     const snapshotRows=mappingRows.map(row=>({...targetBySku.get(row.sku),...row}));
     mark=clock();
     let plan=priceMode==='sellpia_source'
-      ?window.HubCurrentPriceExport.prepareSellpiaSourcePricePlan(source,file.name,scopedCarrierRows,mappingRows,sourcePrices,requested)
+      ?window.HubCurrentPriceExport.prepareSellpiaSourcePricePlan(source,file.name,scopedCarrierRows,mappingRows,sourcePrices,requested,crossFileBlockedProducts)
       :window.HubCurrentPriceExport.prepareCarrierItems(source,file.name,scopedCarrierRows,snapshotRows,{snapshotId:null});
     if(!requested&&priceMode==='rules'){
       const priceProducts=new Set((plan.operations||[]).filter(item=>item.field_key==='sellpia_sale_price').map(item=>String(item.seller_product_code||'')).filter(Boolean));
@@ -8439,10 +8444,11 @@ async function prepareChangedOnlyExport(source,skus=null,{download=false,onProgr
     }
     timings.plan_ms+=Math.round(clock()-mark);plans.push(plan);skipped.push(...plan.excludedItems);
     const fileItems=(plan.operations||[]).map(item=>({...item}));
-    if(!fileItems.length)continue;
+    if(!fileItems.length&&priceMode!=='sellpia_source')continue;
     const allDataRows=new Set(parsed.normalizedRows.map(row=>Number(row.source_row_no)).filter(Number.isInteger));
     const keepRowsForItems=items=>{
       const changedProducts=new Set(items.map(item=>String(item.seller_product_code||'')).filter(Boolean));
+      if(priceMode==='sellpia_source')for(const row of plan.preview||[])if(row.status==='blocked')changedProducts.add(String(row.product_code||''));
       return new Set(parsed.normalizedRows.filter(row=>changedProducts.has(String(row.product_code||''))).map(row=>Number(row.source_row_no)).filter(Number.isInteger));
     };
     const transformOptions=items=>mode==='changed_only'?{dataRowNumbers:allDataRows,keepOnlyRows:keepRowsForItems(items)}:{};
@@ -8451,16 +8457,27 @@ async function prepareChangedOnlyExport(source,skus=null,{download=false,onProgr
     timings.serialize_ms+=Math.round(clock()-mark);
     let appliedItems=transformed.appliedItems,warningPreview=plan.preview;
     if(transformed.skippedItems.length){
-      if(priceMode==='sellpia_source')throw Error(`${source}: 원본 셀 검증에서 ${transformed.skippedItems.length}건이 실패했습니다. 상품 가격을 부분 반영하지 않습니다. ${transformed.skippedItems[0]?.reason||''}`);
-      skipped.push(...transformed.skippedItems);
-      const blocked=new Set(transformed.skippedItems.map(entry=>Number(entry.item?.export_item_id))),safe=fileItems.filter(item=>!blocked.has(Number(item.export_item_id))).map(item=>({...item}));
-      if(!safe.length)continue;
+      if(priceMode==='sellpia_source'){
+        const failedProducts=new Set(transformed.skippedItems.map(entry=>String(entry.item?.seller_product_code||'')));
+        const reasonByProduct=new Map(transformed.skippedItems.map(entry=>[String(entry.item?.seller_product_code||''),entry.reason||'원본 셀 검증 실패']));
+        for(const row of plan.preview||[])if(failedProducts.has(String(row.product_code||''))){
+          row.status='blocked';row.changed=false;row.reason=`상품 묶음 원본 유지: ${reasonByProduct.get(String(row.product_code||''))}`;
+          const item={sellpia_sku_code:row.sku||'',source_channel:source,field_key:'sellpia_sale_price',seller_product_code:row.product_code,seller_option_code:row.option_code||'',source_file_name:file.name,source_row_no:row.source_row_no};
+          skipped.push({item,reason:row.reason});
+        }
+        fileItems.splice(0,fileItems.length,...fileItems.filter(item=>!failedProducts.has(String(item.seller_product_code||''))));
+        plan.operations=fileItems;plan.items=fileItems;
+        plan.summary.blocked=(plan.preview||[]).filter(row=>row.status==='blocked').length;
+        plan.version_token=window.HubCurrentPriceExport.planVersionToken({source,fileName:file.name,preview:plan.preview,operations:fileItems});
+      }else skipped.push(...transformed.skippedItems);
+      const blocked=new Set(transformed.skippedItems.map(entry=>Number(entry.item?.export_item_id))),safe=priceMode==='sellpia_source'?fileItems:fileItems.filter(item=>!blocked.has(Number(item.export_item_id))).map(item=>({...item}));
       mark=clock();
       transformed=await sellerExport.transformSellerFile(file,safe,transformOptions(safe));
       timings.serialize_ms+=Math.round(clock()-mark);skipped.push(...transformed.skippedItems);appliedItems=transformed.appliedItems;
+      if(transformed.skippedItems.length)throw Error(`${source}: 안전한 상품을 다시 검증하는 중 원본 셀 오류가 발생했습니다.`);
     }
     if(priceMode==='sellpia_source'&&appliedItems.length!==fileItems.length)throw Error(`${source}: 계획한 가격 셀 ${fileItems.length}건 중 ${appliedItems.length}건만 검증됐습니다. 파일을 생성하지 않습니다.`);
-    if(!appliedItems.length)continue;
+    if(!appliedItems.length&&!(priceMode==='sellpia_source'&&plan.summary.blocked))continue;
     let outputBlob=transformed.blob;
     if(mode==='changed_only'){
       const keepRows=keepRowsForItems(appliedItems);

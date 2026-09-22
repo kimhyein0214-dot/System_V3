@@ -33,17 +33,20 @@ function assertFinals(p,expected){assert.deepEqual(p.preview.map(row=>row.diff.p
  const p=plan(fixture({discount:116000,base:146000,options:[0,3500,9000],sourcePrices:{A:33000}}));assertFinals(p,[33000,33500,39000]);assert.equal(p.preview[0].diff.price.after.base,149000);assert.equal(p.preview[0].diff.price.before.discount_terms[0].value,116000);
 }
 {
- const f=fixture({sourcePrices:{}});assert.throws(()=>plan(f),/최신 셀피아 원본 판매가/);
- const duplicate=fixture();duplicate.mappings.push({sku:'X',product_code:'P',option_code:'A'});assert.throws(()=>plan(duplicate),/여러 SKU/);
+ const blocked=(f,reason)=>{const p=plan(f);assert.equal(p.operations.length,0);assert.equal(p.summary.blocked,f.rows.length);assert.match(p.preview[0].reason,reason);assert.equal(p.excludedItems.length,f.rows.length);};
+ blocked(fixture({sourcePrices:{}}),/최신 셀피아 원본 판매가/);
+ const duplicate=fixture();duplicate.mappings.push({sku:'X',product_code:'P',option_code:'A'});blocked(duplicate,/여러 SKU/);
  const unrelated=fixture();unrelated.rows.push({...unrelated.rows[0],product_code:'OTHER',option_code:'X'});unrelated.mappings.push({sku:'X',product_code:'OTHER',option_code:'X'},{sku:'Y',product_code:'OTHER',option_code:'X'});assert.equal(plan(unrelated).summary.selected,1,'unrelated product mapping ambiguity does not block the selected product');
- const multi=fixture();multi.mappings.push({sku:'A',product_code:'P',option_code:'B'});assert.throws(()=>plan(multi),/identity가 여러/);
- const missing=fixture();missing.rows[0].discount_terms=null;assert.throws(()=>plan(missing),/할인을 읽지/);
- const unreadable=fixture();unreadable.rows[0].raw_payload.smartstore_basic_discount_unit=null;assert.throws(()=>plan(unreadable),/할인정보가 불완전/);
- const absent=fixture();delete absent.rows[0].raw_payload.smartstore_basic_discount_value;assert.throws(()=>plan(absent),/할인정보를 읽지/);
- const inconsistent=fixture();inconsistent.rows[1].base_price=35000;assert.throws(()=>plan(inconsistent),/등록가·할인조건/);
- const badLocation=fixture();badLocation.rows[0].source_row_no=null;assert.throws(()=>plan(badLocation),/행 위치/);
- const wrongDiscount=fixture();wrongDiscount.rows[0].discounted_base_price=12345;assert.throws(()=>plan(wrongDiscount),/할인조건과 할인 후 가격/);
- const invalidPrice=fixture({sourcePrices:{A:-1}});assert.throws(()=>plan(invalidPrice),/원본 판매가/);
+ const multi=fixture();multi.mappings.push({sku:'A',product_code:'P',option_code:'B'});blocked(multi,/identity가 여러|여러 SKU/);
+ const missing=fixture();missing.rows[0].discount_terms=null;blocked(missing,/할인을 읽지/);
+ const unreadable=fixture();unreadable.rows[0].raw_payload.smartstore_basic_discount_unit=null;blocked(unreadable,/할인정보가 불완전/);
+ const absent=fixture();delete absent.rows[0].raw_payload.smartstore_basic_discount_value;blocked(absent,/할인정보를 읽지/);
+ const inconsistent=fixture();inconsistent.rows[1].base_price=35000;blocked(inconsistent,/등록가·할인조건/);
+ const badLocation=fixture();badLocation.rows[0].source_row_no=null;blocked(badLocation,/행 위치/);
+ const wrongDiscount=fixture();wrongDiscount.rows[0].discounted_base_price=12345;blocked(wrongDiscount,/할인조건과 할인 후 가격/);
+ const invalidPrice=fixture({sourcePrices:{A:-1}});blocked(invalidPrice,/원본 판매가/);
+ const mixed=fixture({sourcePrices:{A:32000,Q:45000}});mixed.rows.push({...mixed.rows[0],product_code:'Q',option_code:'Q',source_row_no:3});mixed.mappings.push({sku:'Q',product_code:'Q',option_code:'Q'});mixed.selected.push('Q');mixed.mappings.push({sku:'X',product_code:'P',option_code:'A'});const partial=plan(mixed);
+ assert.equal(partial.summary.blocked,3,'ambiguous P siblings stay original');assert.equal(partial.summary.selected,1,'independent Q remains exportable');assert.equal(partial.operations.length,1);assert.equal(partial.operations[0].seller_product_code,'Q');
  assert.throws(()=>api.prepareSellpiaSourcePricePlan('ably','smartstore.xlsx',[],[],new Map(),['A']),/스마트스토어·메이크샵/);
 }
 {
@@ -73,11 +76,29 @@ function assertFinals(p,expected){assert.deepEqual(p.preview.map(row=>row.diff.p
   assert.match(parts.get('xl/styles.xml'),/FFFFFF00/);assert.match(parts.get('xl/styles.xml'),/<b\b/);
  }finally{globalThis.JSZip=saved;}
  const missing=structuredClone(rows);missing[0].raw_payload.makeshop_discount_price='invalid';missing[0].discount_terms=[];
- assert.throws(()=>api.prepareSellpiaSourcePricePlan('makeshop','make.xlsx',missing,mappings,new Map([['B',8500]]),['B']),/할인조건과 할인 후 가격|할인정보/);
+ assert.match(api.prepareSellpiaSourcePricePlan('makeshop','make.xlsx',missing,mappings,new Map([['B',8500]]),['B']).preview[0].reason,/할인조건과 할인 후 가격|할인정보/);
 }
 {
  const first=plan(fixture({sourcePrices:{A:32000}})),second=plan(fixture({sourcePrices:{A:32500}}));assert.notEqual(first.version_token,second.version_token,'a new source price invalidates a preview');
  assert.equal(api.matrixPriceTarget({}),null,'the default rules resolver remains independent');
+}
+{
+ const parts=new Map([
+  ['xl/workbook.xml','<workbook xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><sheets><sheet name="수정" sheetId="1" r:id="rId1"/></sheets></workbook>'],
+  ['xl/_rels/workbook.xml.rels','<Relationships><Relationship Id="rId1" Target="worksheets/sheet1.xml"/></Relationships>'],
+  ['xl/styles.xml','<styleSheet><fonts count="1"><font><sz val="11"/></font></fonts><fills count="1"><fill><patternFill patternType="none"/></fill></fills><cellXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0"/></cellXfs></styleSheet>'],
+  ['xl/worksheets/sheet1.xml','<worksheet><dimension ref="A1:CP3"/><sheetData><row r="2"><c r="F2"><v>34000</v></c><c r="BF2"><v>4000</v></c><c r="BG2" t="inlineStr"><is><t>원</t></is></c></row><row r="3"><c r="F3"><v>50000</v></c></row></sheetData></worksheet>']
+ ]);
+ const zip={file(name,value){if(value!==undefined){parts.set(name,value);return this;}return parts.has(name)?{async:async()=>parts.get(name)}:null;},async generateAsync(){return new Blob([JSON.stringify([...parts])]);}};
+ const saved=globalThis.JSZip;globalThis.JSZip={loadAsync:async()=>zip};
+ try{
+  const adapter=globalThis.SystemV3SellerExport,file={name:'smartstore.xlsx',arrayBuffer:async()=>new ArrayBuffer(0)};
+  const scoped=await adapter.transformSellerFile(file,[],{dataRowNumbers:new Set([2,3]),keepOnlyRows:new Set([2])});
+  assert.equal(scoped.appliedItems.length,0);assert.doesNotMatch(parts.get('xl/worksheets/sheet1.xml'),/row r="3"/,'warning-only changed export excludes unrelated rows');
+  await adapter.markCarrierWarnings(scoped.blob,'smartstore',[{status:'blocked',source_row_no:2,product_code:'P',option_code:'A'}]);
+  assert.match(parts.get('xl/styles.xml'),/FFFFC7CE/,'blocked source row is red');
+  assert.match(adapter.conflictCsv([{item:{source_channel:'smartstore',sellpia_sku_code:'A',field_key:'sellpia_sale_price',seller_product_code:'P',option_code:'A',source_file_name:'smartstore.xlsx',source_row_no:2},reason:'연결 모호'}]),/연결 모호/,'blocked row is in separate warning CSV');
+ }finally{globalThis.JSZip=saved;}
 }
 {
  const p=plan(fixture({sourcePrices:{A:32000}}));

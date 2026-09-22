@@ -21,6 +21,6 @@ assert.match(app, /markMatrixAffected\(affected\)[\s\S]*if \(matrixDataset\) awa
 assert.match(app, /pending\.pendingCount >= previousPendingCount && batchKey === previousBatchKey/, 'a persistently failing batch must stop after proving no forward progress');
 assert.match(app, /pendingPurchasePriceRecoveryNextAttemptAt = Date\.now\(\) \+ 5 \* 60 \* 1000/, 'persistent errors must back off instead of retrying continuously');
 assert.match(app, /refreshLiveData\(\{resetPage:true\}\)\.finally\(\(\) => schedulePendingPurchasePriceRecovery\(\)\)/, 'login startup must resume unfinished calculations after initial reads settle');
-assert.match(html, /data-service\.js\?v=20260921-sellpia-source-overlay-v1[\s\S]*app\.js\?v=20260922-sellpia-makeshop-ably-v1/, 'changed frontend assets must be cache-busted');
+assert.match(html, /data-service\.js\?v=20260921-sellpia-source-overlay-v1[\s\S]*app\.js\?v=20260922-partial-price-blocks-v1/, 'changed frontend assets must be cache-busted');
 
 console.log('Operations Hub automatic purchase-price recovery contract: passed');
