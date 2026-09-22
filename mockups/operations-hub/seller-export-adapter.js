@@ -312,16 +312,17 @@
     const map=new Map(); String(sheetXml).replace(/<row\b[^>]*\br="(\d+)"[^>]*>[\s\S]*?<\/row>/g,(rowXml,rowNo)=>{ const code=clean(cellValue(rowXml,`E${rowNo}`,sharedStrings)); if(code) map.set(code,Number(rowNo)); return rowXml; }); return map;
   }
   function makeshopPhysicalProductRows(sheetXml,sharedStrings) {
-    const dataRowNumbers=[],rowsByProduct=new Map();let product='';
+    const dataRowNumbers=[],rowsByProduct=new Map(),rowXmlByNumber=new Map();let product='';
     String(sheetXml).replace(/<row\b[^>]*\br="(\d+)"[^>]*>[\s\S]*?<\/row>/g,(rowXml,rowNo)=>{
       const row=Number(rowNo);if(row<2)return rowXml;
+      rowXmlByNumber.set(row,rowXml);
       const code=clean(cellValue(rowXml,`E${row}`,sharedStrings));
       if(code)product=code;
       dataRowNumbers.push(row);
       if(product){if(!rowsByProduct.has(product))rowsByProduct.set(product,[]);rowsByProduct.get(product).push({row,rowXml});}
       return rowXml;
     });
-    return {dataRowNumbers,rowsByProduct};
+    return {dataRowNumbers,rowsByProduct,rowXmlByNumber};
   }
   async function readMakeshopPhysicalProductRows(file) {
     const {sheetXml,shared}=await xlsxParts(file),scope=makeshopPhysicalProductRows(sheetXml,shared);
@@ -352,7 +353,8 @@
       if(!groups.has(key)) groups.set(key,[]);
       groups.get(key).push(item);
     }
-    let workingSheetXml=sheetXml;
+    const parentUpdates=new Map();
+    const originalRow=row=>physicalRows?.rowXmlByNumber.get(row)||sheetRowXml(sheetXml,row);
     for(const [productCode,group] of groups) {
       try {
         const targets=group.map(priceTargets);
@@ -363,7 +365,7 @@
         if(source==='makeshop') {
           productRow=productRows.get(clean(group[0].seller_product_code));
           if(!productRow) throw exportConflict(group[0],`${SOURCE_LABELS[source]} ${productCode}: 상품 기본 판매가 행을 찾지 못했습니다.`);
-          originalBase=Number(cellValue(sheetRowXml(sheetXml,productRow),`AS${productRow}`,sharedStrings));
+          originalBase=Number(cellValue(originalRow(productRow),`AS${productRow}`,sharedStrings));
           if(!Number.isFinite(originalBase)) throw exportConflict(group[0],`${SOURCE_LABELS[source]} ${productCode}: 원본 기본 판매가를 읽지 못했습니다.`);
           if(group.some(item=>clean(item.seller_option_code))) {
             try {
@@ -384,7 +386,7 @@
         }
         for(const item of group) {
           const row=Number(item.source_row_no);
-          const rowXml=sheetRowXml(sheetXml,row);
+          const rowXml=originalRow(row);
           if(!rowXml) throw exportConflict(item,`${SOURCE_LABELS[source]} ${item.sellpia_sku_code}: 보관 원본에서 ${row}행을 찾지 못했습니다.`);
           const optionCode=clean(item.seller_option_code);
           if(source==='smartstore') {
@@ -401,18 +403,19 @@
             if(Number.isFinite(Number(item.base_price))&&originalBase!==Number(item.base_price)) throw exportConflict(item,`${SOURCE_LABELS[source]} ${item.sellpia_sku_code}: DB 기본 판매가(${item.base_price})와 보관 원본 값(${originalBase})이 다릅니다.`);
             if(optionCode&&clean(cellValue(rowXml,`AR${row}`,sharedStrings))!==optionCode) throw exportConflict(item,`${SOURCE_LABELS[source]} ${item.sellpia_sku_code}: ${row}행 옵션코드가 DB와 다릅니다.`);
             const option=optionCode?Number(cellValue(rowXml,`AF${row}`,sharedStrings)||0):0;
-            verifyExpected(makeshopDiscountedBase(sheetRowXml(sheetXml,productRow),productRow,sharedStrings,originalBase)+option,item);
+            verifyExpected(makeshopDiscountedBase(originalRow(productRow),productRow,sharedStrings,originalBase)+option,item);
             item._product_row_no=productRow;
           }
         }
         if(source==='makeshop') {
-          workingSheetXml=setCellValue(workingSheetXml,`AS${productRow}`,targets[0].base,'number');
+          const updates=[{reference:`AS${productRow}`,value:targets[0].base,type:'number'}];
           if(discountTermsChanged(group[0])) {
             const terms=discountTermMap(group[0].target_discount_terms);
-            workingSheetXml=setCellValue(workingSheetXml,`DD${productRow}`,makeshopPeriodText(terms.get('period')),'string');
-            workingSheetXml=setCellValue(workingSheetXml,`AT${productRow}`,terms.get('membership')?.value??0,'number');
+            updates.push({reference:`DD${productRow}`,value:makeshopPeriodText(terms.get('period')),type:'string'});
+            updates.push({reference:`AT${productRow}`,value:terms.get('membership')?.value??0,type:'number'});
             for(const item of group) item._shared_discount_refs=[{reference:`DD${productRow}`},{reference:`AT${productRow}`}];
           }
+          parentUpdates.set(productRow,updates);
         }
       } catch(error) {
         if(!error?.exportConflict||!onConflict) throw error;
@@ -422,6 +425,11 @@
         }
       }
     }
+    const workingSheetXml=parentUpdates.size?String(sheetXml).replace(/<row\b[^>]*\br="(\d+)"[^>]*>[\s\S]*?<\/row>/g,(rowXml,rowNo)=>{
+      const updates=parentUpdates.get(Number(rowNo));
+      if(!updates)return rowXml;
+      return updates.reduce((current,update)=>setCellValue(current,update.reference,update.value,update.type),rowXml);
+    }):sheetXml;
     return {items,workingSheetXml};
   }
   function patchMakeshopRow(rowXml,items,sharedStrings,onConflict,onApplied) {
@@ -490,6 +498,7 @@
     });
     if(appliedMakeshopOptions.length) {
       const changedByProduct=new Map();
+      const optionListUpdates=new Map();
       for(const item of appliedMakeshopOptions){const code=clean(item.seller_product_code);if(!changedByProduct.has(code))changedByProduct.set(code,[]);changedByProduct.get(code).push(item);}
       for(const [code,group] of changedByProduct){
         const optionList=makeshopOptionList(makeshopRows.rowsByProduct.get(code),shared,code),values=[...optionList.prices];let changed=false;
@@ -500,11 +509,15 @@
           if(Number(values[index])!==target){values[index]=String(target);changed=true;}
         }
         if(changed){
-          const row=optionList.parent.row,matcher=new RegExp(`<row\\b[^>]*\\br="${row}"[^>]*>[\\s\\S]*?<\\/row>`);
-          patched=patched.replace(matcher,rowXml=>setCellValue(rowXml,`V${row}`,values.join(','),'string'));
+          const row=optionList.parent.row;
+          optionListUpdates.set(row,values.join(','));
           appliedHighlights.push({reference:`V${row}`});
         }
       }
+      if(optionListUpdates.size)patched=patched.replace(/<row\b[^>]*\br="(\d+)"[^>]*>[\s\S]*?<\/row>/g,(rowXml,rowNo)=>{
+        const row=Number(rowNo),values=optionListUpdates.get(row);
+        return values===undefined?rowXml:setCellValue(rowXml,`V${row}`,values,'string');
+      });
     }
     let scoped=patched,highlights=appliedHighlights;
     if(dataRowNumbers&&keepOnlyRows){

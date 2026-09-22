@@ -45,7 +45,7 @@ const localAssets = [...html.matchAll(/(?:href|src)="(\.\/[^\"]+)"/g)].map(match
 assert.ok(localAssets.length >= 18, 'the export page must retain its local asset bundle');
 assert.ok(localAssets.every(asset => /\?v=[^&\"]+$/.test(asset)), 'all local export assets must be versioned');
 assert.match(html,/discount-price-math\.js\?v=20260914-matrix-visible-export-v2/,'shared matrix display math keeps its deployed version');
-assert.match(html,/seller-export-adapter\.js\?v=20260922-makeshop-full-product-options-v1/,'MakeShop workbook row and option price serializer uses the latest version');
+assert.match(html,/seller-export-adapter\.js\?v=20260922-makeshop-batch-row-patch-v2/,'MakeShop workbook batch row serializer uses the latest version');
 assert.match(html,/app\.js\?v=[^"']+/,'carrier guard remains cache-versioned');
 assert.match(html,/current-price-export\.js\?v=20260922-smartstore-option-buffer-v1/,'Smartstore Sellpia source resolver uses a fresh deployed version');
 assert.match(html,/ably-playauto-export\.js\?v=20260922-ably-direct-sku-v2/,'Ably carrier variant resolver uses a fresh deployed version');

@@ -78,3 +78,15 @@ test('MakeShop refuses to overwrite a changed option when original V and AF disa
   assert.equal(adapter.cellValue(xml,'AF4',[]),'3500');
   assert.equal(adapter.cellValue(xml,'V3',[]),'0,4000');
 });
+
+test('MakeShop applies shared and listed option prices for multiple products in one file pass',async()=>{
+  const second={...priceItem,source_row_no:7,seller_product_code:'222',seller_option_code:'1',sellpia_sku_code:'sku-3',expected_source_value:40000,after_value:42500,base_price:40000,option_price:0,target_base_price:40000,target_discounted_base_price:40000,target_option_price:2500,target_final_price:42500};
+  const result=await adapter.transformSellerFile(await workbook(),[{...priceItem},second]);
+  assert.equal(result.appliedItems.length,2);
+  assert.equal(result.skippedItems.length,0);
+  const zip=await JSZip.loadAsync(await result.blob.arrayBuffer()),xml=await zip.file('xl/worksheets/sheet1.xml').async('string');
+  assert.equal(adapter.cellValue(xml,'V3',[]),'0,5000');
+  assert.equal(adapter.cellValue(xml,'AF4',[]),'5000');
+  assert.equal(adapter.cellValue(xml,'V7',[]),'2500');
+  assert.equal(adapter.cellValue(xml,'AF7',[]),'2500');
+});

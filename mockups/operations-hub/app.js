@@ -8441,6 +8441,8 @@ async function prepareChangedOnlyExport(source,skus=null,{download=false,onProgr
     timings.target_ms+=Math.round(clock()-mark);
     const targetBySku=new Map((targets.rows||[]).map(row=>[row.sku,row]));
     const snapshotRows=mappingRows.map(row=>({...targetBySku.get(row.sku),...row}));
+    onProgress?.(`가격 계획 계산 중 · 연결 ${formatNumber(matchedSkus.length)} SKU`);
+    await new Promise(resolve=>globalThis.setTimeout(resolve,0));
     mark=clock();
     let plan=priceMode==='sellpia_source'
       ?window.HubCurrentPriceExport.prepareSellpiaSourcePricePlan(source,file.name,scopedCarrierRows,mappingRows,sourcePrices,requested,crossFileBlockedProducts)
@@ -8455,6 +8457,8 @@ async function prepareChangedOnlyExport(source,skus=null,{download=false,onProgr
     timings.plan_ms+=Math.round(clock()-mark);plans.push(plan);skipped.push(...plan.excludedItems);
     const fileItems=(plan.operations||[]).map(item=>({...item}));
     if(!fileItems.length&&priceMode!=='sellpia_source')continue;
+    if(source==='makeshop'&&mode==='changed_only')onProgress?.(`엑셀 원본 행 범위 확인 중 · 변경 ${formatNumber(fileItems.length)}건`);
+    await new Promise(resolve=>globalThis.setTimeout(resolve,0));
     const makeshopPhysicalRows=source==='makeshop'&&mode==='changed_only'
       ?await sellerExport.readMakeshopPhysicalProductRows(file):null;
     const allDataRows=new Set(makeshopPhysicalRows?.dataRowNumbers||parsed.normalizedRows.map(row=>Number(row.source_row_no)).filter(Number.isInteger));
@@ -8470,6 +8474,8 @@ async function prepareChangedOnlyExport(source,skus=null,{download=false,onProgr
       return rows;
     };
     const transformOptions=items=>mode==='changed_only'?{dataRowNumbers:allDataRows,keepOnlyRows:keepRowsForItems(items)}:{};
+    onProgress?.(`엑셀 가격·옵션 일괄 반영 중 · 변경 ${formatNumber(fileItems.length)}건`);
+    await new Promise(resolve=>globalThis.setTimeout(resolve,0));
     mark=clock();
     let transformed=await sellerExport.transformSellerFile(file,fileItems,transformOptions(fileItems));
     timings.serialize_ms+=Math.round(clock()-mark);
@@ -8489,6 +8495,8 @@ async function prepareChangedOnlyExport(source,skus=null,{download=false,onProgr
         plan.version_token=window.HubCurrentPriceExport.planVersionToken({source,fileName:file.name,preview:plan.preview,operations:fileItems});
       }else skipped.push(...transformed.skippedItems);
       const blocked=new Set(transformed.skippedItems.map(entry=>Number(entry.item?.export_item_id))),safe=priceMode==='sellpia_source'?fileItems:fileItems.filter(item=>!blocked.has(Number(item.export_item_id))).map(item=>({...item}));
+      onProgress?.(`엑셀 차단 상품 원본 유지·정상 상품 재검증 중 · 정상 ${formatNumber(safe.length)}건`);
+      await new Promise(resolve=>globalThis.setTimeout(resolve,0));
       mark=clock();
       transformed=await sellerExport.transformSellerFile(file,safe,transformOptions(safe));
       timings.serialize_ms+=Math.round(clock()-mark);skipped.push(...transformed.skippedItems);appliedItems=transformed.appliedItems;
@@ -8526,6 +8534,16 @@ async function prepareChangedOnlyExport(source,skus=null,{download=false,onProgr
 }
 
 async function prepareFullOriginalExport(source,skus=null,options={}){return prepareChangedOnlyExport(source,skus,{...options,mode:'full_original'});}
+
+function reportSellerExportProgress(source,detail){
+  const message=String(detail||'');
+  const stage=message.startsWith('엑셀 차단')?{percent:80,title:'정상 상품 재검증'}
+    :message.startsWith('엑셀 가격')?{percent:75,title:'엑셀 가격 반영'}
+    :message.startsWith('엑셀 원본')?{percent:65,title:'엑셀 행 확인'}
+    :message.startsWith('가격 계획')?{percent:55,title:'가격 계획 계산'}
+    :{percent:45,title:'carrier 대상 조회'};
+  globalThis.dispatchEvent(new CustomEvent('system-v3-seller-export-progress',{detail:{source,...stage,detail:message}}));
+}
 
 window.SystemV3SellerExportBridge={
   async refreshInventoryDrafts({source,skus=null,overwriteBlank=false,job=null,onProgress=null,onCheckpoint=null}={}){
@@ -8601,20 +8619,20 @@ window.SystemV3SellerExportBridge={
     };
   },
   async previewFullOriginal({source,skus=null,priceMode='rules'}={}){
-    const result=await prepareFullOriginalExport(source,skus,{download:false,priceMode,onProgress:detail=>globalThis.dispatchEvent(new CustomEvent('system-v3-seller-export-progress',{detail:{source,percent:45,title:'carrier 대상 조회',detail}}))});
+    const result=await prepareFullOriginalExport(source,skus,{download:false,priceMode,onProgress:detail=>reportSellerExportProgress(source,detail)});
     return {source,count:`반영 ${formatNumber(result.changedItems.length)}건`,detail:`전체 원본 유지 · carrier ${formatNumber(result.diagnostics.carrier_rows)}행 · 대상 ${formatNumber(result.diagnostics.sku_count)} SKU · 경고 ${formatNumber(result.skippedItems.length)}건 · ${(result.timings.total_ms/1000).toFixed(2)}초`,...result};
   },
   async runFullOriginal({source,skus=null,priceMode='rules',expectedPlanFingerprint=null}={}){
-    const result=await prepareFullOriginalExport(source,skus,{download:true,priceMode,expectedPlanFingerprint,onProgress:detail=>globalThis.dispatchEvent(new CustomEvent('system-v3-seller-export-progress',{detail:{source,percent:45,title:'carrier 대상 조회',detail}}))});
+    const result=await prepareFullOriginalExport(source,skus,{download:true,priceMode,expectedPlanFingerprint,onProgress:detail=>reportSellerExportProgress(source,detail)});
     if(!result.outputs.length)throw Error('현재 매트릭스와 다른 안전한 변경 행이 없습니다.');
     return {source,title:'전체 원본 XLSX 생성 완료',progressDetail:`원본 행 전체 유지 · 파일 ${formatNumber(result.outputs.length)}개 · 반영 ${formatNumber(result.changedItems.length)}건 · 경고 ${formatNumber(result.skippedItems.length)}건 · ${(result.timings.total_ms/1000).toFixed(2)}초`,...result};
   },
   async previewChangedOnly({source,skus=null,priceMode='rules'}={}){
-    const result=await prepareChangedOnlyExport(source,skus,{download:false,priceMode,onProgress:detail=>globalThis.dispatchEvent(new CustomEvent('system-v3-seller-export-progress',{detail:{source,percent:45,title:'carrier 대상 조회',detail}}))});
+    const result=await prepareChangedOnlyExport(source,skus,{download:false,priceMode,onProgress:detail=>reportSellerExportProgress(source,detail)});
     return {source,count:`변경 ${formatNumber(result.changedItems.length)}건`,detail:`carrier ${formatNumber(result.diagnostics.carrier_rows)}행 · 대상 ${formatNumber(result.diagnostics.sku_count)} SKU · 부분 XLSX ${formatNumber(result.outputs.length)}개 · 경고 ${formatNumber(result.skippedItems.length)}건 · ${(result.timings.total_ms/1000).toFixed(2)}초`,...result};
   },
   async runChangedOnly({source,skus=null,priceMode='rules',expectedPlanFingerprint=null}={}){
-    const result=await prepareChangedOnlyExport(source,skus,{download:true,priceMode,expectedPlanFingerprint,onProgress:detail=>globalThis.dispatchEvent(new CustomEvent('system-v3-seller-export-progress',{detail:{source,percent:45,title:'carrier 대상 조회',detail}}))});
+    const result=await prepareChangedOnlyExport(source,skus,{download:true,priceMode,expectedPlanFingerprint,onProgress:detail=>reportSellerExportProgress(source,detail)});
     if(!result.outputs.length)throw Error('현재 매트릭스와 다른 안전한 변경 행이 없습니다.');
     return {source,title:'변경분 XLSX 생성 완료',progressDetail:`파일 ${formatNumber(result.outputs.length)}개 · 반영 ${formatNumber(result.changedItems.length)}건 · 경고 ${formatNumber(result.skippedItems.length)}건 · 대상 ${formatNumber(result.diagnostics.sku_count)} SKU · ${(result.timings.total_ms/1000).toFixed(2)}초`,...result};
   },
