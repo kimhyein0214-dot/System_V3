@@ -45,7 +45,7 @@ const localAssets = [...html.matchAll(/(?:href|src)="(\.\/[^\"]+)"/g)].map(match
 assert.ok(localAssets.length >= 18, 'the export page must retain its local asset bundle');
 assert.ok(localAssets.every(asset => /\?v=[^&\"]+$/.test(asset)), 'all local export assets must be versioned');
 assert.match(html,/discount-price-math\.js\?v=20260914-matrix-visible-export-v2/,'shared matrix display math keeps its deployed version');
-assert.match(html,/seller-export-adapter\.js\?v=20260922-smartstore-option-buffer-v1/,'worksheet XML serializer uses the option-limit revalidation version');
+assert.match(html,/seller-export-adapter\.js\?v=20260922-makeshop-full-product-options-v1/,'MakeShop workbook row and option price serializer uses the latest version');
 assert.match(html,/app\.js\?v=[^"']+/,'carrier guard remains cache-versioned');
 assert.match(html,/current-price-export\.js\?v=20260922-smartstore-option-buffer-v1/,'Smartstore Sellpia source resolver uses a fresh deployed version');
 assert.match(html,/ably-playauto-export\.js\?v=20260922-ably-direct-sku-v2/,'Ably carrier variant resolver uses a fresh deployed version');
@@ -194,7 +194,7 @@ assert.equal(adapter.cellValue(makePatched, 'AG4', []), '8');
 assert.equal(adapter.cellValue(makePatched, 'AF4', []), '300');
 assert.equal(adapter.outputName('원본.xlsx'), '원본_SystemV3반영.xlsx');
 
-const makeProductRow = '<row r="2"><c r="E2" t="inlineStr"><is><t>product-1</t></is></c><c r="AS2"><v>5200</v></c></row>';
+const makeProductRow = '<row r="2"><c r="E2" t="inlineStr"><is><t>product-1</t></is></c><c r="U2" t="inlineStr"><is><t>골드</t></is></c><c r="V2" t="inlineStr"><is><t>200</t></is></c><c r="AS2"><v>5200</v></c></row>';
 const makeGroupSheet = `<worksheet><sheetData>${makeProductRow}${makeRow}</sheetData></worksheet>`;
 const makeGroupItems = [
   {source_row_no:4, source_channel:'makeshop', source_file_name:'make.xlsx', sellpia_sku_code:'1014-2', seller_product_code:'product-1', seller_option_code:'425', field_key:'sellpia_sale_price', expected_source_value:5400, after_value:5600, base_price:5200, option_price:200, target_base_price:5300, target_discounted_base_price:4770, target_option_price:830, target_final_price:5600,

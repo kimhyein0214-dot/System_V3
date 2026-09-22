@@ -97,7 +97,7 @@ function assertFinals(p,expected){assert.deepEqual(p.preview.map(row=>row.diff.p
   ['xl/workbook.xml','<workbook xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><sheets><sheet name="수정" sheetId="1" r:id="rId1"/></sheets></workbook>'],
   ['xl/_rels/workbook.xml.rels','<Relationships><Relationship Id="rId1" Target="worksheets/sheet1.xml"/></Relationships>'],
   ['xl/styles.xml','<styleSheet><fonts count="1"><font><sz val="11"/></font></fonts><fills count="1"><fill><patternFill patternType="none"/></fill></fills><cellXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0"/></cellXfs></styleSheet>'],
-  ['xl/worksheets/sheet1.xml','<worksheet><sheetData><row r="2"><c r="E2" t="inlineStr"><is><t>M</t></is></c><c r="AS2"><v>10000</v></c><c r="DD2" t="inlineStr"><is><t>10% 십원반올림</t></is></c></row><row r="3"><c r="AR3" t="inlineStr"><is><t>B</t></is></c><c r="AF3"><v>1000</v></c></row><row r="4"><c r="AR4" t="inlineStr"><is><t>C</t></is></c><c r="AF4"><v>2000</v></c></row></sheetData></worksheet>']
+  ['xl/worksheets/sheet1.xml','<worksheet><sheetData><row r="2"><c r="E2" t="inlineStr"><is><t>M</t></is></c><c r="U2" t="inlineStr"><is><t>B,C</t></is></c><c r="V2" t="inlineStr"><is><t>1000,2000</t></is></c><c r="AS2"><v>10000</v></c><c r="DD2" t="inlineStr"><is><t>10% 십원반올림</t></is></c></row><row r="3"><c r="AD3" t="inlineStr"><is><t>B</t></is></c><c r="AR3" t="inlineStr"><is><t>B</t></is></c><c r="AF3"><v>1000</v></c></row><row r="4"><c r="AD4" t="inlineStr"><is><t>C</t></is></c><c r="AR4" t="inlineStr"><is><t>C</t></is></c><c r="AF4"><v>2000</v></c></row></sheetData></worksheet>']
  ]);
  const zip={file(name,value){if(value!==undefined){parts.set(name,value);return this;}return parts.has(name)?{async:async()=>parts.get(name)}:null;},async generateAsync(){return new Blob([JSON.stringify([...parts])]);}};
  const saved=globalThis.JSZip;globalThis.JSZip={loadAsync:async()=>zip};
@@ -107,6 +107,7 @@ function assertFinals(p,expected){assert.deepEqual(p.preview.map(row=>row.diff.p
   const sheet=parts.get('xl/worksheets/sheet1.xml'),cell=globalThis.SystemV3SellerExport.cellValue;
   assert.equal(Number(cell(sheet,'AS2',[])),p.preview[0].diff.price.after.base);
   assert.equal(Number(cell(sheet,'AF3',[])),0);assert.equal(Number(cell(sheet,'AF4',[])),2500);
+  assert.equal(cell(sheet,'V2',[]),'0,2500','comma-separated option prices match the combination prices');
   assert.equal(cell(sheet,'DD2',[]),'10% 십원반올림','the original period discount is retained');
   assert.match(parts.get('xl/styles.xml'),/FFFFFF00/);assert.match(parts.get('xl/styles.xml'),/<b\b/);
  }finally{globalThis.JSZip=saved;}

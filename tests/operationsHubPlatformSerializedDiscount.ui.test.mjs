@@ -18,7 +18,7 @@ try{
     const r=Array(width).fill('');r[0]='12345';r[1]='sellpia_1000';r[3]='공유 상품';r[5]=15000;r[15]='op1\nop2';r[16]='6mm\n8mm';r[17]='0\n2000';r[18]='10\n20';r[19]='Y\nY';rows.push(r);
    }else if(source==='makeshop'){
     header[4]='product_uid';header[32]='sto_stock';header[44]='sell_price';
-    for(let i=0;i<2;i++){const r=Array(width).fill('');if(!i){r[4]='12345';r[12]='공유 상품';r[44]=15000;}r[29]=i?'8mm':'6mm';r[31]=i*2000;r[32]=10;r[41]='판매';r[43]='op'+(i+1);rows.push(r);}
+    for(let i=0;i<2;i++){const r=Array(width).fill('');if(!i){r[4]='12345';r[12]='공유 상품';r[20]='6mm,8mm';r[21]='0,2000';r[44]=15000;}r[29]=i?'8mm':'6mm';r[31]=i*2000;r[32]=10;r[41]='판매';r[43]='op'+(i+1);rows.push(r);}
    }else{
     header[0]='상품 번호';header[10]='옵션 번호';header[15]='재고수량';
     for(let i=0;i<2;i++){const r=Array(width).fill('');r[0]='12345';r[1]='1000';r[2]='공유 상품';r[4]=15000;r[5]=15000;r[6]=15000+i*2000;r[10]='op'+(i+1);r[14]=i?'8mm':'6mm';r[15]=10;rows.push(r);}

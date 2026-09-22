@@ -311,13 +311,41 @@
   function makeshopProductRows(sheetXml,sharedStrings) {
     const map=new Map(); String(sheetXml).replace(/<row\b[^>]*\br="(\d+)"[^>]*>[\s\S]*?<\/row>/g,(rowXml,rowNo)=>{ const code=clean(cellValue(rowXml,`E${rowNo}`,sharedStrings)); if(code) map.set(code,Number(rowNo)); return rowXml; }); return map;
   }
+  function makeshopPhysicalProductRows(sheetXml,sharedStrings) {
+    const dataRowNumbers=[],rowsByProduct=new Map();let product='';
+    String(sheetXml).replace(/<row\b[^>]*\br="(\d+)"[^>]*>[\s\S]*?<\/row>/g,(rowXml,rowNo)=>{
+      const row=Number(rowNo);if(row<2)return rowXml;
+      const code=clean(cellValue(rowXml,`E${row}`,sharedStrings));
+      if(code)product=code;
+      dataRowNumbers.push(row);
+      if(product){if(!rowsByProduct.has(product))rowsByProduct.set(product,[]);rowsByProduct.get(product).push({row,rowXml});}
+      return rowXml;
+    });
+    return {dataRowNumbers,rowsByProduct};
+  }
+  async function readMakeshopPhysicalProductRows(file) {
+    const {sheetXml,shared}=await xlsxParts(file),scope=makeshopPhysicalProductRows(sheetXml,shared);
+    return {dataRowNumbers:scope.dataRowNumbers,rowsByProduct:Object.fromEntries([...scope.rowsByProduct].map(([code,rows])=>[code,rows.map(value=>value.row)]))};
+  }
+  function makeshopOptionList(block,sharedStrings,productCode) {
+    const parent=block?.[0];
+    if(!parent)throw new Error(`메이크샵 ${productCode}: 상품 원본 행을 찾지 못했습니다.`);
+    const choices=String(cellValue(parent.rowXml,`U${parent.row}`,sharedStrings)).split(',').map(clean);
+    const prices=String(cellValue(parent.rowXml,`V${parent.row}`,sharedStrings)).split(',').map(clean);
+    const options=block.filter(({row,rowXml})=>clean(cellValue(rowXml,`AR${row}`,sharedStrings)));
+    const names=options.map(({row,rowXml})=>clean(cellValue(rowXml,`AD${row}`,sharedStrings)));
+    if(!choices.length||choices.length!==prices.length||choices.length!==options.length||choices.some((name,index)=>!name||name!==names[index]))
+      throw new Error(`메이크샵 ${productCode}: 옵션값(U)·옵션가(V)와 옵션조합(AD/AF)의 순서 또는 개수가 다릅니다.`);
+    return {parent,prices,options,indexByRow:new Map(options.map((entry,index)=>[entry.row,index]))};
+  }
   function sheetRowXml(sheetXml,row) {
     return String(sheetXml||'').match(new RegExp(`<row\\b[^>]*\\br="${Number(row)}"[^>]*>[\\s\\S]*?<\\/row>`))?.[0]||'';
   }
-  function preflightSharedPriceGroups(sheetXml,items,sharedStrings,onConflict) {
+  function preflightSharedPriceGroups(sheetXml,items,sharedStrings,onConflict,physicalRows=null) {
     const source=items[0]?.source_channel;
     if(!['smartstore','makeshop'].includes(source)) return {items,workingSheetXml:sheetXml};
     const productRows=source==='makeshop'?makeshopProductRows(sheetXml,sharedStrings):new Map();
+    const blocks=source==='makeshop'?(physicalRows||makeshopPhysicalProductRows(sheetXml,sharedStrings)).rowsByProduct:new Map();
     const groups=new Map();
     for(const item of items.filter(value=>value.field_key==='sellpia_sale_price')) {
       const key=clean(item.seller_product_code)||`row:${Number(item.source_row_no)}`;
@@ -337,6 +365,22 @@
           if(!productRow) throw exportConflict(group[0],`${SOURCE_LABELS[source]} ${productCode}: 상품 기본 판매가 행을 찾지 못했습니다.`);
           originalBase=Number(cellValue(sheetRowXml(sheetXml,productRow),`AS${productRow}`,sharedStrings));
           if(!Number.isFinite(originalBase)) throw exportConflict(group[0],`${SOURCE_LABELS[source]} ${productCode}: 원본 기본 판매가를 읽지 못했습니다.`);
+          if(group.some(item=>clean(item.seller_option_code))) {
+            try {
+              const optionList=makeshopOptionList(blocks.get(productCode),sharedStrings,productCode);
+              for(const item of group) {
+                const row=Number(item.source_row_no),index=optionList.indexByRow.get(row);
+                if(!clean(item.seller_option_code))continue;
+                if(index===undefined)throw new Error(`메이크샵 ${productCode}: ${row}행의 옵션조합을 옵션가 목록에서 찾지 못했습니다.`);
+                const before=Number(cellValue(optionList.options[index].rowXml,`AF${row}`,sharedStrings));
+                const target=priceTargets(item).option;
+                if(target===before)continue;
+                const listedPrice=optionList.prices[index];
+                if(!Number.isSafeInteger(before)||listedPrice===''||!Number.isSafeInteger(Number(listedPrice))||Number(listedPrice)!==before)
+                  throw new Error(`메이크샵 ${productCode}: ${row}행의 옵션가(V)와 옵션조합가(AF)가 원본에서 일치하지 않습니다.`);
+              }
+            } catch(error) {throw exportConflict(group[0],error.message);}
+          }
         }
         for(const item of group) {
           const row=Number(item.source_row_no);
@@ -428,21 +472,40 @@
 
   async function patchXlsxFile(file,items,onConflict,onApplied,{dataRowNumbers=null,keepOnlyRows=null}={}) {
     const {zip,sheetPath,sheetXml,shared,stylesPath,stylesXml}=await xlsxParts(file);
+    const makeshopRows=items[0]?.source_channel==='makeshop'?makeshopPhysicalProductRows(sheetXml,shared):null;
     let workingSheetXml=sheetXml;
     if(items[0]?.source_channel==='makeshop') {
       const productRows=makeshopProductRows(sheetXml,shared);
       for(const item of items.filter(value=>value.field_key==='seller_product_name')) item.source_row_no=productRows.get(clean(item.seller_product_code))||item.source_row_no;
     }
-    workingSheetXml=preflightSharedPriceGroups(sheetXml,items,shared,onConflict).workingSheetXml;
+    workingSheetXml=preflightSharedPriceGroups(sheetXml,items,shared,onConflict,makeshopRows).workingSheetXml;
     const rowNumbers=new Set([...String(workingSheetXml).matchAll(/<row\b[^>]*\br="(\d+)"/g)].map(match=>Number(match[1])));
     const byRow=new Map();
     for(const item of items){if(item._preflight_conflict)continue;const row=Number(item.source_row_no);if(!rowNumbers.has(row)){const reason=`${SOURCE_LABELS[item.source_channel]} ${item.sellpia_sku_code}: 보관 원본에서 ${row}행을 찾지 못했습니다.`;if(onConflict)onConflict({item,reason});else throw exportConflict(item,reason);continue;}if(!byRow.has(row))byRow.set(row,[]);byRow.get(row).push(item);}
-    const appliedHighlights=[];
-    const recordApplied=(item,reference,highlight)=>{const refs=Array.isArray(reference)?reference:[reference?{reference,...(highlight||{})}:null];for(const entry of refs.filter(Boolean))appliedHighlights.push(entry);onApplied?.(item);};
-    const patched=workingSheetXml.replace(/<row\b[^>]*\br="(\d+)"[^>]*>[\s\S]*?<\/row>/g,(rowXml,rowNo)=>{
+    const appliedHighlights=[],appliedMakeshopOptions=[];
+    const recordApplied=(item,reference,highlight)=>{const refs=Array.isArray(reference)?reference:[reference?{reference,...(highlight||{})}:null];for(const entry of refs.filter(Boolean))appliedHighlights.push(entry);if(makeshopRows&&item.field_key==='sellpia_sale_price'&&clean(item.seller_option_code))appliedMakeshopOptions.push(item);onApplied?.(item);};
+    let patched=workingSheetXml.replace(/<row\b[^>]*\br="(\d+)"[^>]*>[\s\S]*?<\/row>/g,(rowXml,rowNo)=>{
       const changes=byRow.get(Number(rowNo)); if(!changes) return rowXml;
       return items[0].source_channel==='smartstore'?patchSmartstoreRow(rowXml,changes,shared,onConflict,recordApplied):patchMakeshopRow(rowXml,changes,shared,onConflict,recordApplied);
     });
+    if(appliedMakeshopOptions.length) {
+      const changedByProduct=new Map();
+      for(const item of appliedMakeshopOptions){const code=clean(item.seller_product_code);if(!changedByProduct.has(code))changedByProduct.set(code,[]);changedByProduct.get(code).push(item);}
+      for(const [code,group] of changedByProduct){
+        const optionList=makeshopOptionList(makeshopRows.rowsByProduct.get(code),shared,code),values=[...optionList.prices];let changed=false;
+        for(const item of group){
+          const index=optionList.indexByRow.get(Number(item.source_row_no));
+          if(index===undefined)throw new Error(`메이크샵 ${code}: 변경 옵션의 원본 목록 위치를 찾지 못했습니다.`);
+          const target=priceTargets(item).option;
+          if(Number(values[index])!==target){values[index]=String(target);changed=true;}
+        }
+        if(changed){
+          const row=optionList.parent.row,matcher=new RegExp(`<row\\b[^>]*\\br="${row}"[^>]*>[\\s\\S]*?<\\/row>`);
+          patched=patched.replace(matcher,rowXml=>setCellValue(rowXml,`V${row}`,values.join(','),'string'));
+          appliedHighlights.push({reference:`V${row}`});
+        }
+      }
+    }
     let scoped=patched,highlights=appliedHighlights;
     if(dataRowNumbers&&keepOnlyRows){
       const result=scopeWorksheetRowsWithMap(scoped,dataRowNumbers,keepOnlyRows);
@@ -658,5 +721,5 @@
   }
   function downloadBlob(blob,name){const url=URL.createObjectURL(blob);const anchor=document.createElement('a');anchor.href=url;anchor.download=name;document.body.appendChild(anchor);anchor.click();anchor.remove();setTimeout(()=>URL.revokeObjectURL(url),30000);}
 
-  global.SystemV3SellerExport=Object.freeze({cellValue,setCellValue,applyChangeHighlights,carrierWarningReferences,markCarrierWarnings,preflightSharedPriceGroups,patchSmartstoreRow,patchMakeshopRow,scopeWorksheetRows,patchXlsxFile,transformSellerFile,transformTabularXlsx,patchCsvFile,buildExportArchive,downloadBlob,outputName,auditCsv,conflictCsv,discountTermsFingerprint});
+  global.SystemV3SellerExport=Object.freeze({cellValue,setCellValue,applyChangeHighlights,carrierWarningReferences,markCarrierWarnings,preflightSharedPriceGroups,patchSmartstoreRow,patchMakeshopRow,scopeWorksheetRows,readMakeshopPhysicalProductRows,patchXlsxFile,transformSellerFile,transformTabularXlsx,patchCsvFile,buildExportArchive,downloadBlob,outputName,auditCsv,conflictCsv,discountTermsFingerprint});
 })(typeof window!=='undefined'?window:globalThis);

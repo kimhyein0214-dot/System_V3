@@ -8455,11 +8455,15 @@ async function prepareChangedOnlyExport(source,skus=null,{download=false,onProgr
     timings.plan_ms+=Math.round(clock()-mark);plans.push(plan);skipped.push(...plan.excludedItems);
     const fileItems=(plan.operations||[]).map(item=>({...item}));
     if(!fileItems.length&&priceMode!=='sellpia_source')continue;
-    const allDataRows=new Set(parsed.normalizedRows.map(row=>Number(row.source_row_no)).filter(Number.isInteger));
+    const makeshopPhysicalRows=source==='makeshop'&&mode==='changed_only'
+      ?await sellerExport.readMakeshopPhysicalProductRows(file):null;
+    const allDataRows=new Set(makeshopPhysicalRows?.dataRowNumbers||parsed.normalizedRows.map(row=>Number(row.source_row_no)).filter(Number.isInteger));
     const keepRowsForItems=items=>{
       const changedProducts=new Set(items.map(item=>String(item.seller_product_code||'')).filter(Boolean));
       if(priceMode==='sellpia_source')for(const row of plan.preview||[])if(row.status==='blocked')changedProducts.add(String(row.product_code||''));
-      const rows=new Set(parsed.normalizedRows.filter(row=>changedProducts.has(String(row.product_code||''))).map(row=>Number(row.source_row_no)).filter(Number.isInteger));
+      const rows=makeshopPhysicalRows
+        ?new Set([...changedProducts].flatMap(code=>makeshopPhysicalRows.rowsByProduct[code]||[]))
+        :new Set(parsed.normalizedRows.filter(row=>changedProducts.has(String(row.product_code||''))).map(row=>Number(row.source_row_no)).filter(Number.isInteger));
       // MakeShop's second row holds the English field keys required by its
       // official import template, even though the parser can see it as data.
       if(source==='makeshop')rows.add(2);
