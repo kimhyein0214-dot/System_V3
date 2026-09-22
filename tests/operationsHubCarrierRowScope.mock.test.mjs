@@ -11,3 +11,12 @@ test('changed-only row scoping removes unselected data rows and compacts retaine
   assert.doesNotMatch(actual,/<row r="4">/,'unchanged data row is removed');
   assert.match(actual,/<row r="7"><c r="A7"\/><\/row>/,'footer shifts by removed data-row count');
 });
+
+test('changed-only dimension remains self-closing when 1759 source rows become 9 rows',()=>{
+  const rows=Array.from({length:1759},(_,index)=>`<row r="${index+1}"><c r="A${index+1}"/></row>`).join('');
+  const xml=`<worksheet><dimension ref="A1:CP1759"/><sheetData>${rows}</sheetData></worksheet>`;
+  const scoped=globalThis.SystemV3SellerExport.scopeWorksheetRows(xml,new Set(Array.from({length:1758},(_,index)=>index+2)),new Set(Array.from({length:8},(_,index)=>index+2)));
+  assert.match(scoped,/<dimension ref="A1:CP9"\/>/);
+  assert.doesNotMatch(scoped,/\/\/>/);
+  assert.equal([...scoped.matchAll(/<row\b/g)].length,9);
+});

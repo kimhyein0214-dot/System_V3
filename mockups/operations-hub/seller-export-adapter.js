@@ -442,6 +442,7 @@
     let scoped=patched;
     if(dataRowNumbers&&keepOnlyRows)scoped=scopeWorksheetRows(scoped,dataRowNumbers,keepOnlyRows);
     const highlighted=applyChangeHighlights(scoped,stylesXml,appliedHighlights);
+    assertWorksheetXmlWellFormed(highlighted.sheetXml);
     zip.file(sheetPath,highlighted.sheetXml); zip.file(stylesPath,highlighted.stylesXml); return zip.generateAsync({type:'blob',compression:'DEFLATE',compressionOptions:{level:6}});
   }
 
@@ -466,9 +467,17 @@
     const rowRefs=[...output.matchAll(/<row\b[^>]*\br="(\d+)"/g)].map(match=>Number(match[1])).filter(Number.isInteger);
     if(rowRefs.length){
       const maxRow=Math.max(...rowRefs);
-      output=output.replace(/<dimension\b([^>]*\bref=")([A-Z]+)1:([A-Z]+)\d+("[^>]*)\/?>(?:<\/dimension>)?/i,(_,head,left,right,tail)=>'<dimension'+head+left+'1:'+right+maxRow+tail+'/>');
+      output=output.replace(/<dimension\b([^>]*\bref=")([A-Z]+)1:([A-Z]+)\d+("[^>]*)\/?>(?:<\/dimension>)?/i,(_,head,left,right,tail)=>'<dimension'+head+left+'1:'+right+maxRow+tail.replace(/\/\s*$/,'')+'/>');
     }
     return output;
+  }
+  function assertWorksheetXmlWellFormed(xml){
+    if(/<dimension\b[^>]*\/\/>/i.test(xml))throw new Error('XLSX worksheet dimension XML이 잘못되어 파일 생성을 중단했습니다.');
+    if(typeof global.DOMParser==='function'){
+      const parsed=new global.DOMParser().parseFromString(xml,'application/xml');
+      if(parsed.getElementsByTagName('parsererror').length||parsed.documentElement?.localName==='parsererror')
+        throw new Error('XLSX worksheet XML을 읽을 수 없어 파일 생성을 중단했습니다.');
+    }
   }
 
   async function transformSellerFile(file,items,options={}){
@@ -511,6 +520,7 @@
       return `${clean(change.column).toUpperCase()}${row}`;
     });
     const highlighted=applyChangeHighlights(sheetXml,parts.stylesXml,highlights);
+    assertWorksheetXmlWellFormed(highlighted.sheetXml);
     parts.zip.file(parts.sheetPath,highlighted.sheetXml);parts.zip.file(parts.stylesPath,highlighted.stylesXml);
     const blob=await parts.zip.generateAsync({type:'blob',mimeType:'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',compression:'DEFLATE',compressionOptions:{level:6}});
     return {blob,applied,conflicts};
