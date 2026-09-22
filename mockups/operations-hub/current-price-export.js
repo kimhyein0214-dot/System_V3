@@ -199,7 +199,7 @@
  // price; every other option in the same seller product keeps its carrier final.
  // The serializer remains the authority for workbook identity/cell validation.
  function prepareSellpiaSourcePricePlan(source,fileName,carrierRows,mappingRows,sourcePrices,selectedSkus){
-  if(source!=='smartstore')throw Error('셀피아 판매가 기준은 현재 스마트스토어만 지원합니다.');
+  if(!['smartstore','makeshop'].includes(source))throw Error('셀피아 판매가 기준은 스마트스토어·메이크샵 원본만 지원합니다.');
   if(!g.SystemV3DiscountPriceMath?.grossBaseForTarget)throw Error('가격 역산 모듈이 없습니다.');
   const selected=new Set(selectedSkus||[]),identity=row=>JSON.stringify([String(row.product_code||'').trim(),String(row.option_code||'').trim()]);
   if(!selected.size)throw Error('셀피아 판매가 기준은 태그 또는 SKU로 대상 범위를 선택해야 합니다.');
@@ -222,7 +222,13 @@
     if(!validSourceLocation({...row,source_file_name:row.raw_payload?.source_file_name||fileName}))throw Error(`${product}: 판매처 원본 행 위치를 확인할 수 없습니다.`);
     if(!Array.isArray(row.discount_terms)||termsKey(row.discount_terms)!==sharedTerms||Number(row.base_price)!==sharedBase||Number(row.discounted_base_price)!==sharedDiscounted)throw Error(`${product}: 같은 상품의 등록가·할인조건이 옵션별로 다릅니다.`);
     const raw=row.raw_payload||{};
-    for(const [termKey,prefix] of [['basic','basic'],['mobile','mobile'],['reservation','reservation'],['multi_buy','multi_buy']]){
+    if(source==='makeshop'){
+     if(!Object.hasOwn(raw,'makeshop_discount_price')||!Object.hasOwn(raw,'makeshop_membership_discount'))throw Error(`${product}: 메이크샵 원본 할인정보를 읽지 못했습니다.`);
+     const periodPresent=['makeshop_discount_code','makeshop_discount_title','makeshop_discount_price','makeshop_discount_date'].some(key=>String(raw[key]??'').trim());
+     if(periodPresent&&(!String(raw.makeshop_discount_price??'').trim()||!row.discount_terms.some(term=>term.term_key==='period'&&Number.isFinite(Number(term.value))&&term.unit)))throw Error(`${product}: 메이크샵 기간할인을 해석할 수 없습니다.`);
+     if(Number(raw.makeshop_membership_discount||0)&&!row.discount_terms.some(term=>term.term_key==='membership'))throw Error(`${product}: 메이크샵 회원할인을 해석할 수 없습니다.`);
+    }
+    for(const [termKey,prefix] of source==='smartstore'?[['basic','basic'],['mobile','mobile'],['reservation','reservation'],['multi_buy','multi_buy']]:[]){
      const valueKey=`smartstore_${prefix}_discount_value`,unitKey=`smartstore_${prefix}_discount_unit`;
      if(!Object.hasOwn(raw,valueKey)||!Object.hasOwn(raw,unitKey))throw Error(`${product}: 판매처 원본 할인정보를 읽지 못했습니다.`);
      const hasValue=String(raw[valueKey]??'').trim()!=='',hasUnit=String(raw[unitKey]??'').trim()!=='';

@@ -8381,7 +8381,7 @@ async function prepareChangedOnlyExport(source,skus=null,{download=false,onProgr
   if(!['smartstore','makeshop'].includes(source))throw Error('원본 기반 내보내기는 스마트스토어·메이크샵만 지원합니다.');
   if(!['changed_only','full_original'].includes(mode))throw Error('내보내기 모드를 확인해주세요.');
   if(!['rules','sellpia_source'].includes(priceMode))throw Error('가격 계산 방식을 확인해주세요.');
-  if(priceMode==='sellpia_source'&&(source!=='smartstore'||!Array.isArray(skus)||!skus.length))throw Error('셀피아 판매가 기준은 스마트스토어의 태그 또는 SKU 범위에서만 사용할 수 있습니다.');
+  if(priceMode==='sellpia_source'&&(!['smartstore','makeshop'].includes(source)||!Array.isArray(skus)||!skus.length))throw Error('셀피아 판매가 기준은 스마트스토어·메이크샵의 태그 또는 SKU 범위에서만 사용할 수 있습니다.');
   const clock=()=>globalThis.performance?.now?.()??Date.now(),started=clock(),timings={download_ms:0,parse_ms:0,mapping_ms:0,target_ms:0,plan_ms:0,serialize_ms:0},queries=[];
   const requested=Array.isArray(skus)?new Set(skus.map(value=>String(value||'').trim()).filter(Boolean)):null;
   const identityKey=row=>JSON.stringify([String(row?.product_code||'').trim(),String(row?.option_code||'').trim()]);

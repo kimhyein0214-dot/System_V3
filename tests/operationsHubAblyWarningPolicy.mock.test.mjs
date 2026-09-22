@@ -10,11 +10,11 @@ const mathSource=fs.readFileSync(new URL('../mockups/operations-hub/discount-pri
 const priceSource=fs.readFileSync(new URL('../mockups/operations-hub/current-price-export.js',import.meta.url),'utf8');
 const plain=value=>JSON.parse(JSON.stringify(value));
 
-function harness({items,targets=[],role='playauto_option'}){
+function harness({items,targets=[],role='playauto_option',priceMode='rules',selectedSkus=null,sourcePrices={}}){
  const fields=new Map(['title','detail','bar','cancel'].map(key=>[key,{textContent:'',style:{},disabled:false}]));
  const progress={hidden:true,dataset:{},querySelector:selector=>fields.get(selector.match(/progress-(\w+)/)?.[1])};
  const previewNode={hidden:true};
- const document={querySelector(selector){if(selector==='[data-ably-progress]')return progress;if(selector==='[data-ably-progress-detail]')return fields.get('detail');return null;},getElementById:id=>id==='export-preview-v2'?previewNode:null};
+ const document={querySelector(selector){if(selector==='[data-ably-progress]')return progress;if(selector==='[data-ably-progress-detail]')return fields.get('detail');if(selector==='[data-standard-price-mode="ably"]')return {value:priceMode};if(selector==='[data-seller-scope-mode="ably"]')return {value:selectedSkus?'tag':'all'};return null;},getElementById:id=>id==='export-preview-v2'?previewNode:null};
  let nextTimer=0,rendered=0;
  const timers=new Map(),messages=[],state={carrierFiles:new Map(),ablyJob:null,ablyJobSequence:0};
  const global={console,performance:{now:()=>0},setInterval(fn){const id=++nextTimer;timers.set(id,fn);return id;},clearInterval:id=>timers.delete(id),setTimeout:fn=>setImmediate(fn)};
@@ -27,11 +27,21 @@ function harness({items,targets=[],role='playauto_option'}){
  const file={name:'carrier.xlsx',arrayBuffer:async()=>new ArrayBuffer(1)};
  const A=()=>({readTemplate:async()=>({type:roles[role].type,items}),resolveRows:rows=>rows.map(item=>({...item,resolution:item.resolution||{sku:item.sku,method:'direct_sku'}}))});
  const calls=[];
- const D=()=>({loadCarrierSellerMappings:async()=>({rows:[]}),loadCarrierMatrixTargets:async options=>{calls.push(options);return {rows:targets};}});
- const preview=Function('state','roles','setStatus','createAblyJob','document','global','blobFile','A','D','catalog','scopeSkus','renderPreview','n',`${previewSource};return preview;`)(state,roles,setStatus,createAblyJob,document,global,async()=>file,A,D,async()=>[],async()=>null,()=>{rendered++;},n);
+ const D=()=>({loadCarrierSellerMappings:async()=>({rows:[]}),loadCarrierMatrixTargets:async options=>{calls.push(options);return {rows:targets};},loadSellpiaSourcePricesForExport:async()=>new Map(Object.entries(sourcePrices))});
+ const preview=Function('state','roles','setStatus','createAblyJob','document','global','blobFile','A','D','catalog','scopeSkus','renderPreview','n',`${previewSource};return preview;`)(state,roles,setStatus,createAblyJob,document,global,async()=>file,A,D,async()=>[],async()=>selectedSkus?new Set(selectedSkus):null,()=>{rendered++;},n);
  state.carrierFiles.set(role,file);
  return {run:()=>preview(role),state,calls,timers,messages,rendered:()=>rendered};
 }
+test('Ably PlayAuto Sellpia mode preserves unselected option finals while changing shared sale price',async()=>{
+ const items=[row('P-1',6,{option_index:0,base_price:30000,option_price:0}),row('P-2',6,{option_index:1,base_price:30000,option_price:3500}),row('P-3',6,{option_index:2,base_price:30000,option_price:9000,resolution:{sku:null,method:'unresolved'}})];
+ const h=harness({role:'playauto_product',priceMode:'sellpia_source',items,selectedSkus:['P-1'],sourcePrices:{'P-1':32000}}),preview=await h.run();
+ assert.ok(preview,h.messages.at(-1)?.text);assert.equal(preview.counts.selected,1);assert.equal(preview.output.length,3);assert.equal(h.calls.length,0,'source overlay does not require a historical calculated target');
+ assert.deepEqual(plain(preview.output.map(item=>item.target_base_price+item.target_option_price)),[32000,33500,39000]);
+ assert.deepEqual(plain(preview.output.map(item=>item._preserveUnselected)),[false,true,true]);
+ assert.deepEqual(plain(preview.output.map(item=>item._changedFields)),[['base'],['base','option'],['base','option']]);
+ const absent=harness({role:'playauto_product',priceMode:'sellpia_source',items,selectedSkus:['P-1']});
+ assert.equal(await absent.run(),undefined);assert.match(absent.messages.at(-1).text,/셀피아 판매가/);
+});
 function row(sku,sourceRowNo=6,extra={}){
  return {sku,sellpia_product_code:sku.split('-')[0],source_row_no:sourceRowNo,option_index:Number(sku.split('-')[1])||0,base_price:2800,option_price:0,sales_quantity:3,available_stock:888,...extra};
 }

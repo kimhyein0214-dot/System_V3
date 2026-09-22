@@ -96,4 +96,21 @@ assert.equal(A.resolveSellpiaSku(directMappingConflict,catalog10000,mappings1000
 const numericMappingOnly={...directItems[0],direct_sellpia_sku_code:'',seller_option_code:'309683801',option_sku_code:'',option_candidates:['표기가 달라짐']};
 assert.equal(A.resolveSellpiaSku(numericMappingOnly,catalog10000,mappings10000).method,'seller_mapping_exact','numeric Ably option code keeps the existing mapping path');
 assert.equal(A.resolveSellpiaSku({...parsedProduct[0],direct_sellpia_sku_code:'',option_candidates:[]},[{sellpia_product_code:'11541',sellpia_sku_code:'11541-1'}]).method,'single_product_sku','optionless single-product behavior remains unchanged');
+{
+ const stockSource=fs.readFileSync('mockups/operations-hub/ably-stock-export.js','utf8');vm.runInContext(stockSource,context);
+ const changes=[],parts=new Map([
+  ['xl/workbook.xml','<workbook><sheets><sheet name="쇼핑몰상품" sheetId="1" r:id="rId1"/></sheets></workbook>'],
+  ['xl/_rels/workbook.xml.rels','<Relationships><Relationship Id="rId1" Target="worksheets/sheet1.xml"/></Relationships>'],
+  ['xl/worksheets/sheet1.xml','<worksheet><sheetData><row r="6"><c r="I6"><v>30000</v></c><c r="T6" t="inlineStr"><is><t>0\n3500\n9000</t></is></c><c r="U6"><v>99</v></c></row></sheetData></worksheet>'],
+  ['xl/styles.xml','<styleSheet/>']
+ ]);
+ const zip={file(name,value){if(value!==undefined){parts.set(name,value);return this;}return parts.has(name)?{async:async()=>parts.get(name)}:null;},async generateAsync(){return new Blob([parts.get('xl/worksheets/sheet1.xml')]);}};
+ context.JSZip={loadAsync:async()=>zip};context.XLSX={read:()=>({Sheets:{쇼핑몰상품:{T6:{v:'0\n3500\n9000'}}}})};
+ context.SystemV3SellerExport={applyChangeHighlights:(xml,styles,refs)=>{changes.push(...refs);return {sheetXml:xml,stylesXml:styles};}};
+ const edits=[0,1,2].map((index)=>({source_row_no:6,option_index:index,target_base_price:32000,target_option_price:[0,1500,7000][index]}));
+ await A.buildProductPriceOption({name:'playauto.xlsx',arrayBuffer:async()=>new ArrayBuffer(1)},edits);
+ const xml=parts.get('xl/worksheets/sheet1.xml');
+ assert.match(xml,/<c r="I6"[^>]*><v>32000<\/v><\/c>/);assert.match(xml,/0\n1500\n7000/);assert.match(xml,/<c r="U6"><v>99<\/v><\/c>/);
+ assert.ok(changes.includes('I6'));assert.equal(changes.filter(change=>change.reference==='T6').length,3);
+}
 console.log('PASS Ably PlayAuto templates: existing seller mapping wins, strict option fallback remains, and V/X contract preserves W.');
