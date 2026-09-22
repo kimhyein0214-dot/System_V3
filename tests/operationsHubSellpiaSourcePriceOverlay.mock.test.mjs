@@ -51,6 +51,40 @@ function assertFinals(p,expected){assert.deepEqual(p.preview.map(row=>row.diff.p
  assert.throws(()=>api.prepareSellpiaSourcePricePlan('ably','smartstore.xlsx',[],[],new Map(),['A']),/스마트스토어·메이크샵/);
 }
 {
+ const cases=[
+  {product:'6695',base:63000,discount:27000,anchor:36000,option:31750,afterBase:63500,afterDiscount:27500},
+  {product:'6698',base:205750,discount:109500,anchor:96250,option:119500,afterBase:239000,afterDiscount:142750},
+  {product:'5648',base:91250,discount:15000,anchor:76250,option:53000,afterBase:106000,afterDiscount:29750},
+  {product:'9328',base:139000,discount:41500,anchor:97500,option:70250,afterBase:140500,afterDiscount:43000},
+  {product:'round-up-after-check',base:63000,discount:27000,anchor:36000,option:31721,afterBase:63500,afterDiscount:27500},
+  {product:'round-nearest-safe',base:63000,discount:27000,anchor:36000,option:31726,afterBase:63500,afterDiscount:27500}
+ ];
+ for(const value of cases){
+  const f=fixture({base:value.base,discount:value.discount,options:[0,value.option],sourcePrices:{A:value.anchor}}),p=plan(f);
+  assert.equal(p.summary.blocked,0,value.product);assert.equal(p.preview.length,2,value.product);
+  assert.equal(p.preview[0].diff.price.after.base,value.afterBase,value.product);
+  assert.equal(p.preview[0].diff.price.after.discount_terms[0].value,value.afterDiscount,value.product);
+  assert.equal(p.preview[0].diff.price.before.discount_terms[0].value,value.discount,value.product);
+  assert.equal(p.preview[0].diff.price.after.discounted,value.anchor,value.product);
+  assert.equal(p.preview[1].diff.price.after.final,value.anchor+value.option,`${value.product}: unselected sibling final`);
+  assert.equal(p.preview[1].diff.price.before.final,p.preview[1].diff.price.after.final,value.product);
+  assert.ok(p.operations.every(item=>item.target_option_price<=Math.floor(item.target_base_price*0.5/10)*10),value.product);
+  assert.equal(p.preview[0].option_limit_adjustment.allowed_option,Math.floor(value.afterBase*0.5/10)*10,value.product);
+ }
+ const within=plan(fixture({base:63000,discount:27000,options:[0,31000],sourcePrices:{A:36000}}));
+ assert.equal(within.preview[0].diff.price.after.base,63000);assert.equal(within.preview[0].diff.price.after.discount_terms[0].value,27000);assert.equal(within.preview[0].option_limit_adjustment,null);
+ const blocked=(f,reason)=>{const p=plan(f);assert.equal(p.operations.length,0);assert.equal(p.summary.blocked,f.rows.length);assert.match(p.preview[0].reason,reason);};
+ blocked(fixture({base:72000,discount:36000,options:[0,40000],sourcePrices:{A:36000},terms:[{term_key:'basic',value:50,unit:'percent',is_baseline:true}]}),/기본할인 구조/);
+ const noBasic=fixture({base:63000,discount:27000,options:[0,40000],sourcePrices:{A:36000},terms:[{term_key:'mobile',value:27000,unit:'amount',is_baseline:true}]});
+ for(const row of noBasic.rows){row.raw_payload.smartstore_basic_discount_value=null;row.raw_payload.smartstore_basic_discount_unit=null;row.raw_payload.smartstore_mobile_discount_value=27000;row.raw_payload.smartstore_mobile_discount_unit='원';}
+ blocked(noBasic,/기본할인 구조/);
+ blocked(fixture({base:73000,discount:37000,options:[0,40000],sourcePrices:{A:36000},terms:[...term(27000),...term(10000)]}),/기본할인 구조/);
+ blocked(fixture({base:72000,discount:36000,options:[0,40000],sourcePrices:{A:36000},terms:[{term_key:'mobile',value:50,unit:'percent',is_baseline:true},...term(0)]}),/기준 최종가가 일치/);
+ blocked(fixture({base:63000,discount:27000,options:[0,40000],sourcePrices:{A:36000},terms:[{...term(27000)[0],value:Number.NaN}]}),/할인조건과 할인 후 가격/);
+ blocked(fixture({sourcePrices:{A:Number.NaN}}),/원본 판매가/);
+ blocked(fixture({sourcePrices:{A:Number.MAX_SAFE_INTEGER+1}}),/원본 판매가/);
+}
+{
  const terms=[{term_key:'period',term_type:'period',value:10,unit:'percent',rounding_mode:'nearest',rounding_unit:10,is_baseline:true,raw_text:'10% 십원반올림'}];
  const rows=[['',0,2],['B',1000,3],['C',2000,4]].map(([option,price,rowNo])=>({product_code:'M',option_code:option,base_price:10000,discounted_base_price:9000,option_price:price,final_price:9000+price,discount_terms:terms,source_row_no:rowNo,raw_payload:{source_file_name:'make.xlsx',makeshop_discount_price:'10% 십원반올림',makeshop_membership_discount:0}}));
  const mappings=[{sku:'B',product_code:'M',option_code:'B'},{sku:'C',product_code:'M',option_code:'C'}];
@@ -122,6 +156,30 @@ function assertFinals(p,expected){assert.deepEqual(p.preview.map(row=>row.diff.p
   assert.equal(globalThis.SystemV3SellerExport.cellValue(sheet,'D2',[]),'원본 상품명');
   assert.equal(globalThis.SystemV3SellerExport.cellValue(sheet,'S2',[]),'5\n6\n7');
   assert.match(styles,/FFFFFF00/,'edited price cells receive the yellow style');assert.match(styles,/<b\b/,'edited price cells receive bold style');
+ }finally{globalThis.JSZip=saved;}
+}
+{
+ const p=plan(fixture({base:63000,discount:27000,options:[0,31750],sourcePrices:{A:36000}}));
+ const parts=new Map([
+  ['xl/workbook.xml','<workbook xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><sheets><sheet name="수정" sheetId="1" r:id="rId1"/></sheets></workbook>'],
+  ['xl/_rels/workbook.xml.rels','<Relationships><Relationship Id="rId1" Target="worksheets/sheet1.xml"/></Relationships>'],
+  ['xl/styles.xml','<styleSheet><fonts count="1"><font><sz val="11"/></font></fonts><fills count="1"><fill><patternFill patternType="none"/></fill></fills><cellXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0"/></cellXfs></styleSheet>'],
+  ['xl/worksheets/sheet1.xml','<worksheet><sheetData><row r="2"><c r="F2"><v>63000</v></c><c r="P2" t="inlineStr"><is><t>A\nB</t></is></c><c r="R2" t="inlineStr"><is><t>0\n31750</t></is></c><c r="BF2"><v>27000</v></c><c r="BG2" t="inlineStr"><is><t>원</t></is></c></row></sheetData></worksheet>']
+ ]);
+ const zip={file(name,value){if(value!==undefined){parts.set(name,value);return this;}return parts.has(name)?{async:async()=>parts.get(name)}:null;},async generateAsync(){return new Blob([JSON.stringify([...parts])]);}};
+ const saved=globalThis.JSZip;globalThis.JSZip={loadAsync:async()=>zip};
+ try{
+  const result=await globalThis.SystemV3SellerExport.transformSellerFile({name:'smartstore.xlsx',arrayBuffer:async()=>new ArrayBuffer(0)},p.operations);
+  assert.equal(result.skippedItems.length,0);assert.equal(result.appliedItems.length,2);
+  const sheet=parts.get('xl/worksheets/sheet1.xml'),cell=globalThis.SystemV3SellerExport.cellValue;
+  assert.equal(Number(cell(sheet,'F2',[])),63500,'registration price is raised');
+  assert.equal(Number(cell(sheet,'BF2',[])),27500,'basic immediate discount is raised equally');
+  assert.equal(cell(sheet,'BG2',[]),'원');assert.equal(cell(sheet,'R2',[]),'0\n31750','option finals remain unchanged');
+  assert.match(sheet,/<c r="F2"[^>]*\bs="\d+"/);assert.match(sheet,/<c r="BF2"[^>]*\bs="\d+"/);
+  assert.match(parts.get('xl/styles.xml'),/FFFFFF00/);assert.match(parts.get('xl/styles.xml'),/<b\b/);
+  const bad=structuredClone(p.operations);bad[0].target_option_price=31800;
+  const rejected=await globalThis.SystemV3SellerExport.transformSellerFile({name:'smartstore.xlsx',arrayBuffer:async()=>new ArrayBuffer(0)},bad);
+  assert.ok(rejected.skippedItems.length>0,'serialization preflight rejects an out-of-range option');
  }finally{globalThis.JSZip=saved;}
 }
 console.log('PASS Sellpia source overlay: discounts, partial siblings, lowest/reverse, source identity, exact finals, preview drift, default rules isolation.');

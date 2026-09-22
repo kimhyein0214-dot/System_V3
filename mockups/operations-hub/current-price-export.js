@@ -247,13 +247,34 @@
    const anchor=Math.min(...desired.map(entry=>entry.target));
    const reversed=g.SystemV3DiscountPriceMath.grossBaseForTarget(anchor,terms);
    if(!reversed.exact||!Number.isSafeInteger(reversed.basePrice)||reversed.discountedPrice!==anchor)throw Error(`${product}: 기존 할인조건으로 기준가 ${anchor}원을 정확하게 역산할 수 없습니다. ${reversed.reason||''}`);
+   let targetBase=reversed.basePrice,targetTerms=terms,optionLimitAdjustment=null;
+   if(source==='smartstore'){
+    const maxOption=Math.max(...desired.map(entry=>entry.target-anchor));
+    const optionLimit=base=>Math.floor((base*0.5)/10)*10;
+    if(!Number.isSafeInteger(maxOption)||!Number.isSafeInteger(maxOption*2))throw Error(`${product}: 옵션가 허용범위를 안전하게 계산할 수 없습니다.`);
+    if(maxOption>optionLimit(targetBase)){
+     let requiredBase=Math.round((maxOption*2)/100)*100;
+     while(optionLimit(requiredBase)<maxOption)requiredBase+=100;
+     targetBase=Math.max(targetBase,requiredBase);
+     const buffer=targetBase-reversed.basePrice;
+     const basic=terms.filter(term=>term?.term_key==='basic');
+     if(!buffer||targetBase%100!==0||!Number.isSafeInteger(targetBase)||!Number.isSafeInteger(buffer)||basic.length!==1||basic[0].unit!=='amount'||!Number.isSafeInteger(Number(basic[0].value))||Number(basic[0].value)<0)throw Error(`${product}: 옵션가 허용범위 보정에 필요한 원본 기본할인 구조를 안전하게 수정할 수 없습니다.`);
+     const nextDiscount=Number(basic[0].value)+buffer;
+     if(!Number.isSafeInteger(nextDiscount))throw Error(`${product}: 보정한 즉시할인 금액이 유효하지 않습니다.`);
+     targetTerms=structuredClone(terms);
+     targetTerms.find(term=>term.term_key==='basic').value=nextDiscount;
+     if(g.SystemV3DiscountPriceMath.discountedBase(targetBase,targetTerms)!==anchor)throw Error(`${product}: 등록가·즉시할인 보정 후 기준 최종가가 일치하지 않습니다.`);
+     optionLimitAdjustment={before_base:reversed.basePrice,after_base:targetBase,before_discount:Number(basic[0].value),after_discount:nextDiscount,max_option:maxOption,allowed_option:optionLimit(targetBase)};
+    }
+    for(const entry of desired){const option=entry.target-anchor;if(!Number.isSafeInteger(option)||option < -optionLimit(targetBase)||option > optionLimit(targetBase))throw Error(`${product}: 스마트스토어 옵션가 허용범위를 초과합니다.`);}
+   }
    for(const {row,sku,target} of desired){
     const option=target-anchor;
     if(!Number.isSafeInteger(option)||option<0||anchor+option!==target)throw Error(`${product}/${row.option_code}: 옵션가 또는 최종가 검증 실패`);
-    const changed=Number(row.base_price)!==reversed.basePrice||Number(row.option_price)!==option||Number(row.final_price)!==target;
-    preview.push({source_row_no:row.source_row_no,sku:sku||'',product_code:product,option_code:row.option_code||'',status:'ready',changed,changed_fields:changed?['price']:[],preserve_unmapped:!sku,price_source:sku?'sellpia_source':'seller_original',price_state:{code:'sellpia_source',label:sku?'셀피아 최신 원본 판매가':'미선택 옵션 원본 최종가 보존',safe:true},diff:{price:{before:{base:sharedBase,discounted:sharedDiscounted,option:Number(row.option_price),final:Number(row.final_price),discount_terms:terms},after:{base:reversed.basePrice,discounted:anchor,option,final:target,discount_terms:terms},changed}}});
+    const changed=Number(row.base_price)!==targetBase||Number(row.option_price)!==option||Number(row.final_price)!==target||termsKey(terms)!==termsKey(targetTerms);
+    preview.push({source_row_no:row.source_row_no,sku:sku||'',product_code:product,option_code:row.option_code||'',status:'ready',changed,changed_fields:changed?['price']:[],preserve_unmapped:!sku,price_source:sku?'sellpia_source':'seller_original',option_limit_adjustment:optionLimitAdjustment,price_state:{code:'sellpia_source',label:sku?'셀피아 최신 원본 판매가':'미선택 옵션 원본 최종가 보존',safe:true},diff:{price:{before:{base:sharedBase,discounted:sharedDiscounted,option:Number(row.option_price),final:Number(row.final_price),discount_terms:terms},after:{base:targetBase,discounted:anchor,option,final:target,discount_terms:targetTerms},changed}}});
     if(!changed)continue;
-    operations.push({export_item_id:exportId--,sellpia_sku_code:sku||null,source_channel:source,field_key:'sellpia_sale_price',seller_product_code:product,seller_option_code:row.option_code||'',source_file_name:row.raw_payload?.source_file_name||fileName,source_row_no:Number(row.source_row_no),expected_source_value:Number(row.final_price),before_value:Number(row.final_price),after_value:target,base_price:sharedBase,option_price:Number(row.option_price),target_base_price:reversed.basePrice,target_discounted_base_price:anchor,target_option_price:option,target_final_price:target,source_discount_terms:terms,target_discount_terms:terms,stored_matrix_price:true,matrix_visible_price:false,pricing_input_mode:'sellpia_source',preserve_unmapped:!sku,target_component_skus:sku?[sku]:[]});
+    operations.push({export_item_id:exportId--,sellpia_sku_code:sku||null,source_channel:source,field_key:'sellpia_sale_price',seller_product_code:product,seller_option_code:row.option_code||'',source_file_name:row.raw_payload?.source_file_name||fileName,source_row_no:Number(row.source_row_no),expected_source_value:Number(row.final_price),before_value:Number(row.final_price),after_value:target,base_price:sharedBase,option_price:Number(row.option_price),target_base_price:targetBase,target_discounted_base_price:anchor,target_option_price:option,target_final_price:target,source_discount_terms:terms,target_discount_terms:targetTerms,stored_matrix_price:true,matrix_visible_price:false,pricing_input_mode:'sellpia_source',preserve_unmapped:!sku,target_component_skus:sku?[sku]:[]});
    }
    }catch(error){operations.length=operationsStart;preview.length=previewStart;block(error?.message||String(error));}
   }

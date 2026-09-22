@@ -231,6 +231,10 @@
     const finalPrice=Number(item.target_final_price ?? scalar(item.after_value));
     if(!Number.isFinite(base)||!Number.isFinite(discountedBase)||!Number.isFinite(option)||!Number.isFinite(finalPrice)) throw exportConflict(item,`${SOURCE_LABELS[item.source_channel]} ${item.sellpia_sku_code}: 판매가·할인 적용 판매가·옵션가·최종구매가 계산값이 없습니다.`);
     if(base<0||discountedBase<0||finalPrice<0||discountedBase+option!==finalPrice) throw exportConflict(item,`${SOURCE_LABELS[item.source_channel]} ${item.sellpia_sku_code}: 할인 적용 판매가 ${discountedBase} + 옵션가 ${option}가 최종구매가 ${finalPrice}와 일치하지 않습니다.`);
+    if(item.source_channel==='smartstore'&&item.pricing_input_mode==='sellpia_source') {
+      const allowed=Math.floor((base*0.5)/10)*10;
+      if(![base,discountedBase,option,finalPrice].every(Number.isSafeInteger)||option < -allowed||option > allowed||global.SystemV3DiscountPriceMath?.discountedBase(base,item.target_discount_terms)!==discountedBase) throw exportConflict(item,`스마트스토어 ${item.sellpia_sku_code}: 옵션가 허용범위 또는 할인 적용 최종가 재검증 실패`);
+    }
     return {base,discountedBase,option,finalPrice,discountTerms:Array.isArray(item.target_discount_terms)?item.target_discount_terms:[]};
   }
 
