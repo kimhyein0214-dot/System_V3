@@ -510,10 +510,6 @@
    const resolvedWithSku=resolved.filter(item=>item.resolution?.sku);
    let chosen=scope?resolvedWithSku.filter(item=>scope.has(item.resolution.sku)):resolvedWithSku;
    if(!chosen.length&&scope)throw Error('선택 범위에서 PlayAuto 원본과 매칭되는 SKU가 없습니다.');
-   const duplicateSourceSkus=new Set();
-   if(priceMode==='sellpia_source'){
-    const seen=new Set();for(const item of chosen){if(seen.has(item.resolution.sku))duplicateSourceSkus.add(item.resolution.sku);seen.add(item.resolution.sku);}
-   }
 
    // 상품 판매가는 한 행의 옵션들이 공유하므로 선택된 행의 모든 옵션을 함께 읽어 안전성을 확인한다.
    let safetyRows=chosen;
@@ -534,7 +530,6 @@
     const sku=item.resolution?.sku,row=sku?targetMap.get(sku):null,inScope=sku?chosenSet.has(`${item.source_row_no}|${item.option_index??''}|${sku}`):!scope;
     const out={...item,resolution:item.resolution,_inScope:inScope,_status:'ready',_error:'',_changedFields:[]};
     if(item.carrier_identity_error){out._status='ambiguous';out._error=item.carrier_identity_error;return out;}
-    if(priceMode==='sellpia_source'&&duplicateSourceSkus.has(sku)){out._status='ambiguous';out._error=`${sku}: PlayAuto 원본에 선택 SKU가 중복됩니다.`;return out;}
     if(priceMode==='sellpia_source')return out;
     if(!sku){out._status=item.resolution?.method==='unresolved'?'warn_keep_original':'ambiguous';out._error=item.resolution?.error||'SKU를 정확히 찾지 못했습니다.';return out;}
     const priceState=global.HubCurrentPriceExport.carrierPriceState(row);out._priceState=priceState;
@@ -562,26 +557,11 @@
    });
 
    if(role==='playauto_product'){
+    if(priceMode==='sellpia_source')A().prepareSellpiaSourceProductRows(prepared,sellpiaPrices);
+    else{
     const byRow=new Map();for(const item of prepared){if(!byRow.has(item.source_row_no))byRow.set(item.source_row_no,[]);byRow.get(item.source_row_no).push(item);}
     for(const group of byRow.values()){
       if(!group.some(item=>item._inScope))continue;
-      if(priceMode==='sellpia_source'){
-       try{
-       if(group.some(item=>item._status!=='ready'||(!item.resolution?.sku&&item.resolution?.method!=='unresolved')))throw Error(`${group[0].source_row_no}행: 판매처 옵션 identity가 불명확합니다.`);
-       const originalBases=[...new Set(group.map(item=>Number(item.base_price)))];
-       if(originalBases.length!==1||!Number.isSafeInteger(originalBases[0])||originalBases[0]<0)throw Error(`${group[0].source_row_no}행: PlayAuto 원본 공통 판매가가 불완전합니다.`);
-       const targets=group.map(item=>{
-        const option=Number(item.option_price),sku=item.resolution?.sku;
-        if(item.option_price===null||item.option_price===undefined||!Number.isSafeInteger(option))throw Error(`${item.source_row_no}행: 원본 옵션가를 읽지 못했습니다.`);
-        const value=item._inScope?sellpiaPrices.get(sku):originalBases[0]+option;
-        if(!Number.isSafeInteger(value)||value<=0)throw Error(`${sku||item.source_row_no}: 최신 셀피아 판매가 또는 미선택 옵션 원본 최종가가 없습니다.`);
-        return value;
-       });
-       const anchor=Math.min(...targets);
-       group.forEach((item,index)=>{item.target_base_price=anchor;item.target_option_price=targets[index]-anchor;item._priceState={safe:true,code:'sellpia_source',label:item._inScope?'셀피아 최신 원본 판매가':'미선택 옵션 원본 최종가 보존'};item._preserveUnselected=!item._inScope;});
-       }catch(error){for(const item of group){item._status='conflict';item._error=`같은 상품 행 원본 유지: ${error?.message||error}`;delete item.target_base_price;delete item.target_option_price;} }
-       continue;
-      }
       if(group.some(item=>item._status!=='ready'&&item._status!=='warn_keep_original')){
        for(const item of group)if(item._inScope){item._status='conflict';item._error='공유 판매가 상품에 identity 차단이 있어 생성 차단';delete item.target_base_price;delete item.target_option_price;}
        continue;
@@ -593,6 +573,7 @@
       const bases=[...new Set(group.filter(item=>Number.isFinite(Number(item.target_base_price))).map(item=>Number(item.target_base_price)))];
       const safe=bases.length===1&&group.every(item=>item.resolution?.sku&&item._status==='ready');
       if(!safe){for(const item of group)if(item._inScope){item._status='conflict';item._error='공유 판매가를 안전하게 결정할 수 없음';delete item.target_base_price;delete item.target_option_price;}}
+    }
     }
    }
 

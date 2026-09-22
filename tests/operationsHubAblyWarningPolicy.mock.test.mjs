@@ -8,6 +8,7 @@ const helpers=workflow.slice(workflow.indexOf(' const ablyPhases='),workflow.ind
 const previewSource=workflow.slice(workflow.indexOf(' async function preview(role)'),workflow.indexOf('\n function previewRowsForFilter('));
 const mathSource=fs.readFileSync(new URL('../mockups/operations-hub/discount-price-math.js',import.meta.url),'utf8');
 const priceSource=fs.readFileSync(new URL('../mockups/operations-hub/current-price-export.js',import.meta.url),'utf8');
+const ablySource=fs.readFileSync(new URL('../mockups/operations-hub/ably-playauto-export.js',import.meta.url),'utf8');
 const plain=value=>JSON.parse(JSON.stringify(value));
 
 function harness({items,targets=[],role='playauto_option',priceMode='rules',selectedSkus=null,sourcePrices={}}){
@@ -21,11 +22,12 @@ function harness({items,targets=[],role='playauto_option',priceMode='rules',sele
  vm.createContext(global);
  vm.runInContext(mathSource,global);
  vm.runInContext(priceSource,global);
+ vm.runInContext(ablySource,global);
  const n=value=>Number(value||0).toLocaleString('ko-KR'),setStatus=(text,kind)=>messages.push({text,kind});
  const createAblyJob=Function('global','state','document','n','renderExportStatuses','setStatus',`${helpers};return createAblyJob;`)(global,state,document,n,()=>{},setStatus);
  const roles={playauto_option:{label:'옵션가 + 재고',type:'option_price_stock'},playauto_product:{label:'판매가 + 옵션가',type:'product_price_option'}};
  const file={name:'carrier.xlsx',arrayBuffer:async()=>new ArrayBuffer(1)};
- const A=()=>({readTemplate:async()=>({type:roles[role].type,items}),resolveRows:rows=>rows.map(item=>({...item,resolution:item.resolution||{sku:item.sku,method:'direct_sku'}}))});
+ const A=()=>({readTemplate:async()=>({type:roles[role].type,items}),resolveRows:rows=>rows.map(item=>({...item,resolution:item.resolution||{sku:item.sku,method:'direct_sku'}})),prepareSellpiaSourceProductRows:(rows,prices)=>global.AblyPlayautoExport.prepareSellpiaSourceProductRows(rows,prices)});
  const calls=[];
  const D=()=>({loadCarrierSellerMappings:async()=>({rows:[]}),loadCarrierMatrixTargets:async options=>{calls.push(options);return {rows:targets};},loadSellpiaSourcePricesForExport:async()=>new Map(Object.entries(sourcePrices))});
  const preview=Function('state','roles','setStatus','createAblyJob','document','global','blobFile','A','D','catalog','scopeSkus','renderPreview','n',`${previewSource};return preview;`)(state,roles,setStatus,createAblyJob,document,global,async()=>file,A,D,async()=>[],async()=>selectedSkus?new Set(selectedSkus):null,()=>{rendered++;},n);
@@ -40,7 +42,7 @@ test('Ably PlayAuto Sellpia mode preserves unselected option finals while changi
  assert.deepEqual(plain(preview.output.map(item=>item._preserveUnselected)),[false,true,true]);
  assert.deepEqual(plain(preview.output.map(item=>item._changedFields)),[['base'],['base','option'],['base','option']]);
  const absent=harness({role:'playauto_product',priceMode:'sellpia_source',items,selectedSkus:['P-1']});
- const blocked=await absent.run();assert.ok(blocked);assert.equal(blocked.counts.blocked,3);assert.equal(blocked.counts.changed,0);assert.match(blocked.output[0]._error,/셀피아 판매가/);
+ const blocked=await absent.run();assert.ok(blocked);assert.equal(blocked.counts.blocked,3);assert.equal(blocked.counts.changed,0);assert.match(blocked.output[0]._error,/셀피아.*판매가/);
 });
 test('Ably Sellpia mode isolates a blocked physical row and retains another safe row',async()=>{
  const items=[row('P-1',6,{option_index:0,base_price:30000,option_price:0}),row('P-2',6,{option_index:1,base_price:30000,option_price:3500}),row('Q-1',7,{option_index:0,base_price:40000,option_price:0})];
@@ -49,7 +51,7 @@ test('Ably Sellpia mode isolates a blocked physical row and retains another safe
  assert.equal(preview.output.find(item=>item.source_row_no===7).target_base_price,45000);
 });
 function row(sku,sourceRowNo=6,extra={}){
- return {sku,sellpia_product_code:sku.split('-')[0],source_row_no:sourceRowNo,option_index:Number(sku.split('-')[1])||0,base_price:2800,option_price:0,sales_quantity:3,available_stock:888,...extra};
+ return {sku,sellpia_product_code:sku.split('-')[0],seller_management_code:'sellpia_'+sku.split('-')[0],primary_option_name:sku,secondary_option_value:'',source_row_no:sourceRowNo,option_index:Number(sku.split('-')[1])||0,base_price:2800,option_price:0,sales_quantity:3,available_stock:888,...extra};
 }
 function target(sku,extra={}){return {sku,active_price_rule:false,seller_stock:0,...extra};}
 function calculated(generation=27){
