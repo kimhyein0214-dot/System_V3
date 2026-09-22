@@ -4788,6 +4788,7 @@ function renderBulkSourceRefreshProgress() {
     phases.innerHTML = '';
     delete progressBox.dataset.phase;
     delete progressBox.dataset.status;
+    delete progressBox.dataset.saved;
     return;
   }
   const startedAt = new Date(bulkSourceRefreshState.startedAt);
@@ -4798,9 +4799,18 @@ function renderBulkSourceRefreshProgress() {
     completed_with_warning:'전체 DB 갱신 부분 실패',
     failed:'전체 DB 갱신 실패'
   };
-  summary.textContent = `${finalLabels[bulkSourceRefreshState.finalStatus] || '전체 DB 갱신 준비'}${startedLabel ? ` · 시작 ${startedLabel}` : ''}${bulkSourceRefreshState.finalMessage ? ` · ${bulkSourceRefreshState.finalMessage}` : ''}`;
+  const savedFields = bulkSourceRefreshState.fields.filter(fieldKey => bulkSourceRefreshState.fieldStatuses[fieldKey]?.status === 'completed');
+  const savedLabels = savedFields.map(fieldKey => {
+    const changedCount = bulkSourceRefreshState.fieldStatuses[fieldKey]?.changedCount || 0;
+    return `${BULK_SOURCE_REFRESH_FIELDS[fieldKey]?.label || fieldKey} ${changedCount ? `${formatNumber(changedCount)}건 DB 저장 완료` : '변경 없음'}`;
+  }).join(' · ');
+  const savedHeadline = savedFields.length && bulkSourceRefreshState.finalStatus === 'running'
+    ? `${savedLabels} · ${bulkSourceRefreshState.matrixStatus === 'running' ? '매트릭스 화면 반영 중' : bulkSourceRefreshState.priceProgress.status === 'running' ? '후속 가격 계산·저장 중' : '다음 단계 진행 중'}${bulkSourceRefreshState.matrixStatus === 'pending' ? ' · 화면 반영 전' : ''}`
+    : null;
+  summary.textContent = `${savedHeadline || finalLabels[bulkSourceRefreshState.finalStatus] || '전체 DB 갱신 준비'}${startedLabel ? ` · 시작 ${startedLabel}` : ''}${bulkSourceRefreshState.finalMessage ? ` · ${bulkSourceRefreshState.finalMessage}` : ''}`;
   progressBox.dataset.phase = bulkSourceRefreshState.phase;
   progressBox.dataset.status = bulkSourceRefreshState.finalStatus;
+  progressBox.dataset.saved = savedFields.length ? 'true' : 'false';
 
   const fieldKeys = [...new Set(['system_stock', 'sellpia_purchase_price', ...bulkSourceRefreshState.fields])];
   const rows = [{
@@ -4818,24 +4828,24 @@ function renderBulkSourceRefreshProgress() {
       label:info.label,
       status:fieldStatus.status,
       detail:fieldStatus.status === 'completed'
-        ? `${formatNumber(fieldStatus.changedCount || 0)}건 저장`
+        ? `${info.sourceLabel || '셀피아 원본'} → 시스템 ${info.label} · ${fieldStatus.changedCount ? `${formatNumber(fieldStatus.changedCount)}건 DB 저장 완료` : '변경 없음 · 현재 DB 값 유지'}`
         : (fieldStatus.detail || '')
     });
   }
   const price = bulkSourceRefreshState.priceProgress;
   rows.push({
     key:'price_calculation',
-    label:'가격 계산 진행률',
+    label:'후속 가격 계산·저장',
     status:price.status,
     detail:price.status === 'skipped'
       ? '가격 관련 컬럼을 선택하지 않았습니다.'
-      : `${formatNumber(price.completed)} / ${formatNumber(price.total)} SKU${price.phase ? ` · ${price.phase}` : ''}`
+      : `${formatNumber(price.completed)} / ${formatNumber(price.total)} SKU${price.phase ? ` · ${price.phase === 'persist' ? '계산 결과 DB 저장 중' : price.phase}` : ''}${price.status === 'running' && price.total > 0 && price.completed >= price.total ? ' · 아직 완료 확인 전' : ''}`
   });
   rows.push({
     key:'matrix_refresh',
-    label:'매트릭스 재조회',
+    label:'매트릭스 화면 반영',
     status:bulkSourceRefreshState.matrixStatus,
-    detail:bulkSourceRefreshState.matrixStatus === 'completed' ? '최신 DB 값을 화면에 반영했습니다.' : ''
+    detail:bulkSourceRefreshState.matrixStatus === 'completed' ? '최신 DB 값을 화면에 반영했습니다.' : bulkSourceRefreshState.matrixStatus === 'pending' && savedFields.length ? 'DB 저장은 완료됐고 화면 갱신은 대기 중입니다.' : ''
   });
   const finalUiStatus = bulkSourceRefreshState.finalStatus === 'completed'
     ? 'completed'
@@ -4846,7 +4856,7 @@ function renderBulkSourceRefreshProgress() {
         : 'pending';
   rows.push({
     key:'final',
-    label:bulkSourceRefreshState.finalStatus === 'completed_with_warning' ? '부분 실패' : (bulkSourceRefreshState.finalStatus === 'failed' ? '실패' : '완료'),
+    label:bulkSourceRefreshState.finalStatus === 'completed_with_warning' ? '후속 단계 확인 필요' : (bulkSourceRefreshState.finalStatus === 'failed' ? '실패' : '전체 작업 완료'),
     status:finalUiStatus,
     detail:bulkSourceRefreshState.finalMessage
   });

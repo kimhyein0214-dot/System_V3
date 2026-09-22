@@ -1718,6 +1718,14 @@
   line-height: 1.45;
 }
 
+.bulk-source-refresh-progress[data-saved="true"][data-status="running"] .bulk-source-refresh-progress-summary {
+  border: 1px solid #b7dfc5;
+  border-radius: 7px;
+  background: #edf9f1;
+  color: #176338;
+  padding: 9px 11px;
+}
+
 .bulk-source-refresh-progress-phases {
   display: grid;
   gap: 7px;
