@@ -189,7 +189,7 @@
       if(changed)xml=global.AblyStockExport.patchCell(xml,rowNo,PRODUCT_OPTION_PRICE_COLUMN,current.join('\n'));
     }
     if(changes.length)xml=highlightChanges(parts,xml,changes);
-    const warnings=(items||[]).filter(item=>item._status==='warn_keep_original').flatMap(item=>[`${PRODUCT_BASE_PRICE_COLUMN}${item.source_row_no}`,`${PRODUCT_OPTION_PRICE_COLUMN}${item.source_row_no}`]);
+    const warnings=(items||[]).filter(item=>item._status&&item._status!=='ready').flatMap(item=>[`${PRODUCT_BASE_PRICE_COLUMN}${item.source_row_no}`,`${PRODUCT_OPTION_PRICE_COLUMN}${item.source_row_no}`]);
     if(warnings.length)xml=highlightChanges(parts,xml,warnings,{fillColor:'FFFFC7CE',preserveText:true});
     zip.file(path,xml,{createFolders:false});return zip.generateAsync({type:'blob',mimeType:'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',compression:'DEFLATE'});
   }
@@ -203,7 +203,7 @@
       if(finite(item.target_stock)){xml=global.AblyStockExport.patchCell(xml,item.source_row_no,OPTION_STOCK_COLUMN,Number(item.target_stock));changes.push(`${OPTION_STOCK_COLUMN}${item.source_row_no}`);}
     }
     if(changes.length)xml=highlightChanges(parts,xml,changes);
-    const warnings=(items||[]).filter(item=>item._status==='warn_keep_original').flatMap(item=>[`${OPTION_PRICE_COLUMN}${item.source_row_no}`,`${OPTION_STOCK_COLUMN}${item.source_row_no}`]);
+    const warnings=(items||[]).filter(item=>item._status&&item._status!=='ready').flatMap(item=>[`${OPTION_PRICE_COLUMN}${item.source_row_no}`,`${OPTION_STOCK_COLUMN}${item.source_row_no}`]);
     if(warnings.length)xml=highlightChanges(parts,xml,warnings,{fillColor:'FFFFC7CE',preserveText:true});
     parts.zip.file(parts.path,xml,{createFolders:false});return parts.zip.generateAsync({type:'blob',mimeType:'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',compression:'DEFLATE'});
   }

@@ -112,5 +112,8 @@ assert.equal(A.resolveSellpiaSku({...parsedProduct[0],direct_sellpia_sku_code:''
  const xml=parts.get('xl/worksheets/sheet1.xml');
  assert.match(xml,/<c r="I6"[^>]*><v>32000<\/v><\/c>/);assert.match(xml,/0\n1500\n7000/);assert.match(xml,/<c r="U6"><v>99<\/v><\/c>/);
  assert.ok(changes.includes('I6'));assert.equal(changes.filter(change=>change.reference==='T6').length,3);
+ const red=[];context.SystemV3SellerExport.applyChangeHighlights=(sheet,styles,refs,options)=>{if(options?.fillColor==='FFFFC7CE')red.push(...refs);return {sheetXml:sheet,stylesXml:styles};};
+ await A.buildProductPriceOption({name:'playauto.xlsx',arrayBuffer:async()=>new ArrayBuffer(1)},[{source_row_no:6,option_index:0,_status:'conflict'}]);
+ assert.ok(red.includes('I6')&&red.includes('T6'),'blocked PlayAuto row retains original values and is marked red');
 }
 console.log('PASS Ably PlayAuto templates: existing seller mapping wins, strict option fallback remains, and V/X contract preserves W.');

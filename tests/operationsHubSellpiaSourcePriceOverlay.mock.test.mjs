@@ -36,6 +36,7 @@ function assertFinals(p,expected){assert.deepEqual(p.preview.map(row=>row.diff.p
  const blocked=(f,reason)=>{const p=plan(f);assert.equal(p.operations.length,0);assert.equal(p.summary.blocked,f.rows.length);assert.match(p.preview[0].reason,reason);assert.equal(p.excludedItems.length,f.rows.length);};
  blocked(fixture({sourcePrices:{}}),/최신 셀피아 원본 판매가/);
  const duplicate=fixture();duplicate.mappings.push({sku:'X',product_code:'P',option_code:'A'});blocked(duplicate,/여러 SKU/);
+ const duplicateCarrier=fixture();duplicateCarrier.rows.push({...duplicateCarrier.rows[0],source_row_no:5});const duplicatePlan=plan(duplicateCarrier);assert.equal(duplicatePlan.summary.blocked,4);assert.equal(duplicatePlan.preview.filter(row=>row.source_row_no===5&&row.status==='blocked').length,1,'every duplicate physical carrier row remains visible as blocked');
  const unrelated=fixture();unrelated.rows.push({...unrelated.rows[0],product_code:'OTHER',option_code:'X'});unrelated.mappings.push({sku:'X',product_code:'OTHER',option_code:'X'},{sku:'Y',product_code:'OTHER',option_code:'X'});assert.equal(plan(unrelated).summary.selected,1,'unrelated product mapping ambiguity does not block the selected product');
  const multi=fixture();multi.mappings.push({sku:'A',product_code:'P',option_code:'B'});blocked(multi,/identity가 여러|여러 SKU/);
  const missing=fixture();missing.rows[0].discount_terms=null;blocked(missing,/할인을 읽지/);

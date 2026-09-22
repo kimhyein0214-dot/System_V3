@@ -209,7 +209,7 @@
   const blockedProducts=new Map(externalBlockedProducts),selectedProducts=new Set();
   for(const [sku,keys] of skuIdentities){for(const key of keys){const row=originals.get(key);if(row)selectedProducts.add(String(row.product_code||''));}if(keys.size!==1)for(const key of keys){const row=originals.get(key);if(row)blockedProducts.set(String(row.product_code||''),`${sku}: 판매처 옵션 identity가 여러 개입니다.`);}}
   const products=new Map();
-  for(const [key,row] of originals){const product=String(row.product_code||'');if(!selectedProducts.has(product))continue;const mapped=mappings.get(key)||new Set(),selectedMapped=[...mapped].filter(sku=>selected.has(sku));if(mapped.size>1)blockedProducts.set(product,`${product}/${row.option_code}: 판매처 옵션이 여러 SKU에 연결되어 있습니다.`);if(!products.has(product))products.set(product,[]);products.get(product).push({row,sku:selectedMapped[0]||null});}
+  for(const row of carrierRows||[]){const key=identity(row),product=String(row.product_code||'');if(!selectedProducts.has(product))continue;const mapped=mappings.get(key)||new Set(),selectedMapped=[...mapped].filter(sku=>selected.has(sku));if(mapped.size>1)blockedProducts.set(product,`${product}/${row.option_code}: 판매처 옵션이 여러 SKU에 연결되어 있습니다.`);if(!products.has(product))products.set(product,[]);products.get(product).push({row,sku:selectedMapped[0]||null});}
   const operations=[],preview=[],excludedItems=[];let exportId=-1;
   for(const [product,siblings] of products){
    if(!siblings.some(sibling=>sibling.sku)&&!blockedProducts.has(product))continue;

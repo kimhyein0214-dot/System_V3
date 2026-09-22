@@ -40,7 +40,13 @@ test('Ably PlayAuto Sellpia mode preserves unselected option finals while changi
  assert.deepEqual(plain(preview.output.map(item=>item._preserveUnselected)),[false,true,true]);
  assert.deepEqual(plain(preview.output.map(item=>item._changedFields)),[['base'],['base','option'],['base','option']]);
  const absent=harness({role:'playauto_product',priceMode:'sellpia_source',items,selectedSkus:['P-1']});
- assert.equal(await absent.run(),undefined);assert.match(absent.messages.at(-1).text,/셀피아 판매가/);
+ const blocked=await absent.run();assert.ok(blocked);assert.equal(blocked.counts.blocked,3);assert.equal(blocked.counts.changed,0);assert.match(blocked.output[0]._error,/셀피아 판매가/);
+});
+test('Ably Sellpia mode isolates a blocked physical row and retains another safe row',async()=>{
+ const items=[row('P-1',6,{option_index:0,base_price:30000,option_price:0}),row('P-2',6,{option_index:1,base_price:30000,option_price:3500}),row('Q-1',7,{option_index:0,base_price:40000,option_price:0})];
+ const h=harness({role:'playauto_product',priceMode:'sellpia_source',items,selectedSkus:['P-1','Q-1'],sourcePrices:{'Q-1':45000}}),preview=await h.run();
+ assert.ok(preview);assert.equal(preview.counts.blocked,2);assert.equal(preview.counts.changed,1);assert.ok(preview.output.filter(item=>item.source_row_no===6).every(item=>item._status==='conflict'));
+ assert.equal(preview.output.find(item=>item.source_row_no===7).target_base_price,45000);
 });
 function row(sku,sourceRowNo=6,extra={}){
  return {sku,sellpia_product_code:sku.split('-')[0],source_row_no:sourceRowNo,option_index:Number(sku.split('-')[1])||0,base_price:2800,option_price:0,sales_quantity:3,available_stock:888,...extra};
