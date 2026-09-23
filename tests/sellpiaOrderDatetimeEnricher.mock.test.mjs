@@ -15,6 +15,8 @@ assert.match(tool, /sellpia_ordered_at/);
 assert.match(tool, /await patch\("orders", target\)/);
 assert.match(tool, /await patch\("order_items", target\)/);
 assert.match(tool, /method: "PATCH"/);
+assert.match(tool, /return=minimal,count=exact/);
+assert.match(tool, /해당 주문번호를 찾지 못했습니다/);
 assert.doesNotMatch(tool, /method:\s*"DELETE"/);
 assert.doesNotMatch(tool, /upsert/i);
 
