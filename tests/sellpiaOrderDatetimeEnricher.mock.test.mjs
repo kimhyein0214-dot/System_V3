@@ -15,6 +15,8 @@ assert.match(scraper, /id="sp-order-datetime"/);
 assert.match(scraper, /주문일시만 보강/);
 assert.match(scraper, /0923 주문일 보강 패치/);
 assert.match(scraper, /function enrichOrderDateTimes/);
+assert.match(scraper, /function loadCurrentSellpiaRowsForOrderDateTime/);
+assert.match(scraper, /rows=await loadCurrentSellpiaRowsForOrderDateTime\(session,invFilter\)/);
 assert.match(scraper, /c_ord_date/);
 assert.match(scraper, /sellpia_ordered_at/);
 assert.match(scraper, /await dbPatch\('orders'/);
@@ -37,6 +39,8 @@ const generated = decodeURIComponent(getElementById("bookmarklet-link").href.rep
 new Function(generated);
 assert.match(generated, /id="sp-order-datetime"/);
 assert.match(generated, /function enrichOrderDateTimes/);
+assert.match(generated, /function loadCurrentSellpiaRowsForOrderDateTime/);
+assert.match(generated, /현재 셀피아 목록의 주문일시만 보강합니다/);
 assert.match(generated, /document\.getElementById\("sp-order-datetime"\)\.onclick/);
 assert.match(generated, /0923 주문일 보강 패치/);
 
