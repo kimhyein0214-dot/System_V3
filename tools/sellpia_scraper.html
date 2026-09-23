@@ -67,15 +67,42 @@ async function enrichOrderDateTimes(targetDate,session,invFilter){session=sessio
     }
     patched = patched.replace(startActionHook, startActionReplacement);
 
-    // The shared date-query reader can briefly see the previous grid after
-    // Sellpia's search click. Wait for rows from the requested receipt date.
-    const gridReadyHook = 'var waited=0;while(waited<GRID_WAIT_MS){if((window.grid&&window.grid.getData?window.grid.getData().getLength():0)>0)break;await sleep(300);waited+=300;}';
-    const gridReadyReplacement = String.raw`var waited=0;while(waited<GRID_WAIT_MS){var currentData=window.grid&&window.grid.getData?window.grid.getData():null;var currentRows=currentData&&currentData.getItems?currentData.getItems():[];if(currentRows.length&&currentRows.every(function(row){var receipt=normalizeSellpiaDate(getSellpiaReceiptRaw(row),targetDate);return receipt===targetDate;}))break;await sleep(300);waited+=300;}`;
-    if (!patched.includes(gridReadyHook)) {
-      console.error("[SCRAPER] shared date-query grid wait hook not found");
+    // The shared reader also serves the order-datetime range enrichment.
+    // Do not accept the old grid while Sellpia's date search is still loading.
+    const loaderStart = patched.indexOf('async function loadCurrentSellpiaRows(');
+    const loaderEnd = patched.indexOf('async function runInvoiceRefresh(', loaderStart);
+    if (loaderStart < 0 || loaderEnd < 0) {
+      console.error("[SCRAPER] shared date-query loader not found");
       return;
     }
-    patched = patched.replace(gridReadyHook, gridReadyReplacement);
+    let dateLoader = patched.slice(loaderStart, loaderEnd);
+    const loaderSignature = 'async function loadCurrentSellpiaRows(targetDate,session,invFilter){  session=session||"ALL";';
+    const loaderDateInputs = 's.value=targetDate;e.value=targetDate;';
+    const gridReadyHook = 'var waited=0;while(waited<GRID_WAIT_MS){if((window.grid&&window.grid.getData?window.grid.getData().getLength():0)>0)break;await sleep(300);waited+=300;}';
+    const gridReadyReplacement = String.raw`var waited=0;while(waited<GRID_WAIT_MS){var currentData=window.grid&&window.grid.getData?window.grid.getData():null;var currentRows=currentData&&currentData.getItems?currentData.getItems():[];if(currentRows.length&&currentRows.every(function(row){var receipt=normalizeSellpiaDate(getSellpiaReceiptRaw(row),targetDate);return receipt&&receipt>=targetDate&&receipt<=endDate;}))break;await sleep(300);waited+=300;}`;
+    const loaderRangeGuard = 'assertSellpiaReceiptDateMatches(rows,targetDate);';
+    if (![loaderSignature, loaderDateInputs, gridReadyHook, loaderRangeGuard].every(hook => dateLoader.includes(hook))) {
+      console.error("[SCRAPER] shared date-query range hook not found");
+      return;
+    }
+    dateLoader = dateLoader
+      .replace(loaderSignature, 'async function loadCurrentSellpiaRows(targetDate,session,invFilter,endDate){  endDate=endDate||targetDate;session=session||"ALL";')
+      .replace(loaderDateInputs, 's.value=targetDate;e.value=endDate;')
+      .replace(gridReadyHook, gridReadyReplacement)
+      .replace(loaderRangeGuard, 'assertSellpiaReceiptDateInRange(rows,targetDate,endDate);');
+    patched = patched.slice(0, loaderStart) + dateLoader + patched.slice(loaderEnd);
+
+    const orderDateSignature = "async function enrichOrderDateTimes(targetDate,session,invFilter){session=session||'ALL';";
+    const orderDateLoader = 'rows=await loadCurrentSellpiaRows(targetDate,session,invFilter),byOrd={}';
+    const orderDateConfirm = "조회 접수일: '+targetDate+'\\n대상: ";
+    if (![orderDateSignature, orderDateLoader, orderDateConfirm].every(hook => patched.includes(hook))) {
+      console.error("[SCRAPER] order-datetime range hook not found");
+      return;
+    }
+    patched = patched
+      .replace(orderDateSignature, "async function enrichOrderDateTimes(targetDate,session,invFilter,endDate){endDate=endDate||targetDate;session=session||'ALL';")
+      .replace(orderDateLoader, 'rows=await loadCurrentSellpiaRows(targetDate,session,invFilter,endDate),byOrd={}')
+      .replace(orderDateConfirm, "조회 접수기간: '+targetDate+(endDate===targetDate?'':' ~ '+endDate)+'\\n대상: ");
 
     const orderDateButtonHook = '<button id="sp-invoice"';
     const orderDateButtonReplacement = '<button id="sp-order-datetime" style="width:100%;padding:10px;background:#3D6170;border:none;border-radius:8px;color:#EAF8FF;font-weight:900;font-size:14px;cursor:pointer;margin-bottom:6px">주문일시만 보강</button><button id="sp-invoice"';
@@ -88,12 +115,14 @@ async function enrichOrderDateTimes(targetDate,session,invFilter){session=sessio
     const orderDateActionHook = 'document.getElementById("sp-invoice").onclick=async function(){';
     const orderDateActionReplacement = String.raw`document.getElementById("sp-order-datetime").onclick=async function(){
   var d=document.getElementById("sp-date").value;
+  var ed=document.getElementById("sp-date-end").value||d;
   var session=(document.querySelector("input[name=sp-session]:checked")||{}).value||"ALL";
   var invFilter=(document.getElementById("sp-inv-filter")&&document.getElementById("sp-inv-filter").value||"").trim();
   if(!d){alert("날짜를 선택하세요.");return;}
+  if(ed<d){alert("접수 종료일이 시작일보다 빠릅니다.");return;}
   document.getElementById("sp-input-area").style.display="none";
   document.getElementById("sp-progress-area").style.display="block";
-  try{await enrichOrderDateTimes(d,session,invFilter);}
+  try{await enrichOrderDateTimes(d,session,invFilter,ed);}
   catch(err){setStatus("주문일시 보강 오류: "+err.message);addLog(err.stack||err.message);alert("주문일시 보강 오류\n"+err.message);}
 };
 document.getElementById("sp-invoice").onclick=async function(){`;

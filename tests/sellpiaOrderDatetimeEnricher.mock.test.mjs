@@ -40,14 +40,60 @@ new Function(generated);
 assert.match(generated, /id="sp-order-datetime"/);
 assert.equal([...generated.matchAll(/function enrichOrderDateTimes\(/g)].length, 1);
 assert.doesNotMatch(generated, /loadCurrentSellpiaRowsForOrderDateTime/);
-assert.match(generated, /rows=await loadCurrentSellpiaRows\(targetDate,session,invFilter\)/);
-assert.match(generated, /조회 접수일: '\+targetDate/);
+assert.match(generated, /rows=await loadCurrentSellpiaRows\(targetDate,session,invFilter,endDate\)/);
+assert.match(generated, /조회 접수기간: '\+targetDate/);
+assert.match(generated, /var ed=document\.getElementById\("sp-date-end"\)\.value\|\|d/);
+assert.match(generated, /await enrichOrderDateTimes\(d,session,invFilter,ed\)/);
+assert.match(generated, /s\.value=targetDate;e\.value=endDate/);
 assert.match(generated, /setSellpiaDateTypeToReceipt\(\)/);
 assert.match(generated, /btn\.click\(\);await sleep\(1500\)/);
 assert.match(generated, /currentRows\.every\(function\(row\)/);
-assert.match(generated, /assertSellpiaReceiptDateMatches\(rows,targetDate\)/);
+assert.match(generated, /assertSellpiaReceiptDateInRange\(rows,targetDate,endDate\)/);
 assert.match(generated, /document\.getElementById\("sp-order-datetime"\)\.onclick/);
 assert.match(generated, /0923 주문일 보강 패치/);
+
+const loaderStart = generated.indexOf("async function loadCurrentSellpiaRows(");
+const loaderEnd = generated.indexOf("async function runInvoiceRefresh(", loaderStart);
+assert.ok(loaderStart >= 0 && loaderEnd > loaderStart);
+const pageInputs = new Map([
+  ["search_date_s", { value: "", dispatchEvent() {} }],
+  ["search_date_e", { value: "", dispatchEvent() {} }],
+  ["btn_search", { click() { searchClicks++; } }],
+]);
+let searchClicks = 0;
+let checkedRange;
+const sellpiaRows = [
+  { c_ord_no: "old", receipt: "2026-08-26", num: 1 },
+  { c_ord_no: "recent", receipt: "2026-09-23", num: 2 },
+];
+const loaderContext = vm.createContext({
+  GRID_WAIT_MS: 8000,
+  document: {
+    getElementById: (id) => pageInputs.get(id),
+    querySelectorAll: () => [],
+  },
+  window: { grid: { getData: () => ({ getItems: () => sellpiaRows }) } },
+  Event: class {},
+  sleep: async () => {},
+  setSellpiaDateTypeToReceipt: () => {},
+  normalizeSellpiaDate: (value) => value,
+  getSellpiaReceiptRaw: (row) => row.receipt,
+  assertSellpiaReceiptDateInRange: (rows, start, end) => {
+    checkedRange = [start, end];
+    assert.ok(rows.every((row) => row.receipt >= start && row.receipt <= end));
+  },
+});
+vm.runInContext(generated.slice(loaderStart, loaderEnd) + "\nglobalThis.loadRows=loadCurrentSellpiaRows;", loaderContext);
+const rangeRows = await loaderContext.loadRows("2026-06-23", "ALL", "", "2026-09-23");
+assert.equal(searchClicks, 1);
+assert.equal(pageInputs.get("search_date_s").value, "2026-06-23");
+assert.equal(pageInputs.get("search_date_e").value, "2026-09-23");
+assert.deepEqual(checkedRange, ["2026-06-23", "2026-09-23"]);
+assert.deepEqual(Array.from(rangeRows, (row) => row.c_ord_no), ["old", "recent"]);
+sellpiaRows.splice(0, sellpiaRows.length, { c_ord_no: "recent", receipt: "2026-09-23", num: 1 });
+await loaderContext.loadRows("2026-09-23", "ALL", "");
+assert.equal(pageInputs.get("search_date_e").value, "2026-09-23");
+assert.deepEqual(checkedRange, ["2026-09-23", "2026-09-23"]);
 
 assert.match(adapter, /orderDateTime:\s*firstText\(order\.sellpia_ordered_at\)/);
 assert.match(app, /function invoiceOrderDateTimeLabel/);
