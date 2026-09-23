@@ -2076,6 +2076,16 @@ function inspectionLabelNumberMap(selectedInvoice) {
   return map;
 }
 
+function invoiceOrderDateTimeLabel(invoice) {
+  const sourceInvoices = Array.isArray(invoice?.sourceInvoices) && invoice.sourceInvoices.length
+    ? invoice.sourceInvoices
+    : [invoice];
+  return [...new Set(sourceInvoices
+    .map((source) => String(source?.orderDateTime || "").trim())
+    .filter(Boolean))]
+    .join(" / ");
+}
+
 function formatShortDate(value) {
   if (!value) return "-";
   const date = new Date(value);
@@ -3465,6 +3475,7 @@ function renderShortageRow({ invoice, item, state: itemState, completed, cancell
   const key = workflowItemKey(invoice, item);
   const orderNo = itemOrderNo(item, invoiceItemIndex(invoice, item));
   const receiptDate = String(invoice.receiptDate || "").slice(0, 10);
+  const orderDateTime = invoiceOrderDateTimeLabel(invoice);
   const delayLabel = shortageDelayDisplayLabel(invoice);
   const drawerNo = drawerMemoForShortageRow({ invoice, item, state: itemState });
   const drawerOrderLabel = `${drawerNo || "미입력"}-${orderNo}`;
@@ -3483,6 +3494,7 @@ function renderShortageRow({ invoice, item, state: itemState, completed, cancell
         <span class="workflow-row-order" title="서랍번호-상품순서">${escapeHtml(drawerOrderLabel)}</span>
         <small>${escapeHtml(invoice.displayName || invoice.csDisplayName || "-")} · ${escapeHtml(delayLabel)}</small>
         ${receiptDate ? `<small class="workflow-row-receipt">접수 ${escapeHtml(receiptDate)}</small>` : ""}
+        ${orderDateTime ? `<small class="workflow-row-order-date">주문 ${escapeHtml(orderDateTime)}</small>` : ""}
         ${receiving ? `<small class="receiving-row-note">입고 ${escapeHtml(receiving.qty || "-")}개</small>` : ""}
       </span>
       <span class="workflow-row-badge ${cancelled ? "cancelled" : completed ? "done" : "danger"}">${cancelled ? "취소" : completed ? "기존완료" : `미송 ${Number(itemState?.shortageQty || 0) || 1}`}</span>
@@ -3762,6 +3774,7 @@ function renderInspectionPanels(options = {}) {
   if (renderList) {
     els.inspectionListBody.innerHTML = invoices
       .map((invoice, index) => {
+        const orderDateTime = invoiceOrderDateTimeLabel(invoice);
         const itemStates = (invoice.items || []).map((item) => workflowItemState(invoice, item)).filter(Boolean);
         const repicked = itemStates.filter((row) => row.shortageRepicked && !row.inspected && !row.cancelled).length;
         const manualCsCount = manualPendingCsCountForInspectionInvoice(invoice);
@@ -3805,7 +3818,7 @@ function renderInspectionPanels(options = {}) {
           </span>
           <span class="workflow-row-main">
             <strong>${escapeHtml(invoice.displayName || invoice.csDisplayName || "-")}</strong>
-            <small>상품 ${invoice.items.length}종 · 접수 ${escapeHtml(invoice.receiptDate || "-")}</small>
+            <small>상품 ${invoice.items.length}종 · 접수 ${escapeHtml(invoice.receiptDate || "-")}${orderDateTime ? ` · 주문 ${escapeHtml(orderDateTime)}` : ""}</small>
           </span>
           <span class="workflow-row-badges">${shipmentBadges}${badges}</span>
         </button>`;
@@ -3844,6 +3857,7 @@ function renderInspectionPanels(options = {}) {
   const labelNoByItem = selectedLabelTarget ? inspectionLabelNumberMap(selected) : new Map();
   const selectedTotalQty = invoiceTotalQuantity(selected);
   const selectedName = selected.displayName || selected.csDisplayName || "-";
+  const selectedOrderDateTime = invoiceOrderDateTimeLabel(selected);
   const holdNotice = holdState.needsAttention
     ? '<div class="workflow-note">관리메모/기존 보류 신호가 있어 배송보류 ON 확인이 필요합니다. 확인 전 업데이터는 배송보류 OFF를 계획하지 않습니다.</div>'
     : '<div class="workflow-note">셀피아 배송보류는 시스템 배송보류 current 값과 업데이터 실행 시 동기화됩니다.</div>';
@@ -3855,7 +3869,7 @@ function renderInspectionPanels(options = {}) {
           ${seller ? `<span class="seller-badge ${seller.className}">${escapeHtml(seller.label)}</span>` : ""}
         </div>
         <span class="inspection-title-meta">
-          <span>접수 ${escapeHtml(selected.receiptDate || "-")}</span>
+          <span>접수 ${escapeHtml(selected.receiptDate || "-")}${selectedOrderDateTime ? ` · 주문 ${escapeHtml(selectedOrderDateTime)}` : ""}</span>
         </span>
         <label class="inspection-drawer-box" style="flex-wrap: wrap;">
           <span>서랍번호</span>
