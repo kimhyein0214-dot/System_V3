@@ -51,6 +51,9 @@ export function normalizeCurrentDbOrder(order = {}) {
     buyerPhone: firstText(order.orderer_mobile, order.orderer_tel, order.buyer_phone),
     orderTotalAmount: firstNumber(order.sellpia_order_total_amount, order.order_total_amount),
     receiptDate: firstText(order.receipt_date),
+    // Keep the source order timestamp distinct from receipt_date. Receipt date
+    // continues to drive the existing work queues and cleanup boundaries.
+    orderDateTime: firstText(order.sellpia_ordered_at),
     sellpiaMemo1: firstText(order.o_shop_memo, order.shop_memo, order.memo1),
     orderMemo: firstText(order.order_memo, order.o_memo),
     session: firstText(order.am_pm, order.session, order.receipt_session),
@@ -72,6 +75,7 @@ export function normalizeCurrentDbItem(item = {}) {
     optionName: firstText(item.p_option, item.option_name),
     quantity: firstNumber(item.qty, item.o_amount, item.quantity) ?? 1,
     itemSalesAmount: firstNumber(item.sellpia_item_sales_amount, item.item_sales_amount),
+    orderDateTime: firstText(item.sellpia_ordered_at),
     sellpiaMemo1: firstText(item.o_shop_memo, item.shop_memo, item.memo1),
     sellpiaMemo2: firstText(item.o_shop_memo2, item.shop_memo2, item.memo2),
     sellpiaLocation: firstText(item.p_location, item.location),
