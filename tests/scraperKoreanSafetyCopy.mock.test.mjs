@@ -26,7 +26,7 @@ assert.doesNotThrow(
   () => new vm.Script(bookmarklet),
   "the assembled bookmarklet must remain valid JavaScript",
 );
-assert.match(bookmarklet, /0812-접수일 재동기화 오류 수정/);
+assert.match(bookmarklet, /0923 주문일 보강 패치/);
 assert.match(
   bookmarklet,
   /전체 모드에서는 선택 기간의 기존 주문·상품 스크랩 데이터가/,
@@ -39,8 +39,8 @@ assert.match(
 );
 assert.equal(
   (bookmarklet.match(/window\.confirm\(/g) || []).length,
-  1,
-  "the scraper should have a single, explicit full-scrape confirmation",
+  2,
+  "full scrape and order-datetime enrichment must each confirm their own writes",
 );
 assert.match(
   bookmarklet,
