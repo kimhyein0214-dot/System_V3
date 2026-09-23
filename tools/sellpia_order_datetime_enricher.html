@@ -83,12 +83,14 @@ a{display:inline-block;padding:12px 16px;border-radius:8px;background:#2563eb;co
       alert(title + "\n보강할 주문일시가 없습니다.\n누락 " + missing.length + "건 · 충돌 " + conflicts.length + "건");
       return;
     }
-    const headers = { apikey: SUPABASE_KEY, Authorization: "Bearer " + SUPABASE_KEY, "Content-Type": "application/json", Prefer: "return=minimal" };
+    const headers = { apikey: SUPABASE_KEY, Authorization: "Bearer " + SUPABASE_KEY, "Content-Type": "application/json", Prefer: "return=minimal,count=exact" };
     const patch = async (table, target) => {
       const response = await fetch(SUPABASE_URL + "/rest/v1/" + table + "?ord_no=eq." + encodeURIComponent(target.ordNo), {
         method: "PATCH", headers, body: JSON.stringify({ sellpia_ordered_at: target.orderedAt }),
       });
       if (!response.ok) throw new Error(table + " " + response.status + " " + (await response.text()).slice(0, 180));
+      const total = Number((response.headers.get("content-range") || "").split("/").pop());
+      if (!Number.isFinite(total) || total < 1) throw new Error(table + "에서 해당 주문번호를 찾지 못했습니다.");
     };
     const schemaCheck = async (table) => {
       const response = await fetch(SUPABASE_URL + "/rest/v1/" + table + "?select=sellpia_ordered_at&limit=1", { headers });
