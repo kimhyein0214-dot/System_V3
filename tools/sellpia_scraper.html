@@ -29,6 +29,11 @@ function orderReceiptSessionRank(value){var session=normalizeOrderReceiptSession
 async function loadExistingOrderReceiptBaselines(ordNos){var orderRows=[],itemRows=[],byOrder=new Map();ordNos=(ordNos||[]).map(function(value){return String(value||'').trim();}).filter(Boolean);for(var i=0;i<ordNos.length;i+=40){var batch=ordNos.slice(i,i+40),filter='&ord_no=in.('+batch.map(encodeURIComponent).join(',')+')';var orders=await dbGet('orders?select=ord_no,ord_date,receipt_date,am_pm,sort_order'+filter),items=await dbGet('order_items?select=ord_no,ord_date,receipt_date'+filter);if(Array.isArray(orders))orderRows=orderRows.concat(orders);if(Array.isArray(items))itemRows=itemRows.concat(items);}orderRows.forEach(function(row){var ordNo=String(row&&row.ord_no||'').trim();if(ordNo)byOrder.set(ordNo,row);});itemRows.forEach(function(item){var ordNo=String(item&&item.ord_no||'').trim(),itemDate=normalizeOrderReceiptDate(item&&item.receipt_date||item&&item.ord_date);if(!ordNo||!itemDate)return;var baseline=byOrder.get(ordNo)||{ord_no:ordNo,am_pm:'ALL',sort_order:null},baselineDate=normalizeOrderReceiptDate(baseline.receipt_date||baseline.ord_date);if(!baselineDate||itemDate<baselineDate){baseline.receipt_date=itemDate;baseline.ord_date=itemDate;baseline._receipt_date_from_item=true;byOrder.set(ordNo,baseline);}});return Array.from(byOrder.values());}
 function applyExistingOrderReceiptBaselines(orderRows,existingRows){var byOrder=new Map(),stats={loaded:(existingRows||[]).length,preserved:0,resynced:0};(existingRows||[]).forEach(function(row){var ordNo=String(row&&row.ord_no||'').trim();if(ordNo)byOrder.set(ordNo,row);});(orderRows||[]).forEach(function(row){var ordNo=String(row&&row.ord_no||'').trim(),previous=byOrder.get(ordNo);if(!previous)return;var currentDate=normalizeOrderReceiptDate(row.receipt_date||row.ord_date),previousDate=normalizeOrderReceiptDate(previous.receipt_date||previous.ord_date);if(!previousDate)return;var currentSession=normalizeOrderReceiptSession(row.am_pm),previousSession=normalizeOrderReceiptSession(previous.am_pm);var previousWins=!currentDate||previousDate<currentDate||(previousDate===currentDate&&orderReceiptSessionRank(previousSession)<=orderReceiptSessionRank(currentSession));if(!previousWins)return;var changed=previousDate!==currentDate||previousSession!==currentSession;row.receipt_date=previousDate;row.ord_date=previousDate;row.am_pm=previousSession;var previousSort=Number(previous.sort_order);if(Number.isFinite(previousSort))row.sort_order=previousSort;stats.preserved++;if(changed){stats.resynced++;addLog('\uC7AC\uB3D9\uAE30\uD654 \uC8FC\uBB38 \uCD5C\uCD08\uC811\uC218 \uC720\uC9C0: '+ordNo+' / \uC218\uC9D1 '+(currentDate||'-')+' '+currentSession+' -> \uCD5C\uCD08 '+previousDate+' '+previousSession);}});return stats;}
 `;
+    const orderDateTimeEnrichmentHelpers = String.raw`
+function normalizeSellpiaOrderDateTime(value){var raw=String(value==null?'':value).trim().replace(/\./g,'-').replace(/년/g,'-').replace(/월/g,'-').replace(/일/g,' ').replace(/\s+/g,' '),match=raw.match(/(\d{4})-(\d{1,2})-(\d{1,2})(?:[ T]+(오전|오후)?\s*(\d{1,2})(?::(\d{1,2}))?(?::(\d{1,2}))?)?/);if(!match||match[5]==null)return '';var hour=Number(match[5]);if(match[4]==='오후'&&hour<12)hour+=12;if(match[4]==='오전'&&hour===12)hour=0;var pad=function(n){return String(n).padStart(2,'0');};return match[1]+'-'+pad(match[2])+'-'+pad(match[3])+' '+pad(hour)+':'+pad(match[6]||0)+':'+pad(match[7]||0);}
+async function checkOrderDateTimeSchema(){var tables=['orders','order_items'];for(var i=0;i<tables.length;i++){var table=tables[i],res=await fetch(SB_URL+'/rest/v1/'+table+'?select=sellpia_ordered_at&limit=1',{headers:{apikey:SB_KEY,Authorization:'Bearer '+SB_KEY}});if(!res.ok)throw new Error(table+' sellpia_ordered_at 컬럼 확인 실패: '+res.status+' '+(await res.text()).slice(0,180));}}
+async function enrichOrderDateTimes(targetDate,session,invFilter){session=session||'ALL';invFilter=String(invFilter||'').trim();setStatus('주문일시 보강: DB 컬럼 확인 중...');setBar(5);await checkOrderDateTimeSchema();setStatus('주문일시 보강: 셀피아 목록 불러오는 중...');var rows=await loadCurrentSellpiaRows(targetDate,session,invFilter),byOrd={},missing=0,conflicts=0;rows.forEach(function(row){var ordNo=String(row&&row.c_ord_no||'').trim(),orderedAt=normalizeSellpiaOrderDateTime(row&&row.c_ord_date);if(!ordNo||!orderedAt){missing++;return;}if(!byOrd[ordNo])byOrd[ordNo]={};byOrd[ordNo][orderedAt]=true;});var targets=[];Object.keys(byOrd).forEach(function(ordNo){var values=Object.keys(byOrd[ordNo]);if(values.length!==1){conflicts++;addLog('주문일시 충돌 스킵 '+ordNo+': '+values.join(' / '));return;}targets.push({ord_no:ordNo,sellpia_ordered_at:values[0]});});addLog('주문일시 대상 '+targets.length+'건 / 누락 '+missing+'행 / 충돌 '+conflicts+'건');if(!targets.length){setStatus('보강할 주문일시가 없습니다.');return;}if(!window.confirm('주문일시만 보강합니다.\n\n대상: '+targets.length+'개 주문\n변경: orders · order_items의 sellpia_ordered_at 필드만\n변경 안 함: 주문/상품 수집·삭제, 배송보류, 피킹/미송 상태\n\n계속할까요?')){setStatus('주문일시 보강을 취소했습니다.');return;}var ok=0,fail=0,firstErr='';for(var i=0;i<targets.length;i++){var target=targets[i];try{await dbPatch('orders','ord_no=eq.'+encodeURIComponent(target.ord_no),{sellpia_ordered_at:target.sellpia_ordered_at});await dbPatch('order_items','ord_no=eq.'+encodeURIComponent(target.ord_no),{sellpia_ordered_at:target.sellpia_ordered_at});ok++;}catch(error){fail++;if(!firstErr)firstErr=error&&error.message||String(error);addLog('주문일시 PATCH 실패 '+target.ord_no+': '+(error&&error.message||error));}if((i+1)%20===0||i+1===targets.length){setBar(20+Math.round((i+1)/targets.length*80));setStatus('주문일시 보강 중... '+(i+1)+' / '+targets.length);}}var summary='주문일시 보강 완료\n\n성공: '+ok+'건 / 실패: '+fail+'건\n누락: '+missing+'행 / 주문 내 시간 충돌: '+conflicts+'건\n\norders와 order_items의 주문일시 필드만 변경했습니다.'+(firstErr?'\n\n첫 오류: '+firstErr.slice(0,200):'');setStatus(summary);addLog('주문일시 보강 완료 '+new Date().toLocaleTimeString());alert(summary);}
+`;
     const itemRawMemoHook = 'sellpia_order_memo_raw:orderMemo,';
     const orderDateHook = 'o_cs_status:"",o_cs_type:"",delay:Number(it.c_delay||0),';
     const orderDateMergeHook = 'if(invNo&&!existingOrder.inv_no)existingOrder.inv_no=invNo;';
@@ -39,7 +44,7 @@ function applyExistingOrderReceiptBaselines(orderRows,existingRows){var byOrder=
       return;
     }
     let patched = SRC
-      .replace("function hasOrderMemoOverride", outboundDateHelpers + originalReceiptHelpers + "function hasOrderMemoOverride")
+      .replace("function hasOrderMemoOverride", outboundDateHelpers + originalReceiptHelpers + orderDateTimeEnrichmentHelpers + "function hasOrderMemoOverride")
       .replace(itemRawMemoHook, itemRawMemoHook + 'sellpia_outbound_confirmed_date:sellpiaOutboundConfirmedDate(it),')
       .replace(orderDateHook, orderDateHook + 'sellpia_outbound_scheduled_date:sellpiaOutboundScheduledHistory(it),')
       .replace(orderDateMergeHook, orderDateMergeHook + "var scheduledHistory=sellpiaOutboundScheduledHistory(it);if(scheduledHistory&&!existingOrder.sellpia_outbound_scheduled_date)existingOrder.sellpia_outbound_scheduled_date=scheduledHistory;else if(scheduledHistory&&existingOrder.sellpia_outbound_scheduled_date&&scheduledHistory!==existingOrder.sellpia_outbound_scheduled_date)addLog('주의: 출고예정일 이력 불일치 주문 '+ordNo+': '+existingOrder.sellpia_outbound_scheduled_date+' / '+scheduledHistory);")
@@ -61,6 +66,32 @@ function applyExistingOrderReceiptBaselines(orderRows,existingRows){var byOrder=
       return;
     }
     patched = patched.replace(startActionHook, startActionReplacement);
+
+    const orderDateButtonHook = '<button id="sp-invoice"';
+    const orderDateButtonReplacement = '<button id="sp-order-datetime" style="width:100%;padding:10px;background:#3D6170;border:none;border-radius:8px;color:#EAF8FF;font-weight:900;font-size:14px;cursor:pointer;margin-bottom:6px">주문일시만 보강</button><button id="sp-invoice"';
+    if (!patched.includes(orderDateButtonHook)) {
+      console.error("[SCRAPER] order-datetime button hook not found");
+      return;
+    }
+    patched = patched.replace(orderDateButtonHook, orderDateButtonReplacement);
+
+    const orderDateActionHook = 'document.getElementById("sp-invoice").onclick=async function(){';
+    const orderDateActionReplacement = String.raw`document.getElementById("sp-order-datetime").onclick=async function(){
+  var d=document.getElementById("sp-date").value;
+  var session=(document.querySelector("input[name=sp-session]:checked")||{}).value||"ALL";
+  var invFilter=(document.getElementById("sp-inv-filter")&&document.getElementById("sp-inv-filter").value||"").trim();
+  if(!d){alert("날짜를 선택하세요.");return;}
+  document.getElementById("sp-input-area").style.display="none";
+  document.getElementById("sp-progress-area").style.display="block";
+  try{await enrichOrderDateTimes(d,session,invFilter);}
+  catch(err){setStatus("주문일시 보강 오류: "+err.message);addLog(err.stack||err.message);alert("주문일시 보강 오류\n"+err.message);}
+};
+document.getElementById("sp-invoice").onclick=async function(){`;
+    if (!patched.includes(orderDateActionHook)) {
+      console.error("[SCRAPER] order-datetime action hook not found");
+      return;
+    }
+    patched = patched.replace(orderDateActionHook, orderDateActionReplacement);
 
     const modeGuideHook = '</label></div><button id="sp-start"';
     const modeGuideReplacement = '</label></div><div style="font-size:11px;line-height:1.5;color:#AEB6C2;background:#25282D;border-radius:7px;padding:8px 10px;margin:-4px 0 12px">전체: 선택 기간 완전 동기화 · 오전/오후: 해당 구분만 갱신<br>특정 송장 입력: 해당 송장만 테스트(다른 주문 정리 없음)</div><button id="sp-start"';
