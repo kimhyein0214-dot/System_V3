@@ -13,6 +13,7 @@ const [scraper, adapter, app] = await Promise.all([
 
 assert.match(scraper, /id="sp-order-datetime"/);
 assert.match(scraper, /주문일시만 보강/);
+assert.match(scraper, /0923 주문일 보강 패치/);
 assert.match(scraper, /function enrichOrderDateTimes/);
 assert.match(scraper, /c_ord_date/);
 assert.match(scraper, /sellpia_ordered_at/);
@@ -37,6 +38,7 @@ new Function(generated);
 assert.match(generated, /id="sp-order-datetime"/);
 assert.match(generated, /function enrichOrderDateTimes/);
 assert.match(generated, /document\.getElementById\("sp-order-datetime"\)\.onclick/);
+assert.match(generated, /0923 주문일 보강 패치/);
 
 assert.match(adapter, /orderDateTime:\s*firstText\(order\.sellpia_ordered_at\)/);
 assert.match(app, /function invoiceOrderDateTimeLabel/);
