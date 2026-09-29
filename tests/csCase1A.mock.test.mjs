@@ -157,6 +157,36 @@ const automatic = await adapter.createAutoShortageCsCase({
 assert.equal(automatic.caseRow.source, "auto");
 assert.equal(automatic.caseRow.alimtalk_template, "14k_1");
 assert.equal((await adapter.updateCsCase(automatic.caseRow.id, { alimtalk_template: "d3_pf" })).alimtalk_template, "d3_pf");
+const exclusionOverride = await adapter.upsertTemplateOverride({
+  ordNo: "order-a",
+  itemNo: "item-3",
+  sellpiaOrderItemNo: "sellpia-3",
+  invNo: "invoice-a",
+  receiptDate: "2026-07-28",
+  alimtalkExcluded: true,
+});
+assert.equal(exclusionOverride.created, true);
+assert.equal(exclusionOverride.caseRow.case_type, "template_override");
+assert.equal(exclusionOverride.caseRow.alimtalk_template, null);
+assert.equal(exclusionOverride.caseRow.alimtalk_excluded, true);
+const clearedExclusion = await adapter.upsertTemplateOverride({
+  ordNo: "order-a",
+  itemNo: "item-3",
+  sellpiaOrderItemNo: "sellpia-3",
+  invNo: "invoice-a",
+  receiptDate: "2026-07-28",
+  alimtalkExcluded: false,
+});
+assert.equal(clearedExclusion.created, false);
+assert.equal(clearedExclusion.caseRow.alimtalk_excluded, false);
+assert.equal(memoryDb.tables.cs_cases.filter((row) => row.case_type === "template_override").length, 1);
+const emptyOverride = await adapter.upsertTemplateOverride({
+  ordNo: "order-a",
+  itemNo: "item-2",
+  alimtalkExcluded: false,
+});
+assert.equal(emptyOverride.caseRow, null);
+assert.equal(emptyOverride.created, false);
 const autoExcluded = await adapter.excludeAutoShortageCsCase({
   ordNo: "order-a",
   itemNo: "item-3",

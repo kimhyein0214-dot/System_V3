@@ -4819,6 +4819,7 @@ function filteredCsCaseRows() {
     .filter((row) => !state.csTemplateOnly || csAutoTemplateKeys(row).length > 0)
     .filter((row) => {
       if (!state.csTypeFilter) return true;
+      if (state.csTypeFilter === "alimtalk_excluded") return csAlimtalkExcluded(row);
       if (state.csTypeFilter === "manual") return row.caseRow?.source === "manual";
       if (state.csTypeFilter === "d5_selection_required") return csNeedsFiveDayTemplateSelection(row);
       if (state.csTypeFilter === "none") return row.caseRow?.source === "auto"
@@ -4869,6 +4870,10 @@ function csTemplateOverrideForRow(row) {
 
 function csSelectedAlimtalkTemplate(row) {
   return String(row?.caseRow?.alimtalk_template || row?.templateOverride?.alimtalk_template || "").trim();
+}
+
+function csAlimtalkExcluded(row) {
+  return Boolean(row?.caseRow?.alimtalk_excluded || row?.templateOverride?.alimtalk_excluded);
 }
 
 function groupedCsRows(rows) {
@@ -5055,6 +5060,14 @@ function csTemplateSelect(row, disabled = "") {
   </select></label>`;
 }
 
+function csAlimtalkExcludeField(row, disabled = "") {
+  const excluded = csAlimtalkExcluded(row);
+  return `<label class="cs-alimtalk-exclude-field ${excluded ? "is-excluded" : ""}">
+    <span>알림톡 제외</span>
+    <span class="cs-alimtalk-exclude-control"><input type="checkbox" data-cs-alimtalk-excluded ${excluded ? "checked" : ""} ${disabled}><em>${excluded ? "내보내기 제외 중" : "체크 시 내보내기 제외"}</em></span>
+  </label>`;
+}
+
 function csCaseBadges(group) {
   const badges = [];
   const seller = csSellerMeta(group);
@@ -5080,6 +5093,10 @@ function csCaseBadges(group) {
       .map((rule) => rule.label),
   )];
   noTemplateLabels.forEach((label) => badges.push(`<span class="workflow-row-badge neutral">${escapeHtml(label)}</span>`));
+  const alimtalkExcludedCount = group.items.filter(csAlimtalkExcluded).length;
+  if (alimtalkExcludedCount) {
+    badges.push(`<span class="workflow-row-badge hold">알림톡 제외${alimtalkExcludedCount > 1 ? ` ${alimtalkExcludedCount}` : ""}</span>`);
+  }
 
   // 제외한 별도 CS는 일반 상품으로 되돌아간 것처럼 보여야 한다.
   // 따라서 진행 중인 수동 케이스만 송장/검품 뱃지에 반영한다.
@@ -5106,6 +5123,7 @@ function renderCsCaseFilters() {
       ${Object.entries(CS_TEMPLATE_PRESETS).map(([templateKey, preset]) => `<option value="${escapeHtml(templateKey)}" ${state.csTypeFilter === templateKey ? "selected" : ""}>${escapeHtml(preset.label)}</option>`).join("")}
       <option value="none" ${state.csTypeFilter === "none" ? "selected" : ""}>템플릿 없음 (기타)</option>
       <option value="manual" ${state.csTypeFilter === "manual" ? "selected" : ""}>별도 CS</option>
+      <option value="alimtalk_excluded" ${state.csTypeFilter === "alimtalk_excluded" ? "selected" : ""}>알림톡 제외건</option>
     </select>
     <label class="filter-chip cs-template-only"><input type="checkbox" data-cs-template-only ${state.csTemplateOnly ? "checked" : ""}> 템플릿 없음 제외</label>
     <select class="filter-chip" data-cs-gold-filter aria-label="골드 필터">
@@ -5222,6 +5240,7 @@ function renderCsCaseItemEditor(row, itemNumber = 0) {
     <section class="cs-item-section cs-item-case-classification">
       <h4>CS 진행</h4>
       ${caseClassification}
+      ${csAlimtalkExcludeField(row, disabled)}
       <label><span>기준일</span><output class="cs-basis-date-display" data-cs-basis-date-text>${escapeHtml(csBasisDateText(row, basisDate || receiptDate))}</output></label>
       <label><span>출고확정일 / 입고예정</span><input data-cs-item-sync-field="outbound_confirmed_date" type="date" value="${escapeHtml(outboundConfirmedDate)}" ${managementReadonly}></label>
     </section>
@@ -5770,6 +5789,7 @@ async function saveCsTemplateOverride(row, scope = els.csDetail) {
     invNo: row?.order?.inv_no || row?.item?.inv_no || row?.caseRow?.inv_no || "",
     receiptDate,
     alimtalkTemplate: templateField.value || "",
+    alimtalkExcluded: csAlimtalkExcluded(row),
   });
   if (result.caseRow) {
     state.csCases = [
@@ -5778,6 +5798,35 @@ async function saveCsTemplateOverride(row, scope = els.csDetail) {
     ];
   }
   toast(result.caseRow?.alimtalk_template ? "알림톡 템플릿을 저장했습니다." : "알림톡 템플릿 선택을 해제했습니다.");
+  renderCsPanels();
+}
+
+async function saveCsAlimtalkExcluded(row, excluded) {
+  if (!allowWrites) {
+    toast("읽기전용입니다. URL에 write=1을 붙여야 알림톡 제외 상태를 저장할 수 있습니다.");
+    return;
+  }
+  const ordNo = csRowOrderNo(row);
+  const itemNo = String(row?.item?.item_no || row?.caseRow?.item_no || "").trim();
+  const sellpiaOrderItemNo = String(row?.item?.sellpia_order_item_no || row?.caseRow?.sellpia_order_item_no || "").trim();
+  if (!ordNo || !itemNo) throw new Error("알림톡 제외 저장에는 주문번호와 상품행번호가 필요합니다.");
+  const receiptDate = String(row?.order?.receipt_date || row?.item?.receipt_date || row?.caseRow?.receipt_date || "").trim();
+  const result = await csCases.upsertTemplateOverride({
+    ordNo,
+    itemNo,
+    sellpiaOrderItemNo,
+    invNo: row?.order?.inv_no || row?.item?.inv_no || row?.caseRow?.inv_no || "",
+    receiptDate,
+    alimtalkTemplate: row?.templateOverride?.alimtalk_template || "",
+    alimtalkExcluded: Boolean(excluded),
+  });
+  if (result.caseRow) {
+    state.csCases = [
+      ...state.csCases.filter((entry) => Number(entry.id) !== Number(result.caseRow.id)),
+      result.caseRow,
+    ];
+  }
+  toast(excluded ? "알림톡 제외로 저장했습니다." : "알림톡 대상에 다시 포함했습니다.");
   renderCsPanels();
 }
 
@@ -7437,12 +7486,29 @@ function mergeAlimtalkSourceRows(...lists) {
     const reason = String(row?.csReason || "").trim();
     const ordNo = alimtalkOrderNo(row);
     const itemNo = String(row?.item?.raw?.item_no || row?.item?.sellpiaItemNo || "").trim();
-    const key = `${ordNo}::${itemNo}::${reason}`;
+    // Tomorrow-shipping notifications are order-scoped. The CS list and the
+    // direct source can select different representative items from the same
+    // order, so dedupe them by order before applying the item-row exclusion.
+    const key = reason === "tomorrow"
+      ? `${ordNo}::tomorrow`
+      : `${ordNo}::${itemNo}::${reason}`;
     if (!ordNo || seen.has(key)) continue;
     seen.add(key);
     merged.push(row);
   }
   return merged;
+}
+
+function alimtalkExcludedForExport(row) {
+  if (row?.alimtalkCaseRow?.alimtalk_excluded) return true;
+  const ordNo = alimtalkOrderNo(row);
+  const itemNo = String(row?.item?.raw?.item_no || row?.item?.item_no || row?.item?.sellpiaItemNo || "").trim();
+  if (!ordNo || !itemNo) return false;
+  return state.csCases.some((caseRow) => (
+    Boolean(caseRow?.alimtalk_excluded)
+    && String(caseRow?.ord_no || "") === ordNo
+    && String(caseRow?.item_no || "") === itemNo
+  ));
 }
 
 function alimtalkCsCaseForRow(row) {
@@ -7518,7 +7584,7 @@ async function exportAlimtalkCsv() {
   const allRows = mergeAlimtalkSourceRows(
     buildAlimtalkRowsFromCurrentCsCases(),
     buildAlimtalkRowsFromCsInvoices(allCsRows()),
-  );
+  ).filter((row) => !alimtalkExcludedForExport(row));
   if (!allRows.length) {
     toast("알림톡 CSV 대상이 없습니다.");
     return;
@@ -9560,6 +9626,21 @@ function bindEvents() {
     field.closest(".inspection-memo-cell")?.classList.toggle("has-value", Boolean(field.value.trim()));
   });
   els.csDetail?.addEventListener("change", (event) => {
+    const alimtalkExcludedField = event.target.closest("[data-cs-alimtalk-excluded]");
+    if (alimtalkExcludedField) {
+      const scope = alimtalkExcludedField.closest(".cs-item-card, .cs-item-row");
+      const row = selectedCsItemRow(scope?.dataset.csRowKey || "");
+      const requested = Boolean(alimtalkExcludedField.checked);
+      alimtalkExcludedField.disabled = true;
+      saveCsAlimtalkExcluded(row, requested).catch((error) => {
+        if (alimtalkExcludedField.isConnected) {
+          alimtalkExcludedField.checked = !requested;
+          alimtalkExcludedField.disabled = false;
+        }
+        showCsError(error);
+      });
+      return;
+    }
     if (event.target.closest("[data-shortage-input]")) {
       onShortageInputChange(event);
       return;

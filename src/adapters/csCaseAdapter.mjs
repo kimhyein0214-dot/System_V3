@@ -178,6 +178,7 @@ export function createCsCaseAdapter(db) {
   }
 
   async function upsertTemplateOverride(input) {
+    const hasAlimtalkExcluded = Object.prototype.hasOwnProperty.call(input || {}, "alimtalkExcluded");
     const payload = {
       ord_no: nonEmpty(input.ordNo, "ord_no"),
       item_no: nonEmpty(input.itemNo, "item_no"),
@@ -190,6 +191,7 @@ export function createCsCaseAdapter(db) {
       basis_date: text(input.receiptDate) || null,
       basis_date_source: "receipt_date",
       alimtalk_template: text(input.alimtalkTemplate) || null,
+      alimtalk_excluded: hasAlimtalkExcluded ? Boolean(input.alimtalkExcluded) : false,
       updated_by: text(input.updatedBy) || null,
     };
     const existing = await findCsCase({
@@ -197,17 +199,19 @@ export function createCsCaseAdapter(db) {
       itemNo: payload.item_no,
       caseType: payload.case_type,
     });
-    if (!existing && !payload.alimtalk_template) {
+    if (!existing && !payload.alimtalk_template && !payload.alimtalk_excluded) {
       return { caseRow: null, created: false };
     }
     if (existing) {
-      const caseRow = await updateCsCase(existing.id, {
+      const patch = {
         sellpia_order_item_no: payload.sellpia_order_item_no,
         inv_no: payload.inv_no,
         receipt_date: payload.receipt_date,
         alimtalk_template: payload.alimtalk_template,
         updated_by: payload.updated_by,
-      });
+      };
+      if (hasAlimtalkExcluded) patch.alimtalk_excluded = payload.alimtalk_excluded;
+      const caseRow = await updateCsCase(existing.id, patch);
       return { caseRow, created: false };
     }
     const { data, error } = await db.from("cs_cases").insert(payload).select("*");
