@@ -69,6 +69,7 @@ function createMemoryDb(seed) {
     order_items: [...seed.order_items],
     cs_cases: [],
   };
+  const operations = [];
   let nextId = 1;
   const clone = (value) => JSON.parse(JSON.stringify(value));
 
@@ -91,6 +92,7 @@ function createMemoryDb(seed) {
             rows = [row];
           }
           if (state.mode === "update") {
+            operations.push({ table: state.table, payload: clone(state.payload) });
             rows = rows.map((row) => Object.assign(row, state.payload, { updated_at: "now" }));
           }
           if (state.range) rows = rows.slice(state.range[0], state.range[1] + 1);
@@ -102,7 +104,7 @@ function createMemoryDb(seed) {
     };
     return api;
   }
-  return { from: builder, tables };
+  return { from: builder, tables, operations };
 }
 
 const memoryDb = createMemoryDb({
@@ -179,6 +181,7 @@ const clearedExclusion = await adapter.upsertTemplateOverride({
 });
 assert.equal(clearedExclusion.created, false);
 assert.equal(clearedExclusion.caseRow.alimtalk_excluded, false);
+assert.deepEqual(Object.keys(memoryDb.operations.at(-1).payload).sort(), ["alimtalk_excluded", "alimtalk_template", "updated_by"]);
 assert.equal(memoryDb.tables.cs_cases.filter((row) => row.case_type === "template_override").length, 1);
 const emptyOverride = await adapter.upsertTemplateOverride({
   ordNo: "order-a",

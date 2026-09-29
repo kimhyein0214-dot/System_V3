@@ -1,6 +1,6 @@
 import { annotateShippingHoldState, loadWorkflowQueues } from "../adapters/workflowEventAdapter.mjs?v=20260731-cancellation3";
 import { buildPickingViewModel } from "../workflows/picking/buildPickingViewModel.mjs?v=20260706-memo2-text1";
-import { createCsCaseAdapter, openShortageItemKeys } from "../adapters/csCaseAdapter.mjs?v=20260728-cs-cases3";
+import { createCsCaseAdapter, openShortageItemKeys } from "../adapters/csCaseAdapter.mjs?v=20260929-alimtalk-uncheck1";
 import { createAlimtalkSendAdapter } from "../adapters/alimtalkSendAdapter.mjs?v=20260728-alimtalk-history2";
 import { isBareGpaOwnCode, isGoldOwnCode } from "../domain/gold.mjs?v=20260811-bare-gpa-label1";
 import { alimtalkSendLogAnchor, alimtalkSendLogCode, alimtalkSendNaturalKey, appendAlimtalkSendLog, formatAlimtalkInboundExpectedDate, hasTomorrowShippingManagementMemo, normalizeAlimtalkSendLog, resolveAlimtalkTemplate } from "../domain/alimtalk.mjs?v=20260804-send-log-anchor2";

@@ -204,9 +204,6 @@ export function createCsCaseAdapter(db) {
     }
     if (existing) {
       const patch = {
-        sellpia_order_item_no: payload.sellpia_order_item_no,
-        inv_no: payload.inv_no,
-        receipt_date: payload.receipt_date,
         alimtalk_template: payload.alimtalk_template,
         updated_by: payload.updated_by,
       };
