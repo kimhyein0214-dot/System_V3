@@ -178,6 +178,7 @@ const state = {
   csTypeFilter: "",
   csTemplateOnly: false,
   csGoldFilter: "all",
+  csInboundDateFilter: "all",
   csSort: "receipt_desc",
   csManualCandidates: [],
   csReceiptBusinessDates: new Set(),
@@ -4812,7 +4813,80 @@ function allCsDisplayRows() {
   return [...visibleCases.map(csCaseContext), ...autoShortageCsRows(), ...autoTomorrowShippingCsRows()];
 }
 
-function filteredCsCaseRows() {
+function normalizedCsInboundExpectedDate(rowOrItem) {
+  const item = rowOrItem?.item || rowOrItem || {};
+  const value = String(
+    item?.inbound_expected_date
+    ?? item?.raw?.inbound_expected_date
+    ?? item?.sellpia_outbound_confirmed_date
+    ?? item?.raw?.sellpia_outbound_confirmed_date
+    ?? item?.outbound_confirmed_date
+    ?? "",
+  ).trim();
+  return /^\d{4}-\d{2}-\d{2}$/.test(value) ? value : "";
+}
+
+function csInboundExpectedSource(rowOrItem) {
+  const item = rowOrItem?.item || rowOrItem || {};
+  const source = String(
+    item?.inbound_expected_source
+    ?? item?.inbound_expected_date_source
+    ?? item?.raw?.inbound_expected_source
+    ?? item?.raw?.inbound_expected_date_source
+    ?? "",
+  ).trim().toLowerCase();
+  if (["sku_schedule", "sku", "db", "auto", "automatic"].includes(source)) return "auto";
+  if (["manual", "operator", "direct"].includes(source)) return "manual";
+  // The existing Sellpia field is edited directly in this screen. Future SKU
+  // schedule sync can override this fallback with inbound_expected_source.
+  return normalizedCsInboundExpectedDate(item) ? "manual" : "";
+}
+
+function offsetLocalDateString(dateString, days) {
+  const date = new Date(`${dateString}T12:00:00`);
+  date.setDate(date.getDate() + days);
+  const local = new Date(date.getTime() - date.getTimezoneOffset() * 60000);
+  return local.toISOString().slice(0, 10);
+}
+
+function csInboundDateMatches(row, filter = state.csInboundDateFilter) {
+  if (!filter || filter === "all") return true;
+  const date = normalizedCsInboundExpectedDate(row);
+  if (filter === "missing") return !date;
+  if (!date) return false;
+  const today = todayDateString();
+  if (filter === "overdue") return date < today;
+  if (filter === "today") return date === today;
+  if (filter === "tomorrow") return date === offsetLocalDateString(today, 1);
+  if (filter === "week") {
+    const weekday = new Date(`${today}T12:00:00`).getDay();
+    const weekEnd = offsetLocalDateString(today, (7 - weekday) % 7);
+    return date >= today && date <= weekEnd;
+  }
+  if (filter.startsWith("date:")) return date === filter.slice(5);
+  return true;
+}
+
+function formatCsInboundDateLabel(dateString) {
+  if (!dateString) return "";
+  const [, month = "", day = ""] = dateString.split("-");
+  const weekday = ["일", "월", "화", "수", "목", "금", "토"][new Date(`${dateString}T12:00:00`).getDay()] || "";
+  return `${month}/${day}${weekday ? `(${weekday})` : ""}`;
+}
+
+function csInboundExpectedBadges(row) {
+  const date = normalizedCsInboundExpectedDate(row);
+  if (!date) return "";
+  const source = csInboundExpectedSource(row);
+  const sourceBadge = source === "auto"
+    ? '<span class="workflow-row-badge inbound-source-auto" title="SKU 입고예정 DB에서 가져온 값">자동</span>'
+    : source === "manual"
+      ? '<span class="workflow-row-badge inbound-source-manual" title="CS 화면에서 직접 입력한 값">수동</span>'
+      : "";
+  return `<span class="workflow-row-badge inbound-date" title="입고예정일">입고 ${escapeHtml(formatCsInboundDateLabel(date))}</span>${sourceBadge}`;
+}
+
+function filteredCsCaseRows({ includeInboundDate = true } = {}) {
   const search = state.csSearchText.trim().toLowerCase();
   return allCsDisplayRows()
     .filter((row) => state.csStatusFilter === "all" || csEffectiveStatus(row) === state.csStatusFilter)
@@ -4828,6 +4902,7 @@ function filteredCsCaseRows() {
       return row.caseRow?.source === "auto" && csAutoTemplateKeys(row).includes(state.csTypeFilter);
     })
     .filter((row) => state.csGoldFilter === "all" || (state.csGoldFilter === "gold" ? row.isGold : !row.isGold))
+    .filter((row) => !includeInboundDate || csInboundDateMatches(row))
     .filter((row) => !search || csSearchTextFor(row).includes(search));
 }
 
@@ -4836,8 +4911,9 @@ function filteredManualCsCandidates() {
   if (!search) return [];
   return state.csManualCandidates
     .filter((row) => csSearchTextFor(row).includes(search))
-    .slice(0, 100)
-    .map(manualCsCandidateRow);
+    .map(manualCsCandidateRow)
+    .filter((row) => csInboundDateMatches(row))
+    .slice(0, 100);
 }
 
 function manualCsCandidateRow(row) {
@@ -4926,9 +5002,15 @@ function manualCsRowsForMatchedOrders() {
     .map(manualCsCandidateRow);
 }
 
-function caseRowsForMatchedOrders() {
-  const matchedCaseRows = filteredCsCaseRows();
-  if (!state.csManualCandidates.length) return matchedCaseRows;
+function caseRowsForMatchedOrders({ includeInboundDate = true } = {}) {
+  // First apply the ordinary CS filters, then expand the matched order/invoice
+  // to its product rows. An inbound date may be entered on a sibling that is
+  // not itself the shortage CS target, so the date filter must run after this
+  // expansion instead of only against persisted cs_cases rows.
+  const matchedCaseRows = filteredCsCaseRows({ includeInboundDate: false });
+  if (!state.csManualCandidates.length) {
+    return includeInboundDate ? matchedCaseRows.filter((row) => csInboundDateMatches(row)) : matchedCaseRows;
+  }
   const matchedOrderNos = new Set(matchedCaseRows.map(csRowOrderNo).filter(Boolean));
   const matchedInvoiceNos = new Set(matchedCaseRows.map(csRowInvoiceNo).filter(Boolean));
   if (!matchedOrderNos.size && !matchedInvoiceNos.size) return [];
@@ -4966,7 +5048,7 @@ function caseRowsForMatchedOrders() {
     const itemKey = `${csRowOrderNo(row)}::${String(row.caseRow?.item_no || row.caseRow?.sellpia_order_item_no || "")}`;
     if (!expandedItemKeys.has(itemKey)) expandedRows.push(row);
   }
-  return expandedRows;
+  return includeInboundDate ? expandedRows.filter((row) => csInboundDateMatches(row)) : expandedRows;
 }
 
 function renderedCsGroups() {
@@ -5109,12 +5191,41 @@ function csCaseBadges(group) {
   return badges.join("");
 }
 
+function csInboundDateFilterOptions(rows) {
+  const count = (filter) => rows.filter((row) => csInboundDateMatches(row, filter)).length;
+  const dateCounts = new Map();
+  for (const row of rows) {
+    const date = normalizedCsInboundExpectedDate(row);
+    if (date) dateCounts.set(date, (dateCounts.get(date) || 0) + 1);
+  }
+  const options = [
+    ["all", `입고예정 전체 ${rows.length}`],
+    ["missing", `입고예정 미정 ${count("missing")}`],
+    ["overdue", `예정일 지남 ${count("overdue")}`],
+    ["today", `오늘 ${count("today")}`],
+    ["tomorrow", `내일 ${count("tomorrow")}`],
+    ["week", `이번주 ${count("week")}`],
+  ];
+  [...dateCounts.entries()]
+    .sort(([left], [right]) => left.localeCompare(right))
+    .forEach(([date, dateCount]) => options.push([`date:${date}`, `${formatCsInboundDateLabel(date)} · ${dateCount}건`]));
+  if (state.csInboundDateFilter.startsWith("date:") && !options.some(([value]) => value === state.csInboundDateFilter)) {
+    const selectedDate = state.csInboundDateFilter.slice(5);
+    options.push([state.csInboundDateFilter, `${formatCsInboundDateLabel(selectedDate)} · 0건`]);
+  }
+  return options;
+}
+
 function renderCsCaseFilters() {
   const statusButtons = [
     ["pending", "진행"],
     ["excluded", "제외"],
     ["all", "전체"],
   ];
+  const inboundDateSourceRows = state.csMode === "manual"
+    ? state.csManualCandidates.map(manualCsCandidateRow)
+    : caseRowsForMatchedOrders({ includeInboundDate: false });
+  const inboundDateOptions = csInboundDateFilterOptions(inboundDateSourceRows);
   els.csDateTabs.innerHTML = `
     ${statusButtons.map(([value, label]) => `<button class="filter-chip ${state.csMode === "cases" && state.csStatusFilter === value ? "active" : ""}" data-cs-case-status="${value}" type="button">${label}</button>`).join("")}
     <select class="filter-chip" data-cs-template-filter aria-label="알림톡 템플릿 필터">
@@ -5130,6 +5241,9 @@ function renderCsCaseFilters() {
       <option value="all" ${state.csGoldFilter === "all" ? "selected" : ""}>일반/14K 전체</option>
       <option value="normal" ${state.csGoldFilter === "normal" ? "selected" : ""}>일반</option>
       <option value="gold" ${state.csGoldFilter === "gold" ? "selected" : ""}>14K</option>
+    </select>
+    <select class="filter-chip cs-inbound-date-filter" data-cs-inbound-date-filter aria-label="입고예정일 모아보기" title="입고예정일이 입력된 상품은 자동·수동 출처와 관계없이 같은 날짜로 모읍니다.">
+      ${inboundDateOptions.map(([value, label]) => `<option value="${escapeHtml(value)}" ${state.csInboundDateFilter === value ? "selected" : ""}>${escapeHtml(label)}</option>`).join("")}
     </select>
     <button class="filter-chip ${state.csMode === "manual" ? "active" : ""}" data-cs-mode="manual" type="button">수동 CS 추가</button>
     <button class="filter-chip" data-cs-alimtalk-action="export" type="button" ${allowWrites ? "" : "disabled"}>알림톡 CSV</button>
@@ -5191,7 +5305,7 @@ function renderCsCaseItemEditor(row, itemNumber = 0) {
   const receiptDate = caseRow?.receipt_date || order.receipt_date || item.receipt_date || "";
   const memo = String(item.order_memo ?? "");
   const managementMemo2 = String(item.o_shop_memo2 ?? item.shop_memo2 ?? item.memo2 ?? "");
-  const outboundConfirmedDate = String(item.sellpia_outbound_confirmed_date ?? "");
+  const outboundConfirmedDate = normalizedCsInboundExpectedDate(row);
   const basisDate = caseRow?.basis_date || receiptDate;
   const automaticCase = Boolean(virtualCase || caseRow?.source === "auto");
   const manualCase = Boolean(caseRow && !virtualCase && caseRow.source === "manual");
@@ -5235,14 +5349,14 @@ function renderCsCaseItemEditor(row, itemNumber = 0) {
       <span class="cs-item-line-number" title="상품행번호 ${escapeHtml(String(itemNumber || "-"))}">${escapeHtml(String(itemNumber || "-"))}</span>
       <div class="workflow-item-photo">${imageUrl ? `<img src="${imageUrl}" ${photoImgAttrs(imageUrl, `${row.ownCode || ""} · ${item.p_name || ""}`, productImageFallbackUrls(imageCode))} alt="" loading="lazy">` : "사진"}</div>
       <div class="cs-item-product"><strong>${escapeHtml(item.p_name || "상품 정보 없음")}</strong><em>${escapeHtml(item.p_option || "옵션 없음")}</em><div class="cs-item-facts"><span>수량 <b>${escapeHtml(String(item.qty ?? item.o_amount ?? "-"))}</b></span><span>자사코드 <b>${escapeHtml(row.ownCode || "-")}</b></span></div></div>
-      <div class="workflow-row-badges cs-item-status">${caseBadge}${partialHoldBadge}${row.isGold ? '<span class="workflow-row-badge gold">14K</span>' : '<span class="workflow-row-badge">일반</span>'}</div>
+      <div class="workflow-row-badges cs-item-status">${caseBadge}${partialHoldBadge}${csInboundExpectedBadges(row)}${row.isGold ? '<span class="workflow-row-badge gold">14K</span>' : '<span class="workflow-row-badge">일반</span>'}</div>
     </section>
     <section class="cs-item-section cs-item-case-classification">
       <h4>CS 진행</h4>
       ${caseClassification}
       ${csAlimtalkExcludeField(row, disabled)}
       <label><span>기준일</span><output class="cs-basis-date-display" data-cs-basis-date-text>${escapeHtml(csBasisDateText(row, basisDate || receiptDate))}</output></label>
-      <label><span>출고확정일 / 입고예정</span><input data-cs-item-sync-field="outbound_confirmed_date" type="date" value="${escapeHtml(outboundConfirmedDate)}" ${managementReadonly}></label>
+      <label><span>입고예정일</span><input data-cs-item-sync-field="outbound_confirmed_date" type="date" value="${escapeHtml(outboundConfirmedDate)}" ${managementReadonly}></label>
     </section>
     <section class="cs-item-section cs-item-memo-fields">
       <h4>상품 메모</h4>
@@ -5488,11 +5602,11 @@ async function appendCsOrderScheduledHistory(ordNo, entry) {
 
 async function saveCsItemConfirmedDate(row, value) {
   if (!allowWrites) {
-    toast("Read-only mode: add write=1 to save the outbound confirmed date.");
+    toast("Read-only mode: add write=1 to save the inbound expected date.");
     return;
   }
   const { ordNo, itemNo, sellpiaOrderItemNo } = csItemIdentity(row);
-  if (!ordNo || (!itemNo && !sellpiaOrderItemNo)) throw new Error("Missing item key for outbound confirmed date.");
+  if (!ordNo || (!itemNo && !sellpiaOrderItemNo)) throw new Error("Missing item key for inbound expected date.");
   const confirmedDate = String(value || "").trim() || null;
   await updateOrderItemOrderMemoExact({
     ordNo,
@@ -5500,15 +5614,24 @@ async function saveCsItemConfirmedDate(row, value) {
     sellpiaOrderItemNo,
     patch: { sellpia_outbound_confirmed_date: confirmedDate },
   });
-  if (row?.item) row.item.sellpia_outbound_confirmed_date = confirmedDate;
+  if (row?.item) {
+    row.item.sellpia_outbound_confirmed_date = confirmedDate;
+    row.item.inbound_expected_source = confirmedDate ? "manual" : "";
+  }
   const contextItem = state.csCaseContexts?.items?.get(itemNo);
-  if (contextItem) contextItem.sellpia_outbound_confirmed_date = confirmedDate;
+  if (contextItem) {
+    contextItem.sellpia_outbound_confirmed_date = confirmedDate;
+    contextItem.inbound_expected_source = confirmedDate ? "manual" : "";
+  }
   for (const candidate of state.csManualCandidates || []) {
     if (String(candidate?.order?.ord_no || "") !== ordNo) continue;
-    if (String(candidate?.item?.item_no || "") !== itemNo) continue;
+    const candidateItemNo = String(candidate?.item?.item_no || "");
+    const candidateSellpiaItemNo = String(candidate?.item?.sellpia_order_item_no || "");
+    if (itemNo ? candidateItemNo !== itemNo : candidateSellpiaItemNo !== sellpiaOrderItemNo) continue;
     candidate.item.sellpia_outbound_confirmed_date = confirmedDate;
+    candidate.item.inbound_expected_source = confirmedDate ? "manual" : "";
   }
-  toast("출고확정일 저장");
+  toast("입고예정일 저장");
 }
 
 async function recordAlimtalkSendScheduledDate(batchId) {
@@ -7022,12 +7145,7 @@ function alimtalkOption(item) {
 }
 
 function alimtalkInboundExpectedDate(item) {
-  return String(
-    item?.sellpia_outbound_confirmed_date
-    ?? item?.raw?.sellpia_outbound_confirmed_date
-    ?? item?.outbound_confirmed_date
-    ?? "",
-  ).trim();
+  return normalizedCsInboundExpectedDate(item);
 }
 
 function alimtalkOptionWithInboundExpectedDate(item) {
@@ -9602,6 +9720,13 @@ function bindEvents() {
       state.csGoldFilter = goldSelect.value || "all";
       state.selectedCsKey = "";
       renderCsPanels();
+      return;
+    }
+    const inboundDateSelect = event.target.closest("[data-cs-inbound-date-filter]");
+    if (inboundDateSelect) {
+      state.csInboundDateFilter = inboundDateSelect.value || "all";
+      state.selectedCsKey = "";
+      renderCsPanels();
     }
   });
   els.csSearchInput?.addEventListener("input", () => {
@@ -9660,7 +9785,9 @@ function bindEvents() {
     if (itemSyncField) {
       const scope = itemSyncField.closest(".cs-item-card, .cs-item-row");
       const row = selectedCsItemRow(scope?.dataset.csRowKey || "");
-      saveCsItemConfirmedDate(row, itemSyncField.value).catch(showCsError);
+      saveCsItemConfirmedDate(row, itemSyncField.value)
+        .then(() => renderCsPanels())
+        .catch(showCsError);
       return;
     }
     const managementField = event.target.closest("[data-cs-management-field]");

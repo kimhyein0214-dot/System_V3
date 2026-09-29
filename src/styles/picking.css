@@ -4324,6 +4324,25 @@ input {
   color: #c2410c;
 }
 
+.workflow-row-badge.inbound-date {
+  background: #e0f2fe;
+  color: #075985;
+}
+
+.workflow-row-badge.inbound-source-auto {
+  background: #dcfce7;
+  color: #166534;
+}
+
+.workflow-row-badge.inbound-source-manual {
+  background: #f1f5f9;
+  color: #475569;
+}
+
+.cs-inbound-date-filter {
+  max-width: 172px;
+}
+
 .cs-case-row.is-manual-source {
   border-color: #fed7aa;
   background: #fffaf5;
