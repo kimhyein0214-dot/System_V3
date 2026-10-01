@@ -137,7 +137,7 @@ function normalizedDate(value) {
   return /^\d{4}-\d{2}-\d{2}$/.test(normalized) ? normalized : "";
 }
 
-export function resolveEffectiveInboundExpectedDate({ operation = null, currentItem = null } = {}) {
+export function resolveEffectiveInboundExpectedDate({ operation = null, currentItem = null, skuSchedule = null } = {}) {
   const source = text(operation?.inbound_expected_source).toLowerCase();
   if (source) {
     if (!ORDER_ITEM_OPERATION_INBOUND_SOURCES.includes(source)) {
@@ -149,6 +149,15 @@ export function resolveEffectiveInboundExpectedDate({ operation = null, currentI
       source,
       authoritative: true,
       explicitlyCleared: source === "manual" && !date,
+    };
+  }
+  const scheduleDate = normalizedDate(skuSchedule?.inbound_expected_date ?? skuSchedule?.inboundExpectedDate);
+  if (scheduleDate) {
+    return {
+      date: scheduleDate,
+      source: "sku_schedule",
+      authoritative: true,
+      explicitlyCleared: false,
     };
   }
   const legacyDate = normalizedDate(field(

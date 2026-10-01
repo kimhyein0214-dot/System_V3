@@ -90,6 +90,20 @@ const legacyRows = buildCustomOrderRows({ operations: [{ ...base, operation_id: 
 assert.equal(legacyRows[0].inbound.date, "2026-10-04");
 assert.equal(legacyRows[0].inbound.source, "legacy_sellpia");
 
+const scheduledRows = buildCustomOrderRows({
+  operations: [
+    { ...base, operation_id: "scheduled", ord_no: "O-1", sellpia_order_item_no: "R-1", item_no: "1_R-1", custom_ordered_on: "2026-09-29" },
+    { ...base, operation_id: "scheduled-clear", ord_no: "O-1", sellpia_order_item_no: "R-2", item_no: "2_R-2", custom_ordered_on: "2026-09-29", inbound_expected_source: "manual", inbound_expected_date: null },
+  ],
+  currentItems,
+  skuSchedules: [{ sellpia_sku: "SAME-SKU", inbound_expected_date: "2026-10-07", own_code: "OWN-SCHEDULE" }],
+});
+assert.equal(scheduledRows[0].inbound.source, "sku_schedule");
+assert.equal(scheduledRows[0].inbound.date, "2026-10-07");
+assert.equal(scheduledRows[0].status, CUSTOM_ORDER_STATUS.WAITING, "SKU date must move an ordered row into the waiting detail status");
+assert.equal(scheduledRows[1].inbound.date, "", "manual clear must suppress the shared SKU schedule");
+assert.equal(scheduledRows[1].status, CUSTOM_ORDER_STATUS.ORDERED);
+
 assert.deepEqual(filterCustomOrderRows(rows, { status: "active" }).map((row) => row.operation.operation_id).sort(), ["before", "manual-clear", "missing", "sibling"]);
 assert.deepEqual(filterCustomOrderRows(rows, { status: "waiting" }).map((row) => row.operation.operation_id), ["missing"]);
 assert.deepEqual(filterCustomOrderRows(rows, { supplier: "0-스냅매입처 [ 9 ]" }).map((row) => row.operation.operation_id), ["missing"]);

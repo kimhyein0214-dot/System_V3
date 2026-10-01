@@ -40,6 +40,32 @@ const browser = await chromium.launch({
 const page = await browser.newPage({ viewport: { width: 1600, height: 1000 } });
 const pageErrors = [];
 page.on("pageerror", (error) => pageErrors.push(error.message));
+await page.addInitScript(() => {
+  window.__xlsxUploadMatrix = [
+    ["셀피아 SKU", "입고예정일", "자사코드"],
+    ["UPLOADED-SKU", "2026-10-18", "UPLOADED-OWN"],
+  ];
+  window.XLSX = {
+    read() {
+      return { SheetNames: ["입고예정일"], Sheets: { 입고예정일: {} } };
+    },
+    utils: {
+      sheet_to_json() { return window.__xlsxUploadMatrix; },
+      book_new() { return { SheetNames: [], Sheets: {} }; },
+      aoa_to_sheet(values) { return { __values: values }; },
+      book_append_sheet(workbook, worksheet, name) {
+        workbook.SheetNames.push(name);
+        workbook.Sheets[name] = worksheet;
+      },
+    },
+    writeFile(workbook, filename) {
+      window.__xlsxDownload = { workbook, filename };
+    },
+  };
+});
+await page.route("https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js", async (route) => {
+  await route.fulfill({ contentType: "text/javascript", body: "/* test uses the init-script XLSX stub */" });
+});
 await page.route("https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2", async (route) => {
   await route.fulfill({
     contentType: "text/javascript",
@@ -62,6 +88,9 @@ await page.route("https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2", async (
           { ord_no: "O-2", sellpia_order_item_no: "R-2", item_no: "1_R-2", p_code: "SAME-SKU", p_dpcode: "OWN-2", p_name: "현재 상품 2", p_option: "골드", sellpia_supplier_cell_raw: "0-세븐피어싱 [ 1 ]", sellpia_outbound_confirmed_date: "2026-10-08" },
           { ord_no: "O-3", sellpia_order_item_no: "R-3", item_no: "1_R-3", p_code: "LEGACY", p_dpcode: "OWN-3", p_name: "레거시 상품", sellpia_supplier_cell_raw: "0-베니스톤 [ 28 ]", sellpia_outbound_confirmed_date: "2026-10-09" },
           { ord_no: "O-LONLY", sellpia_order_item_no: "R-LONLY", item_no: "1_R-LONLY", p_code: "LEGACY-ONLY", p_dpcode: "OWN-LONLY", p_name: "operation 없는 셀피아 일정", sellpia_supplier_cell_raw: "0-신규매입처 [ 7 ]", sellpia_outbound_confirmed_date: "2026-10-11" }
+        ],
+        sku_inbound_schedules: [
+          { sellpia_sku: "LEGACY-ONLY", inbound_expected_date: "2026-10-07", own_code: "OWN-LONLY", created_at: "2026-10-01T01:00:00Z", updated_at: "2026-10-01T01:00:00Z" }
         ]
       };
       function query(table) {
@@ -84,6 +113,16 @@ await page.route("https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2", async (
                 (window.__tables[table] ||= []).push(inserted);
                 rows = [inserted];
               }
+              if (state.mode === "upsert") {
+                const payload = Array.isArray(state.payload) ? state.payload : [state.payload];
+                rows = payload.map((value) => {
+                  const existing = (window.__tables[table] ||= []).find((row) => row.sellpia_sku === value.sellpia_sku);
+                  if (existing) return Object.assign(existing, value, { updated_at: new Date().toISOString() });
+                  const inserted = { created_at: new Date().toISOString(), updated_at: new Date().toISOString(), ...value };
+                  window.__tables[table].push(inserted);
+                  return inserted;
+                });
+              }
               resolve({ data: structuredClone(rows), error: null });
             };
             return (...args) => {
@@ -93,6 +132,7 @@ await page.route("https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2", async (
               if (prop === "not" && args[1] === "is" && args[2] === null) state.notNull = args[0];
               if (prop === "update") { state.mode = "update"; state.payload = args[0]; }
               if (prop === "insert") { state.mode = "insert"; state.payload = args[0]; }
+              if (prop === "upsert") { state.mode = "upsert"; state.payload = structuredClone(args[0]); }
               return proxy;
             };
           }
@@ -156,7 +196,7 @@ try {
       gapToFirstRow: firstRow.getBoundingClientRect().top - toolbar.getBoundingClientRect().bottom,
     };
   });
-  assert.equal(layout.panelRows, 5, "custom-order panel must allocate header/tabs/filters/summary/list rows");
+  assert.equal(layout.panelRows, 6, "custom-order panel must allocate header/tabs/filters/SKU-manager/summary/list rows");
   assert.ok(layout.toolbarHeight >= 48 && layout.toolbarHeight <= 60, `toolbar must match existing panel density (${layout.toolbarHeight}px)`);
   assert.equal(layout.statusHeight, 32, `filter controls must match the existing 32px form-control height (${layout.statusHeight}px)`);
   assert.ok(layout.gapToFirstRow < 70, `list must start directly below its summary (${layout.gapToFirstRow}px)`);
@@ -167,8 +207,17 @@ try {
   assert.match(await page.locator('[data-operation-id="op-manual-clear"]').textContent(), /수동 · 삭제됨/);
   assert.match(await page.locator('[data-operation-id="op-legacy"]').textContent(), /셀피아/);
 
+  const statusColors = {};
+  for (const [filter, key] of [["before_order", "before"], ["received", "received"]]) {
+    await page.selectOption("#custom-orders-status", filter);
+    const row = page.locator(".custom-order-row").first();
+    statusColors[key] = await row.evaluate((node) => getComputedStyle(node).borderLeftColor);
+  }
+  assert.notEqual(statusColors.before, statusColors.received, "before-order and received rows must have distinct status colors");
+
   await page.selectOption("#custom-orders-status", "received");
   assert.equal(await page.locator('.custom-order-row[data-operation-id="op-received"]').count(), 1);
+  assert.match(await page.locator('[data-operation-id="op-received"] .custom-order-status').textContent(), /입고 완료/);
   await page.selectOption("#custom-orders-status", "active");
   await page.selectOption("#custom-orders-supplier", "0-스냅매입처 [ 9 ]");
   assert.equal(await page.locator(".custom-order-row").count(), 1);
@@ -179,7 +228,10 @@ try {
 
   await page.locator('[data-operation-id="op-before"] [data-custom-order-action="ordered-today"]').click();
   await page.waitForFunction(() => window.__tables.order_item_operations.find((row) => row.operation_id === "op-before")?.custom_ordered_on);
-  assert.match(await page.locator('[data-operation-id="op-before"] .custom-order-status').textContent(), /주문 들어감/);
+  assert.match(await page.locator('[data-operation-id="op-before"] .custom-order-status').textContent(), /주문 후/);
+  const orderedColor = await page.locator('[data-operation-id="op-before"]').evaluate((node) => getComputedStyle(node).borderLeftColor);
+  assert.notEqual(orderedColor, statusColors.before, "ordered rows must be visually distinct from before-order rows");
+  assert.notEqual(orderedColor, statusColors.received, "ordered rows must be visually distinct from received rows");
 
   await page.locator('[data-operation-id="op-missing"] [data-custom-order-field="inbound_expected_date"]').fill("2026-10-06");
   await page.locator('[data-operation-id="op-missing"] [data-custom-order-field="inbound_expected_date"]').press("Tab");
@@ -205,12 +257,38 @@ try {
   await page.waitForFunction(() => document.getElementById("custom-orders-count")?.textContent === "4건 / 전체 4건");
   assert.equal(await page.locator('[data-custom-orders-toolbar="workflow"]').isVisible(), false);
   assert.equal(await page.locator('[data-custom-orders-toolbar="inbound"]').isVisible(), true);
+  assert.equal(await page.locator("#custom-orders-sku-schedule-panel").isVisible(), true);
+  assert.match(await page.locator("#custom-orders-sku-count").textContent(), /1개 SKU/);
   assert.equal(await page.locator(".inbound-expected-row").count(), 4);
   assert.match(await page.locator('[data-inbound-row-key="O-2::R-2"]').textContent(), /명시적 삭제/);
   assert.match(await page.locator('[data-inbound-row-key="O-M::R-M"]').textContent(), /원천 주문행 없음/);
+  assert.match(await page.locator('[data-inbound-row-key="O-LONLY::R-LONLY"]').textContent(), /SKU 일정/);
   await page.selectOption("#custom-orders-inbound-source", "legacy_sellpia");
-  assert.equal(await page.locator(".inbound-expected-row").count(), 2);
+  assert.equal(await page.locator(".inbound-expected-row").count(), 1);
   await page.selectOption("#custom-orders-inbound-source", "all");
+
+  await page.fill("#custom-orders-sku-input", "DIRECT-SKU");
+  await page.fill("#custom-orders-sku-date", "2026-10-17");
+  await page.fill("#custom-orders-sku-own-code", "DIRECT-OWN");
+  await page.click("#custom-orders-sku-save");
+  await page.waitForFunction(() => window.__tables.sku_inbound_schedules.some((row) => row.sellpia_sku === "DIRECT-SKU" && row.inbound_expected_date === "2026-10-17"));
+  assert.match(await page.locator("#custom-orders-sku-count").textContent(), /2개 SKU/);
+
+  await page.click("#custom-orders-sku-download");
+  await page.waitForFunction(() => window.__xlsxDownload);
+  const download = await page.evaluate(() => window.__xlsxDownload);
+  assert.match(download.filename, /^SKU_입고예정일_\d{4}-\d{2}-\d{2}\.xlsx$/);
+  assert.deepEqual(download.workbook.Sheets["입고예정일"].__values[0], ["셀피아 SKU", "입고예정일", "자사코드"]);
+
+  page.once("dialog", (dialog) => dialog.accept());
+  await page.locator("#custom-orders-sku-file").setInputFiles({
+    name: "schedule.xlsx",
+    mimeType: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    buffer: Buffer.from("mock xlsx"),
+  });
+  await page.waitForFunction(() => window.__tables.sku_inbound_schedules.some((row) => row.sellpia_sku === "UPLOADED-SKU" && row.own_code === "UPLOADED-OWN"));
+  assert.match(await page.locator("#custom-orders-sku-import-status").textContent(), /1개 SKU 일정을 업로드/);
+
   await page.fill("#custom-orders-inbound-search", "O-LONLY");
   assert.equal(await page.locator(".inbound-expected-row").count(), 1, "legacy-only rows must be searchable by order identity");
   const legacyOnly = page.locator('[data-inbound-row-key="O-LONLY::R-LONLY"]');

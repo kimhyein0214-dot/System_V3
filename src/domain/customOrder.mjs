@@ -5,6 +5,10 @@ import {
   resolveEffectiveInboundExpectedDate,
   resolveOperationDisplayFields,
 } from "../adapters/orderItemOperationsAdapter.mjs";
+import {
+  buildSkuInboundScheduleMap,
+  findSkuInboundSchedule,
+} from "./skuInboundSchedule.mjs";
 
 export const CUSTOM_ORDER_STATUS = Object.freeze({
   BEFORE_ORDER: "before_order",
@@ -16,9 +20,9 @@ export const CUSTOM_ORDER_STATUS = Object.freeze({
 
 export const CUSTOM_ORDER_STATUS_LABEL = Object.freeze({
   [CUSTOM_ORDER_STATUS.BEFORE_ORDER]: "주문 전",
-  [CUSTOM_ORDER_STATUS.ORDERED]: "주문 들어감",
-  [CUSTOM_ORDER_STATUS.WAITING]: "입고 대기",
-  [CUSTOM_ORDER_STATUS.RECEIVED]: "완료",
+  [CUSTOM_ORDER_STATUS.ORDERED]: "주문 후",
+  [CUSTOM_ORDER_STATUS.WAITING]: "주문 후 · 입고 대기",
+  [CUSTOM_ORDER_STATUS.RECEIVED]: "입고 완료",
   [CUSTOM_ORDER_STATUS.CANCELLED]: "취소",
 });
 
@@ -26,10 +30,10 @@ function text(value) {
   return String(value ?? "").trim();
 }
 
-export function customOrderStatus(operation = {}) {
+export function customOrderStatus(operation = {}, inbound = null) {
   if (text(operation.custom_cancelled_at)) return CUSTOM_ORDER_STATUS.CANCELLED;
   if (text(operation.custom_received_on)) return CUSTOM_ORDER_STATUS.RECEIVED;
-  if (text(operation.custom_ordered_on) && text(operation.inbound_expected_date)) return CUSTOM_ORDER_STATUS.WAITING;
+  if (text(operation.custom_ordered_on) && text(inbound?.date ?? operation.inbound_expected_date)) return CUSTOM_ORDER_STATUS.WAITING;
   if (text(operation.custom_ordered_on)) return CUSTOM_ORDER_STATUS.ORDERED;
   if (text(operation.custom_required_at)) return CUSTOM_ORDER_STATUS.BEFORE_ORDER;
   return "";
@@ -53,21 +57,23 @@ function datePart(value) {
   return local.toISOString().slice(0, 10);
 }
 
-export function buildCustomOrderRows({ operations = [], currentItems = [] } = {}) {
+export function buildCustomOrderRows({ operations = [], currentItems = [], skuSchedules = [] } = {}) {
+  const scheduleMap = buildSkuInboundScheduleMap(skuSchedules);
   return operations
     .filter((operation) => text(operation.custom_required_at))
     .map((operation) => {
       const match = findCurrentSourceForOperation(operation, currentItems);
       const currentItem = match.status === "matched" ? match.row : null;
       const display = resolveOperationDisplayFields({ operation, currentItem });
-      const inbound = resolveEffectiveInboundExpectedDate({ operation, currentItem });
+      const skuSchedule = findSkuInboundSchedule(display.sellpiaProductCode, scheduleMap);
+      const inbound = resolveEffectiveInboundExpectedDate({ operation, currentItem, skuSchedule });
       return {
         operation,
         currentItem,
         match,
         display,
         inbound,
-        status: customOrderStatus(operation),
+        status: customOrderStatus(operation, inbound),
         sourceMissing: match.status !== "matched",
       };
     });
@@ -78,15 +84,18 @@ function identityKey(value) {
   return `${identity.ordNo}::${identity.sellpiaOrderItemNo || identity.itemNo}`;
 }
 
-export function buildInboundExpectedRows({ operations = [], currentItems = [] } = {}) {
+export function buildInboundExpectedRows({ operations = [], currentItems = [], skuSchedules = [] } = {}) {
   const rows = [];
+  const scheduleMap = buildSkuInboundScheduleMap(skuSchedules);
   const usedOperationIds = new Set();
   const usedCurrentItemKeys = new Set();
 
   for (const currentItem of currentItems) {
     const operationMatch = findOperationForCurrentItem(currentItem, operations);
     const operation = operationMatch.status === "matched" ? operationMatch.row : null;
-    const inbound = resolveEffectiveInboundExpectedDate({ operation, currentItem });
+    const display = resolveOperationDisplayFields({ operation, currentItem });
+    const skuSchedule = findSkuInboundSchedule(display.sellpiaProductCode, scheduleMap);
+    const inbound = resolveEffectiveInboundExpectedDate({ operation, currentItem, skuSchedule });
     if (!inbound.source && !inbound.date) continue;
     const key = identityKey(currentItem);
     usedCurrentItemKeys.add(key);
@@ -95,7 +104,7 @@ export function buildInboundExpectedRows({ operations = [], currentItems = [] } 
       key,
       operation,
       currentItem,
-      display: resolveOperationDisplayFields({ operation, currentItem }),
+      display,
       inbound,
       sourceMissing: false,
       identityIssue: ["ambiguous", "conflict"].includes(operationMatch.status),
@@ -109,13 +118,15 @@ export function buildInboundExpectedRows({ operations = [], currentItems = [] } 
     const currentItem = sourceMatch.status === "matched" ? sourceMatch.row : null;
     const key = currentItem ? identityKey(currentItem) : identityKey(operation);
     if (usedCurrentItemKeys.has(key)) continue;
-    const inbound = resolveEffectiveInboundExpectedDate({ operation, currentItem });
+    const display = resolveOperationDisplayFields({ operation, currentItem });
+    const skuSchedule = findSkuInboundSchedule(display.sellpiaProductCode, scheduleMap);
+    const inbound = resolveEffectiveInboundExpectedDate({ operation, currentItem, skuSchedule });
     if (!inbound.source && !inbound.date) continue;
     rows.push({
       key,
       operation,
       currentItem,
-      display: resolveOperationDisplayFields({ operation, currentItem }),
+      display,
       inbound,
       sourceMissing: sourceMatch.status !== "matched",
       identityIssue: ["ambiguous", "conflict"].includes(sourceMatch.status),

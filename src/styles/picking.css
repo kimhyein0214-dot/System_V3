@@ -60,8 +60,8 @@
 }
 
 .custom-order-status.status-before_order { border-color: #c4b5fd; background: #f5f3ff; color: #6d28d9; }
-.custom-order-status.status-ordered { border-color: #93c5fd; background: #eff6ff; color: #1d4ed8; }
-.custom-order-status.status-waiting { border-color: #fcd34d; background: #fffbeb; color: #a16207; }
+.custom-order-status.status-ordered,
+.custom-order-status.status-waiting { border-color: #60a5fa; background: #dbeafe; color: #1d4ed8; }
 .custom-order-status.status-received { border-color: #86efac; background: #f0fdf4; color: #15803d; }
 .custom-order-status.status-cancelled { border-color: #cbd5e1; background: #f1f5f9; color: #64748b; }
 
@@ -122,7 +122,7 @@
 .workflow-panel.custom-orders-panel {
   min-width: 0;
   min-height: 0;
-  grid-template-rows: auto auto auto auto minmax(0, 1fr);
+  grid-template-rows: auto auto auto auto auto minmax(0, 1fr);
   overflow: hidden;
 }
 
@@ -250,6 +250,140 @@
   color: #1e293b;
 }
 
+.sku-inbound-schedule-panel {
+  display: grid;
+  gap: 0;
+  min-width: 0;
+  max-height: 240px;
+  border-bottom: 1px solid #dbe4f0;
+  background: #f8fafc;
+}
+
+.sku-inbound-schedule-panel[hidden] {
+  display: none;
+}
+
+.sku-inbound-schedule-head,
+.sku-inbound-schedule-entry,
+.sku-inbound-schedule-list-head,
+.sku-inbound-schedule-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.sku-inbound-schedule-head {
+  justify-content: space-between;
+  padding: 7px 12px 5px;
+}
+
+.sku-inbound-schedule-head > div:first-child {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  min-width: 0;
+}
+
+.sku-inbound-schedule-head strong,
+.sku-inbound-schedule-list-head strong {
+  color: #1e3a8a;
+  font-size: 12px;
+}
+
+.sku-inbound-schedule-head span,
+.sku-inbound-schedule-list-head span,
+.sku-inbound-schedule-status {
+  color: #64748b;
+  font-size: 11px;
+}
+
+.sku-inbound-schedule-file-actions {
+  display: flex;
+  gap: 5px;
+}
+
+.sku-inbound-schedule-file-actions .btn,
+.sku-inbound-schedule-entry .btn,
+.sku-inbound-schedule-row .btn {
+  min-height: 28px;
+  padding: 4px 9px;
+  font-size: 11px;
+}
+
+.sku-inbound-schedule-entry {
+  display: grid;
+  grid-template-columns: minmax(170px, 1.2fr) minmax(145px, .7fr) minmax(170px, 1fr) auto minmax(170px, 1.3fr);
+  padding: 0 12px 7px;
+}
+
+.sku-inbound-schedule-entry label,
+.sku-inbound-schedule-row label {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  min-width: 0;
+  color: #64748b;
+  font-size: 11px;
+  font-weight: 800;
+  white-space: nowrap;
+}
+
+.sku-inbound-schedule-entry input,
+.sku-inbound-schedule-row input {
+  width: 100%;
+  min-width: 0;
+  min-height: 28px;
+  border: 1px solid #cbd5e1;
+  border-radius: 6px;
+  background: #fff;
+  padding: 3px 7px;
+  color: #172033;
+  font: inherit;
+}
+
+.sku-inbound-schedule-list-head {
+  padding: 4px 12px;
+  border-top: 1px solid #e5edf7;
+  border-bottom: 1px solid #e5edf7;
+  background: #fff;
+}
+
+.sku-inbound-schedule-list {
+  display: grid;
+  min-height: 34px;
+  max-height: 112px;
+  overflow: auto;
+}
+
+.sku-inbound-schedule-row {
+  display: grid;
+  grid-template-columns: minmax(180px, 1.2fr) minmax(145px, .7fr) minmax(180px, 1fr) auto;
+  padding: 4px 12px;
+  border-bottom: 1px solid #edf1f6;
+  background: #fff;
+}
+
+.sku-inbound-schedule-row:last-child {
+  border-bottom: 0;
+}
+
+.sku-inbound-schedule-row code {
+  overflow: hidden;
+  color: #1e3a8a;
+  font-family: inherit;
+  font-size: 12px;
+  font-weight: 900;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.sku-inbound-schedule-empty {
+  padding: 9px 12px;
+  color: #64748b;
+  font-size: 11px;
+}
+
 .custom-orders-list {
   display: grid;
   align-content: start;
@@ -272,8 +406,21 @@
   overflow: hidden;
 }
 
-.custom-order-row.status-waiting { border-left-color: #eab308; }
-.custom-order-row.status-received { border-left-color: #22c55e; }
+.custom-order-row.status-before_order {
+  border-left-color: #7c3aed;
+  background: linear-gradient(90deg, #f5f3ff 0, #fff 18%);
+}
+
+.custom-order-row.status-ordered,
+.custom-order-row.status-waiting {
+  border-left-color: #2563eb;
+  background: linear-gradient(90deg, #eff6ff 0, #fff 18%);
+}
+
+.custom-order-row.status-received {
+  border-left-color: #16a34a;
+  background: linear-gradient(90deg, #f0fdf4 0, #fff 18%);
+}
 .custom-order-row.status-cancelled { border-left-color: #94a3b8; background: #f8fafc; }
 
 .custom-order-row-primary,
@@ -491,6 +638,20 @@
   }
 
   .custom-orders-toolbar > .search {
+    grid-column: 1 / -1;
+  }
+
+  .sku-inbound-schedule-head {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .sku-inbound-schedule-entry,
+  .sku-inbound-schedule-row {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .sku-inbound-schedule-status {
     grid-column: 1 / -1;
   }
 
@@ -3135,6 +3296,7 @@ input {
 }
 
 .inspection-title-block {
+  flex: 1 1 auto;
   min-width: 0;
 }
 
@@ -3157,6 +3319,43 @@ input {
   font-size: 1.5rem;
   font-weight: 1000;
   line-height: 1;
+}
+
+.inspection-commerce-summary {
+  display: inline-flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.45rem;
+  margin-left: 0.35rem;
+}
+
+.inspection-commerce-summary .inspection-seller-badge,
+.inspection-commerce-summary .inspection-total-amount {
+  display: inline-flex;
+  align-items: center;
+  min-height: 2.2rem;
+  border-radius: 0.5rem;
+  padding: 0.35rem 0.75rem;
+  font-size: 1.2rem;
+  font-weight: 1000;
+  line-height: 1;
+}
+
+.inspection-commerce-summary .inspection-seller-badge.seller-ably {
+  border-color: #f4d64e;
+  background: #fff4a8;
+  color: #765c00;
+}
+
+.inspection-commerce-summary .inspection-total-amount {
+  border-color: #bfd6f6;
+  background: #e7f1ff;
+  color: #315f9e;
+}
+
+.inspection-commerce-summary .workflow-row-badge.gift {
+  min-height: 2rem;
+  padding: 0.3rem 0.6rem;
 }
 
 .inspection-title-meta {

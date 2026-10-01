@@ -12,7 +12,7 @@
   const tables = {
     orders: [
       { ord_no: "LOCAL-PICK-1", receipt_date: "2026-10-01", sort_order: 1, receiver: "로컬테스트", seller: "스마트스토어" },
-      { ord_no: "LOCAL-PICK-2", receipt_date: "2026-10-01", sort_order: 2, receiver: "형제행테스트", seller: "에이블리" },
+      { ord_no: "LOCAL-PICK-2", receipt_date: "2026-10-01", sort_order: 2, receiver: "형제행테스트", seller: "에이블리", sellpia_order_total_amount: 13070 },
     ],
     order_items: [
       { ord_no: "LOCAL-PICK-1", sellpia_order_item_no: "LOCAL-R1", item_no: "1_LOCAL-R1", sort_order: 1, p_code: "LOCAL-SKU-1", p_dpcode: "LOCAL-OWN-1", p_name: "피킹에서 주문제작 체크할 상품", p_option: "실버 / 8mm", p_location: "A-1", qty: 1 },
@@ -30,6 +30,10 @@
       { ...base, operation_id: "preview-legacy", ord_no: "LOCAL-O3", sellpia_order_item_no: "R3", item_no: "1_R3", custom_ordered_on: "2026-09-30" },
       { ...base, operation_id: "preview-received", ord_no: "LOCAL-DONE", sellpia_order_item_no: "RD", item_no: "1_RD", custom_received_on: "2026-10-01", product_name_snapshot: "완료 필터 확인 상품", supplier_cell_raw_snapshot: "0-완료매입처 [ 3 ]" },
       { ...base, operation_id: "preview-cancelled", ord_no: "LOCAL-CANCEL", sellpia_order_item_no: "RC", item_no: "1_RC", custom_cancelled_at: "2026-10-01T04:00:00Z", product_name_snapshot: "취소 필터 확인 상품", supplier_cell_raw_snapshot: "0-취소매입처 [ 4 ]" },
+    ],
+    sku_inbound_schedules: [
+      { sellpia_sku: "SKU-INBOUND", inbound_expected_date: "2026-10-07", own_code: "OWN-INBOUND", created_at: "2026-10-01T01:00:00Z", updated_at: "2026-10-01T01:00:00Z" },
+      { sellpia_sku: "SCHEDULE-ONLY", inbound_expected_date: "2026-10-15", own_code: "OWN-SCHEDULE", created_at: "2026-10-01T01:00:00Z", updated_at: "2026-10-01T01:00:00Z" },
     ],
   };
 
@@ -56,6 +60,19 @@
               (tables[table] ||= []).push(inserted);
               rows = [inserted];
             }
+            if (state.mode === "upsert") {
+              const payload = Array.isArray(state.payload) ? state.payload : [state.payload];
+              rows = payload.map((value) => {
+                const existing = (tables[table] ||= []).find((row) => row.sellpia_sku === value.sellpia_sku);
+                if (existing) {
+                  Object.assign(existing, value, { updated_at: new Date().toISOString() });
+                  return existing;
+                }
+                const inserted = { created_at: new Date().toISOString(), updated_at: new Date().toISOString(), ...value };
+                tables[table].push(inserted);
+                return inserted;
+              });
+            }
             resolve({ data: structuredClone(rows), error: null });
           };
         }
@@ -66,6 +83,7 @@
           if (property === "range") state.range = [args[0], args[1]];
           if (property === "update") { state.mode = "update"; state.payload = args[0]; }
           if (property === "insert") { state.mode = "insert"; state.payload = args[0]; }
+          if (property === "upsert") { state.mode = "upsert"; state.payload = structuredClone(args[0]); }
           return proxy;
         };
       },

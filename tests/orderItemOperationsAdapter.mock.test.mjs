@@ -92,6 +92,26 @@ assert.deepEqual(resolveEffectiveInboundExpectedDate({ operation: null, currentI
   explicitlyCleared: false,
 });
 assert.deepEqual(resolveEffectiveInboundExpectedDate({
+  operation: null,
+  currentItem: current,
+  skuSchedule: { sellpia_sku: "SKU-1", inbound_expected_date: "2026-10-07" },
+}), {
+  date: "2026-10-07",
+  source: "sku_schedule",
+  authoritative: true,
+  explicitlyCleared: false,
+}, "SKU schedule must override the legacy Sellpia date when no operation override exists");
+assert.deepEqual(resolveEffectiveInboundExpectedDate({
+  operation: { ...operation, inbound_expected_date: null },
+  currentItem: current,
+  skuSchedule: { sellpia_sku: "SKU-1", inbound_expected_date: "2026-10-07" },
+}), {
+  date: "",
+  source: "manual",
+  authoritative: true,
+  explicitlyCleared: true,
+}, "manual NULL must also suppress the SKU schedule");
+assert.deepEqual(resolveEffectiveInboundExpectedDate({
   operation: { ...operation, inbound_expected_source: "sku_schedule" },
   currentItem: current,
 }), {

@@ -6,7 +6,7 @@ import {
   findOperationForCurrentItem,
   orderItemIdentity,
   resolveEffectiveInboundExpectedDate,
-} from "../adapters/orderItemOperationsAdapter.mjs?v=20261001-foundation2";
+} from "../adapters/orderItemOperationsAdapter.mjs?v=20261001-sku-schedule1";
 import {
   CUSTOM_ORDER_STATUS_LABEL,
   buildCustomOrderRows,
@@ -16,7 +16,14 @@ import {
   customOrderSuppliers,
   filterCustomOrderRows,
   filterInboundExpectedRows,
-} from "../domain/customOrder.mjs?v=20261001-ui2";
+} from "../domain/customOrder.mjs?v=20261001-sku-schedule1";
+import { createSkuInboundSchedulesAdapter } from "../adapters/skuInboundSchedulesAdapter.mjs?v=20261001-sku-schedule1";
+import {
+  SKU_INBOUND_SCHEDULE_HEADERS,
+  findSkuInboundSchedule,
+  parseSkuInboundScheduleRows,
+  skuInboundScheduleWorkbookRows,
+} from "../domain/skuInboundSchedule.mjs?v=20261001-sku-schedule1";
 import { createAlimtalkSendAdapter } from "../adapters/alimtalkSendAdapter.mjs?v=20260728-alimtalk-history2";
 import { isBareGpaOwnCode, isGoldOwnCode } from "../domain/gold.mjs?v=20260811-bare-gpa-label1";
 import { alimtalkSendLogAnchor, alimtalkSendLogCode, alimtalkSendNaturalKey, appendAlimtalkSendLog, formatAlimtalkInboundExpectedDate, hasTomorrowShippingManagementMemo, normalizeAlimtalkSendLog, resolveAlimtalkTemplate } from "../domain/alimtalk.mjs?v=20260804-send-log-anchor2";
@@ -134,6 +141,7 @@ const db = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
 const imageDb = window.supabase.createClient(IMAGE_SUPABASE_URL, IMAGE_SUPABASE_KEY);
 const csCases = createCsCaseAdapter(db);
 const orderItemOperations = createOrderItemOperationsAdapter(db);
+const skuInboundSchedules = createSkuInboundSchedulesAdapter(db);
 const alimtalkSends = createAlimtalkSendAdapter(db);
 
 function todayDateString() {
@@ -207,6 +215,9 @@ const state = {
     error: "",
     operations: [],
     currentItems: [],
+    skuSchedules: [],
+    skuSchedulesLoaded: false,
+    skuScheduleImportStatus: "",
     status: "active",
     supplier: "",
     dateCriterion: "required",
@@ -334,6 +345,17 @@ const els = {
   customOrdersInboundDateFrom: document.getElementById("custom-orders-inbound-date-from"),
   customOrdersInboundDateTo: document.getElementById("custom-orders-inbound-date-to"),
   customOrdersInboundSearch: document.getElementById("custom-orders-inbound-search"),
+  customOrdersSkuSchedulePanel: document.getElementById("custom-orders-sku-schedule-panel"),
+  customOrdersSkuInput: document.getElementById("custom-orders-sku-input"),
+  customOrdersSkuDate: document.getElementById("custom-orders-sku-date"),
+  customOrdersSkuOwnCode: document.getElementById("custom-orders-sku-own-code"),
+  customOrdersSkuSave: document.getElementById("custom-orders-sku-save"),
+  customOrdersSkuUpload: document.getElementById("custom-orders-sku-upload"),
+  customOrdersSkuFile: document.getElementById("custom-orders-sku-file"),
+  customOrdersSkuDownload: document.getElementById("custom-orders-sku-download"),
+  customOrdersSkuImportStatus: document.getElementById("custom-orders-sku-import-status"),
+  customOrdersSkuCount: document.getElementById("custom-orders-sku-count"),
+  customOrdersSkuList: document.getElementById("custom-orders-sku-list"),
   customOrdersCount: document.getElementById("custom-orders-count"),
   customOrdersList: document.getElementById("custom-orders-list"),
   completedListCount: document.getElementById("completed-list-count"),
@@ -2080,7 +2102,7 @@ function getInvoiceTotalAmount(invoice) {
 function renderInspectionTotalAmountBadge(invoice) {
   const totalAmount = getInvoiceTotalAmount(invoice);
   if (totalAmount === null) return "";
-  return `<span class="invoice-badge" aria-label="총 주문금액">총금액 ${escapeHtml(formatAmount(totalAmount))}원</span>
+  return `<span class="invoice-badge inspection-total-amount" aria-label="총 주문금액">총금액 ${escapeHtml(formatAmount(totalAmount))}원</span>
     ${totalAmount >= 20000 ? '<span class="workflow-row-badge gift">사은품확인!</span>' : ""}`;
 }
 
@@ -3922,7 +3944,10 @@ function renderInspectionPanels(options = {}) {
         <div class="inspection-title-line">
           <strong>${escapeHtml(invoicePrimaryWorkflowLabel(selected, selectedIndex >= 0 ? selectedIndex : 0))}</strong>
           <span class="inspection-title-name">${escapeHtml(selectedName)}</span>
-          ${seller ? `<span class="seller-badge ${seller.className}">${escapeHtml(seller.label)}</span>` : ""}
+          <span class="inspection-commerce-summary">
+            ${seller ? `<span class="seller-badge inspection-seller-badge ${seller.className}">${escapeHtml(seller.label)}</span>` : ""}
+            ${renderInspectionTotalAmountBadge(selected)}
+          </span>
         </div>
         <span class="inspection-title-meta">
           <span>접수 ${escapeHtml(selected.receiptDate || "-")}${selectedOrderDateTime ? ` · 주문 ${escapeHtml(selectedOrderDateTime)}` : ""}</span>
@@ -3930,7 +3955,6 @@ function renderInspectionPanels(options = {}) {
         <label class="inspection-drawer-box" style="flex-wrap: wrap;">
           <span>서랍번호</span>
           <textarea class="drawer-input inspection-drawer-input" data-inspection-drawer data-order-group="${escapeHtml(selected.orderGroupNo)}" rows="2" placeholder="서랍번호 / 메모">${escapeHtml(invoiceDrawerValue(selected))}</textarea>
-          ${renderInspectionTotalAmountBadge(selected)}
         </label>
       </div>
       <div class="inspection-header-controls">
@@ -4579,8 +4603,13 @@ function operationForPickingItem(item) {
   return match.status === "matched" ? match.row : null;
 }
 
-function operationStatusMeta(operation) {
-  const status = customOrderStatus(operation || {});
+function operationStatusMeta(operation, item = null) {
+  const inbound = resolveEffectiveInboundExpectedDate({
+    operation,
+    currentItem: item,
+    skuSchedule: findSkuInboundSchedule(item, state.customOrders.skuSchedules),
+  });
+  const status = customOrderStatus(operation || {}, inbound);
   return {
     status,
     label: CUSTOM_ORDER_STATUS_LABEL[status] || (String(operation?.internal_memo || "").trim() ? "메모" : ""),
@@ -4590,7 +4619,7 @@ function operationStatusMeta(operation) {
 function renderPickingCustomOrderControls(invoice, item, { compact = false } = {}) {
   const operation = operationForPickingItem(item);
   const required = Boolean(String(operation?.custom_required_at || "").trim());
-  const meta = operationStatusMeta(operation);
+  const meta = operationStatusMeta(operation, item);
   const memo = String(operation?.internal_memo || "");
   const identityAttrs = `data-order-group="${escapeHtml(invoice.orderGroupNo)}" data-item-no="${escapeHtml(item.sellpiaItemNo)}"`;
   return `<div class="picking-custom-order ${compact ? "compact" : ""}">
@@ -4915,6 +4944,7 @@ function csInboundExpectedState(rowOrItem) {
   return resolveEffectiveInboundExpectedDate({
     operation: match.status === "matched" ? match.row : null,
     currentItem: item,
+    skuSchedule: findSkuInboundSchedule(item, state.customOrders.skuSchedules),
   });
 }
 
@@ -5582,6 +5612,45 @@ function customOrderInboundSourceLabel(source) {
   }[String(source || "").trim()] || "없음";
 }
 
+function sortedSkuInboundSchedules() {
+  return [...state.customOrders.skuSchedules].sort((left, right) => (
+    String(left.inbound_expected_date || "").localeCompare(String(right.inbound_expected_date || ""))
+      || String(left.sellpia_sku || "").localeCompare(String(right.sellpia_sku || ""), "ko")
+  ));
+}
+
+function mergeSkuInboundScheduleState(saved) {
+  const sku = String(saved?.sellpia_sku || "").trim();
+  if (!sku) return;
+  const index = state.customOrders.skuSchedules.findIndex((row) => String(row.sellpia_sku || "").trim() === sku);
+  if (index >= 0) state.customOrders.skuSchedules.splice(index, 1, saved);
+  else state.customOrders.skuSchedules.push(saved);
+  state.customOrders.skuSchedulesLoaded = true;
+}
+
+function renderSkuInboundScheduleRow(schedule) {
+  const sku = escapeHtml(schedule.sellpia_sku || "");
+  const saving = state.saving.has(`sku-inbound:${schedule.sellpia_sku}`);
+  return `<div class="sku-inbound-schedule-row" data-sku-inbound-schedule="${sku}" aria-busy="${saving ? "true" : "false"}">
+    <code title="${sku}">${sku}</code>
+    <label>입고예정일<input type="date" data-sku-schedule-field="inbound_expected_date" value="${escapeHtml(schedule.inbound_expected_date || "")}" ${saving ? "disabled" : ""}></label>
+    <label>자사코드<input data-sku-schedule-field="own_code" value="${escapeHtml(schedule.own_code || "")}" placeholder="선택 입력" ${saving ? "disabled" : ""}></label>
+    <button class="btn" data-sku-schedule-action="save" type="button" ${saving ? "disabled" : ""}>저장</button>
+  </div>`;
+}
+
+function renderSkuInboundScheduleManager() {
+  if (!els.customOrdersSkuList) return;
+  const schedules = sortedSkuInboundSchedules();
+  if (els.customOrdersSkuCount) els.customOrdersSkuCount.textContent = `${schedules.length}개 SKU`;
+  if (els.customOrdersSkuImportStatus) {
+    els.customOrdersSkuImportStatus.textContent = state.customOrders.skuScheduleImportStatus;
+  }
+  els.customOrdersSkuList.innerHTML = schedules.length
+    ? schedules.map(renderSkuInboundScheduleRow).join("")
+    : '<div class="sku-inbound-schedule-empty">등록된 SKU 입고예정일이 없습니다. 위 입력란 또는 엑셀 업로드로 추가하세요.</div>';
+}
+
 function renderCustomOrderRow(row) {
   const operation = row.operation;
   const display = row.display;
@@ -5705,6 +5774,9 @@ function syncCustomOrdersViewControls() {
   document.querySelectorAll("[data-custom-orders-toolbar]").forEach((toolbar) => {
     toolbar.hidden = toolbar.dataset.customOrdersToolbar !== activeView;
   });
+  document.querySelectorAll("[data-custom-orders-view-panel]").forEach((panel) => {
+    panel.hidden = panel.dataset.customOrdersViewPanel !== activeView;
+  });
 }
 
 function renderCustomOrdersPanel() {
@@ -5724,9 +5796,18 @@ function renderCustomOrdersPanel() {
     return;
   }
 
-  const rows = buildCustomOrderRows({ operations: workspace.operations, currentItems: workspace.currentItems });
-  const inboundRows = buildInboundExpectedRows({ operations: workspace.operations, currentItems: workspace.currentItems });
+  const rows = buildCustomOrderRows({
+    operations: workspace.operations,
+    currentItems: workspace.currentItems,
+    skuSchedules: workspace.skuSchedules,
+  });
+  const inboundRows = buildInboundExpectedRows({
+    operations: workspace.operations,
+    currentItems: workspace.currentItems,
+    skuSchedules: workspace.skuSchedules,
+  });
   if (workspace.view === "inbound") {
+    renderSkuInboundScheduleManager();
     const suppliers = customOrderSuppliers(inboundRows);
     if (workspace.inboundSupplier && !suppliers.includes(workspace.inboundSupplier)) workspace.inboundSupplier = "";
     if (els.customOrdersInboundSupplier) {
@@ -5745,7 +5826,7 @@ function renderCustomOrdersPanel() {
       search: workspace.inboundSearch,
     });
     if (els.customOrdersCount) els.customOrdersCount.textContent = `${filtered.length}건 / 전체 ${inboundRows.length}건`;
-    if (els.customOrdersSummaryText) els.customOrdersSummaryText.textContent = "수동·자동·셀피아 입고예정일과 명시적으로 삭제한 건을 함께 관리합니다.";
+    if (els.customOrdersSummaryText) els.customOrdersSummaryText.textContent = "아래는 SKU 일정이 적용된 주문상품과 수동·셀피아 입고예정일 현황입니다.";
     if (!filtered.length) {
       renderWorkflowEmpty(els.customOrdersList, "현재 필터에 맞는 입고예정일이 없습니다.");
       return;
@@ -5789,9 +5870,19 @@ async function loadCustomOrdersData({ force = false } = {}) {
   state.customOrders.error = "";
   renderCustomOrdersPanel();
   try {
-    const workspace = await orderItemOperations.loadCustomOrderWorkspace();
+    const [workspace, schedules] = await Promise.all([
+      orderItemOperations.loadCustomOrderWorkspace(),
+      skuInboundSchedules.loadAllSchedules(),
+    ]);
+    const scheduledItems = await skuInboundSchedules.loadCurrentItemsForSchedules(schedules);
+    const currentItems = [...new Map(
+      [...workspace.currentItems, ...scheduledItems]
+        .map((item) => [currentItemIdentityKey(item), item]),
+    ).values()];
     state.customOrders.operations = workspace.operations;
-    state.customOrders.currentItems = workspace.currentItems;
+    state.customOrders.currentItems = currentItems;
+    state.customOrders.skuSchedules = schedules;
+    state.customOrders.skuSchedulesLoaded = true;
     state.customOrders.loaded = true;
     for (const operation of workspace.operations) mergeOperationState(operation);
   } catch (error) {
@@ -5822,6 +5913,144 @@ async function saveCustomOrderPatch(operationId, patch, successMessage) {
     renderCustomOrdersPanel();
     renderPickingSurfaces();
   }
+}
+
+let skuScheduleXlsxPromise = null;
+
+function ensureSkuScheduleXlsx() {
+  if (window.XLSX) return Promise.resolve(window.XLSX);
+  if (skuScheduleXlsxPromise) return skuScheduleXlsxPromise;
+  skuScheduleXlsxPromise = new Promise((resolve, reject) => {
+    const script = document.createElement("script");
+    script.src = "https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js";
+    script.async = true;
+    script.addEventListener("load", () => {
+      if (window.XLSX) resolve(window.XLSX);
+      else reject(new Error("XLSX 라이브러리를 불러오지 못했습니다."));
+    }, { once: true });
+    script.addEventListener("error", () => reject(new Error("XLSX 라이브러리를 불러오지 못했습니다.")), { once: true });
+    document.head.appendChild(script);
+  }).catch((error) => {
+    skuScheduleXlsxPromise = null;
+    throw error;
+  });
+  return skuScheduleXlsxPromise;
+}
+
+async function mergeScheduledCurrentItems(schedules) {
+  const items = await skuInboundSchedules.loadCurrentItemsForSchedules(schedules);
+  const merged = new Map(state.customOrders.currentItems.map((item) => [currentItemIdentityKey(item), item]));
+  items.forEach((item) => merged.set(currentItemIdentityKey(item), item));
+  state.customOrders.currentItems = [...merged.values()];
+}
+
+async function saveSkuInboundSchedule(value, successMessage = "SKU 입고예정일을 저장했습니다.") {
+  if (!allowWrites) {
+    toast("읽기전용입니다. SKU 입고예정일 변경은 write=1에서만 저장됩니다.");
+    return null;
+  }
+  const sku = String(value?.sellpia_sku || "").trim();
+  const savingKey = `sku-inbound:${sku}`;
+  if (state.saving.has(savingKey)) return null;
+  state.saving.add(savingKey);
+  renderSkuInboundScheduleManager();
+  try {
+    const saved = await skuInboundSchedules.upsertSchedule(value);
+    mergeSkuInboundScheduleState(saved);
+    await mergeScheduledCurrentItems([saved]);
+    state.customOrders.skuScheduleImportStatus = successMessage;
+    toast(successMessage);
+    return saved;
+  } finally {
+    state.saving.delete(savingKey);
+    renderCustomOrdersPanel();
+    renderPickingSurfaces();
+    if (state.activeTab === "cs") renderCsPanels();
+  }
+}
+
+async function saveDirectSkuInboundSchedule() {
+  const sellpiaSku = String(els.customOrdersSkuInput?.value || "").trim();
+  const inboundExpectedDate = String(els.customOrdersSkuDate?.value || "").trim();
+  const ownCode = String(els.customOrdersSkuOwnCode?.value || "").trim();
+  const saved = await saveSkuInboundSchedule({
+    sellpia_sku: sellpiaSku,
+    inbound_expected_date: inboundExpectedDate,
+    own_code: ownCode || null,
+  });
+  if (!saved) return;
+  if (els.customOrdersSkuInput) els.customOrdersSkuInput.value = "";
+  if (els.customOrdersSkuDate) els.customOrdersSkuDate.value = "";
+  if (els.customOrdersSkuOwnCode) els.customOrdersSkuOwnCode.value = "";
+}
+
+async function saveSkuInboundScheduleRow(rowElement) {
+  const sellpiaSku = String(rowElement?.dataset.skuInboundSchedule || "").trim();
+  const inboundExpectedDate = String(rowElement?.querySelector('[data-sku-schedule-field="inbound_expected_date"]')?.value || "").trim();
+  const ownCode = String(rowElement?.querySelector('[data-sku-schedule-field="own_code"]')?.value || "").trim();
+  await saveSkuInboundSchedule({
+    sellpia_sku: sellpiaSku,
+    inbound_expected_date: inboundExpectedDate,
+    own_code: ownCode || null,
+  });
+}
+
+async function downloadSkuInboundSchedules() {
+  const XLSX = await ensureSkuScheduleXlsx();
+  const schedules = sortedSkuInboundSchedules();
+  const exported = skuInboundScheduleWorkbookRows(schedules);
+  const values = [SKU_INBOUND_SCHEDULE_HEADERS, ...exported.map((row) => [
+    row[SKU_INBOUND_SCHEDULE_HEADERS[0]],
+    row[SKU_INBOUND_SCHEDULE_HEADERS[1]] ? new Date(`${row[SKU_INBOUND_SCHEDULE_HEADERS[1]]}T12:00:00`) : null,
+    row[SKU_INBOUND_SCHEDULE_HEADERS[2]],
+  ])];
+  const workbook = XLSX.utils.book_new();
+  const worksheet = XLSX.utils.aoa_to_sheet(values, { cellDates: true });
+  worksheet["!cols"] = [{ wch: 24 }, { wch: 14 }, { wch: 22 }];
+  worksheet["!autofilter"] = { ref: `A1:C${Math.max(1, values.length)}` };
+  for (let row = 2; row <= values.length; row += 1) {
+    if (worksheet[`A${row}`]) {
+      worksheet[`A${row}`].t = "s";
+      worksheet[`A${row}`].z = "@";
+    }
+    if (worksheet[`B${row}`]) worksheet[`B${row}`].z = "yyyy-mm-dd";
+    if (worksheet[`C${row}`]) {
+      worksheet[`C${row}`].t = "s";
+      worksheet[`C${row}`].z = "@";
+    }
+  }
+  XLSX.utils.book_append_sheet(workbook, worksheet, "입고예정일");
+  XLSX.writeFile(workbook, `SKU_입고예정일_${todayDateString()}.xlsx`, { bookType: "xlsx", cellDates: true });
+  state.customOrders.skuScheduleImportStatus = `${schedules.length}개 SKU를 내려받았습니다.`;
+  renderSkuInboundScheduleManager();
+}
+
+async function importSkuInboundSchedules(file) {
+  if (!file) return;
+  if (!allowWrites) {
+    toast("읽기전용입니다. 엑셀 업로드는 write=1에서만 저장됩니다.");
+    return;
+  }
+  const XLSX = await ensureSkuScheduleXlsx();
+  const workbook = XLSX.read(await file.arrayBuffer(), { type: "array", cellDates: true });
+  const sheetName = workbook.SheetNames?.[0];
+  if (!sheetName) throw new Error("엑셀의 첫 번째 시트를 찾지 못했습니다.");
+  const matrix = XLSX.utils.sheet_to_json(workbook.Sheets[sheetName], { header: 1, raw: true, defval: "" });
+  const parsed = parseSkuInboundScheduleRows(matrix);
+  if (parsed.errors.length) {
+    const preview = parsed.errors.slice(0, 3).map((error) => `${error.rowNumber ? `${error.rowNumber}행 ` : ""}${error.message}`).join(" / ");
+    state.customOrders.skuScheduleImportStatus = `업로드 중단: ${preview}${parsed.errors.length > 3 ? ` 외 ${parsed.errors.length - 3}건` : ""}`;
+    renderSkuInboundScheduleManager();
+    throw new Error(state.customOrders.skuScheduleImportStatus);
+  }
+  if (!parsed.rows.length) throw new Error("업로드할 SKU 일정이 없습니다.");
+  if (!window.confirm(`${parsed.rows.length}개 SKU 일정을 추가하거나 같은 SKU의 값을 갱신할까요?`)) return;
+  const saved = await skuInboundSchedules.upsertSchedules(parsed.rows);
+  saved.forEach(mergeSkuInboundScheduleState);
+  await mergeScheduledCurrentItems(saved);
+  state.customOrders.skuScheduleImportStatus = `${saved.length}개 SKU 일정을 업로드했습니다.`;
+  renderCustomOrdersPanel();
+  toast(state.customOrders.skuScheduleImportStatus);
 }
 
 function currentItemIdentityKey(item) {
@@ -5923,15 +6152,20 @@ async function loadCsCaseData() {
   state.csCaseError = "";
   render();
   try {
-    const [cases, candidates, operations] = await Promise.all([
+    const [cases, candidates, operations, schedules] = await Promise.all([
       csCases.loadCsCases(),
       state.csManualCandidates.length ? Promise.resolve(state.csManualCandidates) : csCases.loadManualCsCandidates(),
       orderItemOperations.loadAllOperations(),
+      state.customOrders.skuSchedulesLoaded
+        ? Promise.resolve(state.customOrders.skuSchedules)
+        : skuInboundSchedules.loadAllSchedules(),
     ]);
     state.csCases = cases;
     state.csManualCandidates = candidates;
     state.orderItemOperations = operations;
     state.orderItemOperationsLoaded = true;
+    state.customOrders.skuSchedules = schedules;
+    state.customOrders.skuSchedulesLoaded = true;
     // The candidate source contains every currently readable order.  Build a
     // receipt-active calendar from it once so the CS screen and Alimtalk CSV
     // use the same business-day definition: dates with at least one receipt.
@@ -5966,13 +6200,18 @@ async function loadManualCsCandidates() {
   state.csCasesLoading = true;
   render();
   try {
-    const [candidates, operations] = await Promise.all([
+    const [candidates, operations, schedules] = await Promise.all([
       csCases.loadManualCsCandidates(),
       state.orderItemOperationsLoaded ? Promise.resolve(state.orderItemOperations) : orderItemOperations.loadAllOperations(),
+      state.customOrders.skuSchedulesLoaded
+        ? Promise.resolve(state.customOrders.skuSchedules)
+        : skuInboundSchedules.loadAllSchedules(),
     ]);
     state.csManualCandidates = candidates;
     state.orderItemOperations = operations;
     state.orderItemOperationsLoaded = true;
+    state.customOrders.skuSchedules = schedules;
+    state.customOrders.skuSchedulesLoaded = true;
     state.csReceiptBusinessDates = receiptBusinessDayKeys(state.csManualCandidates.map((candidate) => candidate.order));
     state.csReceiptBusinessDayCache = new Map();
   } catch (error) {
@@ -10140,6 +10379,43 @@ function bindEvents() {
   els.customOrdersInboundSearch?.addEventListener("input", () => {
     state.customOrders.inboundSearch = els.customOrdersInboundSearch.value || "";
     renderCustomOrdersPanel();
+  });
+  els.customOrdersSkuSave?.addEventListener("click", () => saveDirectSkuInboundSchedule().catch((error) => {
+    console.error(error);
+    state.customOrders.skuScheduleImportStatus = `저장 실패: ${error?.message || error}`;
+    renderSkuInboundScheduleManager();
+    toast(state.customOrders.skuScheduleImportStatus);
+  }));
+  els.customOrdersSkuUpload?.addEventListener("click", () => els.customOrdersSkuFile?.click());
+  els.customOrdersSkuFile?.addEventListener("change", () => {
+    const file = els.customOrdersSkuFile.files?.[0];
+    importSkuInboundSchedules(file).catch((error) => {
+      console.error(error);
+      if (!state.customOrders.skuScheduleImportStatus.startsWith("업로드 중단:")) {
+        state.customOrders.skuScheduleImportStatus = `업로드 실패: ${error?.message || error}`;
+      }
+      renderSkuInboundScheduleManager();
+      toast(state.customOrders.skuScheduleImportStatus);
+    }).finally(() => {
+      els.customOrdersSkuFile.value = "";
+    });
+  });
+  els.customOrdersSkuDownload?.addEventListener("click", () => downloadSkuInboundSchedules().catch((error) => {
+    console.error(error);
+    state.customOrders.skuScheduleImportStatus = `내려받기 실패: ${error?.message || error}`;
+    renderSkuInboundScheduleManager();
+    toast(state.customOrders.skuScheduleImportStatus);
+  }));
+  els.customOrdersSkuList?.addEventListener("click", (event) => {
+    const button = event.target.closest('[data-sku-schedule-action="save"]');
+    if (!button) return;
+    const row = button.closest("[data-sku-inbound-schedule]");
+    saveSkuInboundScheduleRow(row).catch((error) => {
+      console.error(error);
+      state.customOrders.skuScheduleImportStatus = `저장 실패: ${error?.message || error}`;
+      renderSkuInboundScheduleManager();
+      toast(state.customOrders.skuScheduleImportStatus);
+    });
   });
   els.customOrdersList?.addEventListener("click", (event) => onCustomOrderListClick(event).catch((error) => {
     console.error(error);
