@@ -35,13 +35,13 @@ assert.match(
 );
 assert.match(
   source,
-  /item\?\.inbound_expected_date[\s\S]*item\?\.sellpia_outbound_confirmed_date/,
-  "the date resolver must prefer the future inbound-date field and retain the current Sellpia field fallback",
+  /findOperationForCurrentItem\(item, state\.orderItemOperations\)[\s\S]*resolveEffectiveInboundExpectedDate/,
+  "the CS date resolver must use the shared operation matcher and source-aware fallback resolver",
 );
 assert.match(
   source,
-  /row\.item\.inbound_expected_source = confirmedDate \? "manual" : "";/,
-  "a date entered in the CS screen must be marked as manual for informational display",
+  /upsertOperationForCurrentOrderItem\(row\.item,[\s\S]*inbound_expected_date: confirmedDate,[\s\S]*inbound_expected_source: "manual"/,
+  "a date entered or cleared in CS must persist as an authoritative manual operation override",
 );
 assert.match(
   source,
