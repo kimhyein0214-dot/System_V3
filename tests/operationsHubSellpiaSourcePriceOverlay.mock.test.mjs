@@ -119,6 +119,22 @@ function assertFinals(p,expected){assert.deepEqual(p.preview.map(row=>row.diff.p
  assert.equal(api.matrixPriceTarget({}),null,'the default rules resolver remains independent');
 }
 {
+ const changed=Array.from({length:2646},(_,index)=>({status:'ready',changed:true,product_code:`CHANGED-${index}`,source_row_no:index+2}));
+ const noChange=Array.from({length:44},(_,index)=>({status:'ready',changed:false,product_code:`NO-CHANGE-${index}`,source_row_no:index+3000}));
+ const blockedProducts=[...Array(36).fill('2084923'),...Array(6).fill('2080413'),...Array(2).fill('2085509')];
+ const blockedRows=blockedProducts.map((product,index)=>({status:'blocked',changed:false,product_code:product,source_row_no:index+4000,reason:`blocked-${product}`}));
+ const plans=[{preview:[...changed,...noChange,...blockedRows]}],before=JSON.stringify(plans);
+ const summary=api.summarizeSourcePricePreview(plans);
+ assert.deepEqual(summary,{total:2734,changed:2646,noChange:44,blocked:44,unclassified:0,complete:true});
+ assert.equal(summary.changed+summary.noChange+summary.blocked,summary.total,'row-state counts are mutually exclusive and exhaustive');
+ assert.deepEqual(Object.fromEntries([...new Set(blockedProducts)].map(product=>[product,blockedRows.filter(row=>row.product_code===product).length])),{'2084923':36,'2080413':6,'2085509':2});
+ const excluded=blockedRows.map((row,index)=>({item:{source_channel:'makeshop',sellpia_sku_code:'',field_key:'sellpia_sale_price',seller_product_code:row.product_code,seller_option_code:'',source_file_name:'makeshop.xlsx',source_row_no:row.source_row_no,export_item_id:-index-1},reason:row.reason}));
+ const warningCsv=globalThis.SystemV3SellerExport.conflictCsv(excluded),warningLines=warningCsv.replace(/^\uFEFF/,'').trim().split(/\r?\n/);
+ assert.equal(warningLines.length-1,summary.blocked,'warning CSV contains exactly the blocked rows');
+ assert.ok(noChange.every(row=>!warningCsv.includes(row.product_code)),'NO_CHANGE rows never enter warning CSV');
+ assert.equal(JSON.stringify(plans),before,'preview classification must not mutate the transformation plan or XLSX operations');
+}
+{
  const parts=new Map([
   ['xl/workbook.xml','<workbook xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><sheets><sheet name="수정" sheetId="1" r:id="rId1"/></sheets></workbook>'],
   ['xl/_rels/workbook.xml.rels','<Relationships><Relationship Id="rId1" Target="worksheets/sheet1.xml"/></Relationships>'],

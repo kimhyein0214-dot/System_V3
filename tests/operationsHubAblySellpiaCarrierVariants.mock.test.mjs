@@ -3,6 +3,7 @@ import fs from 'node:fs';
 import vm from 'node:vm';
 
 const context={console};context.globalThis=context;vm.createContext(context);
+vm.runInContext(fs.readFileSync('mockups/operations-hub/ably-price-projection.js','utf8'),context);
 vm.runInContext(fs.readFileSync('mockups/operations-hub/ably-playauto-export.js','utf8'),context);
 const A=context.AblyPlayautoExport;
 const headers=['판매자관리코드','쇼핑몰(계정)','온라인 상품명','판매가','옵션','SKU','옵션 추가금액'];
@@ -127,7 +128,7 @@ assert.equal(A.isNoBallAnchor('14K 헤비 잠금볼'),false);
  A.prepareSellpiaSourceProductRows(rows,new Map([['11445-1',82000]]));
  blocked(rows);assert.match(rows[0]._error,/P열 직접 SKU.*충돌/);
 }
-assert.match(fs.readFileSync('mockups/operations-hub/seller-file-workflow-v2.js','utf8'),/if\(priceMode==='sellpia_source'\)A\(\)\.prepareSellpiaSourceProductRows\(prepared,sellpiaPrices\)/,'variant pricing runs only in opt-in mode');
+assert.match(fs.readFileSync('mockups/operations-hub/seller-file-workflow-v2.js','utf8'),/P\(\)\.projectProductRows\(prepared,\{priceMode,targetFinalBySku,policyByRow,legacyRulesBaseBySku/,'rules and sellpia_source share one physical-product projection');
 {
  vm.runInContext(fs.readFileSync('mockups/operations-hub/ably-stock-export.js','utf8'),context);
  vm.runInContext(fs.readFileSync('mockups/operations-hub/seller-export-adapter.js','utf8'),context);

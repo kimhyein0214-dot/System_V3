@@ -31,12 +31,19 @@ test('tag-centric manager exposes saved-assignment download and member editing',
   assert.match(js,/loadTagMembers/);
   assert.match(js,/removeTagMembers/);
   assert.match(js,/syncTagAssignments/);
+  assert.match(js,/id="tag-ably-policy"/);
+  assert.match(js,/ABLY ·/);
+  assert.match(js,/saveAblyCarrierPolicy/);
   assert.match(js,/XLSX\.writeFile/);
   assert.match(css,/tag-manager-v2/);
   assert.match(css,/grid-template-columns:minmax\(0,1fr\) auto!important/);
   assert.match(data,/async function loadTagCatalog/);
   assert.match(data,/async function loadTagMembers/);
   assert.match(data,/async function removeTagMembers/);
+  assert.match(data,/carrier-policy:tag:/);
+  assert.match(data,/async function loadAblyCarrierPoliciesForSkus/);
+  assert.match(data,/async function saveAblyCarrierPolicy/);
+  assert.doesNotMatch(data,/hub_rules\.config[^\n]*representativeStrategy/);
   assert.match(js,/id="tag-upload-sync" type="button">엑셀 업로드/);
   assert.match(js,/function openUpload\(\)\{\s*const tag=currentTag\(\);\s*setStatus/);
   assert.match(js,/openTagImport\(\{openFilePicker:true,tagId:tag\?\.tag_id\|\|null\}\)/);
@@ -53,5 +60,6 @@ test('tag-centric manager exposes saved-assignment download and member editing',
   assert.doesNotMatch(rules,/D\.ruleRegistry\('save'/);
   assert.match(html,/tag-management-v2\.css/);
   assert.match(html,/rule-workspace\.js\?v=20260918-tag-partial-v2/);
-  assert.match(html,/tag-management-v2\.js\?v=20260921-tag-retire-search-v2/);
+  assert.match(html,/ably-price-projection\.js\?v=20260929-ably-carrier-policy-v1/);
+  assert.match(html,/tag-management-v2\.js\?v=20260929-ably-carrier-policy-v1/);
 });

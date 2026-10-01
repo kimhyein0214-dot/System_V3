@@ -3429,6 +3429,51 @@
     if(error)throw error;return data;
   }
 
+  const ablyCarrierPolicyTitle=tagId=>`carrier-policy:tag:${cleanText(tagId)}`;
+
+  async function loadAblyCarrierPolicy(tagId) {
+    const id=cleanText(tagId);if(!id)throw new Error('조회할 태그를 확인해주세요.');
+    return workDocument('get_title','formula',{title:ablyCarrierPolicyTitle(id)});
+  }
+
+  async function saveAblyCarrierPolicy({tagId,strategy='',document=null}={}) {
+    const id=cleanText(tagId),selected=cleanText(strategy),allowed=new Set(['lowest','lower_middle','preserve_existing_base']);
+    if(!id)throw new Error('저장할 태그를 확인해주세요.');
+    if(selected&&!allowed.has(selected))throw new Error('지원하지 않는 에이블리 내보내기 정책입니다.');
+    const current=document||await loadAblyCarrierPolicy(id),body=current?.body&&typeof current.body==='object'?structuredClone(current.body):{};
+    const carriers=body.carriers&&typeof body.carriers==='object'?{...body.carriers}:{};
+    if(selected)carriers.ably={representativeStrategy:selected};else delete carriers.ably;
+    const savedBody={...body,version:1,carriers};
+    return workDocument('save','formula',{id:current?.id||null,title:ablyCarrierPolicyTitle(id),body:savedBody,version:current?.version||null});
+  }
+
+  async function loadAblyCarrierPoliciesForSkus({skus=[]}={}) {
+    requireOperationsHubSessionToken();
+    const codes=[...new Set((skus||[]).map(cleanText).filter(Boolean))];
+    if(!codes.length)return {rows:[],documents:[],fingerprint:'[]'};
+    const profiles=[];
+    for(let offset=0;offset<codes.length;offset+=200){
+      const {data,error}=await db.from('operations_hub_product_profiles').select('sellpia_sku_code,product_tags,sku_tags').in('sellpia_sku_code',codes.slice(offset,offset+200));
+      if(error)throw error;profiles.push(...(data||[]));
+    }
+    const activeTags=await loadTags(),activeById=new Map(activeTags.map(tag=>[cleanText(tag.tag_id),tag]));
+    const memberships=new Map();
+    for(const profile of profiles){
+      const tags=[...(Array.isArray(profile.product_tags)?profile.product_tags:[]),...(Array.isArray(profile.sku_tags)?profile.sku_tags:[])];
+      const unique=new Map();
+      for(const tag of tags){const id=cleanText(tag?.tag_id);if(id&&activeById.has(id))unique.set(id,{...activeById.get(id),...tag,tag_id:id,is_active:true});}
+      memberships.set(cleanText(profile.sellpia_sku_code),[...unique.values()].sort((a,b)=>cleanText(a.tag_id).localeCompare(cleanText(b.tag_id))));
+    }
+    const tagIds=[...new Set([...memberships.values()].flat().map(tag=>cleanText(tag.tag_id)))].sort();
+    const documents=(await Promise.all(tagIds.map(async tagId=>({tagId,document:await loadAblyCarrierPolicy(tagId)})))).filter(entry=>entry.document);
+    const documentByTag=new Map(documents.map(entry=>[entry.tagId,entry.document]));
+    const rows=codes.map(sku=>({sku,tags:(memberships.get(sku)||[]).map(tag=>({
+      tag_id:cleanText(tag.tag_id),tag_name:cleanText(tag.tag_name)||cleanText(tag.tag_id),is_active:true,document:documentByTag.get(cleanText(tag.tag_id))||null
+    }))}));
+    const fingerprint=JSON.stringify(rows.map(row=>[row.sku,row.tags.map(tag=>[tag.tag_id,tag.document?.id||'',Number(tag.document?.version||0),tag.document?.body?.carriers?.ably?.representativeStrategy||''])]));
+    return {rows,documents,fingerprint};
+  }
+
   async function loadTags() {
     const { data, error } = await db
       .from('product_tags')
@@ -4608,6 +4653,9 @@
     loadTagMembers,
     loadTagMemberSearch,
     removeTagMembers,
+    loadAblyCarrierPolicy,
+    saveAblyCarrierPolicy,
+    loadAblyCarrierPoliciesForSkus,
     uploadAuxiliarySellerFile,
     loadAuxiliarySellerFiles,
     downloadAuxiliarySellerFile,

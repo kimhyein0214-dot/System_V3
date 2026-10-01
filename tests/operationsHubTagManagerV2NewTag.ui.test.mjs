@@ -10,7 +10,7 @@ try{
   await page.setContent('<main id="attributes"><div class="attributes-title"></div><div class="attributes-quick-actions"></div><div class="attributes-layout"></div></main>');
   await page.addStyleTag({path:fileURLToPath(new URL('tag-management-v2.css',root))});
   await page.evaluate(()=>{
-    window.qa={created:[],formulaDrafts:[],tagImports:[],renamed:[],saved:[],calculations:[],searchReads:[],applied:[{sellpia_sku_code:'applied-1',own_sku:'OWN-1',sellpia_product_name:'기존 상품',sellpia_option_name:'블랙'}],catalog:[
+    window.qa={created:[],formulaDrafts:[],tagImports:[],renamed:[],saved:[],calculations:[],searchReads:[],policySaves:[],policyDocs:{},applied:[{sellpia_sku_code:'applied-1',own_sku:'OWN-1',sellpia_product_name:'기존 상품',sellpia_option_name:'블랙'}],catalog:[
       {tag_id:'plain',tag_name:'귀걸이',tag_color:'#eeeeee',tag_group:'운영',rule_count:0,option_count:3},
       {tag_id:'formula',tag_name:'소스_2000',tag_color:'#dbeafe',tag_group:'가격 수식',rule_count:2,option_count:0}
     ]};
@@ -23,6 +23,8 @@ try{
       renameProductTag:async payload=>{qa.renamed.push(structuredClone(payload));const tag=qa.catalog.find(item=>item.tag_id===payload.id);
         if(payload.expectedName!==tag.tag_name)throw Error('다른 화면에서 수정되었습니다.');tag.tag_name=payload.name;return structuredClone(tag);},
       ruleRegistry:async()=>({rules:[{id:'formula-rule',tag_id:'formula',name:'소스_2000',scope:'smartstore',target_field:'platform_registration_price',source_field:'source_base_price',config:{steps:[{op:'add',value:2000},{op:'round',unit:1,rounding:'nearest'}]}},{id:'makeshop-rule',tag_id:'formula',name:'메이크샵 M15',scope:'makeshop',source_scope:'makeshop',target_field:'platform_discount_price',source_field:'platform_registration_price',config:{discount_mode:'makeshop_code',discount_rule_code:'M15',steps:[{op:'multiply',value:.85},{op:'round',unit:10,rounding:'down'}]}}],assignments:[],dependencies:[]}),
+      loadAblyCarrierPolicy:async tagId=>qa.policyDocs[tagId]?structuredClone(qa.policyDocs[tagId]):null,
+      saveAblyCarrierPolicy:async payload=>{qa.policySaves.push(structuredClone(payload));qa.policyDocs[payload.tagId]={id:'policy-'+payload.tagId,title:'carrier-policy:tag:'+payload.tagId,version:1,body:{version:1,carriers:payload.strategy?{ably:{representativeStrategy:payload.strategy}}:{}}};return {id:'policy-'+payload.tagId,version:1};},
       createProductTag:async payload=>{qa.created.push(structuredClone(payload));const tag={tag_id:'created-'+qa.created.length,tag_name:payload.name,tag_color:payload.color,tag_group:payload.group,rule_count:0,option_count:0};qa.catalog.push(tag);return structuredClone(tag);}
     };
     window.HubPriceWorkspace={openForTag:async tag=>qa.formulaDrafts.push(structuredClone(tag)),openTagImport:options=>qa.tagImports.push(structuredClone(options))};
@@ -44,6 +46,28 @@ try{
   assert.match(await page.locator('.tag-rule-formula').nth(1).innerText(),/계산식\s*메이크샵 · 판매처 등록가 → × 0.85 → 10 단위 내림/);
   assert.match(await page.locator('.tag-rule-item-head').nth(1).innerText(),/메이크샵 M15 · M15/);
   assert.equal(await page.locator('#tag-stat-count').innerText(),'1','live member count is the selected tag count source');
+  await page.locator('#tag-ably-policy').selectOption('lower_middle');await page.locator('#tag-ably-policy-save').click();await page.waitForFunction(()=>qa.policySaves.length===1);
+  assert.deepEqual(await page.evaluate(()=>qa.policySaves[0]),{tagId:'formula',strategy:'lower_middle',document:null});
+  assert.match(await page.locator('#tag-selected-name').innerText(),/ABLY · 대표가 중간/);
+  assert.match(await page.locator('#tag-ably-policy-help').innerText(),/다운로드는 차단/);
+
+  await page.locator('#tag-ably-policy').selectOption('preserve_existing_base');await page.locator('#tag-ably-policy-save').click();await page.waitForFunction(()=>qa.policySaves.length===2);
+  assert.equal(await page.evaluate(()=>qa.policySaves[1].strategy),'preserve_existing_base');
+  assert.equal(await page.evaluate(()=>qa.policySaves[1].document.body.carriers.ably.representativeStrategy),'lower_middle','policy edits reuse the existing work document');
+  assert.match(await page.locator('#tag-selected-name').innerText(),/ABLY · 기존 I 유지/);
+  await page.locator('#tag-ably-policy').selectOption('lowest');await page.locator('#tag-ably-policy-save').click();await page.waitForFunction(()=>qa.policySaves.length===3);
+  assert.equal(await page.evaluate(()=>qa.policySaves[2].strategy),'lowest');
+  assert.match(await page.locator('#tag-selected-name').innerText(),/ABLY · 대표가 최저/);
+  assert.equal(await page.evaluate(()=>qa.calculations.length),0,'carrier policy saves must not recalculate or replace price Rules');
+
+  await page.locator('[data-tag-kind="all"]').click();await page.locator('[data-tag-id="plain"]').click();await page.locator('[data-tag-id="formula"]').click();
+  await page.waitForFunction(()=>document.getElementById('tag-ably-policy')?.value==='lowest');
+  assert.match(await page.locator('#tag-selected-name').innerText(),/ABLY · 대표가 최저/,'saved policy survives tag reload');
+  await page.locator('#tag-ably-policy').selectOption('');await page.locator('#tag-ably-policy-save').click();await page.waitForFunction(()=>qa.policySaves.length===4);
+  assert.equal(await page.evaluate(()=>qa.policySaves[3].strategy),'');
+  assert.equal(await page.locator('#tag-selected-name').innerText().then(text=>text.includes('ABLY ·')),false,'inherit removes the explicit Ably badge');
+  assert.match(await page.locator('#tag-ably-policy-help').innerText(),/legacy fallback/);
+  assert.equal(await page.evaluate(()=>qa.calculations.length),0,'returning to inheritance must leave price Rules untouched');
 
   page.once('dialog',dialog=>dialog.accept('소스_2500'));
   await page.locator('#tag-rename').click();await page.waitForFunction(()=>qa.renamed.length===1);
@@ -68,5 +92,5 @@ try{
   assert.equal(await page.evaluate(()=>qa.created.length),1,'formula draft must not create an orphan plain tag');
   assert.deepEqual(await page.evaluate(()=>qa.formulaDrafts[0]),{name:'에이블리_1000',color:'#dbeafe',group:'가격 수식'});
   assert.deepEqual(errors,[]);
-  console.log('PASS tag manager filters tags, shows formulas, renames by stable id, directly applies selected SKU, and refreshes one live count source.');
+  console.log('PASS tag manager filters tags, edits Ably carrier policy, shows separate badges, and preserves existing tag/formula workflows.');
 }finally{await browser.close();}

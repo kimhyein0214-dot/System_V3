@@ -8,6 +8,7 @@ const helpers=workflow.slice(workflow.indexOf(' const ablyPhases='),workflow.ind
 const previewSource=workflow.slice(workflow.indexOf(' async function preview(role)'),workflow.indexOf('\n function previewRowsForFilter('));
 const mathSource=fs.readFileSync(new URL('../mockups/operations-hub/discount-price-math.js',import.meta.url),'utf8');
 const priceSource=fs.readFileSync(new URL('../mockups/operations-hub/current-price-export.js',import.meta.url),'utf8');
+const projectionSource=fs.readFileSync(new URL('../mockups/operations-hub/ably-price-projection.js',import.meta.url),'utf8');
 const ablySource=fs.readFileSync(new URL('../mockups/operations-hub/ably-playauto-export.js',import.meta.url),'utf8');
 const plain=value=>JSON.parse(JSON.stringify(value));
 
@@ -22,20 +23,22 @@ function harness({items,targets=[],role='playauto_option',priceMode='rules',sele
  vm.createContext(global);
  vm.runInContext(mathSource,global);
  vm.runInContext(priceSource,global);
+ vm.runInContext(projectionSource,global);
  vm.runInContext(ablySource,global);
  const n=value=>Number(value||0).toLocaleString('ko-KR'),setStatus=(text,kind)=>messages.push({text,kind});
  const createAblyJob=Function('global','state','document','n','renderExportStatuses','setStatus',`${helpers};return createAblyJob;`)(global,state,document,n,()=>{},setStatus);
  const roles={playauto_option:{label:'옵션가 + 재고',type:'option_price_stock'},playauto_product:{label:'판매가 + 옵션가',type:'product_price_option'}};
  const file={name:'carrier.xlsx',arrayBuffer:async()=>new ArrayBuffer(1)};
- const A=()=>({readTemplate:async()=>({type:roles[role].type,items}),resolveRows:(rows,_catalog,_mappings,options)=>rows.map(item=>({...item,resolution:carrierCatalog?global.AblyPlayautoExport.resolveSellpiaSku(item,carrierCatalog,carrierMappings,options):item.resolution||{sku:item.sku,method:'direct_sku'}})),prepareSellpiaSourceProductRows:(rows,prices)=>global.AblyPlayautoExport.prepareSellpiaSourceProductRows(rows,prices)});
+ const A=()=>({readTemplate:async()=>({type:roles[role].type,items}),resolveRows:(rows,_catalog,_mappings,options)=>rows.map(item=>({...item,resolution:carrierCatalog?global.AblyPlayautoExport.resolveSellpiaSku(item,carrierCatalog,carrierMappings,options):item.resolution||{sku:item.sku,method:'direct_sku'}}))});
+ const P=()=>global.AblyPriceProjection;
  const calls=[];
- const D=()=>({loadCarrierSellerMappings:async()=>({rows:carrierMappings}),loadCarrierMatrixTargets:async options=>{calls.push(options);return {rows:targets};},loadSellpiaSourcePricesForExport:async()=>new Map(Object.entries(sourcePrices))});
- const preview=Function('state','roles','setStatus','createAblyJob','document','global','blobFile','A','D','catalog','scopeSkus','renderPreview','n',`${previewSource};return preview;`)(state,roles,setStatus,createAblyJob,document,global,async()=>file,A,D,async()=>carrierCatalog||[],async()=>selectedSkus?new Set(selectedSkus):null,()=>{rendered++;},n);
+ const D=()=>({loadCarrierSellerMappings:async()=>({rows:carrierMappings}),loadCarrierMatrixTargets:async options=>{calls.push(options);return {rows:targets};},loadSellpiaSourcePricesForExport:async()=>new Map(Object.entries(sourcePrices)),loadAblyCarrierPoliciesForSkus:async()=>({rows:[],fingerprint:'[]'})});
+ const preview=Function('state','roles','setStatus','createAblyJob','document','global','blobFile','A','D','P','catalog','scopeSkus','renderPreview','n',`${previewSource};return preview;`)(state,roles,setStatus,createAblyJob,document,global,async()=>file,A,D,P,async()=>carrierCatalog||[],async()=>selectedSkus?new Set(selectedSkus):null,()=>{rendered++;},n);
  state.carrierFiles.set(role,file);
  return {run:()=>preview(role),state,calls,timers,messages,rendered:()=>rendered};
 }
 test('Ably PlayAuto Sellpia mode preserves unselected option finals while changing shared sale price',async()=>{
- const items=[row('P-1',6,{option_index:0,base_price:30000,option_price:0}),row('P-2',6,{option_index:1,base_price:30000,option_price:3500}),row('P-3',6,{option_index:2,base_price:30000,option_price:9000,resolution:{sku:null,method:'unresolved'}})];
+ const items=[row('P-1',6,{option_index:0,base_price:30000,option_price:0}),row('P-2',6,{option_index:1,base_price:30000,option_price:3500}),row('P-3',6,{option_index:2,base_price:30000,option_price:9000})];
  const h=harness({role:'playauto_product',priceMode:'sellpia_source',items,selectedSkus:['P-1'],sourcePrices:{'P-1':32000}}),preview=await h.run();
  assert.ok(preview,h.messages.at(-1)?.text);assert.equal(preview.counts.selected,1);assert.equal(preview.output.length,3);assert.equal(h.calls.length,0,'source overlay does not require a historical calculated target');
  assert.deepEqual(plain(preview.output.map(item=>item.target_base_price+item.target_option_price)),[32000,33500,39000]);
@@ -43,6 +46,15 @@ test('Ably PlayAuto Sellpia mode preserves unselected option finals while changi
  assert.deepEqual(plain(preview.output.map(item=>item._changedFields)),[['base'],['base','option'],['base','option']]);
  const absent=harness({role:'playauto_product',priceMode:'sellpia_source',items,selectedSkus:['P-1']});
  const blocked=await absent.run();assert.ok(blocked);assert.equal(blocked.counts.blocked,3);assert.equal(blocked.counts.changed,0);assert.match(blocked.output[0]._error,/셀피아.*판매가/);
+});
+test('Ably PlayAuto rules partial export recomputes every sibling T while preserving unselected finals',async()=>{
+ const items=[row('P-1',6,{option_index:0,base_price:30000,option_price:0}),row('P-2',6,{option_index:1,base_price:30000,option_price:3500}),row('P-3',6,{option_index:2,base_price:30000,option_price:9000})];
+ const rule={active_price_rule:true,current_effective_price:{platformBase:32000,platformDiscount:0,platformOption:0,platformFinal:32000,platformTerms:[],versions:[{id:'rule',version:1}]}};
+ const h=harness({role:'playauto_product',priceMode:'rules',items,selectedSkus:['P-1'],targets:[target('P-1',rule),target('P-2'),target('P-3')]}),preview=await h.run();
+ assert.ok(preview,h.messages.at(-1)?.text);assert.equal(preview.output.length,3);
+ assert.deepEqual(plain(preview.output.map(item=>item.target_base_price+item.target_option_price)),[32000,33500,39000]);
+ assert.deepEqual(plain(preview.output.map(item=>item.target_option_price)),[0,1500,7000]);
+ assert.deepEqual(plain(preview.output.map(item=>item._preserveUnselected)),[false,true,true]);
 });
 test('Ably Sellpia mode isolates a blocked physical row and retains another safe row',async()=>{
  const items=[row('P-1',6,{option_index:0,base_price:30000,option_price:0}),row('P-2',6,{option_index:1,base_price:30000,option_price:3500}),row('Q-1',7,{option_index:0,base_price:40000,option_price:0})];

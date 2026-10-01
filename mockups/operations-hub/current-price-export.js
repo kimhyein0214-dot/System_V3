@@ -69,6 +69,14 @@
    for(let index=0;index<text.length;index++){const code=text.charCodeAt(index);first=Math.imul(first^code,16777619);second=Math.imul(second^code,3266489917);}
    return `${(first>>>0).toString(16).padStart(8,'0')}${(second>>>0).toString(16).padStart(8,'0')}`;
   }
+ function summarizeSourcePricePreview(plans=[]){
+  const rows=(plans||[]).flatMap(plan=>Array.isArray(plan?.preview)?plan.preview:[]);
+  const changed=rows.filter(row=>row?.status==='ready'&&row.changed===true).length;
+  const noChange=rows.filter(row=>row?.status==='ready'&&row.changed!==true).length;
+  const blocked=rows.filter(row=>row?.status==='blocked').length;
+  const unclassified=rows.length-changed-noChange-blocked;
+  return {total:rows.length,changed,noChange,blocked,unclassified,complete:unclassified===0};
+ }
  function prepareCarrierItems(source,fileName,carrierRows,snapshotRows,{snapshotId=null,includeStock=true}={}){
   const identity=row=>JSON.stringify([String(row?.product_code||'').trim(),String(row?.option_code||'').trim()]);
   const snapshotGenerations=(snapshotRows||[]).flatMap(row=>[row?.latest_generation_id,row?.latest_price_generation_id,row?.registration_generation_id,row?.discount_generation_id,row?.option_generation_id,row?.final_generation_id]).filter(finite).map(Number);
@@ -278,7 +286,7 @@
    }
    }catch(error){operations.length=operationsStart;preview.length=previewStart;block(error?.message||String(error));}
   }
-  return {kind:'TransformationPlan',source,source_type:'sellpia_source_overlay',file_name:fileName,version_token:planVersionToken({source,fileName,preview,operations}),operations,items:operations,excludedItems,preview,summary:{total:preview.length,selected:preview.filter(row=>row.sku&&row.status==='ready').length,preserved:preview.filter(row=>row.preserve_unmapped&&row.status==='ready').length,changed:preview.filter(row=>row.changed).length,blocked:preview.filter(row=>row.status==='blocked').length},canGenerate:true,safety:{can_generate_xlsx:true,price_complete:true,requires_revalidation:true,reason:'문제 상품은 원본 유지·빨간 표시하고, 안전한 상품만 셀피아 판매가로 변경합니다.'}};
+  return {kind:'TransformationPlan',source,source_type:'sellpia_source_overlay',file_name:fileName,version_token:planVersionToken({source,fileName,preview,operations}),operations,items:operations,excludedItems,preview,summary:{total:preview.length,selected:preview.filter(row=>row.sku&&row.status==='ready').length,preserved:preview.filter(row=>row.preserve_unmapped&&row.status==='ready').length,changed:preview.filter(row=>row.status==='ready'&&row.changed).length,unchanged:preview.filter(row=>row.status==='ready'&&!row.changed).length,blocked:preview.filter(row=>row.status==='blocked').length},canGenerate:true,safety:{can_generate_xlsx:true,price_complete:true,requires_revalidation:true,reason:'문제 상품은 원본 유지·빨간 표시하고, 안전한 상품만 셀피아 판매가로 변경합니다.'}};
  }
  async function buildArchive(files,items,onProgress,excludedItems=[]){
   let remaining=[...items],excluded=[...excludedItems];
@@ -300,5 +308,5 @@
   if(finite(row?.source_stock))return Number(row.source_stock);
   return null;
  }
- g.HubCurrentPriceExport={refreshItems,buildArchive,matrixPriceTarget,matrixStockTarget,prepareCarrierItems,prepareSellpiaSourcePricePlan,validSourceLocation,carrierPriceState,planVersionToken};
+ g.HubCurrentPriceExport={refreshItems,buildArchive,matrixPriceTarget,matrixStockTarget,prepareCarrierItems,prepareSellpiaSourcePricePlan,summarizeSourcePricePreview,validSourceLocation,carrierPriceState,planVersionToken};
 })(typeof window==='undefined'?globalThis:window);

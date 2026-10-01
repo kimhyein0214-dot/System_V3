@@ -1,7 +1,7 @@
 (function initTagManagementV2(global){
  'use strict';
  const D=()=>global.SystemV3Data;
- const state={mode:'all',kind:'all',catalog:[],catalogSearch:'',selectedTagId:'',tag:null,page:1,pageSize:100,count:0,appliedCount:0,rows:[],memberSearch:'',selected:new Set(),rules:[],loading:false};
+ const state={mode:'all',kind:'all',catalog:[],catalogSearch:'',selectedTagId:'',tag:null,page:1,pageSize:100,count:0,appliedCount:0,rows:[],memberSearch:'',selected:new Set(),rules:[],carrierPolicyDocument:null,carrierPolicyLoading:false,loading:false};
  const esc=v=>String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
  const n=v=>Number(v||0).toLocaleString('ko-KR');
  const number=v=>Number.isFinite(Number(v))?Number(v).toLocaleString('ko-KR'):String(v??'—');
@@ -71,8 +71,9 @@
    </section>
    <aside class="tag-manager-panel tag-manager-side">
     <div class="tag-selected-card"><div><h3 id="tag-selected-name">태그 미선택</h3><button class="btn" id="tag-rename" type="button" disabled>태그 이름 수정</button></div><p id="tag-selected-group">왼쪽에서 태그를 선택하세요.</p></div>
-    <div class="tag-stat-grid"><div><span>적용 SKU</span><b id="tag-stat-count">-</b></div><div><span>연결 수식</span><b id="tag-stat-rules">-</b></div></div>
-    <div class="tag-rule-summary"><span>연결 수식</span><div id="tag-rule-list"><i>태그를 선택하면 표시됩니다.</i></div></div>
+     <div class="tag-stat-grid"><div><span>적용 SKU</span><b id="tag-stat-count">-</b></div><div><span>연결 수식</span><b id="tag-stat-rules">-</b></div></div>
+     <div class="tag-rule-summary"><span>연결 수식</span><div id="tag-rule-list"><i>태그를 선택하면 표시됩니다.</i></div></div>
+     <div class="tag-carrier-policy"><span>에이블리 내보내기</span><p>가격 Rule과 별개로 PlayAuto 공통 판매가 I를 선택하는 carrier policy입니다.</p><label>대표가 정책<select id="tag-ably-policy" disabled><option value="">기본값 상속</option><option value="lowest">최저가</option><option value="lower_middle">중간값 (lower-middle)</option><option value="preserve_existing_base">기존 판매가 I 유지</option></select></label><small id="tag-ably-policy-help">태그를 선택하면 설정할 수 있습니다.</small><button class="btn" id="tag-ably-policy-save" type="button" disabled>내보내기 정책 저장</button></div>
     <div class="tag-manager-actions">
       <button class="btn wide" id="tag-download-current" type="button" disabled>현재 적용 목록 XLSX</button>
       <button class="btn" id="tag-download-blank" type="button" disabled>빈 템플릿</button>
@@ -104,7 +105,7 @@
   try{
    const result=await D().loadTagCatalog({search:state.catalogSearch});
    state.catalog=result.rows||[];
-   if(!keepSelection||!state.catalog.some(t=>String(t.tag_id)===String(state.selectedTagId))){state.selectedTagId='';state.tag=null;state.rows=[];state.count=0;state.appliedCount=0;state.selected.clear();}
+   if(!keepSelection||!state.catalog.some(t=>String(t.tag_id)===String(state.selectedTagId))){state.selectedTagId='';state.tag=null;state.rows=[];state.count=0;state.appliedCount=0;state.selected.clear();state.carrierPolicyDocument=null;}
    else state.appliedCount=Number(currentTag()?.option_count||0);
    renderCatalog();renderSelected();
    if(state.selectedTagId)await loadMembers();
@@ -123,8 +124,28 @@
  async function selectTag(tagId){
   state.selectedTagId=tagId;state.tag=currentTag();state.page=1;state.memberSearch='';state.appliedCount=Number(state.tag?.option_count||0);state.selected.clear();
   const q=document.getElementById('tag-member-query');if(q)q.value='';
-  renderCatalog();renderSelected();await Promise.all([loadMembers(),loadRules()]);
- }
+   state.carrierPolicyDocument=null;renderCatalog();renderSelected();await Promise.all([loadMembers(),loadRules(),loadCarrierPolicy()]);
+  }
+
+  async function loadCarrierPolicy(){
+   if(!state.selectedTagId||!D().loadAblyCarrierPolicy)return;
+   state.carrierPolicyLoading=true;renderSelected();
+   try{state.carrierPolicyDocument=await D().loadAblyCarrierPolicy(state.selectedTagId);}
+   catch(error){state.carrierPolicyDocument=null;setStatus(`에이블리 내보내기 정책 조회 실패: ${error?.message||error}`,'error');}
+   finally{state.carrierPolicyLoading=false;renderSelected();}
+  }
+
+  async function saveCarrierPolicy(){
+   const tag=currentTag(),select=document.getElementById('tag-ably-policy');if(!tag||!select||!D().saveAblyCarrierPolicy)return;
+   select.disabled=true;document.getElementById('tag-ably-policy-save').disabled=true;setStatus('에이블리 내보내기 정책을 저장하는 중…');
+   try{
+    await D().saveAblyCarrierPolicy({tagId:tag.tag_id,strategy:select.value,document:state.carrierPolicyDocument});
+    state.carrierPolicyDocument=await D().loadAblyCarrierPolicy(tag.tag_id);renderSelected();
+    setStatus(select.value==='lower_middle'?'lower-middle 정책을 저장했습니다. 실제 다운로드는 허용범위 확인 전까지 차단됩니다.':'에이블리 내보내기 정책을 저장했습니다.','success');
+    global.dispatchEvent(new CustomEvent('hub-tags-changed',{detail:{tagId:tag.tag_id,carrierPolicy:true}}));
+   }catch(error){setStatus(`에이블리 내보내기 정책 저장 실패: ${error?.message||error}`,'error');}
+   finally{renderSelected();}
+  }
 
  async function loadRules(){
   if(!state.selectedTagId)return;
@@ -165,18 +186,23 @@
   const selectionCopy=document.getElementById('tag-member-selection-copy');if(selectionCopy)selectionCopy.textContent=state.memberSearch?`전체 SKU 검색 결과 ${n(state.count)}개`:`태그 적용 SKU ${n(state.appliedCount)}개`;
  }
 
- function renderSelected(){
-  const tag=currentTag();
-  const name=document.getElementById('tag-selected-name'),group=document.getElementById('tag-selected-group');
-  if(name)name.innerHTML=tag?`${esc(tag.tag_name)} <small class="tag-kind ${Number(tag.rule_count||0)>0?'formula':'plain'}">${Number(tag.rule_count||0)>0?'ƒ 수식 태그':'일반 태그'}</small>`:'태그 미선택';
+  function renderSelected(){
+   const tag=currentTag();
+   const policy=state.carrierPolicyDocument?.body?.carriers?.ably?.representativeStrategy||'',policyLabels={lowest:'대표가 최저',lower_middle:'대표가 중간',preserve_existing_base:'기존 I 유지'};
+   const name=document.getElementById('tag-selected-name'),group=document.getElementById('tag-selected-group');
+   if(name)name.innerHTML=tag?`${esc(tag.tag_name)} <small class="tag-kind ${Number(tag.rule_count||0)>0?'formula':'plain'}">${Number(tag.rule_count||0)>0?'ƒ 가격 수식':'일반 태그'}</small>${policy?` <small class="tag-kind carrier">ABLY · ${esc(policyLabels[policy]||policy)}</small>`:''}`:'태그 미선택';
   if(group)group.textContent=tag?`${tag.tag_group||'운영'} · ${Number(tag.rule_count||0)>0?'가격 수식 연결됨':'분류·운영용 태그'} · 저장 기준 option 태그`:'왼쪽에서 태그를 선택하세요.';
   const title=document.getElementById('tag-member-title'),copy=document.getElementById('tag-member-copy');
   if(title)title.textContent=tag?tag.tag_name:'태그를 선택하세요';
   if(copy)copy.textContent=tag?`현재 DB에 저장된 ${n(state.appliedCount)}개 SKU 적용 내역`:'저장된 태그 적용 내역을 조회·수정할 수 있습니다.';
   document.getElementById('tag-stat-count').textContent=tag?n(state.appliedCount):'-';
   document.getElementById('tag-stat-rules').textContent=tag?n(state.rules.length||tag.rule_count):'-';
-  const ruleList=document.getElementById('tag-rule-list');
-  if(ruleList)ruleList.innerHTML=tag?(state.rules.length?state.rules.map(rule=>{const view=ruleDisplay(rule);return `<i class="tag-rule-item"><span class="tag-rule-item-head"><b class="tag-rule-destination">${esc(view.destination)} 저장</b><small>${esc(rule.name)}${view.code?' · '+esc(view.code):''}</small></span><strong class="tag-rule-formula"><small>계산식</small>${esc(view.formula)}</strong><span class="tag-rule-result">결과 → ${esc(view.target)}</span></i>`;}).join(''):'<i>연결된 수식 없음</i>'):'<i>태그를 선택하면 표시됩니다.</i>';
+   const ruleList=document.getElementById('tag-rule-list');
+   if(ruleList)ruleList.innerHTML=tag?(state.rules.length?state.rules.map(rule=>{const view=ruleDisplay(rule);return `<i class="tag-rule-item"><span class="tag-rule-item-head"><b class="tag-rule-destination">${esc(view.destination)} 저장</b><small>${esc(rule.name)}${view.code?' · '+esc(view.code):''}</small></span><strong class="tag-rule-formula"><small>계산식</small>${esc(view.formula)}</strong><span class="tag-rule-result">결과 → ${esc(view.target)}</span></i>`;}).join(''):'<i>연결된 수식 없음</i>'):'<i>태그를 선택하면 표시됩니다.</i>';
+   const policySelect=document.getElementById('tag-ably-policy'),policySave=document.getElementById('tag-ably-policy-save'),policyHelp=document.getElementById('tag-ably-policy-help');
+   if(policySelect){policySelect.value=policy;policySelect.disabled=!tag||state.carrierPolicyLoading;}
+   if(policySave)policySave.disabled=!tag||state.carrierPolicyLoading||!D().saveAblyCarrierPolicy;
+   if(policyHelp)policyHelp.textContent=!tag?'태그를 선택하면 설정할 수 있습니다.':state.carrierPolicyLoading?'정책을 불러오는 중…':policy==='lower_middle'?'계산·미리보기만 제공됩니다. 음수 옵션가와 허용범위 확인 전 다운로드는 차단됩니다.':policy?'이 태그가 적용된 에이블리 상품에 명시적으로 적용됩니다.':'rules는 기존 platformBase, sellpia_source는 lowest인 legacy fallback을 유지합니다.';
   for(const id of ['tag-download-current','tag-download-blank','tag-edit-rule','tag-clear-all','tag-rename'])document.getElementById(id).disabled=!tag;
   const deleteButton=document.getElementById('tag-delete-unused');
   if(deleteButton){
@@ -377,8 +403,9 @@
   document.getElementById('tag-edit-rule').onclick=()=>void editRule();
   document.getElementById('tag-remove-selected').onclick=()=>void removeSelected();
   document.getElementById('tag-clear-all').onclick=()=>void clearAll();
-  document.getElementById('tag-delete-unused').onclick=()=>void deleteUnusedTag();
- }
+   document.getElementById('tag-delete-unused').onclick=()=>void deleteUnusedTag();
+   document.getElementById('tag-ably-policy-save').onclick=()=>void saveCarrierPolicy();
+  }
 
  async function openTag(tagId){
   setMode('tag');

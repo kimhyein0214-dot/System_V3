@@ -14,7 +14,7 @@ test('changed-only export derives its authoritative scope from carrier identitie
  const file={name:'actual-carrier.xlsx'};
  const carrierRows=[{product_code:'P1',option_code:'O1',source_row_no:2,stock:4,base_price:1000,discounted_base_price:1000,option_price:0,final_price:1000,discount_terms:[]}];
  const ctx={
-  Date,Blob,performance:{now:()=>Date.now()},formatNumber:value=>String(value),CHANNEL_LABELS:{smartstore:'스마트스토어'},
+  Date,Blob,setTimeout,performance:{now:()=>Date.now()},formatNumber:value=>String(value),CHANNEL_LABELS:{smartstore:'스마트스토어'},
   sellerExport:{transformSellerFile(){throw Error('unchanged plan must not serialize');},outputName:name=>name,downloadBlob(){},conflictCsv(){return '';}},
   liveData:{
    async downloadLatestSellerOriginals(sources){calls.push(['files',sources]);return new Map([['smartstore',[file]]]);},
