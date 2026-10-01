@@ -20,8 +20,8 @@ export const CUSTOM_ORDER_STATUS = Object.freeze({
 
 export const CUSTOM_ORDER_STATUS_LABEL = Object.freeze({
   [CUSTOM_ORDER_STATUS.BEFORE_ORDER]: "주문 전",
-  [CUSTOM_ORDER_STATUS.ORDERED]: "주문 후",
-  [CUSTOM_ORDER_STATUS.WAITING]: "주문 후 · 입고 대기",
+  [CUSTOM_ORDER_STATUS.ORDERED]: "주문완",
+  [CUSTOM_ORDER_STATUS.WAITING]: "주문완 · 입고 대기",
   [CUSTOM_ORDER_STATUS.RECEIVED]: "입고 완료",
   [CUSTOM_ORDER_STATUS.CANCELLED]: "취소",
 });
@@ -79,6 +79,16 @@ export function buildCustomOrderRows({ operations = [], currentItems = [], skuSc
     });
 }
 
+export function addCalendarDays(value, days) {
+  const normalized = datePart(value);
+  const count = Number(days);
+  if (!normalized || !Number.isFinite(count)) return "";
+  const [year, month, day] = normalized.split("-").map(Number);
+  const date = new Date(Date.UTC(year, month - 1, day));
+  date.setUTCDate(date.getUTCDate() + Math.trunc(count));
+  return date.toISOString().slice(0, 10);
+}
+
 function identityKey(value) {
   const identity = orderItemIdentity(value);
   return `${identity.ordNo}::${identity.sellpiaOrderItemNo || identity.itemNo}`;
@@ -133,10 +143,19 @@ export function buildInboundExpectedRows({ operations = [], currentItems = [], s
     });
   }
 
-  return rows.sort((left, right) => {
-    const leftDate = datePart(left.inbound?.date) || "9999-12-31";
-    const rightDate = datePart(right.inbound?.date) || "9999-12-31";
-    return leftDate.localeCompare(rightDate) || left.key.localeCompare(right.key, "ko");
+  return sortInboundExpectedRows(rows, "asc");
+}
+
+export function sortInboundExpectedRows(rows = [], direction = "asc") {
+  const descending = text(direction).toLowerCase() === "desc";
+  return [...rows].sort((left, right) => {
+    const leftDate = datePart(left.inbound?.date);
+    const rightDate = datePart(right.inbound?.date);
+    if (!leftDate && !rightDate) return left.key.localeCompare(right.key, "ko");
+    if (!leftDate) return 1;
+    if (!rightDate) return -1;
+    const dateOrder = leftDate.localeCompare(rightDate);
+    return (descending ? -dateOrder : dateOrder) || left.key.localeCompare(right.key, "ko");
   });
 }
 

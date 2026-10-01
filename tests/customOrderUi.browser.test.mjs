@@ -167,12 +167,16 @@ try {
   await pickingCard.locator('[data-action="custom-order-toggle"]').click();
   await page.waitForFunction(() => window.__tables.order_item_operations.some((row) => row.ord_no === "O-P" && row.custom_required_at === null));
   pickingCard = page.locator('.picking-item-card[data-order-group="O-P"]');
-  await pickingCard.locator(".custom-order-memo summary").click();
   await pickingCard.locator('[data-action="custom-order-memo-input"]').fill("내부 제작 메모");
   await pickingCard.locator('[data-action="custom-order-memo-save"]').click();
   await page.waitForFunction(() => window.__tables.order_item_operations.some((row) => row.ord_no === "O-P" && row.internal_memo === "내부 제작 메모"));
   pickingCard = page.locator('.picking-item-card[data-order-group="O-P"]');
   await pickingCard.locator('[data-action="custom-order-toggle"]').check();
+  assert.deepEqual(await pickingCard.locator(".picking-custom-order").evaluate((node) => [...node.children].map((child) => child.className)), [
+    "custom-order-check",
+    "custom-order-memo-inline",
+    "custom-order-status status-before_order",
+  ], "picking controls must be ordered as checkbox, memo, then status badge");
   pickingCard = page.locator('.picking-item-card[data-order-group="O-P"]');
   await pickingCard.locator('[data-action="custom-order-toggle"]').click();
   await page.waitForFunction(() => document.getElementById("toast")?.textContent.includes("주문제작 탭에서 취소"));
@@ -206,6 +210,7 @@ try {
   assert.match(await page.locator('[data-operation-id="op-missing"]').textContent(), /스냅 상품/);
   assert.match(await page.locator('[data-operation-id="op-manual-clear"]').textContent(), /수동 · 삭제됨/);
   assert.match(await page.locator('[data-operation-id="op-legacy"]').textContent(), /셀피아/);
+  assert.equal(await page.locator('[data-operation-id="op-before"] .custom-order-product-photo img').count(), 1, "custom-order workflow must show the product photo");
 
   const statusColors = {};
   for (const [filter, key] of [["before_order", "before"], ["received", "received"]]) {
@@ -227,8 +232,13 @@ try {
   await page.fill("#custom-orders-search", "");
 
   await page.locator('[data-operation-id="op-before"] [data-custom-order-action="ordered-today"]').click();
-  await page.waitForFunction(() => window.__tables.order_item_operations.find((row) => row.operation_id === "op-before")?.custom_ordered_on);
-  assert.match(await page.locator('[data-operation-id="op-before"] .custom-order-status').textContent(), /주문 후/);
+  await page.waitForFunction(() => {
+    const row = window.__tables.order_item_operations.find((entry) => entry.operation_id === "op-before");
+    return row?.custom_ordered_on === "2026-10-01"
+      && row?.inbound_expected_date === "2026-10-15"
+      && row?.inbound_expected_source === "manual";
+  });
+  assert.match(await page.locator('[data-operation-id="op-before"] .custom-order-status').textContent(), /주문완/);
   const orderedColor = await page.locator('[data-operation-id="op-before"]').evaluate((node) => getComputedStyle(node).borderLeftColor);
   assert.notEqual(orderedColor, statusColors.before, "ordered rows must be visually distinct from before-order rows");
   assert.notEqual(orderedColor, statusColors.received, "ordered rows must be visually distinct from received rows");
@@ -254,15 +264,19 @@ try {
   assert.equal(await page.locator('[data-operation-id="op-legacy"]').count(), 1);
 
   await page.click('[data-custom-orders-view="inbound"]');
-  await page.waitForFunction(() => document.getElementById("custom-orders-count")?.textContent === "4건 / 전체 4건");
+  await page.waitForFunction(() => document.getElementById("custom-orders-count")?.textContent === "5건 / 전체 5건");
   assert.equal(await page.locator('[data-custom-orders-toolbar="workflow"]').isVisible(), false);
   assert.equal(await page.locator('[data-custom-orders-toolbar="inbound"]').isVisible(), true);
   assert.equal(await page.locator("#custom-orders-sku-schedule-panel").isVisible(), true);
   assert.match(await page.locator("#custom-orders-sku-count").textContent(), /1개 SKU/);
-  assert.equal(await page.locator(".inbound-expected-row").count(), 4);
+  assert.equal(await page.locator(".inbound-expected-row").count(), 5);
   assert.match(await page.locator('[data-inbound-row-key="O-2::R-2"]').textContent(), /명시적 삭제/);
   assert.match(await page.locator('[data-inbound-row-key="O-M::R-M"]').textContent(), /원천 주문행 없음/);
   assert.match(await page.locator('[data-inbound-row-key="O-LONLY::R-LONLY"]').textContent(), /SKU 일정/);
+  await page.selectOption("#custom-orders-inbound-sort", "desc");
+  assert.equal(await page.locator('.inbound-expected-row [data-inbound-expected-field="inbound_expected_date"]').first().inputValue(), "2026-10-15");
+  await page.selectOption("#custom-orders-inbound-sort", "asc");
+  assert.equal(await page.locator('.inbound-expected-row [data-inbound-expected-field="inbound_expected_date"]').first().inputValue(), "2026-10-06");
   await page.selectOption("#custom-orders-inbound-source", "legacy_sellpia");
   assert.equal(await page.locator(".inbound-expected-row").count(), 1);
   await page.selectOption("#custom-orders-inbound-source", "all");

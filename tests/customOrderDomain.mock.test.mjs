@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import {
   CUSTOM_ORDER_STATUS,
+  addCalendarDays,
   buildCustomOrderRows,
   buildInboundExpectedRows,
   canClearCustomRequired,
@@ -9,6 +10,7 @@ import {
   customOrderSuppliers,
   filterCustomOrderRows,
   filterInboundExpectedRows,
+  sortInboundExpectedRows,
 } from "../src/domain/customOrder.mjs";
 
 const base = {
@@ -27,6 +29,8 @@ assert.equal(customOrderStatus({ ...base, custom_ordered_on: "2026-09-29", inbou
 assert.equal(customOrderStatus({ ...base, custom_received_on: "2026-10-03" }), CUSTOM_ORDER_STATUS.RECEIVED);
 assert.equal(customOrderStatus({ ...base, custom_received_on: "2026-10-03", custom_cancelled_at: "2026-10-01T01:00:00Z" }), CUSTOM_ORDER_STATUS.CANCELLED);
 assert.equal(canClearCustomRequired(base), true);
+assert.equal(addCalendarDays("2026-10-01", 14), "2026-10-15");
+assert.equal(addCalendarDays("2026-12-25", 14), "2027-01-08");
 for (const patch of [
   { custom_ordered_on: "2026-09-29" },
   { custom_received_on: "2026-10-03" },
@@ -146,5 +150,7 @@ assert.deepEqual(filterInboundExpectedRows(inboundRows, { source: "legacy_sellpi
 assert.deepEqual(filterInboundExpectedRows(inboundRows, { source: "cleared" }).map((row) => row.operation?.operation_id), ["inbound-clear"]);
 assert.deepEqual(filterInboundExpectedRows(inboundRows, { search: "O-1" }).map((row) => row.key).sort(), ["O-1::R-1", "O-1::R-2"]);
 assert.deepEqual(filterInboundExpectedRows(inboundRows, { dateFrom: "2026-10-05", dateTo: "2026-10-05" }).map((row) => row.operation?.operation_id), ["inbound-auto"]);
+assert.deepEqual(sortInboundExpectedRows(inboundRows, "asc").map((row) => row.inbound.date), ["2026-10-04", "2026-10-05", ""]);
+assert.deepEqual(sortInboundExpectedRows(inboundRows, "desc").map((row) => row.inbound.date), ["2026-10-05", "2026-10-04", ""]);
 
 console.log("customOrderDomain.mock.test: OK");

@@ -65,43 +65,14 @@
 .custom-order-status.status-received { border-color: #86efac; background: #f0fdf4; color: #15803d; }
 .custom-order-status.status-cancelled { border-color: #cbd5e1; background: #f1f5f9; color: #64748b; }
 
-.custom-order-memo {
-  position: relative;
-}
-
-.custom-order-memo summary {
-  cursor: pointer;
-  list-style: none;
-  min-height: 22px;
-  padding: 3px 7px;
-  border: 1px solid #d7dfeb;
-  border-radius: 6px;
-  background: #fff;
-  color: #526077;
-  font-weight: 700;
-}
-
-.custom-order-memo[data-has-memo="1"] summary {
-  border-color: #a78bfa;
-  color: #6d28d9;
-}
-
-.custom-order-memo-editor {
-  position: absolute;
-  z-index: 20;
-  top: calc(100% + 4px);
-  left: 0;
+.custom-order-memo-inline {
   display: grid;
-  grid-template-columns: minmax(190px, 300px) auto;
-  gap: 5px;
-  padding: 7px;
-  border: 1px solid #cbd5e1;
-  border-radius: 8px;
-  background: #fff;
-  box-shadow: 0 8px 24px rgb(15 23 42 / 16%);
+  grid-template-columns: minmax(8rem, 14rem) auto;
+  gap: .3rem;
+  min-width: 0;
 }
 
-.custom-order-memo-editor input,
+.custom-order-memo-inline input,
 .custom-orders-toolbar input,
 .custom-orders-toolbar select,
 .custom-order-row input {
@@ -194,7 +165,7 @@
 }
 
 .custom-orders-toolbar[data-custom-orders-toolbar="inbound"] {
-  grid-template-columns: minmax(120px, .6fr) minmax(210px, 1.15fr) minmax(320px, 1.55fr) minmax(300px, 2fr);
+  grid-template-columns: minmax(120px, .6fr) minmax(190px, 1fr) minmax(300px, 1.45fr) minmax(210px, .9fr) minmax(260px, 1.5fr);
 }
 
 .custom-orders-toolbar > label {
@@ -423,13 +394,41 @@
 }
 .custom-order-row.status-cancelled { border-left-color: #94a3b8; background: #f8fafc; }
 
-.custom-order-row-primary,
+.custom-order-row-primary-copy,
 .custom-order-product,
 .custom-order-identity,
 .custom-order-row-memo label {
   display: grid;
   gap: 3px;
   min-width: 0;
+}
+
+.custom-order-row-primary {
+  display: grid;
+  grid-template-columns: 4.5rem minmax(0, 1fr);
+  align-items: start;
+  gap: .7rem;
+}
+
+.custom-order-product-photo {
+  display: grid;
+  place-items: center;
+  width: 4.5rem;
+  aspect-ratio: 1;
+  overflow: hidden;
+  border: 1px solid #dbe3ef;
+  border-radius: .5rem;
+  background: #f8fafc;
+  color: #94a3b8;
+  font-size: .7rem;
+  font-weight: 800;
+}
+
+.custom-order-product-photo img {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  cursor: zoom-in;
 }
 
 .custom-order-card-section {
@@ -602,6 +601,10 @@
     grid-column: auto;
   }
 
+  .custom-orders-toolbar[data-custom-orders-toolbar="inbound"] {
+    grid-template-columns: 108px minmax(160px, 1fr) minmax(260px, 1.35fr) minmax(190px, .8fr) minmax(220px, 1.2fr);
+  }
+
   .custom-order-row {
     grid-template-columns: minmax(300px, 1fr) minmax(420px, 1.2fr);
   }
@@ -664,9 +667,8 @@
     border-left: 0;
   }
 
-  .custom-order-memo-editor {
-    right: 0;
-    left: auto;
+  .custom-order-memo-inline {
+    grid-template-columns: minmax(7rem, 1fr) auto;
   }
 }
 
