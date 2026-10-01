@@ -46,6 +46,14 @@ test('frontend requires preview fingerprint and refreshes only affected Matrix S
  assert.match(html,/id="inventory-count-preview"/);
 });
 
+test('inventory-count upload renders only selected files instead of ten empty picker slots',()=>{
+ assert.match(app,/sourceSelect\.value === 'inventory_count'[\s\S]*?selectedFiles\.map\(\(file, index\)/);
+ assert.match(app,/class="inventory-count-file-remove"/);
+ assert.match(app,/selectedFiles\.splice\(Number\(removeButton\.dataset\.fileIndex\), 1\)/);
+ assert.doesNotMatch(app,/상품코드·가용재고·재고 헤더가 있는 XLSX를 1~10개/);
+ assert.match(html,/<div id="file-slots" class="file-slots"><\/div>/);
+});
+
 test('stock-only export audit records the selected source before download',()=>{
  assert.match(migration,/add column if not exists stock_source text/);
  assert.match(migration,/export_mode in \('change_queue','inventory_match','stock_only'\)/);

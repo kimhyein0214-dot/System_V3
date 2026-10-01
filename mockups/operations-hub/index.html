@@ -7,7 +7,7 @@
     <title>System V3 · 상품 운영 허브</title>
     <link rel="preconnect" href="https://cdnjs.cloudflare.com" crossorigin>
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/pretendard/1.3.9/static/pretendard.css">
-    <link rel="stylesheet" href="./style.css?v=20261001-inventory-count-v1">
+    <link rel="stylesheet" href="./style.css?v=20261001-inventory-file-list-v2">
     <link rel="stylesheet" href="./ably-combinations.css?v=20260910-rule-destination-v111">
     <link rel="stylesheet" href="./workspaces-v91.css?v=20260910-rule-destination-v111">
     <link rel="stylesheet" href="./price-rule-lab.css?v=20260910-rule-destination-v111">
@@ -164,11 +164,7 @@
                   <span class="drop-icon">↑</span><h4>파일을 여기에 끌어놓으세요</h4><p>또는 클릭하여 내 컴퓨터에서 선택</p><small>XLSX · XLS · CSV / 파일당 최대 50MB</small>
                   <input id="mock-file" type="file" multiple hidden>
                 </div>
-                <div id="file-slots" class="file-slots">
-                  <div><i>1</i><span><b>파일 1</b><em>선택된 파일 없음</em></span><button type="button">파일 선택</button></div>
-                  <div><i>2</i><span><b>파일 2</b><em>선택된 파일 없음</em></span><button type="button">파일 선택</button></div>
-                  <div><i>3</i><span><b>파일 3</b><em>선택된 파일 없음</em></span><button type="button">파일 선택</button></div>
-                </div>
+                <div id="file-slots" class="file-slots"></div>
                 <section id="sellpia-preflight-panel" class="sellpia-preflight-panel" aria-live="polite" hidden></section>
                 <section id="inventory-count-preview" class="sellpia-preflight-panel inventory-count-preview" aria-live="polite" hidden></section>
                 <div class="upload-options">
@@ -1004,7 +1000,7 @@
     <link rel="stylesheet" href="./sellpia-patch-export.css?v=20260919-partial-export-v3">
     <script src="./sellpia-patch-export.js?v=20260921-sellpia-current-carrier-v1"></script>
     <script src="./matrix-dataset.js?v=20260921-matrix-grid-feed-v5d"></script>
-  <script src="./app.js?v=20261001-inventory-count-v1"></script>
+  <script src="./app.js?v=20261001-inventory-file-list-v2"></script>
     <script src="./mapping-import.js?v=20260910-rule-destination-v111"></script>
     <script src="./attributes-page.js?v=20260915-tag-matrix-v1"></script>
     <script src="./price-rule-lab.js?v=20260910-rule-destination-v111"></script>

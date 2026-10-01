@@ -3,7 +3,7 @@ const sourceConfig = {
   smartstore: {name:'스마트스토어 상품 원본', initial:'N', cls:'smart', guide:'분할된 스마트스토어 상품 파일 2개를 올려주세요.', detail:'분할된 파일 2개 · XLSX', files:2},
   makeshop: {name:'메이크샵 상품 원본', initial:'M', cls:'make', guide:'메이크샵에서 내려받은 상품 파일 1개를 올려주세요.', detail:'파일 1개 · XLSX 또는 XLS', files:1},
   ably: {name:'에이블리 전체 원본 (GOODS_LIST)', initial:'A', cls:'ably', guide:'조회·매칭용 GOODS_LIST CSV를 올려주세요. PlayAuto 수정용 파일은 아래 에이블리 파일 세트에서 별도로 등록합니다.', detail:'조회·매칭 원본 1개 · CSV · 수정파일 내보내기에는 사용하지 않음', files:1},
-  inventory_count: {name:'재고조사 결과 반영', initial:'#', cls:'sellpia', guide:'상품코드·가용재고·재고 헤더가 있는 XLSX를 1~10개 올려주세요.', detail:'여러 XLSX · stock/available_stock만 갱신 · 파일에 없는 SKU 유지', files:10}
+  inventory_count: {name:'재고조사 결과 반영', initial:'#', cls:'sellpia', guide:'상품코드·가용재고·재고 헤더가 있는 XLSX를 한 번에 올려주세요.', detail:'여러 XLSX · stock/available_stock만 갱신 · 파일에 없는 SKU 유지', files:10}
 };
 
 const matrixBody = document.getElementById('matrix-body');
@@ -12676,13 +12676,30 @@ const fileInput = document.getElementById('mock-file');
 const dropZone = document.getElementById('drop-zone');
 dropZone.addEventListener('click', () => fileInput.click());
 dropZone.addEventListener('keydown', event => { if (event.key === 'Enter' || event.key === ' ') fileInput.click(); });
-fileSlots.addEventListener('click', event => { if (event.target.closest('.slot-button')) fileInput.click(); });
+fileSlots.addEventListener('click', event => {
+  const removeButton = event.target.closest('.inventory-count-file-remove');
+  if (removeButton) {
+    selectedFiles.splice(Number(removeButton.dataset.fileIndex), 1);
+    fileInput.value = '';
+    renderFiles(selectedFiles);
+    return;
+  }
+  if (event.target.closest('.slot-button')) fileInput.click();
+});
 ['dragenter','dragover'].forEach(type => dropZone.addEventListener(type, event => {event.preventDefault();dropZone.classList.add('drag');}));
 ['dragleave','drop'].forEach(type => dropZone.addEventListener(type, event => {event.preventDefault();dropZone.classList.remove('drag');if(type==='drop') renderFiles(event.dataTransfer.files);}));
 fileInput.addEventListener('change', () => renderFiles(fileInput.files));
 function renderFiles(files, {skipPreflight = false} = {}) {
   const config = sourceConfig[sourceSelect.value];
   selectedFiles = Array.from(files || []).slice(0, config.files);
+  if (sourceSelect.value === 'inventory_count') {
+    fileSlots.innerHTML = selectedFiles.map((file, index) => `<div class="inventory-count-file"><i>✓</i><span><b>${escapeHtml(file.name)}</b><em>${(file.size/1024/1024).toFixed(1)}MB · 업로드 준비됨</em></span><button type="button" class="inventory-count-file-remove" data-file-index="${index}" aria-label="${escapeHtml(file.name)} 삭제">삭제</button></div>`).join('');
+    renderSellpiaPreflight();
+    renderInventoryCountPreview();
+    if (!skipPreflight) void runInventoryCountPreview();
+    else setUploadCapability();
+    return;
+  }
   const required = requiredUploadFileCount();
   fileSlots.innerHTML = Array.from({length:config.files},(_,i)=>{
     const file = selectedFiles[i];
