@@ -31,7 +31,7 @@ import { receiptBusinessDayKeys, receiptBusinessDaysSince } from "../domain/busi
 import { inspectionHoldCsAction } from "../domain/csHoldTransition.mjs?v=20260731-inspection-hold-cs1";
 import { preferredPickingRow } from "../domain/pickingPersistence.mjs?v=20260807-picking-dedupe1";
 import { comparePickingRowsByRoute } from "../domain/pickingRowSort.mjs?v=20260731-route-row1";
-import { buildCurrentShortageExport, buildInventorySurveyExport } from "../domain/inventorySurveyExport.mjs?v=20260812-inventory-count-export-local2";
+import { buildCurrentShortageExport, buildInventorySurveyExport } from "../domain/inventorySurveyExport.mjs?v=20261001-custom-order-qty1";
 import {
   combineInvoicesBySharedInvoice,
   sourceOrderGroupNo,
@@ -7401,9 +7401,9 @@ function downloadInventoryCountWorkbook(filename, inventoryRows, shortageRows) {
 
   const workbook = window.XLSX.utils.book_new();
   const worksheet = window.XLSX.utils.aoa_to_sheet(inventoryRows || []);
-  worksheet["!cols"] = [{ wch: 18 }, { wch: 24 }, { wch: 20 }, { wch: 20 }, { wch: 16 }, { wch: 22 }];
-  worksheet["!autofilter"] = { ref: `A1:F${Math.max(1, inventoryRows?.length || 1)}` };
-  const range = window.XLSX.utils.decode_range(worksheet["!ref"] || "A1:F1");
+  worksheet["!cols"] = [{ wch: 18 }, { wch: 24 }, { wch: 20 }, { wch: 20 }, { wch: 16 }, { wch: 22 }, { wch: 14 }];
+  worksheet["!autofilter"] = { ref: `A1:G${Math.max(1, inventoryRows?.length || 1)}` };
+  const range = window.XLSX.utils.decode_range(worksheet["!ref"] || "A1:G1");
   for (let row = 1; row <= range.e.r; row += 1) {
     for (const column of ["A", "B"]) {
       const cell = worksheet[`${column}${row + 1}`];
@@ -7430,15 +7430,32 @@ function downloadInventoryCountWorkbook(filename, inventoryRows, shortageRows) {
   window.XLSX.writeFile(workbook, filename, { bookType: "xlsx" });
 }
 
+async function loadTodayCustomOrderInventoryExportData() {
+  const today = todayDateString();
+  const orders = await fetchAllRows(() => db.from("orders").select("ord_no").eq("receipt_date", today));
+  const orderNos = [...new Set(orders.map((row) => String(row.ord_no || "").trim()).filter(Boolean))];
+  if (!orderNos.length) return { currentItems: [], operations: [] };
+  const [currentItems, operations] = await Promise.all([
+    fetchAllRows(() => db.from("order_items").select("*").in("ord_no", orderNos)),
+    orderItemOperations.loadOperationsForOrders(orderNos),
+  ]);
+  return { currentItems, operations };
+}
+
 async function exportInventoryCountWorkbook() {
   if (state.inventoryCountExportRunning) return;
   setInventoryCountExportBusy(true);
   try {
-    const { data, error } = await db.rpc("get_inventory_survey_live_counts");
+    const [{ data, error }, customOrderData] = await Promise.all([
+      db.rpc("get_inventory_survey_live_counts"),
+      loadTodayCustomOrderInventoryExportData(),
+    ]);
     if (error) throw error;
     const result = buildInventorySurveyExport({
       countRows: data || [],
       invoices: allWorkflowInvoices(),
+      currentItems: customOrderData.currentItems,
+      operations: customOrderData.operations,
     });
     const currentShortage = buildCurrentShortageExport(state.workflowQueues?.shortageItems || []);
     if (!result.itemCount) {
@@ -7453,7 +7470,7 @@ async function exportInventoryCountWorkbook() {
     );
     const missingOwnCode = result.missingOwnCodeCount ? ` · 자사코드 미확인 ${result.missingOwnCodeCount}종` : "";
     toast(
-      `재고반영 ${result.itemCount}종 · 일반 피킹 ${result.pickedTotal}개 · 미송서랍 ${result.shortageDrawerTotal}개 · 현재 미송 ${currentShortage.itemCount}종 ${currentShortage.shortageTotal}개${missingOwnCode}`,
+      `재고반영 ${result.itemCount}종 · 일반 피킹 ${result.pickedTotal}개 · 미송서랍 ${result.shortageDrawerTotal}개 · 오늘 주문수량 ${result.orderedTotal}개 · 현재 미송 ${currentShortage.itemCount}종 ${currentShortage.shortageTotal}개${missingOwnCode}`,
     );
   } finally {
     setInventoryCountExportBusy(false);

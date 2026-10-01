@@ -1,3 +1,8 @@
+import {
+  findOperationForCurrentItem,
+  orderItemIdentity,
+} from "../adapters/orderItemOperationsAdapter.mjs";
+
 export const INVENTORY_SURVEY_EXPORT_HEADER = Object.freeze([
   "셀피아 SKU코드",
   "자사코드",
@@ -5,6 +10,7 @@ export const INVENTORY_SURVEY_EXPORT_HEADER = Object.freeze([
   "미송서랍 보관 수량",
   "재고반영 합계",
   "집계시각",
+  "주문수량",
 ]);
 
 export const CURRENT_SHORTAGE_EXPORT_HEADER = Object.freeze(["셀피아 SKU", "자사코드", "미송수량"]);
@@ -21,6 +27,10 @@ function nonNegativeNumber(value) {
 function itemSellpiaSku(item = {}) {
   return text(
     item.sellpiaProductCode ||
+      item.sellpia_p_code ||
+      item.sellpia_product_code ||
+      item.p_code ||
+      item.product_code ||
       item.raw?.sellpia_p_code ||
       item.raw?.sellpia_product_code ||
       item.raw?.p_code ||
@@ -29,7 +39,58 @@ function itemSellpiaSku(item = {}) {
 }
 
 function itemOwnCode(item = {}) {
-  return text(item.ownCode || item.raw?.prod_code || item.raw?.own_code || item.raw?.private_code || item.raw?.p_dpcode);
+  return text(
+    item.ownCode ||
+      item.prod_code ||
+      item.own_code ||
+      item.private_code ||
+      item.p_dpcode ||
+      item.raw?.prod_code ||
+      item.raw?.own_code ||
+      item.raw?.private_code ||
+      item.raw?.p_dpcode,
+  );
+}
+
+function itemQuantity(item = {}) {
+  const value = item.quantity ?? item.qty ?? item.o_amount ?? item.raw?.quantity ?? item.raw?.qty ?? item.raw?.o_amount;
+  if (value === null || value === undefined || value === "") return 1;
+  return nonNegativeNumber(value);
+}
+
+function itemIdentityKey(item = {}) {
+  const identity = orderItemIdentity(item);
+  if (!identity.ordNo || (!identity.sellpiaOrderItemNo && !identity.itemNo)) return "";
+  return `${identity.ordNo}::${identity.sellpiaOrderItemNo || identity.itemNo}`;
+}
+
+function operationHasPlacedOrder(operation = {}) {
+  if (text(operation.custom_cancelled_at)) return false;
+  return Boolean(text(operation.custom_ordered_on) || text(operation.custom_received_on));
+}
+
+export function inventorySurveyOrderedQuantitiesBySku({ currentItems = [], operations = [] } = {}) {
+  const quantitiesBySku = new Map();
+  const seenItems = new Set();
+
+  for (const item of currentItems || []) {
+    const identityKey = itemIdentityKey(item);
+    if (!identityKey || seenItems.has(identityKey)) continue;
+    seenItems.add(identityKey);
+
+    const match = findOperationForCurrentItem(item, operations);
+    if (match.status !== "matched" || !operationHasPlacedOrder(match.row)) continue;
+
+    const sku = itemSellpiaSku(item);
+    if (!sku) continue;
+    const current = quantitiesBySku.get(sku) || { quantity: 0, ownCodes: new Set() };
+    current.quantity += itemQuantity(item);
+    const ownCode = itemOwnCode(item);
+    if (ownCode) current.ownCodes.add(ownCode);
+    quantitiesBySku.set(sku, current);
+  }
+
+  return quantitiesBySku;
 }
 
 export function inventorySurveyOwnCodesBySku(invoices = []) {
@@ -52,6 +113,7 @@ export function inventorySurveyOwnCodesBySku(invoices = []) {
 }
 
 export function formatInventorySurveyCalculatedAt(value) {
+  if (!text(value)) return "";
   const date = new Date(value || 0);
   if (Number.isNaN(date.getTime())) return text(value);
   const parts = new Intl.DateTimeFormat("ko-KR", {
@@ -68,8 +130,9 @@ export function formatInventorySurveyCalculatedAt(value) {
   return `${part("year")}-${part("month")}-${part("day")} ${part("hour")}:${part("minute")}:${part("second")}`;
 }
 
-export function buildInventorySurveyExport({ countRows = [], invoices = [] } = {}) {
+export function buildInventorySurveyExport({ countRows = [], invoices = [], currentItems = [], operations = [] } = {}) {
   const ownCodesBySku = inventorySurveyOwnCodesBySku(invoices);
+  const orderedBySku = inventorySurveyOrderedQuantitiesBySku({ currentItems, operations });
   const countsBySku = new Map();
 
   for (const row of countRows || []) {
@@ -79,6 +142,7 @@ export function buildInventorySurveyExport({ countRows = [], invoices = [] } = {
       sku,
       pickedQty: 0,
       shortageDrawerQty: 0,
+      orderedQty: 0,
       ownCodes: new Set(),
       calculatedAt: "",
     };
@@ -92,8 +156,22 @@ export function buildInventorySurveyExport({ countRows = [], invoices = [] } = {
     countsBySku.set(sku, current);
   }
 
+  for (const [sku, ordered] of orderedBySku) {
+    const current = countsBySku.get(sku) || {
+      sku,
+      pickedQty: 0,
+      shortageDrawerQty: 0,
+      orderedQty: 0,
+      ownCodes: new Set(),
+      calculatedAt: "",
+    };
+    current.orderedQty += ordered.quantity;
+    for (const ownCode of ordered.ownCodes) current.ownCodes.add(ownCode);
+    countsBySku.set(sku, current);
+  }
+
   const entries = [...countsBySku.values()]
-    .filter((row) => row.pickedQty + row.shortageDrawerQty > 0)
+    .filter((row) => row.pickedQty + row.shortageDrawerQty + row.orderedQty > 0)
     .sort((left, right) => left.sku.localeCompare(right.sku, "en", { numeric: true, sensitivity: "base" }));
 
   let missingOwnCodeCount = 0;
@@ -109,6 +187,7 @@ export function buildInventorySurveyExport({ countRows = [], invoices = [] } = {
       row.shortageDrawerQty,
       row.pickedQty + row.shortageDrawerQty,
       formatInventorySurveyCalculatedAt(row.calculatedAt),
+      row.orderedQty,
     ];
   });
 
@@ -117,6 +196,7 @@ export function buildInventorySurveyExport({ countRows = [], invoices = [] } = {
     itemCount: rows.length,
     pickedTotal: entries.reduce((sum, row) => sum + row.pickedQty, 0),
     shortageDrawerTotal: entries.reduce((sum, row) => sum + row.shortageDrawerQty, 0),
+    orderedTotal: entries.reduce((sum, row) => sum + row.orderedQty, 0),
     missingOwnCodeCount,
   };
 }
