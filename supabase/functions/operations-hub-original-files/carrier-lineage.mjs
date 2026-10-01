@@ -5,7 +5,7 @@ function modeOf(snapshot) {
   return String(snapshot?.metadata?.upload_mode ?? 'full').trim().toLowerCase();
 }
 
-// A patch has no workbook of the complete catalogue. Only its exact ready
+// A patch or stock-only inventory count has no workbook of the complete catalogue. Only its exact ready
 // parent chain may identify the immutable full workbook used as its carrier.
 export async function resolveSellpiaCarrierLineage(latest, readReadySnapshot, requestedCarrierId = '') {
   if (!latest) return { carrier: null, stateSnapshotId: null, reason: 'ready 상태의 Sellpia 원본이 없습니다.' };
@@ -25,7 +25,7 @@ export async function resolveSellpiaCarrierLineage(latest, readReadySnapshot, re
       }
       return { carrier: snapshot, stateSnapshotId, reason: '' };
     }
-    if (mode !== 'patch') {
+    if (!['patch','inventory_count'].includes(mode)) {
       return { carrier: null, stateSnapshotId, reason: '지원하지 않는 Sellpia 원본 snapshot 종류입니다.' };
     }
     const parentId = String(snapshot.metadata?.base_snapshot_id ?? '').trim();

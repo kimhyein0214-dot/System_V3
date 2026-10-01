@@ -8,20 +8,22 @@ const helpers=workflow.slice(workflow.indexOf(' const ablyPhases='),workflow.ind
 const previewSource=workflow.slice(workflow.indexOf(' async function preview(role)'),workflow.indexOf('\n function previewRowsForFilter('));
 const mathSource=fs.readFileSync(new URL('../mockups/operations-hub/discount-price-math.js',import.meta.url),'utf8');
 const priceSource=fs.readFileSync(new URL('../mockups/operations-hub/current-price-export.js',import.meta.url),'utf8');
+const inventoryCountSource=fs.readFileSync(new URL('../mockups/operations-hub/sellpia-inventory-count.js',import.meta.url),'utf8');
 const projectionSource=fs.readFileSync(new URL('../mockups/operations-hub/ably-price-projection.js',import.meta.url),'utf8');
 const ablySource=fs.readFileSync(new URL('../mockups/operations-hub/ably-playauto-export.js',import.meta.url),'utf8');
 const plain=value=>JSON.parse(JSON.stringify(value));
 
-function harness({items,targets=[],role='playauto_option',priceMode='rules',selectedSkus=null,sourcePrices={},carrierCatalog=null,carrierMappings=[]}){
+function harness({items,targets=[],role='playauto_option',priceMode='rules',fieldMode='option_stock',stockSource='available_stock',stockSources={},selectedSkus=null,sourcePrices={},carrierCatalog=null,carrierMappings=[]}){
  const fields=new Map(['title','detail','bar','cancel'].map(key=>[key,{textContent:'',style:{},disabled:false}]));
  const progress={hidden:true,dataset:{},querySelector:selector=>fields.get(selector.match(/progress-(\w+)/)?.[1])};
  const previewNode={hidden:true};
- const document={querySelector(selector){if(selector==='[data-ably-progress]')return progress;if(selector==='[data-ably-progress-detail]')return fields.get('detail');if(selector==='[data-standard-price-mode="ably"]')return {value:priceMode};if(selector==='[data-seller-scope-mode="ably"]')return {value:selectedSkus?'tag':'all'};return null;},getElementById:id=>id==='export-preview-v2'?previewNode:null};
+ const document={querySelector(selector){if(selector==='[data-ably-progress]')return progress;if(selector==='[data-ably-progress-detail]')return fields.get('detail');if(selector==='[data-standard-price-mode="ably"]')return {value:priceMode};if(selector==='[data-ably-field-mode]')return {value:fieldMode};if(selector==='[data-ably-stock-source]')return {value:stockSource};if(selector==='[data-seller-scope-mode="ably"]')return {value:selectedSkus?'tag':'all'};return null;},getElementById:id=>id==='export-preview-v2'?previewNode:null};
  let nextTimer=0,rendered=0;
  const timers=new Map(),messages=[],state={carrierFiles:new Map(),ablyJob:null,ablyJobSequence:0};
  const global={console,performance:{now:()=>0},setInterval(fn){const id=++nextTimer;timers.set(id,fn);return id;},clearInterval:id=>timers.delete(id),setTimeout:fn=>setImmediate(fn)};
  vm.createContext(global);
  vm.runInContext(mathSource,global);
+ vm.runInContext(inventoryCountSource,global);
  vm.runInContext(priceSource,global);
  vm.runInContext(projectionSource,global);
  vm.runInContext(ablySource,global);
@@ -32,7 +34,7 @@ function harness({items,targets=[],role='playauto_option',priceMode='rules',sele
  const A=()=>({readTemplate:async()=>({type:roles[role].type,items}),resolveRows:(rows,_catalog,_mappings,options)=>rows.map(item=>({...item,resolution:carrierCatalog?global.AblyPlayautoExport.resolveSellpiaSku(item,carrierCatalog,carrierMappings,options):item.resolution||{sku:item.sku,method:'direct_sku'}}))});
  const P=()=>global.AblyPriceProjection;
  const calls=[];
- const D=()=>({loadCarrierSellerMappings:async()=>({rows:carrierMappings}),loadCarrierMatrixTargets:async options=>{calls.push(options);return {rows:targets};},loadSellpiaSourcePricesForExport:async()=>new Map(Object.entries(sourcePrices)),loadAblyCarrierPoliciesForSkus:async()=>({rows:[],fingerprint:'[]'})});
+ const D=()=>({loadCarrierSellerMappings:async()=>({rows:carrierMappings}),loadCarrierMatrixTargets:async options=>{calls.push(options);return {rows:targets};},loadSellpiaSourcePricesForExport:async()=>new Map(Object.entries(sourcePrices)),loadSellpiaStockSourcesForExport:async()=>({snapshotId:'stock-snapshot',bySku:new Map(Object.entries(stockSources))}),loadAblyCarrierPoliciesForSkus:async()=>({rows:[],fingerprint:'[]'})});
  const preview=Function('state','roles','setStatus','createAblyJob','document','global','blobFile','A','D','P','catalog','scopeSkus','renderPreview','n',`${previewSource};return preview;`)(state,roles,setStatus,createAblyJob,document,global,async()=>file,A,D,P,async()=>carrierCatalog||[],async()=>selectedSkus?new Set(selectedSkus):null,()=>{rendered++;},n);
  state.carrierFiles.set(role,file);
  return {run:()=>preview(role),state,calls,timers,messages,rendered:()=>rendered};
@@ -186,4 +188,23 @@ test('Ably blank X stock keeps the existing blank policy without creating a spur
  assert.equal(preview.output[0]._blankStockPreserved,true);
  assert.equal(preview.output[0].target_stock,undefined);
  assert.equal(preview.output[0].available_stock,888);
+});
+
+test('Ably stock-only uses the shared available-stock projection and never writes option price',async()=>{
+ const h=harness({fieldMode:'stock_only',items:[row('NEG-1',6,{option_price:777,sales_quantity:5})],stockSources:{'NEG-1':{sellpia_current_stock:-4,sellpia_available_stock:-3}}});
+ const preview=await h.run();assert.ok(preview,h.messages.at(-1)?.text);
+ assert.equal(preview.stockOnly,true);assert.equal(preview.stockSource,'available_stock');
+ assert.equal(preview.output[0].target_stock,0);
+ assert.equal(Object.hasOwn(preview.output[0],'target_option_price'),false);
+ assert.deepEqual(plain(preview.output[0]._changedFields),['stock']);
+});
+
+test('Ably price-only writes option price and preserves X stock even when no stock target exists',async()=>{
+ const h=harness({fieldMode:'price_only',items:[row('PRICE-1',6,{option_price:0,sales_quantity:5})],targets:[target('PRICE-1',{seller_stock:null,...calculated()})]});
+ const preview=await h.run();assert.ok(preview,h.messages.at(-1)?.text);
+ assert.equal(preview.priceOnly,true);
+ assert.equal(preview.output[0].target_option_price,100);
+ assert.equal(Object.hasOwn(preview.output[0],'target_stock'),false);
+ assert.deepEqual(plain(preview.output[0]._changedFields),['option']);
+ assert.equal(preview.counts.warned,0);
 });

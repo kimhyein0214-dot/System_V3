@@ -14,6 +14,9 @@
 
 .export-workflow-v2{margin:0 0 16px;padding:14px;border:1px solid #dfe6ef;border-radius:13px;background:#fff}
 .export-workflow-v2 h3{margin:0;font-size:17px}.export-workflow-v2>header p{margin:5px 0 0;color:#68778c;font-size:11px}
+.seller-export-field-presets{display:flex;justify-content:space-between;align-items:center;gap:12px;margin:12px 0 16px;padding:11px 12px;border:1px solid #cddcf0;border-radius:10px;background:#f7faff}
+.seller-export-field-presets>div:first-child{display:grid;gap:3px}.seller-export-field-presets b{font-size:12px;color:#294b78}.seller-export-field-presets span{font-size:10px;color:#68778c;line-height:1.4}
+.seller-export-field-presets>div:last-child{display:flex;flex-wrap:wrap;gap:7px}.seller-export-field-presets .btn{margin:0}.seller-export-field-presets .btn.active{border-color:#2f6fec;background:#eaf1ff;color:#174ea6;box-shadow:0 0 0 2px rgba(47,111,236,.12)}
 .seller-card-scope{display:grid;gap:7px;padding:10px;border:1px solid #d9e4f2;border-radius:9px;background:#fff}
 .seller-card-scope label{display:grid;gap:5px;font-size:10px;font-weight:800;color:#52647a}
 .seller-card-scope select,.seller-card-scope textarea{width:100%;box-sizing:border-box;border:1px solid #cbd7e7;border-radius:7px;background:#fff;padding:7px;font:inherit;color:#1e293b}
@@ -37,6 +40,7 @@
 .seller-export-history[open]>summary{margin-bottom:14px}
 #export-workflow-v2>#export-workflow-status[hidden]{display:none!important}
 @media(max-width:900px){.export-channel-card{grid-template-columns:1fr}.seller-export-panel{border-left:0;border-top:1px solid #dfe6ef;padding:15px 0 0}}
+@media(max-width:700px){.seller-export-field-presets{align-items:flex-start;flex-direction:column}}
 .export-channel-card header{display:flex;align-items:center;justify-content:space-between;gap:8px}
 .export-channel-card h4{margin:0;font-size:14px}.export-channel-card p{margin:0;color:#68778c;font-size:10px;line-height:1.45}
 .export-channel-card .btn{margin-top:auto}

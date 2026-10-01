@@ -87,7 +87,7 @@ async function beginUpload(sessionToken: string, body: Record<string, unknown>) 
     throw Object.assign(new Error("SELLPIA 업로드 총 용량은 60 MiB를 초과할 수 없습니다."), { code: "22023" });
   }
 
-  const { data: intent, error } = await guardClient.rpc("hub_original_upload_intent_begin_v1", {
+  const { data: intent, error } = await guardClient.rpc("hub_original_upload_intent_begin_v2", {
     p_session_token: sessionToken,
     p_request_id: cleanText(body.request_id),
     p_upload_mode: cleanText(body.upload_mode),

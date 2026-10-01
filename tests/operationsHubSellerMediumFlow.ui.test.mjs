@@ -4,6 +4,7 @@ import {createRequire} from 'node:module';
 const require=createRequire(`${process.env.CODEX_NODE_MODULES}/medium-ui.cjs`),{chromium}=require('playwright');
 const JSZip=require('jszip');
 const cellStylesOnly=xml=>xml.replace(/(<c\b[^>]*?)\s+s="[^"]*"/g,'$1');
+const withoutStockCells=(xml,source)=>cellStylesOnly(xml).replace(new RegExp(`<c\\b(?=[^>]*\\br="${source==='smartstore'?'S':'AG'}\\d+")[^>]*(?:\\/>|>[\\s\\S]*?<\\/c>)`,'g'),'');
 function redReferences(xml,styles){
  const xfs=[...(styles.match(/<cellXfs\b[^>]*>([\s\S]*?)<\/cellXfs>/)?.[1]||'').matchAll(/<xf\b[^>]*?(?:\/>|>[\s\S]*?<\/xf>)/g)].map(m=>m[0]);
  const fills=[...(styles.match(/<fills\b[^>]*>([\s\S]*?)<\/fills>/)?.[1]||'').matchAll(/<fill\b[^>]*>[\s\S]*?<\/fill>/g)].map(m=>m[0]);
@@ -45,22 +46,22 @@ try{
     SystemV3Data.loadCarrierMatrixTargets=async({source:channel})=>({rows:fixture.map(([sku,smartOption,smartStock,makeStock],index)=>({sku,seller_stock:channel==='smartstore'?smartStock:makeStock,active_price_rule:index!==0?false:true,...(index===0&&mode==='error'?{registration_status:'error',registration_error:'statement timeout'}:{}),...(index===0&&mode==='stale'?{latest_generation_id:99,registration_price:4000,discount_price:4000,option_price:0,final_price:4000,registration_status:'calculated',discount_status:'calculated',option_status:'calculated',final_status:'calculated',registration_generation_id:98,discount_generation_id:98,option_generation_id:98,final_generation_id:98}:{})}))});
    },{source,mode});
    await page.locator(`[data-standard-carrier-input="${source}"]`).setInputFiles(process.env[env]);
-   await page.waitForFunction(source=>document.querySelector(`[data-standard-result="${source}"]`).textContent.includes('원본 유지 경고 31'),source);
-   assert.equal(await page.locator(`[data-standard-result="${source}"] .export-row-warning`).count(),31);
+   await page.waitForFunction(source=>document.querySelector(`[data-standard-result="${source}"]`).textContent.includes('원본 유지 경고 1'),source);
+   assert.equal(await page.locator(`[data-standard-result="${source}"] .export-row-warning`).count(),1);
    assert.equal(await page.locator(`[data-standard-carrier-run="${source}"]`).getAttribute('aria-disabled'),'false');
    const count=await page.evaluate(()=>downloads.length);await page.locator(`[data-standard-carrier-run="${source}"]`).click();
    await page.waitForFunction(count=>downloads.length>count,count);
    const output=await page.evaluate(async count=>[...new Uint8Array(await downloads[count].blob.arrayBuffer())],count);
    const beforeZip=await JSZip.loadAsync(fs.readFileSync(process.env[env])),afterZip=await JSZip.loadAsync(Buffer.from(output));
    const beforeXml=await beforeZip.file('xl/worksheets/sheet1.xml').async('string'),afterXml=await afterZip.file('xl/worksheets/sheet1.xml').async('string');
-   assert.equal(cellStylesOnly(afterXml),cellStylesOnly(beforeXml),source+' '+mode+' all original cell values/formulas/text preserved; only style IDs change');
+    assert.equal(withoutStockCells(afterXml,source),withoutStockCells(beforeXml,source),source+' '+mode+' all non-stock cell values/formulas/text preserved; only stock and style IDs change');
    assert.ok(redReferences(afterXml,await afterZip.file('xl/styles.xml').async('string')).length>0,source+' warnings must be red INSIDE the same XLSX');
    for(const [name,entry] of Object.entries(beforeZip.files))if(!entry.dir&&!['xl/styles.xml','xl/worksheets/sheet1.xml'].includes(name))assert.deepEqual(await afterZip.file(name).async('uint8array'),await entry.async('uint8array'),source+' preserves '+name);
    assert.equal(await page.evaluate(()=>downloads.length),count+1,'never create a separate warning CSV');
   }
   // Restore normal scoped targets for the next seller and Ably round.
   await page.evaluate(()=>{SystemV3Data.loadCarrierMatrixTargets=async({source})=>({rows:source==='ably'?ablyTargets:fixture.map(([sku,smartOption,smartStock,makeStock])=>({sku,seller_stock:source==='smartstore'?smartStock:makeStock,active_price_rule:false}))});});
-  console.log(source+': missing/error/stale -> warning 31 -> same XLSX red cells/original values/no CSV PASS');
+   console.log(source+': one active target missing/error/stale -> warning 1 -> same XLSX red cell/original values/no CSV PASS');
   // Ambiguity remains a file-level hard blocker, even though other options are safe.
   await page.evaluate(()=>{
    window.normalMappingReader=SystemV3Data.loadCarrierSellerMappings;

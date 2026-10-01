@@ -15,9 +15,9 @@ test('stock source is seller matrix/draft, never system or carrier; no Rule igno
  assert.equal(api.matrixStockTarget({seller_stock:0,system_stock:999}),0);
  assert.equal(api.matrixStockTarget({seller_stock:2,stock_draft:{after_value:0}}),0);
  assert.equal(api.matrixStockTarget({system_stock:999}),null);
- const row={active_price_rule:false,registration_status:'calculated',discount_status:'calculated',option_status:'calculated',final_status:'calculated',registration_price:4000,discount_price:4000,option_price:0,final_price:4000,registration_generation_id:12,discount_generation_id:12,option_generation_id:12,final_generation_id:12};
+ const row={active_price_rule:false,current_effective_price:{platformBase:4000,platformDiscount:4000,platformOption:0,platformFinal:4000,platformTerms:[]},registration_status:'calculated',discount_status:'calculated',option_status:'calculated',final_status:'calculated',registration_price:4000,discount_price:4000,option_price:0,final_price:4000,registration_generation_id:12,discount_generation_id:12,option_generation_id:12,final_generation_id:12};
  assert.equal(api.matrixPriceTarget(row),null);
- assert.match(api.carrierPriceState(row).label,/수식 없음/);
+ assert.match(api.carrierPriceState(row).label,/가격 지시 없음/);
  row.active_price_rule=true;assert.equal(api.matrixPriceTarget(row).final,4000);
  row.active_price_rule=false;assert.equal(api.matrixPriceTarget(row),null,'Rule removal suppresses persisted result without deleting it');
 });

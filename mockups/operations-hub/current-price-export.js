@@ -56,8 +56,8 @@
   if(target.invalid)return {code:'timeout_error',label:'현재 가격 target 산출 실패 · 원본 유지',detail:target.reason,safe:false,usesOriginal:true,diagnostic};
   return {code:'calculated_complete',label:target.origin==='draft'?'정상 표시값 · 현재 수정안':'현재 가격 target 계산 완료',detail:target.origin==='draft'?'완전한 가격 수정안(draft)을 우선 사용합니다.':'현재 Rule과 입력값으로 완전한 가격 tuple을 산출했습니다.',safe:true,usesOriginal:false,diagnostic};
   }
-  function planVersionToken({source,fileName,snapshotId,preview,operations}){
-   const compact={source,fileName,snapshotId:snapshotId||null,preview:(preview||[]).map(row=>({
+  function planVersionToken({source,fileName,snapshotId,preview,operations,stockSource=null,includeStock=true,includePrice=true}){
+   const compact={source,fileName,snapshotId:snapshotId||null,stockSource,includeStock:Boolean(includeStock),includePrice:Boolean(includePrice),preview:(preview||[]).map(row=>({
     row:row.source_row_no,sku:row.sku||'',product:row.product_code||'',option:row.option_code||'',status:row.status,
     changed:row.changed_fields||[],priceState:row.price_state?.code||'',reason:row.reason||'',diff:row.diff||null
    })),operations:(operations||[]).map(item=>({
@@ -77,7 +77,7 @@
   const unclassified=rows.length-changed-noChange-blocked;
   return {total:rows.length,changed,noChange,blocked,unclassified,complete:unclassified===0};
  }
- function prepareCarrierItems(source,fileName,carrierRows,snapshotRows,{snapshotId=null,includeStock=true}={}){
+ function prepareCarrierItems(source,fileName,carrierRows,snapshotRows,{snapshotId=null,includeStock=true,includePrice=true,stockSource=null}={}){
   const identity=row=>JSON.stringify([String(row?.product_code||'').trim(),String(row?.option_code||'').trim()]);
   const snapshotGenerations=(snapshotRows||[]).flatMap(row=>[row?.latest_generation_id,row?.latest_price_generation_id,row?.registration_generation_id,row?.discount_generation_id,row?.option_generation_id,row?.final_generation_id]).filter(finite).map(Number);
   const latestGeneration=snapshotGenerations.length?snapshotGenerations.reduce((latest,value)=>Math.max(latest,value),Number.NEGATIVE_INFINITY):null;
@@ -94,19 +94,20 @@
    const row={...matches[0],source_file_name:original.raw_payload?.source_file_name||fileName,source_row_no:Number(original.source_row_no),source_stock:original.stock,
     source_base_price:original.base_price,source_discounted_base_price:original.discounted_base_price,
     source_option_price:original.option_price,source_final_price:original.final_price,source_discount_terms:original.discount_terms||[]};
-   const changedFields=[],rowItems=[];let priceState=carrierPriceState(row);
-   const stockTarget=matrixStockTarget(matches[0]);
+   const changedFields=[],rowItems=[];let priceState=includePrice?carrierPriceState(row):{code:'not_selected',label:'가격 미선택 · 판매처 원본 유지',detail:'재고-only 내보내기에서는 가격 필드를 계산하거나 수정하지 않습니다.',safe:true,usesOriginal:true};
+   const stockTarget=includeStock?matrixStockTarget(matches[0],stockSource):null;
    if(includeStock&&original.stock!==null&&original.stock!==undefined&&original.stock!==''&&stockTarget===null){exclude(original,'재고 target 없음 → 이 행 원본 유지',{warning:true,sku:row.sku,priceState});continue;}
    if(includeStock&&original.stock!==null&&original.stock!==undefined&&original.stock!==''&&stockTarget!==null&&Number(original.stock)!==stockTarget){
     rowItems.push({export_item_id:nextId--,sellpia_sku_code:row.sku,source_channel:source,field_key:'sellpia_current_stock',seller_product_code:row.product_code,seller_option_code:row.option_code||'',source_file_name:row.source_file_name,source_row_no:Number(original.source_row_no),expected_source_value:original.stock,before_value:original.stock,after_value:stockTarget,matrix_visible_stock:true,target_component_skus:[row.sku]});changedFields.push('stock');
    }
-   const target=priceState.safe?matrixPriceTarget(row):null;
+   const target=includePrice&&priceState.safe?matrixPriceTarget(row):null;
    const currentPrice={base:original.base_price,discounted:original.discounted_base_price,option:original.option_price,final:original.final_price};
    const candidatePrice=target&&!target.invalid?{base:target.base,discounted:target.discounted,option:target.option,final:target.final}:currentPrice;
    const targetPrice=priceState.safe?candidatePrice:currentPrice;
-   const diff={stock:{before:original.stock,after:stockTarget??original.stock,changed:changedFields.includes('stock')},price:{before:currentPrice,after:targetPrice,changed:false}};
+   const rawStockSource=stockSource==='stock'?matches[0]?.sellpia_current_stock:stockSource==='available_stock'?matches[0]?.sellpia_available_stock:null;
+   const diff={stock:{before:original.stock,after:stockTarget??original.stock,source:stockSource,source_raw:rawStockSource,clamped_to_zero:stockSource==='available_stock'&&Number(rawStockSource)<0,changed:changedFields.includes('stock')},price:{before:currentPrice,after:targetPrice,changed:false}};
    let priceWarningReason='';
-   if(!priceState.safe)priceWarningReason=`${priceState.label} · 가격만 원본 유지`;
+   if(includePrice&&!priceState.safe)priceWarningReason=`${priceState.label} · 가격만 원본 유지`;
    else if(target?.invalid){priceState={code:'original_fallback',label:'가격 계산 미완료/오류 · 원본 유지',detail:target.reason,safe:false,usesOriginal:true};priceWarningReason=`${target.reason} · 가격만 원본 유지`;}
    else if(target){
     const current=[original.base_price,original.discounted_base_price,original.option_price,original.final_price];
@@ -146,10 +147,10 @@
   const priceStates={calculated_complete:0,latest_generation_unreflected:0,timeout_error:0,original_fallback:0};
   for(const row of preview){const code=row.price_state?.code||'original_fallback';priceStates[code]=(priceStates[code]||0)+1;}
   const summary={total:preview.length,matched:preview.filter(row=>row.sku).length,changed:preview.filter(row=>row.diff?.stock?.changed||row.diff?.price?.changed).length,candidate_changed:preview.filter(row=>row.diff?.stock?.changed||row.diff?.price?.candidate_changed).length,unchanged:preview.filter(row=>row.status==='ready'&&!row.changed&&!row.shared_price_warning).length,warned:preview.filter(row=>row.status==='warn_keep_original'||row.shared_price_warning).length,warning_products:new Set(preview.filter(row=>row.status==='warn_keep_original'||row.shared_price_warning).map(row=>String(row.product_code||''))).size,shared_price_warned:preview.filter(row=>row.shared_price_warning).length,blocked:preview.filter(row=>row.status==='blocked').length,price_states:priceStates};
-   const priceSafe=preview.length>0&&preview.every(row=>row.price_state?.safe===true);
+   const priceSafe=!includePrice||preview.length>0&&preview.every(row=>row.price_state?.safe===true);
    const canGenerate=preview.length>0&&summary.blocked===0;
-   const versionToken=planVersionToken({source,fileName,snapshotId,preview,operations:items});
-    return {kind:'TransformationPlan',version:3,source,source_type:'carrier',file_name:fileName,created_at:new Date().toISOString(),snapshot_id:snapshotId,latest_generation_id:latestGeneration,preview_only:false,xlsx_connected:true,items,operations:items,excludedItems,preview,summary,version_token:versionToken,canGenerate,safety:{can_generate_xlsx:canGenerate,price_complete:priceSafe,requires_revalidation:true,reason:canGenerate?`원본 유지 경고 ${summary.warned}건은 해당 가격 필드만 보존하고, 재고 등 안전한 독립 변경은 반영합니다. 생성 직전에 같은 대상을 재검증합니다.`:'identity/구조 관련 치명적 차단이 있어 파일을 생성할 수 없습니다.'}};
+   const versionToken=planVersionToken({source,fileName,snapshotId,preview,operations:items,stockSource,includeStock,includePrice});
+    return {kind:'TransformationPlan',version:4,source,source_type:'carrier',file_name:fileName,created_at:new Date().toISOString(),snapshot_id:snapshotId,latest_generation_id:latestGeneration,preview_only:false,xlsx_connected:true,include_stock:Boolean(includeStock),include_price:Boolean(includePrice),stock_source:stockSource,items,operations:items,excludedItems,preview,summary,version_token:versionToken,canGenerate,safety:{can_generate_xlsx:canGenerate,price_complete:priceSafe,requires_revalidation:true,reason:canGenerate?`원본 유지 경고 ${summary.warned}건은 해당 가격 필드만 보존하고, 재고 등 안전한 독립 변경은 반영합니다. 생성 직전에 같은 대상을 재검증합니다.`:'identity/구조 관련 치명적 차단이 있어 파일을 생성할 수 없습니다.'}};
  }
 
  async function refreshItems(items,filesBySource,{sources:selected=sources,skus=null,includeRules=true,includeMatrixStock=false,onProgress}={}){
@@ -302,7 +303,8 @@
    remaining=remaining.filter(i=>!(price(i)&&blocked.has(group(i))));
   }
  }
- function matrixStockTarget(row){
+ function matrixStockTarget(row,stockSource=null){
+  if(stockSource&&g.SystemV3SellpiaInventoryCount?.resolveExportStock)return g.SystemV3SellpiaInventoryCount.resolveExportStock(row,stockSource);
   if(finite(row?.stock_draft?.after_value))return Number(row.stock_draft.after_value);
   if(finite(row?.seller_stock))return Number(row.seller_stock);
   if(finite(row?.source_stock))return Number(row.source_stock);

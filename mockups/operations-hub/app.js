@@ -3,7 +3,7 @@ const sourceConfig = {
   smartstore: {name:'스마트스토어 상품 원본', initial:'N', cls:'smart', guide:'분할된 스마트스토어 상품 파일 2개를 올려주세요.', detail:'분할된 파일 2개 · XLSX', files:2},
   makeshop: {name:'메이크샵 상품 원본', initial:'M', cls:'make', guide:'메이크샵에서 내려받은 상품 파일 1개를 올려주세요.', detail:'파일 1개 · XLSX 또는 XLS', files:1},
   ably: {name:'에이블리 전체 원본 (GOODS_LIST)', initial:'A', cls:'ably', guide:'조회·매칭용 GOODS_LIST CSV를 올려주세요. PlayAuto 수정용 파일은 아래 에이블리 파일 세트에서 별도로 등록합니다.', detail:'조회·매칭 원본 1개 · CSV · 수정파일 내보내기에는 사용하지 않음', files:1},
-  survey: {name:'재고조사 완료 파일', initial:'#', cls:'sellpia', guide:'담당자가 조사 완료한 재고 파일 1개를 올려주세요.', detail:'파일 1개 · 셀피아 SKU 포함', files:1}
+  inventory_count: {name:'재고조사 결과 반영', initial:'#', cls:'sellpia', guide:'상품코드·가용재고·재고 헤더가 있는 XLSX를 1~10개 올려주세요.', detail:'여러 XLSX · stock/available_stock만 갱신 · 파일에 없는 SKU 유지', files:10}
 };
 
 const matrixBody = document.getElementById('matrix-body');
@@ -8387,11 +8387,14 @@ async function transformStandardCarrierExport(plan,{download=false}={}){
   return {...plan,blob,appliedItems:transformed.appliedItems,skippedItems:skipped};
 }
 
-async function prepareChangedOnlyExport(source,skus=null,{download=false,onProgress=null,mode='changed_only',priceMode='rules',expectedPlanFingerprint=null}={}){
+async function prepareChangedOnlyExport(source,skus=null,{download=false,onProgress=null,mode='changed_only',priceMode='rules',expectedPlanFingerprint=null,includePrice=true,includeStock=true,stockSource=null}={}){
   if(!['smartstore','makeshop'].includes(source))throw Error('원본 기반 내보내기는 스마트스토어·메이크샵만 지원합니다.');
   if(!['changed_only','full_original'].includes(mode))throw Error('내보내기 모드를 확인해주세요.');
   if(!['rules','sellpia_source'].includes(priceMode))throw Error('가격 계산 방식을 확인해주세요.');
-  if(priceMode==='sellpia_source'&&(!['smartstore','makeshop'].includes(source)||!Array.isArray(skus)||!skus.length))throw Error('셀피아 판매가 기준은 스마트스토어·메이크샵의 태그 또는 SKU 범위에서만 사용할 수 있습니다.');
+  if(!includePrice&&!includeStock)throw Error('내보낼 항목에서 가격 또는 재고를 하나 이상 선택해주세요.');
+  if(stockSource&&!['stock','available_stock'].includes(stockSource))throw Error('재고 내보내기 기준을 확인해주세요.');
+  if(stockSource&&includePrice)throw Error('재고 기준 선택은 재고-only 내보내기에서 사용해주세요.');
+  if(priceMode==='sellpia_source'&&includePrice&&(!['smartstore','makeshop'].includes(source)||!Array.isArray(skus)||!skus.length))throw Error('셀피아 판매가 기준은 스마트스토어·메이크샵의 태그 또는 SKU 범위에서만 사용할 수 있습니다.');
   const clock=()=>globalThis.performance?.now?.()??Date.now(),started=clock(),timings={download_ms:0,parse_ms:0,mapping_ms:0,target_ms:0,plan_ms:0,serialize_ms:0},queries=[];
   const requested=Array.isArray(skus)?new Set(skus.map(value=>String(value||'').trim()).filter(Boolean)):null;
   const identityKey=row=>JSON.stringify([String(row?.product_code||'').trim(),String(row?.option_code||'').trim()]);
@@ -8399,11 +8402,11 @@ async function prepareChangedOnlyExport(source,skus=null,{download=false,onProgr
   const filesBySource=await liveData.downloadLatestSellerOriginals([source]);
   timings.download_ms=Math.round(clock()-mark);
   const files=filesBySource.get(source)||[];if(!files.length)throw Error(`${CHANNEL_LABELS[source]||source} 최신 보관 원본이 없습니다.`);
-  const outputs=[],skipped=[],plans=[],sourcePriceProofs=new Map(),matchedSelectedSkus=new Set(),selectedIdentityBySku=new Map(),crossFileBlockedProducts=new Map(),fileContexts=[];let carrierRows=0,matchedSkuCount=0;
+  const outputs=[],skipped=[],plans=[],sourcePriceProofs=new Map(),matchedSelectedSkus=new Set(),selectedIdentityBySku=new Map(),crossFileBlockedProducts=new Map(),fileContexts=[];let carrierRows=0,matchedSkuCount=0,exportAudit=null;
   const onQuery=query=>{queries.push(query);onProgress?.(`${source} · ${query.query} · 대상 ${formatNumber(query.scope_count)} · ${formatNumber(query.latency_ms)}ms`);};
   for(const file of files){
     mark=clock();
-    const parsed=await window.SystemV3SellerParsers.parseSellerFiles(source,[file],{price:true,discount:true,inventory:true});
+    const parsed=await window.SystemV3SellerParsers.parseSellerFiles(source,[file],{price:Boolean(includePrice),discount:Boolean(includePrice),inventory:Boolean(includeStock)});
     timings.parse_ms+=Math.round(clock()-mark);carrierRows+=parsed.normalizedRows.length;
     onProgress?.(`${source} · carrier ${formatNumber(parsed.normalizedRows.length)}행에서 identity를 확인합니다.`);
     mark=clock();
@@ -8433,30 +8436,31 @@ async function prepareChangedOnlyExport(source,skus=null,{download=false,onProgr
     matchedSkuCount+=matchedSkus.length;
     onProgress?.(`${source} · carrier에서 확정된 ${formatNumber(matchedSkus.length)} SKU의 목표값만 조회합니다.`);
     mark=clock();
-    const targets=priceMode==='rules'&&matchedSkus.length?await liveData.loadCarrierMatrixTargets({source,skus:matchedSkus,onQuery}):{rows:[]};
-    const selectedMapped=priceMode==='sellpia_source'?matchedSkus.filter(sku=>requested.has(sku)):[];
-    for(const row of mappingRows)if(priceMode==='sellpia_source'&&requested.has(row.sku))matchedSelectedSkus.add(row.sku);
-    const sourcePrices=priceMode==='sellpia_source'?await liveData.loadSellpiaSourcePricesForExport({skus:selectedMapped,onQuery}):null;
+    const targets=includePrice&&priceMode==='rules'&&matchedSkus.length?await liveData.loadCarrierMatrixTargets({source,skus:matchedSkus,onQuery}):{rows:[]};
+    const selectedMapped=includePrice&&priceMode==='sellpia_source'?matchedSkus.filter(sku=>requested.has(sku)):[];
+    for(const row of mappingRows)if(includePrice&&priceMode==='sellpia_source'&&requested.has(row.sku))matchedSelectedSkus.add(row.sku);
+    const sourcePrices=includePrice&&priceMode==='sellpia_source'?await liveData.loadSellpiaSourcePricesForExport({skus:selectedMapped,onQuery}):null;
+    const stockSources=includeStock&&stockSource&&matchedSkus.length?await liveData.loadSellpiaStockSourcesForExport({skus:matchedSkus,onQuery}):null;
     if(sourcePrices)for(const [sku,value] of sourcePrices){if(sourcePriceProofs.has(sku)&&sourcePriceProofs.get(sku)!==value)throw Error(`${sku}: 파일 간 셀피아 원본 가격이 다릅니다.`);sourcePriceProofs.set(sku,value);}
     timings.target_ms+=Math.round(clock()-mark);
     const targetBySku=new Map((targets.rows||[]).map(row=>[row.sku,row]));
-    const snapshotRows=mappingRows.map(row=>({...targetBySku.get(row.sku),...row}));
+    const snapshotRows=mappingRows.map(row=>({...targetBySku.get(row.sku),...(stockSources?.bySku.get(row.sku)||{}),...row}));
     onProgress?.(`가격 계획 계산 중 · 연결 ${formatNumber(matchedSkus.length)} SKU`);
     await new Promise(resolve=>globalThis.setTimeout(resolve,0));
     mark=clock();
-    let plan=priceMode==='sellpia_source'
+    let plan=includePrice&&priceMode==='sellpia_source'
       ?window.HubCurrentPriceExport.prepareSellpiaSourcePricePlan(source,file.name,scopedCarrierRows,mappingRows,sourcePrices,requested,crossFileBlockedProducts)
-      :window.HubCurrentPriceExport.prepareCarrierItems(source,file.name,scopedCarrierRows,snapshotRows,{snapshotId:null});
-    if(!requested&&priceMode==='rules'){
+      :window.HubCurrentPriceExport.prepareCarrierItems(source,file.name,scopedCarrierRows,snapshotRows,{snapshotId:stockSources?.snapshotId||null,includePrice,includeStock,stockSource});
+    if(includePrice&&!requested&&priceMode==='rules'){
       const priceProducts=new Set((plan.operations||[]).filter(item=>item.field_key==='sellpia_sale_price').map(item=>String(item.seller_product_code||'')).filter(Boolean));
       if(priceProducts.size){
         const expanded=parsed.normalizedRows.filter(row=>mappedIdentities.has(identityKey(row))||priceProducts.has(String(row.product_code||'')));
-        if(expanded.length!==scopedCarrierRows.length){scopedCarrierRows=expanded;plan=window.HubCurrentPriceExport.prepareCarrierItems(source,file.name,scopedCarrierRows,snapshotRows,{snapshotId:null});}
+        if(expanded.length!==scopedCarrierRows.length){scopedCarrierRows=expanded;plan=window.HubCurrentPriceExport.prepareCarrierItems(source,file.name,scopedCarrierRows,snapshotRows,{snapshotId:stockSources?.snapshotId||null,includePrice,includeStock,stockSource});}
       }
     }
     timings.plan_ms+=Math.round(clock()-mark);plans.push(plan);skipped.push(...plan.excludedItems);
     const fileItems=(plan.operations||[]).map(item=>({...item}));
-    if(!fileItems.length&&priceMode!=='sellpia_source')continue;
+    if(!fileItems.length&&!(includePrice&&priceMode==='sellpia_source'))continue;
     if(source==='makeshop'&&mode==='changed_only')onProgress?.(`엑셀 원본 행 범위 확인 중 · 변경 ${formatNumber(fileItems.length)}건`);
     await new Promise(resolve=>globalThis.setTimeout(resolve,0));
     const makeshopPhysicalRows=source==='makeshop'&&mode==='changed_only'
@@ -8474,7 +8478,7 @@ async function prepareChangedOnlyExport(source,skus=null,{download=false,onProgr
       return rows;
     };
     const transformOptions=items=>mode==='changed_only'?{dataRowNumbers:allDataRows,keepOnlyRows:keepRowsForItems(items)}:{};
-    onProgress?.(`엑셀 가격·옵션 일괄 반영 중 · 변경 ${formatNumber(fileItems.length)}건`);
+    onProgress?.(`${includePrice?'엑셀 가격·옵션':'엑셀 재고'} 일괄 반영 중 · 변경 ${formatNumber(fileItems.length)}건`);
     await new Promise(resolve=>globalThis.setTimeout(resolve,0));
     mark=clock();
     let transformed=await sellerExport.transformSellerFile(file,fileItems,transformOptions(fileItems));
@@ -8512,25 +8516,33 @@ async function prepareChangedOnlyExport(source,skus=null,{download=false,onProgr
     }
     outputBlob=await sellerExport.markCarrierWarnings(outputBlob,source,warningPreview);
     outputs.push({file,blob:outputBlob,appliedItems});
-    if(download&&priceMode==='rules'){
-      const suffix=mode==='full_original'?'_SystemV3전체반영':'_SystemV3변경분';
+    if(download&&priceMode==='rules'&&!stockSource){
+      const suffix=!includePrice&&includeStock?'_SystemV3재고반영':includePrice&&!includeStock?'_SystemV3가격반영':mode==='full_original'?'_SystemV3전체반영':'_SystemV3변경분';
       sellerExport.downloadBlob(outputBlob,sellerExport.outputName(file.name).replace('_SystemV3반영',suffix));
     }
   }
-  const planFingerprint=priceMode==='sellpia_source'?plans.map(plan=>`${plan.file_name}:${plan.version_token}`).join('|'):null;
-  if(priceMode==='sellpia_source'&&download){
+  const requiresFingerprint=priceMode==='sellpia_source'||Boolean(stockSource);
+  const planFingerprint=requiresFingerprint?plans.map(plan=>`${plan.file_name}:${plan.version_token}`).join('|'):null;
+  if(requiresFingerprint&&download){
     if(!expectedPlanFingerprint||expectedPlanFingerprint!==planFingerprint)throw Error('미리보기 이후 셀피아/판매처 가격 또는 대상이 변경됐습니다. 새 모드 미리보기를 다시 실행하세요.');
-    const confirmed=await liveData.loadSellpiaSourcePricesForExport({skus:[...sourcePriceProofs.keys()],onQuery});
-    for(const [sku,value] of sourcePriceProofs)if(confirmed.get(sku)!==value)throw Error(`${sku}: 파일 생성 도중 최신 셀피아 원본 판매가가 변경됐습니다. 미리보기를 다시 실행하세요.`);
-    for(const output of outputs){
-      const suffix=mode==='full_original'?'_SystemV3전체반영':'_SystemV3변경분';
+    if(priceMode==='sellpia_source'){
+      const confirmed=await liveData.loadSellpiaSourcePricesForExport({skus:[...sourcePriceProofs.keys()],onQuery});
+      for(const [sku,value] of sourcePriceProofs)if(confirmed.get(sku)!==value)throw Error(`${sku}: 파일 생성 도중 최신 셀피아 원본 판매가가 변경됐습니다. 미리보기를 다시 실행하세요.`);
+    }
+    if(stockSource&&outputs.length){
+      if(!liveData?.recordStockExportAudit)throw Error('재고 내보내기 감사 기록 기능을 불러오지 못했습니다. migration 적용 상태를 확인해주세요.');
+      const manifest=outputs.map(output=>({source_channel:source,source_file_name:output.file.name,item_count:output.appliedItems.length,stock_source:stockSource}));
+      exportAudit=await liveData.recordStockExportAudit({batchId:crypto.randomUUID(),sources:[source],stockSource,itemCount:outputs.reduce((sum,output)=>sum+output.appliedItems.length,0),manifest});
+    }
+    if(priceMode==='sellpia_source'||stockSource)for(const output of outputs){
+      const suffix=stockSource?'_SystemV3재고반영':mode==='full_original'?'_SystemV3전체반영':'_SystemV3변경분';
       sellerExport.downloadBlob(output.blob,sellerExport.outputName(output.file.name).replace('_SystemV3반영',suffix));
     }
   }
   if(download&&skipped.length)sellerExport.downloadBlob(new Blob([sellerExport.conflictCsv(skipped)],{type:'text/csv;charset=utf-8'}),`${source}_${mode==='full_original'?'전체반영':'변경분'}_경고.csv`);
   const unmatchedSelectedSkus=priceMode==='sellpia_source'?[...requested].filter(sku=>!matchedSelectedSkus.has(sku)):[];
   timings.total_ms=Math.round(clock()-started);
-  return {source,mode,priceMode,planFingerprint,outputs,plans,skippedItems:skipped,changedItems:outputs.flatMap(output=>output.appliedItems),timings,diagnostics:{queries,query_count:queries.length,carrier_rows:carrierRows,sku_count:matchedSkuCount,unmatched_selected_skus:unmatchedSelectedSkus,full_snapshot:false}};
+  return {source,mode,priceMode,includePrice:Boolean(includePrice),includeStock:Boolean(includeStock),stockSource:stockSource||null,exportAudit,planFingerprint,outputs,plans,skippedItems:skipped,changedItems:outputs.flatMap(output=>output.appliedItems),timings,diagnostics:{queries,query_count:queries.length,carrier_rows:carrierRows,sku_count:matchedSkuCount,unmatched_selected_skus:unmatchedSelectedSkus,full_snapshot:false}};
 }
 
 async function prepareFullOriginalExport(source,skus=null,options={}){return prepareChangedOnlyExport(source,skus,{...options,mode:'full_original'});}
@@ -8626,6 +8638,26 @@ window.SystemV3SellerExportBridge={
     const result=await prepareFullOriginalExport(source,skus,{download:true,priceMode,expectedPlanFingerprint,onProgress:detail=>reportSellerExportProgress(source,detail)});
     if(!result.outputs.length)throw Error('현재 매트릭스와 다른 안전한 변경 행이 없습니다.');
     return {source,title:'전체 원본 XLSX 생성 완료',progressDetail:`원본 행 전체 유지 · 파일 ${formatNumber(result.outputs.length)}개 · 반영 ${formatNumber(result.changedItems.length)}건 · 경고 ${formatNumber(result.skippedItems.length)}건 · ${(result.timings.total_ms/1000).toFixed(2)}초`,...result};
+  },
+  async previewStockOnly({source,skus=null,stockSource='available_stock',mode='changed_only'}={}){
+    const result=await prepareChangedOnlyExport(source,skus,{download:false,mode,priceMode:'rules',includePrice:false,includeStock:true,stockSource,onProgress:detail=>reportSellerExportProgress(source,detail)});
+    const changed=result.changedItems.filter(item=>item.field_key==='sellpia_current_stock').length;
+    return {source,count:`재고 변경 ${formatNumber(changed)}건`,detail:`기준 ${stockSource==='stock'?'재고':'가용재고'} · carrier ${formatNumber(result.diagnostics.carrier_rows)}행 · 대상 ${formatNumber(result.diagnostics.sku_count)} SKU · 경고 ${formatNumber(result.skippedItems.length)}건`,...result};
+  },
+  async runStockOnly({source,skus=null,stockSource='available_stock',mode='changed_only',expectedPlanFingerprint=null}={}){
+    const result=await prepareChangedOnlyExport(source,skus,{download:true,mode,priceMode:'rules',includePrice:false,includeStock:true,stockSource,expectedPlanFingerprint,onProgress:detail=>reportSellerExportProgress(source,detail)});
+    if(!result.outputs.length)throw Error('선택한 재고 기준으로 변경할 안전한 행이 없습니다.');
+    return {source,title:'재고-only XLSX 생성 완료',progressDetail:`기준 ${stockSource==='stock'?'재고':'가용재고'} · 파일 ${formatNumber(result.outputs.length)}개 · 재고 반영 ${formatNumber(result.changedItems.length)}건 · 가격 변경 0건 · 경고 ${formatNumber(result.skippedItems.length)}건`,...result};
+  },
+  async previewPriceOnly({source,skus=null,priceMode='rules',mode='changed_only'}={}){
+    const result=await prepareChangedOnlyExport(source,skus,{download:false,mode,priceMode,includePrice:true,includeStock:false,onProgress:detail=>reportSellerExportProgress(source,detail)});
+    const changed=result.changedItems.filter(item=>item.field_key==='sellpia_sale_price').length;
+    return {source,count:`가격 변경 ${formatNumber(changed)}건`,detail:`재고 변경 0건 · carrier ${formatNumber(result.diagnostics.carrier_rows)}행 · 대상 ${formatNumber(result.diagnostics.sku_count)} SKU · 경고 ${formatNumber(result.skippedItems.length)}건`,...result};
+  },
+  async runPriceOnly({source,skus=null,priceMode='rules',mode='changed_only',expectedPlanFingerprint=null}={}){
+    const result=await prepareChangedOnlyExport(source,skus,{download:true,mode,priceMode,includePrice:true,includeStock:false,expectedPlanFingerprint,onProgress:detail=>reportSellerExportProgress(source,detail)});
+    if(!result.outputs.length)throw Error('선택한 가격 기준으로 변경할 안전한 행이 없습니다.');
+    return {source,title:'가격-only XLSX 생성 완료',progressDetail:`파일 ${formatNumber(result.outputs.length)}개 · 가격 반영 ${formatNumber(result.changedItems.length)}건 · 재고 변경 0건 · 경고 ${formatNumber(result.skippedItems.length)}건`,...result};
   },
   async previewChangedOnly({source,skus=null,priceMode='rules'}={}){
     const result=await prepareChangedOnlyExport(source,skus,{download:false,priceMode,onProgress:detail=>reportSellerExportProgress(source,detail)});
@@ -12434,6 +12466,8 @@ const sellpiaPreflightState = {
   error:'',
   detail:''
 };
+const inventoryCountPreviewPanel = document.getElementById('inventory-count-preview');
+const inventoryCountState = {requestId:0,status:'idle',signature:'',result:null,error:'',detail:''};
 
 function isPatchableUploadSource(source = sourceSelect.value) {
   return ['sellpia','smartstore','makeshop','ably'].includes(source);
@@ -12445,7 +12479,36 @@ function currentUploadMode() {
 
 function requiredUploadFileCount() {
   const config = sourceConfig[sourceSelect.value];
+  if(sourceSelect.value==='inventory_count')return 1;
   return isPatchableUploadSource() && currentUploadMode() === 'patch' ? 1 : config.files;
+}
+
+function inventoryCountSignature(files=selectedFiles){return Array.from(files||[]).map(file=>[file.name,file.size,file.lastModified,file.type].join(':')).join('|');}
+function hasCurrentInventoryCountPreview(){return sourceSelect.value==='inventory_count'&&inventoryCountState.status==='success'&&inventoryCountState.signature===inventoryCountSignature()&&selectedFiles.length>0;}
+function renderInventoryCountPreview(){
+  if(!inventoryCountPreviewPanel)return;
+  const active=sourceSelect.value==='inventory_count';inventoryCountPreviewPanel.hidden=!active;
+  inventoryCountPreviewPanel.dataset.status=active?inventoryCountState.status:'idle';
+  if(!active){inventoryCountPreviewPanel.innerHTML='';return;}
+  if(!selectedFiles.length){inventoryCountPreviewPanel.innerHTML='<div><b>재고조사 결과 미리보기</b><span>파일을 선택하면 DB write 전에 상품코드와 최신 재고를 비교합니다.</span></div><em>대기</em>';return;}
+  if(inventoryCountState.status==='checking'){inventoryCountPreviewPanel.innerHTML=`<div><b>재고조사 결과 확인 중</b><span>${escapeHtml(inventoryCountState.detail||'파일과 최신 Sellpia snapshot을 비교합니다.')}</span></div><em>읽기 전용</em>`;return;}
+  if(inventoryCountState.status==='error'){inventoryCountPreviewPanel.innerHTML=`<div><b>재고조사 미리보기 실패</b><span>${escapeHtml(inventoryCountState.error)}</span></div><em>반영 차단</em>`;return;}
+  const result=inventoryCountState.result;if(!result){inventoryCountPreviewPanel.innerHTML='<div><b>재고조사 결과 미리보기</b><span>상품코드·가용재고·재고 세 헤더를 확인합니다.</span></div><em>대기</em>';return;}
+  const s=result.summary||{},shown=(result.rows||[]).slice(0,100),statusLabel={changed:'변경',unchanged:'동일',unknown_sku:'미확인 SKU',duplicate_conflict:'중복 충돌',invalid:'오류 행'};
+  inventoryCountPreviewPanel.innerHTML=`<div><b>재고조사 결과 미리보기 완료</b><span>선택 파일 ${formatNumber(s.fileCount)}개 · 읽은 행 ${formatNumber(s.readRowCount)} · 정상 SKU ${formatNumber(s.validSkuCount)} · 실제 변경 ${formatNumber(s.changedSkuCount)} · 변경 없음 ${formatNumber(s.unchangedSkuCount)} · 미확인 SKU ${formatNumber(s.unknownSkuCount)} · 중복 동일값 ${formatNumber(s.duplicateSameCount)} · 중복 충돌 ${formatNumber(s.duplicateConflictCount)} · 오류 행 ${formatNumber(s.errorRowCount)}</span></div><em>${s.changedSkuCount?'변경 SKU만 반영':'변경 없음'}</em><div class="inventory-count-preview-table"><table><thead><tr><th>상품코드</th><th>기존 재고</th><th>신규 재고</th><th>기존 가용재고</th><th>신규 가용재고</th><th>상태</th></tr></thead><tbody>${shown.map(row=>`<tr><td>${escapeHtml(row.sellpia_sku_code||'—')}</td><td>${row.old_stock??'—'}</td><td>${row.stock??'—'}</td><td>${row.old_available_stock??'—'}</td><td>${row.available_stock??'—'}</td><td>${escapeHtml(row.preview_status==='invalid'?(row.reason||'오류 행'):(statusLabel[row.preview_status]||row.preview_label||row.reason||'확인'))}</td></tr>`).join('')}</tbody></table>${(result.rows||[]).length>shown.length?`<small>첫 ${formatNumber(shown.length)}행 표시 · 전체 ${formatNumber(result.rows.length)}행 판정 완료</small>`:''}</div>`;
+}
+function invalidateInventoryCountPreview(){inventoryCountState.requestId+=1;inventoryCountState.status='idle';inventoryCountState.signature='';inventoryCountState.result=null;inventoryCountState.error='';inventoryCountState.detail='';}
+async function runInventoryCountPreview(){
+  if(sourceSelect.value!=='inventory_count')return;
+  const files=[...selectedFiles],signature=inventoryCountSignature(files),requestId=++inventoryCountState.requestId;
+  inventoryCountState.status=files.length?'checking':'idle';inventoryCountState.signature=signature;inventoryCountState.result=null;inventoryCountState.error='';renderInventoryCountPreview();setUploadCapability();
+  if(!files.length)return;
+  try{
+    const result=await liveData.previewSellpiaInventoryCount(files,progress=>{if(requestId!==inventoryCountState.requestId||signature!==inventoryCountSignature())return;inventoryCountState.detail=progress?.detail||progress?.title||'비교 중';renderInventoryCountPreview();});
+    if(requestId!==inventoryCountState.requestId||signature!==inventoryCountSignature()||sourceSelect.value!=='inventory_count')return;
+    inventoryCountState.status='success';inventoryCountState.result=result;
+  }catch(error){if(requestId!==inventoryCountState.requestId)return;inventoryCountState.status='error';inventoryCountState.error=error?.message||String(error);}
+  renderInventoryCountPreview();setUploadCapability();
 }
 
 function sellpiaPreflightSignature(files = selectedFiles, mode = currentUploadMode()) {
@@ -12568,11 +12631,12 @@ async function runSellpiaPreflight() {
 }
 
 function setUploadCapability() {
-  const supported = ['sellpia','smartstore','makeshop','ably'].includes(sourceSelect.value) || sourceSelect.value === 'survey';
+  const supported = ['sellpia','inventory_count','smartstore','makeshop','ably'].includes(sourceSelect.value);
   const label = sourceConfig[sourceSelect.value]?.name || '원본';
   const sellpiaBlocked = sourceSelect.value === 'sellpia' && !hasCurrentSellpiaPreflight();
-  uploadButton.disabled = !supported || sellpiaBlocked;
-  uploadButton.textContent = !supported ? '업로드 연결 예정' : sellpiaBlocked ? (sellpiaPreflightState.status === 'checking' ? '사전검사 중…' : '사전검사 필요') : 'DB 업로드 시작';
+  const inventoryBlocked=sourceSelect.value==='inventory_count'&&!hasCurrentInventoryCountPreview();
+  uploadButton.disabled = !supported || sellpiaBlocked || inventoryBlocked;
+  uploadButton.textContent = !supported ? '업로드 연결 예정' : sellpiaBlocked ? (sellpiaPreflightState.status === 'checking' ? '사전검사 중…' : '사전검사 필요') : inventoryBlocked?(inventoryCountState.status==='checking'?'재고 비교 중…':'미리보기 필요'):'DB 반영 시작';
   uploadCapabilityBadge.textContent = supported ? `${label} 실데이터 업로드 연결` : '업로드 연결 예정';
 }
 
@@ -12581,6 +12645,7 @@ function updateSource() {
   document.getElementById('upload-price-label').textContent=sourceSelect.value==='sellpia'?'기준가격':'가격';
   const config = sourceConfig[sourceSelect.value];
   invalidateSellpiaPreflight();
+  invalidateInventoryCountPreview();
   selectedFiles = [];
   document.getElementById('mock-file').value = '';
   sourceInfo.innerHTML = `<span class="channel-logo ${config.cls}">${config.initial}</span><div><b>${config.name}</b><p>${config.detail}</p></div><em>필수</em>`;
@@ -12588,13 +12653,14 @@ function updateSource() {
   if (isPatchableUploadSource()) {
     sellerUploadMode.querySelector(`input[value="patch"]`).checked = true;
   }
-  fileGuide.textContent = isPatchableUploadSource()
+  fileGuide.textContent = sourceSelect.value==='inventory_count'?config.guide:isPatchableUploadSource()
     ? sourceSelect.value === 'sellpia'
       ? '부분 갱신: 셀피아 파일 1개 이상으로 기준가격·매입가·재고를 각각 선택해 갱신합니다. 생략한 파일과 선택하지 않은 값은 유지합니다.'
       : '부분 갱신은 수정한 파일만 올리면 되고, 전체 교체는 판매처 전체 파일이 필요합니다.'
     : config.guide;
   renderFiles([]);
-  document.querySelector('.upload-options').hidden = sourceSelect.value === 'survey';
+  document.querySelector('.upload-options').hidden = sourceSelect.value === 'inventory_count';
+  renderInventoryCountPreview();
   setUploadCapability();
 }
 sourceSelect.addEventListener('change', updateSource);
@@ -12628,8 +12694,9 @@ function renderFiles(files, {skipPreflight = false} = {}) {
       : optional ? '부분 갱신에서는 생략 가능' : '선택된 파일 없음';
     return `<div class="${sourceSelect.value === 'sellpia' ? `sellpia-preflight-slot ${sellpiaPreflightState.status}` : ''}"><i>${file?'✓':i+1}</i><span><b>${file?file.name:`파일 ${i+1}${optional ? ' · 선택' : ' · 필수'}`}</b><em>${detail}</em></span><button type="button" class="slot-button">${file?'교체':'파일 선택'}</button></div>`;
   }).join('');
-  renderSellpiaPreflight();
+  renderSellpiaPreflight();renderInventoryCountPreview();
   if (sourceSelect.value === 'sellpia' && !skipPreflight) void runSellpiaPreflight();
+  else if(sourceSelect.value==='inventory_count'&&!skipPreflight)void runInventoryCountPreview();
   else setUploadCapability();
 }
 
@@ -12645,7 +12712,7 @@ function showUploadProgress({percent = 0, title = '처리 중', detail = ''} = {
 
 uploadButton.addEventListener('click', async () => {
   const config = sourceConfig[sourceSelect.value];
-  const supported = ['sellpia','smartstore','makeshop','ably'].includes(sourceSelect.value) || sourceSelect.value === 'survey';
+  const supported = ['sellpia','inventory_count','smartstore','makeshop','ably'].includes(sourceSelect.value);
   if (!supported) {
     showToast('이 원본은 아직 업로드할 수 없습니다.');
     return;
@@ -12662,9 +12729,12 @@ uploadButton.addEventListener('click', async () => {
     if (sellpiaPreflightState.status !== 'checking') void runSellpiaPreflight();
     return;
   }
-  const uploadMethod = sourceSelect.value === 'sellpia'
-    ? liveData?.uploadSellpiaSnapshot
-    : liveData?.uploadSellerSnapshot;
+  if(sourceSelect.value==='inventory_count'&&!hasCurrentInventoryCountPreview()){
+    showToast(inventoryCountState.status==='checking'?'재고조사 미리보기가 끝난 뒤 반영할 수 있습니다.':'현재 파일의 재고조사 미리보기를 먼저 확인해주세요.');
+    if(inventoryCountState.status!=='checking')void runInventoryCountPreview();
+    return;
+  }
+  const uploadMethod = sourceSelect.value === 'sellpia'?liveData?.uploadSellpiaSnapshot:sourceSelect.value==='inventory_count'?liveData?.uploadSellpiaInventoryCount:liveData?.uploadSellerSnapshot;
   if (!uploadMethod) {
     showToast('업로드 모듈을 불러오지 못했습니다. 새로고침 후 다시 시도해주세요.');
     return;
@@ -12679,7 +12749,7 @@ uploadButton.addEventListener('click', async () => {
     status: document.getElementById('upload-field-status').checked,
     mode: isPatchableUploadSource() ? currentUploadMode() : 'full'
   };
-  if (sourceSelect.value !== 'survey' && ![fields.inventory, fields.price, fields.purchasePrice, fields.discount, fields.basic, fields.status].some(Boolean)) {
+  if (sourceSelect.value !== 'inventory_count' && ![fields.inventory, fields.price, fields.purchasePrice, fields.discount, fields.basic, fields.status].some(Boolean)) {
     showToast('갱신할 항목을 하나 이상 선택해주세요.');
     return;
   }
@@ -12694,19 +12764,15 @@ uploadButton.addEventListener('click', async () => {
       ? fields.mode === 'patch'
         ? '셀피아 부분 갱신 SKU와 선택 필드를 검사합니다. 파일에 없는 SKU는 유지합니다.'
         : '헤더, 연속 행번호, SKU 중복을 검사합니다.'
-      : sourceSelect.value === 'survey'
-        ? '셀피아 SKU, 자사코드, 조사수량 헤더를 검사합니다.'
+      : sourceSelect.value === 'inventory_count'
+        ? '미리보기 fingerprint와 최신 Sellpia snapshot을 재검증합니다. 변경 SKU의 재고·가용재고만 반영합니다.'
         : fields.mode === 'patch'
           ? '부분 갱신 키를 검사합니다. 파일에 없는 기존 판매처 상품은 삭제하지 않습니다.'
           : '전체 교체용 헤더와 상품·옵션 코드 중복을 검사합니다.'
   });
   try {
-    const result = sourceSelect.value === 'sellpia'
-      ? await uploadMethod(selectedFiles, fields, showUploadProgress)
-      : sourceSelect.value === 'survey'
-        ? await uploadMethod(selectedFiles[0], showUploadProgress)
-        : await uploadMethod(sourceSelect.value, selectedFiles, fields, showUploadProgress);
-    if (sourceSelect.value === 'sellpia') {
+    const result = sourceSelect.value === 'sellpia'?await uploadMethod(selectedFiles, fields, showUploadProgress):sourceSelect.value==='inventory_count'?await uploadMethod(selectedFiles,inventoryCountState.result,showUploadProgress):await uploadMethod(sourceSelect.value, selectedFiles, fields, showUploadProgress);
+    if (['sellpia','inventory_count'].includes(sourceSelect.value)&&result.snapshotId) {
       try {
         await liveData.waitForSellpiaMatrixRebuild(result.snapshotId, showUploadProgress);
       } catch (rebuildError) {
@@ -12747,11 +12813,18 @@ uploadButton.addEventListener('click', async () => {
         markMatrixAffected(changed);
       else matrixSourceReloadNeeded=true; // New/removed membership needs a full bootstrap.
     }
-    const rowLabel = ['sellpia','survey'].includes(sourceSelect.value) ? 'SKU' : '상품·옵션';
+    if(sourceSelect.value==='inventory_count'){
+      const changed=[...new Set((result.matrixAffectedSkus||[]).map(String))];
+      if(matrixDataset&&changed.every(sku=>matrixDataset.bySku.has(sku)))await refreshMatrixSkus(changed);
+      else markMatrixAffected(changed);
+    }
+    const rowLabel = ['sellpia','inventory_count'].includes(sourceSelect.value) ? 'SKU' : '상품·옵션';
     showUploadProgress({
       percent:100,
-      title:sourceSelect.value === 'sellpia' ? '업로드·매트릭스 재구성 완료' : 'DB 업로드 완료',
-      detail:sourceSelect.value === 'sellpia'
+      title:['sellpia','inventory_count'].includes(sourceSelect.value) ? '업로드·매트릭스 재구성 완료' : 'DB 업로드 완료',
+      detail:sourceSelect.value === 'inventory_count'
+        ? `재고·가용재고만 ${formatNumber(result.uploadedRowCount)}개 SKU에 반영했습니다. 변경 없음·미확인·충돌·오류 행은 저장하지 않았습니다.`
+        : sourceSelect.value === 'sellpia'
         ? result.uploadMode === 'patch'
           ? `업로드 ${formatNumber(result.uploadedRowCount)}개 SKU의 선택 항목만 갱신하고, 전체 ${formatNumber(result.rowCount)}개 SKU를 유지했습니다.`
           : `${formatNumber(result.rowCount)}개 최신 셀피아 SKU로 매트릭스를 완전히 교체했습니다.`
@@ -12762,7 +12835,7 @@ uploadButton.addEventListener('click', async () => {
     showToast(calculationWarning || (result.uploadMode === 'patch'
       ? `${config.name} ${formatNumber(result.uploadedRowCount)}개 부분 갱신 완료`
       : `${config.name} ${formatNumber(result.rowCount)}개 ${rowLabel} 업로드 완료`));
-    await refreshLiveData({resetPage:true});
+    if(sourceSelect.value!=='inventory_count')await refreshLiveData({resetPage:true});
     window.setTimeout(() => showPage('matching'), 500);
   } catch (error) {
     console.error(`${sourceSelect.value} snapshot upload failed`, error);

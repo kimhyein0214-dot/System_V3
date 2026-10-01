@@ -19,6 +19,15 @@ test('Sellpia PATCH ancestry resolves its exact immutable FULL carrier',async()=
  assert.equal((await resolveSellpiaCarrierLineage(rows.get(PATCH2),lookup,OTHER)).carrier,null,'an unrelated FULL must never be selected');
 });
 
+test('inventory-count snapshots remain state snapshots and resolve the original FULL carrier',async()=>{
+ const inventory='00000000-0000-4000-8000-000000000005';
+ const rows=new Map([row(FULL,'full'),row(PATCH1,'patch',FULL),row(inventory,'inventory_count',PATCH1)].map(value=>[value.snapshot_id,value]));
+ const result=await resolveSellpiaCarrierLineage(rows.get(inventory),async id=>rows.get(id)||null,FULL);
+ assert.equal(result.carrier.snapshot_id,FULL);
+ assert.equal(result.stateSnapshotId,inventory);
+ assert.equal(result.reason,'');
+});
+
 test('Sellpia carrier lineage fails closed on missing, unready, cyclic and invalid parents',async()=>{
  const full=row(FULL,'full'),patch=row(PATCH1,'patch',FULL);
  assert.match((await resolveSellpiaCarrierLineage(patch,async()=>null)).reason,/ready/);
