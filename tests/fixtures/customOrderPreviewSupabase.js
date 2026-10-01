@@ -21,6 +21,7 @@
       { ord_no: "LOCAL-O1", sellpia_order_item_no: "R1", item_no: "9_R1", p_code: "SKU-CURRENT", p_dpcode: "OWN-CURRENT", p_name: "현재 원천 상품", p_option: "현재 옵션", sellpia_supplier_cell_raw: "0-베니스톤 [ 28 ]" },
       { ord_no: "LOCAL-O2", sellpia_order_item_no: "R2", item_no: "1_R2", p_code: "SKU-MANUAL", p_dpcode: "OWN-MANUAL", p_name: "수동삭제 확인 상품", sellpia_supplier_cell_raw: "0-세븐피어싱 [ 1 ]", sellpia_outbound_confirmed_date: "2026-10-08" },
       { ord_no: "LOCAL-O3", sellpia_order_item_no: "R3", item_no: "1_R3", p_code: "SKU-LEGACY", p_dpcode: "OWN-LEGACY", p_name: "셀피아 fallback 상품", sellpia_supplier_cell_raw: "0-베니스톤 [ 28 ]", sellpia_outbound_confirmed_date: "2026-10-09" },
+      { ord_no: "LOCAL-INBOUND", sellpia_order_item_no: "R-INBOUND", item_no: "1_R-INBOUND", p_code: "SKU-INBOUND", p_dpcode: "OWN-INBOUND", p_name: "입고예정일 관리 전용 상품", p_option: "레거시 일정", sellpia_supplier_cell_raw: "0-신규매입처 [ 7 ]", sellpia_outbound_confirmed_date: "2026-10-11" },
     ],
     order_item_operations: [
       { ...base, operation_id: "preview-before", ord_no: "LOCAL-O1", sellpia_order_item_no: "R1", item_no: "1_R1", sellpia_product_code_snapshot: "OLD-SKU", product_name_snapshot: "예전 상품", supplier_cell_raw_snapshot: "예전 매입처" },

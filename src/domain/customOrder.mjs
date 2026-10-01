@@ -1,5 +1,7 @@
 import {
   findCurrentSourceForOperation,
+  findOperationForCurrentItem,
+  orderItemIdentity,
   resolveEffectiveInboundExpectedDate,
   resolveOperationDisplayFields,
 } from "../adapters/orderItemOperationsAdapter.mjs";
@@ -71,6 +73,62 @@ export function buildCustomOrderRows({ operations = [], currentItems = [] } = {}
     });
 }
 
+function identityKey(value) {
+  const identity = orderItemIdentity(value);
+  return `${identity.ordNo}::${identity.sellpiaOrderItemNo || identity.itemNo}`;
+}
+
+export function buildInboundExpectedRows({ operations = [], currentItems = [] } = {}) {
+  const rows = [];
+  const usedOperationIds = new Set();
+  const usedCurrentItemKeys = new Set();
+
+  for (const currentItem of currentItems) {
+    const operationMatch = findOperationForCurrentItem(currentItem, operations);
+    const operation = operationMatch.status === "matched" ? operationMatch.row : null;
+    const inbound = resolveEffectiveInboundExpectedDate({ operation, currentItem });
+    if (!inbound.source && !inbound.date) continue;
+    const key = identityKey(currentItem);
+    usedCurrentItemKeys.add(key);
+    if (operation?.operation_id) usedOperationIds.add(text(operation.operation_id));
+    rows.push({
+      key,
+      operation,
+      currentItem,
+      display: resolveOperationDisplayFields({ operation, currentItem }),
+      inbound,
+      sourceMissing: false,
+      identityIssue: ["ambiguous", "conflict"].includes(operationMatch.status),
+    });
+  }
+
+  for (const operation of operations) {
+    const operationId = text(operation.operation_id);
+    if (usedOperationIds.has(operationId)) continue;
+    const sourceMatch = findCurrentSourceForOperation(operation, currentItems);
+    const currentItem = sourceMatch.status === "matched" ? sourceMatch.row : null;
+    const key = currentItem ? identityKey(currentItem) : identityKey(operation);
+    if (usedCurrentItemKeys.has(key)) continue;
+    const inbound = resolveEffectiveInboundExpectedDate({ operation, currentItem });
+    if (!inbound.source && !inbound.date) continue;
+    rows.push({
+      key,
+      operation,
+      currentItem,
+      display: resolveOperationDisplayFields({ operation, currentItem }),
+      inbound,
+      sourceMissing: sourceMatch.status !== "matched",
+      identityIssue: ["ambiguous", "conflict"].includes(sourceMatch.status),
+    });
+  }
+
+  return rows.sort((left, right) => {
+    const leftDate = datePart(left.inbound?.date) || "9999-12-31";
+    const rightDate = datePart(right.inbound?.date) || "9999-12-31";
+    return leftDate.localeCompare(rightDate) || left.key.localeCompare(right.key, "ko");
+  });
+}
+
 export function customOrderDate(row, criterion) {
   const operation = row?.operation || {};
   if (criterion === "ordered") return datePart(operation.custom_ordered_on);
@@ -81,11 +139,12 @@ export function customOrderDate(row, criterion) {
 
 export function customOrderSearchText(row) {
   const operation = row?.operation || {};
+  const identity = orderItemIdentity(row?.operation || row?.currentItem || {});
   const display = row?.display || {};
   return [
-    operation.ord_no,
-    operation.sellpia_order_item_no,
-    operation.item_no,
+    identity.ordNo,
+    identity.sellpiaOrderItemNo,
+    identity.itemNo,
     display.sellpiaProductCode,
     display.ownCode,
     display.productName,
@@ -93,6 +152,26 @@ export function customOrderSearchText(row) {
     display.supplierCellRaw,
     operation.internal_memo,
   ].map(text).join(" ").toLocaleLowerCase("ko");
+}
+
+export function filterInboundExpectedRows(rows = [], filters = {}) {
+  const source = text(filters.source) || "all";
+  const supplier = text(filters.supplier);
+  const query = text(filters.search).toLocaleLowerCase("ko");
+  const from = datePart(filters.dateFrom);
+  const to = datePart(filters.dateTo);
+
+  return rows.filter((row) => {
+    if (source === "cleared" && !row.inbound?.explicitlyCleared) return false;
+    if (source !== "all" && source !== "cleared" && row.inbound?.source !== source) return false;
+    if (supplier && text(row.display?.supplierCellRaw) !== supplier) return false;
+    if (query && !customOrderSearchText(row).includes(query)) return false;
+    if (from || to) {
+      const value = datePart(row.inbound?.date);
+      if (!value || (from && value < from) || (to && value > to)) return false;
+    }
+    return true;
+  });
 }
 
 export function filterCustomOrderRows(rows = [], filters = {}) {

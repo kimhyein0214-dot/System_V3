@@ -261,6 +261,38 @@ export function createOrderItemOperationsAdapter(db) {
     }
   }
 
+  async function loadInboundExpectedOperations(pageSize = 1000) {
+    const rows = [];
+    for (let offset = 0; ; offset += pageSize) {
+      const { data, error } = await db
+        .from("order_item_operations")
+        .select("*")
+        .not("inbound_expected_source", "is", null)
+        .order("updated_at", { ascending: false })
+        .range(offset, offset + pageSize - 1);
+      if (error) throw error;
+      const page = data || [];
+      rows.push(...page);
+      if (page.length < pageSize) return rows;
+    }
+  }
+
+  async function loadLegacyInboundExpectedItems(pageSize = 1000) {
+    const rows = [];
+    for (let offset = 0; ; offset += pageSize) {
+      const { data, error } = await db
+        .from("order_items")
+        .select("*")
+        .not("sellpia_outbound_confirmed_date", "is", null)
+        .order("sellpia_outbound_confirmed_date", { ascending: true })
+        .range(offset, offset + pageSize - 1);
+      if (error) throw error;
+      const page = data || [];
+      rows.push(...page);
+      if (page.length < pageSize) return rows;
+    }
+  }
+
   async function loadCurrentItemsForOperations(operations = []) {
     const ordNos = [...new Set(operations.map((operation) => orderItemIdentity(operation).ordNo).filter(Boolean))];
     if (!ordNos.length) return [];
@@ -278,8 +310,23 @@ export function createOrderItemOperationsAdapter(db) {
   }
 
   async function loadCustomOrderWorkspace() {
-    const operations = await loadCustomOrderOperations();
-    const currentItems = await loadCurrentItemsForOperations(operations);
+    const [customOperations, inboundOperations, legacyInboundItems] = await Promise.all([
+      loadCustomOrderOperations(),
+      loadInboundExpectedOperations(),
+      loadLegacyInboundExpectedItems(),
+    ]);
+    const operations = [...new Map(
+      [...customOperations, ...inboundOperations]
+        .map((operation) => [text(operation.operation_id), operation]),
+    ).values()];
+    const operationItems = await loadCurrentItemsForOperations(operations);
+    const currentItems = [...new Map(
+      [...operationItems, ...legacyInboundItems]
+        .map((item) => {
+          const identity = orderItemIdentity(item);
+          return [`${identity.ordNo}::${identity.sellpiaOrderItemNo || identity.itemNo}`, item];
+        }),
+    ).values()];
     return { operations, currentItems };
   }
 
@@ -347,6 +394,8 @@ export function createOrderItemOperationsAdapter(db) {
     loadOperationsForOrder,
     loadOperationsForOrders,
     loadCustomOrderOperations,
+    loadInboundExpectedOperations,
+    loadLegacyInboundExpectedItems,
     loadCurrentItemsForOperations,
     loadCustomOrderWorkspace,
     getOperationForCurrentOrderItem,

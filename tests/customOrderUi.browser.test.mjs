@@ -60,7 +60,8 @@ await page.route("https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2", async (
           { ord_no: "O-P", sellpia_order_item_no: "R-P", item_no: "1_R-P", sort_order: 1, p_code: "PICK-SKU", p_dpcode: "PICK-OWN", p_name: "피킹 주문제작 상품", p_option: "테스트 옵션", p_location: "A-1", qty: 1 },
           { ord_no: "O-1", sellpia_order_item_no: "R-1", item_no: "9_R-1", p_code: "SAME-SKU", p_dpcode: "OWN-1", p_name: "현재 상품 1", p_option: "실버", sellpia_supplier_cell_raw: "0-베니스톤 [ 28 ]" },
           { ord_no: "O-2", sellpia_order_item_no: "R-2", item_no: "1_R-2", p_code: "SAME-SKU", p_dpcode: "OWN-2", p_name: "현재 상품 2", p_option: "골드", sellpia_supplier_cell_raw: "0-세븐피어싱 [ 1 ]", sellpia_outbound_confirmed_date: "2026-10-08" },
-          { ord_no: "O-3", sellpia_order_item_no: "R-3", item_no: "1_R-3", p_code: "LEGACY", p_dpcode: "OWN-3", p_name: "레거시 상품", sellpia_supplier_cell_raw: "0-베니스톤 [ 28 ]", sellpia_outbound_confirmed_date: "2026-10-09" }
+          { ord_no: "O-3", sellpia_order_item_no: "R-3", item_no: "1_R-3", p_code: "LEGACY", p_dpcode: "OWN-3", p_name: "레거시 상품", sellpia_supplier_cell_raw: "0-베니스톤 [ 28 ]", sellpia_outbound_confirmed_date: "2026-10-09" },
+          { ord_no: "O-LONLY", sellpia_order_item_no: "R-LONLY", item_no: "1_R-LONLY", p_code: "LEGACY-ONLY", p_dpcode: "OWN-LONLY", p_name: "operation 없는 셀피아 일정", sellpia_supplier_cell_raw: "0-신규매입처 [ 7 ]", sellpia_outbound_confirmed_date: "2026-10-11" }
         ]
       };
       function query(table) {
@@ -155,9 +156,9 @@ try {
       gapToFirstRow: firstRow.getBoundingClientRect().top - toolbar.getBoundingClientRect().bottom,
     };
   });
-  assert.equal(layout.panelRows, 3, "custom-order panel must allocate explicit header/summary/list rows");
-  assert.ok(layout.toolbarHeight < 50, `toolbar must stay inside the compact panel header (${layout.toolbarHeight}px)`);
-  assert.ok(layout.statusHeight <= 34, `filter controls must match existing control density (${layout.statusHeight}px)`);
+  assert.equal(layout.panelRows, 5, "custom-order panel must allocate header/tabs/filters/summary/list rows");
+  assert.ok(layout.toolbarHeight >= 48 && layout.toolbarHeight <= 60, `toolbar must match existing panel density (${layout.toolbarHeight}px)`);
+  assert.equal(layout.statusHeight, 32, `filter controls must match the existing 32px form-control height (${layout.statusHeight}px)`);
   assert.ok(layout.gapToFirstRow < 70, `list must start directly below its summary (${layout.gapToFirstRow}px)`);
   assert.match(await page.locator("#custom-orders-count").textContent(), /^5건 \/ 전체 7건$/);
   assert.equal(await page.locator(".custom-order-row").count(), 5);
@@ -200,8 +201,28 @@ try {
   await page.selectOption("#custom-orders-status", "cancelled");
   assert.equal(await page.locator('[data-operation-id="op-legacy"]').count(), 1);
 
+  await page.click('[data-custom-orders-view="inbound"]');
+  await page.waitForFunction(() => document.getElementById("custom-orders-count")?.textContent === "4건 / 전체 4건");
+  assert.equal(await page.locator('[data-custom-orders-toolbar="workflow"]').isVisible(), false);
+  assert.equal(await page.locator('[data-custom-orders-toolbar="inbound"]').isVisible(), true);
+  assert.equal(await page.locator(".inbound-expected-row").count(), 4);
+  assert.match(await page.locator('[data-inbound-row-key="O-2::R-2"]').textContent(), /명시적 삭제/);
+  assert.match(await page.locator('[data-inbound-row-key="O-M::R-M"]').textContent(), /원천 주문행 없음/);
+  await page.selectOption("#custom-orders-inbound-source", "legacy_sellpia");
+  assert.equal(await page.locator(".inbound-expected-row").count(), 2);
+  await page.selectOption("#custom-orders-inbound-source", "all");
+  await page.fill("#custom-orders-inbound-search", "O-LONLY");
+  assert.equal(await page.locator(".inbound-expected-row").count(), 1, "legacy-only rows must be searchable by order identity");
+  const legacyOnly = page.locator('[data-inbound-row-key="O-LONLY::R-LONLY"]');
+  await legacyOnly.locator('[data-inbound-expected-field="inbound_expected_date"]').fill("2026-10-12");
+  await legacyOnly.locator('[data-inbound-expected-field="inbound_expected_date"]').press("Tab");
+  await page.waitForFunction(() => window.__tables.order_item_operations.some((row) => row.ord_no === "O-LONLY" && row.inbound_expected_source === "manual" && row.inbound_expected_date === "2026-10-12"));
+  assert.match(await page.locator('[data-inbound-row-key="O-LONLY::R-LONLY"]').textContent(), /수동/);
+  await page.fill("#custom-orders-inbound-search", "");
+  await page.click('[data-custom-orders-view="workflow"]');
+
   const after = await page.evaluate(() => window.__supabaseCalls.filter((entry) => entry.table === "order_item_operations" && entry.method === "not").length);
-  assert.equal(after, 1, "custom-order workspace must load exactly on first tab entry");
+  assert.equal(after, 2, "custom-order and inbound operation queries must each lazy-load once on first tab entry");
 
   for (const tab of ["dashboard", "picking", "shortage", "inspection", "cs", "completed", "custom-orders"]) {
     await page.click(`[data-app-tab="${tab}"]`);

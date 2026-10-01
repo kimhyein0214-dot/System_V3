@@ -4,16 +4,19 @@ import { createCsCaseAdapter, openShortageItemKeys } from "../adapters/csCaseAda
 import {
   createOrderItemOperationsAdapter,
   findOperationForCurrentItem,
+  orderItemIdentity,
   resolveEffectiveInboundExpectedDate,
-} from "../adapters/orderItemOperationsAdapter.mjs?v=20261001-foundation1";
+} from "../adapters/orderItemOperationsAdapter.mjs?v=20261001-foundation2";
 import {
   CUSTOM_ORDER_STATUS_LABEL,
   buildCustomOrderRows,
+  buildInboundExpectedRows,
   canClearCustomRequired,
   customOrderStatus,
   customOrderSuppliers,
   filterCustomOrderRows,
-} from "../domain/customOrder.mjs?v=20261001-ui1";
+  filterInboundExpectedRows,
+} from "../domain/customOrder.mjs?v=20261001-ui2";
 import { createAlimtalkSendAdapter } from "../adapters/alimtalkSendAdapter.mjs?v=20260728-alimtalk-history2";
 import { isBareGpaOwnCode, isGoldOwnCode } from "../domain/gold.mjs?v=20260811-bare-gpa-label1";
 import { alimtalkSendLogAnchor, alimtalkSendLogCode, alimtalkSendNaturalKey, appendAlimtalkSendLog, formatAlimtalkInboundExpectedDate, hasTomorrowShippingManagementMemo, normalizeAlimtalkSendLog, resolveAlimtalkTemplate } from "../domain/alimtalk.mjs?v=20260804-send-log-anchor2";
@@ -198,6 +201,7 @@ const state = {
   orderItemOperations: [],
   orderItemOperationsLoaded: false,
   customOrders: {
+    view: "workflow",
     loaded: false,
     loading: false,
     error: "",
@@ -209,6 +213,11 @@ const state = {
     dateFrom: "",
     dateTo: "",
     search: "",
+    inboundSource: "all",
+    inboundSupplier: "",
+    inboundDateFrom: "",
+    inboundDateTo: "",
+    inboundSearch: "",
   },
   csReceiptBusinessDates: new Set(),
   csReceiptBusinessDayCache: new Map(),
@@ -319,6 +328,12 @@ const els = {
   customOrdersDateFrom: document.getElementById("custom-orders-date-from"),
   customOrdersDateTo: document.getElementById("custom-orders-date-to"),
   customOrdersSearch: document.getElementById("custom-orders-search"),
+  customOrdersSummaryText: document.getElementById("custom-orders-summary-text"),
+  customOrdersInboundSource: document.getElementById("custom-orders-inbound-source"),
+  customOrdersInboundSupplier: document.getElementById("custom-orders-inbound-supplier"),
+  customOrdersInboundDateFrom: document.getElementById("custom-orders-inbound-date-from"),
+  customOrdersInboundDateTo: document.getElementById("custom-orders-inbound-date-to"),
+  customOrdersInboundSearch: document.getElementById("custom-orders-inbound-search"),
   customOrdersCount: document.getElementById("custom-orders-count"),
   customOrdersList: document.getElementById("custom-orders-list"),
   completedListCount: document.getElementById("completed-list-count"),
@@ -5562,7 +5577,7 @@ function renderCsCasePanels() {
 function customOrderInboundSourceLabel(source) {
   return {
     manual: "수동",
-    sku_schedule: "자동",
+    sku_schedule: "SKU 일정",
     legacy_sellpia: "셀피아",
   }[String(source || "").trim()] || "없음";
 }
@@ -5576,7 +5591,7 @@ function renderCustomOrderRow(row) {
   const saving = state.saving.has(`custom-order:${operation.operation_id}`);
   const disabled = cancelled || saving ? "disabled" : "";
   return `<article class="custom-order-row status-${escapeHtml(row.status)}" data-operation-id="${operationId}" aria-busy="${saving ? "true" : "false"}">
-    <div class="custom-order-row-primary">
+    <div class="custom-order-row-primary custom-order-card-section">
       <div class="custom-order-row-badges">
         <span class="custom-order-status status-${escapeHtml(row.status)}">${escapeHtml(statusLabel)}</span>
         ${row.sourceMissing ? '<span class="workflow-row-badge danger">원천 주문행 없음</span>' : ""}
@@ -5595,37 +5610,107 @@ function renderCustomOrderRow(row) {
         <small>${escapeHtml(operation.sellpia_order_item_no || operation.item_no || "-")}</small>
       </div>
     </div>
-    <div class="custom-order-row-dates">
-      <label>등록일 <span>${escapeHtml(formatShortDate(operation.custom_required_at))}</span></label>
-      <label>업체 주문일
-        <input type="date" data-custom-order-field="custom_ordered_on" value="${escapeHtml(operation.custom_ordered_on || "")}" ${disabled}>
-      </label>
-      <label>입고예정일
-        <span class="custom-order-date-with-source">
-          <input type="date" data-custom-order-field="inbound_expected_date" value="${escapeHtml(row.inbound.date || "")}" ${disabled}>
-          <small>${escapeHtml(customOrderInboundSourceLabel(row.inbound.source))}${row.inbound.explicitlyCleared ? " · 삭제됨" : ""}</small>
-        </span>
-      </label>
-      <label>입고 완료일
-        <input type="date" data-custom-order-field="custom_received_on" value="${escapeHtml(operation.custom_received_on || "")}" ${disabled}>
-      </label>
+    <div class="custom-order-card-section custom-order-row-workflow">
+      <strong class="custom-order-section-title">진행 일정</strong>
+      <div class="custom-order-row-dates">
+        <label>등록일 <span>${escapeHtml(formatShortDate(operation.custom_required_at))}</span></label>
+        <label>업체 주문일
+          <input type="date" data-custom-order-field="custom_ordered_on" value="${escapeHtml(operation.custom_ordered_on || "")}" ${disabled}>
+        </label>
+        <label>입고예정일
+          <span class="custom-order-date-with-source">
+            <input type="date" data-custom-order-field="inbound_expected_date" value="${escapeHtml(row.inbound.date || "")}" ${disabled}>
+            <small>${escapeHtml(customOrderInboundSourceLabel(row.inbound.source))}${row.inbound.explicitlyCleared ? " · 삭제됨" : ""}</small>
+          </span>
+        </label>
+        <label>입고 완료일
+          <input type="date" data-custom-order-field="custom_received_on" value="${escapeHtml(operation.custom_received_on || "")}" ${disabled}>
+        </label>
+      </div>
     </div>
-    <div class="custom-order-row-memo">
-      <label>내부 메모
-        <input data-custom-order-field="internal_memo" maxlength="500" value="${escapeHtml(operation.internal_memo || "")}" placeholder="System V3 내부 메모" ${disabled}>
-      </label>
-    </div>
-    <div class="custom-order-row-actions">
-      <button class="btn" data-custom-order-action="ordered-today" type="button" ${disabled}>주문 넣음</button>
-      <button class="btn primary" data-custom-order-action="received-today" type="button" ${disabled}>입고 완료</button>
-      <button class="btn danger" data-custom-order-action="cancel" type="button" ${disabled}>취소</button>
+    <div class="custom-order-card-section custom-order-row-side">
+      <div class="custom-order-row-memo">
+        <label>내부 메모
+          <input data-custom-order-field="internal_memo" maxlength="500" value="${escapeHtml(operation.internal_memo || "")}" placeholder="System V3 내부 메모" ${disabled}>
+        </label>
+      </div>
+      <div class="custom-order-row-actions">
+        <button class="btn" data-custom-order-action="ordered-today" type="button" ${disabled}>주문 넣음</button>
+        <button class="btn primary" data-custom-order-action="received-today" type="button" ${disabled}>입고 완료</button>
+        <button class="btn danger" data-custom-order-action="cancel" type="button" ${disabled}>취소</button>
+      </div>
     </div>
   </article>`;
+}
+
+function inboundRowIdentity(row) {
+  return orderItemIdentity(row?.operation || row?.currentItem || {});
+}
+
+function renderInboundExpectedRow(row) {
+  const identity = inboundRowIdentity(row);
+  const operation = row.operation;
+  const operationId = operation?.operation_id || "";
+  const savingKey = operationId ? `custom-order:${operationId}` : `inbound:${row.key}`;
+  const saving = state.saving.has(savingKey);
+  const disabled = saving || row.identityIssue || customOrderStatus(operation || {}) === "cancelled" ? "disabled" : "";
+  const display = row.display;
+  return `<article class="custom-order-row inbound-expected-row" data-inbound-row-key="${escapeHtml(row.key)}" ${operationId ? `data-operation-id="${escapeHtml(operationId)}"` : ""} aria-busy="${saving ? "true" : "false"}">
+    <div class="custom-order-row-primary custom-order-card-section">
+      <div class="custom-order-row-badges">
+        <span class="custom-order-status inbound-source-${escapeHtml(row.inbound.source || "none")}">${escapeHtml(customOrderInboundSourceLabel(row.inbound.source))}</span>
+        ${row.inbound.explicitlyCleared ? '<span class="workflow-row-badge warn">명시적 삭제</span>' : ""}
+        ${row.sourceMissing ? '<span class="workflow-row-badge danger">원천 주문행 없음</span>' : ""}
+        ${row.identityIssue ? '<span class="workflow-row-badge danger">식별 충돌 · 수정 불가</span>' : ""}
+      </div>
+      <strong class="custom-order-supplier">${escapeHtml(display.supplierCellRaw || "매입처 미확인")}</strong>
+      <div class="custom-order-product">
+        <b>${escapeHtml(display.productName || "상품명 없음")}</b>
+        ${display.productOption ? `<span>${escapeHtml(display.productOption)}</span>` : ""}
+      </div>
+      <div class="custom-order-codes">
+        <span>SKU ${escapeHtml(display.sellpiaProductCode || "-")}</span>
+        <span>자사 ${escapeHtml(display.ownCode || "-")}</span>
+      </div>
+      <div class="custom-order-identity">
+        <span>주문 ${escapeHtml(identity.ordNo || "-")}</span>
+        <small>${escapeHtml(identity.sellpiaOrderItemNo || identity.itemNo || "-")}</small>
+      </div>
+    </div>
+    <div class="custom-order-card-section inbound-expected-editor">
+      <strong class="custom-order-section-title">입고예정일</strong>
+      <label>예정일
+        <input type="date" data-inbound-expected-field="inbound_expected_date" value="${escapeHtml(row.inbound.date || "")}" ${disabled}>
+      </label>
+      <div class="inbound-expected-meta">
+        <span>출처 <b>${escapeHtml(customOrderInboundSourceLabel(row.inbound.source))}</b></span>
+        <small>${row.inbound.authoritative ? "operation 저장값" : "셀피아 기존값"}</small>
+      </div>
+    </div>
+    <div class="custom-order-card-section inbound-expected-note">
+      <strong class="custom-order-section-title">내부 메모</strong>
+      <p>${escapeHtml(operation?.internal_memo || "메모 없음")}</p>
+      <small>${row.inbound.explicitlyCleared ? "날짜를 지워도 셀피아 기존값은 다시 표시되지 않습니다." : "날짜를 수정하면 수동 입력으로 저장됩니다."}</small>
+    </div>
+  </article>`;
+}
+
+function syncCustomOrdersViewControls() {
+  const activeView = state.customOrders.view;
+  document.querySelectorAll("[data-custom-orders-view]").forEach((button) => {
+    const active = button.dataset.customOrdersView === activeView;
+    button.classList.toggle("active", active);
+    button.setAttribute("aria-selected", String(active));
+  });
+  document.querySelectorAll("[data-custom-orders-toolbar]").forEach((toolbar) => {
+    toolbar.hidden = toolbar.dataset.customOrdersToolbar !== activeView;
+  });
 }
 
 function renderCustomOrdersPanel() {
   if (!els.customOrdersList) return;
   const workspace = state.customOrders;
+  syncCustomOrdersViewControls();
   if (workspace.loading && !workspace.loaded) {
     renderWorkflowEmpty(els.customOrdersList, "주문제작 데이터를 불러오는 중입니다.");
     return;
@@ -5640,6 +5725,35 @@ function renderCustomOrdersPanel() {
   }
 
   const rows = buildCustomOrderRows({ operations: workspace.operations, currentItems: workspace.currentItems });
+  const inboundRows = buildInboundExpectedRows({ operations: workspace.operations, currentItems: workspace.currentItems });
+  if (workspace.view === "inbound") {
+    const suppliers = customOrderSuppliers(inboundRows);
+    if (workspace.inboundSupplier && !suppliers.includes(workspace.inboundSupplier)) workspace.inboundSupplier = "";
+    if (els.customOrdersInboundSupplier) {
+      els.customOrdersInboundSupplier.innerHTML = `<option value="">전체</option>${suppliers.map((supplier) => `<option value="${escapeHtml(supplier)}">${escapeHtml(supplier)}</option>`).join("")}`;
+      els.customOrdersInboundSupplier.value = workspace.inboundSupplier;
+    }
+    if (els.customOrdersInboundSource) els.customOrdersInboundSource.value = workspace.inboundSource;
+    if (els.customOrdersInboundDateFrom) els.customOrdersInboundDateFrom.value = workspace.inboundDateFrom;
+    if (els.customOrdersInboundDateTo) els.customOrdersInboundDateTo.value = workspace.inboundDateTo;
+    if (els.customOrdersInboundSearch && document.activeElement !== els.customOrdersInboundSearch) els.customOrdersInboundSearch.value = workspace.inboundSearch;
+    const filtered = filterInboundExpectedRows(inboundRows, {
+      source: workspace.inboundSource,
+      supplier: workspace.inboundSupplier,
+      dateFrom: workspace.inboundDateFrom,
+      dateTo: workspace.inboundDateTo,
+      search: workspace.inboundSearch,
+    });
+    if (els.customOrdersCount) els.customOrdersCount.textContent = `${filtered.length}건 / 전체 ${inboundRows.length}건`;
+    if (els.customOrdersSummaryText) els.customOrdersSummaryText.textContent = "수동·자동·셀피아 입고예정일과 명시적으로 삭제한 건을 함께 관리합니다.";
+    if (!filtered.length) {
+      renderWorkflowEmpty(els.customOrdersList, "현재 필터에 맞는 입고예정일이 없습니다.");
+      return;
+    }
+    els.customOrdersList.innerHTML = filtered.map(renderInboundExpectedRow).join("");
+    return;
+  }
+
   const suppliers = customOrderSuppliers(rows);
   if (workspace.supplier && !suppliers.includes(workspace.supplier)) workspace.supplier = "";
   if (els.customOrdersSupplier) {
@@ -5661,6 +5775,7 @@ function renderCustomOrdersPanel() {
     search: workspace.search,
   });
   if (els.customOrdersCount) els.customOrdersCount.textContent = `${filtered.length}건 / 전체 ${rows.length}건`;
+  if (els.customOrdersSummaryText) els.customOrdersSummaryText.textContent = "기본 화면은 완료·취소를 제외한 미완료 주문제작 건입니다.";
   if (!filtered.length) {
     renderWorkflowEmpty(els.customOrdersList, "현재 필터에 맞는 주문제작 건이 없습니다.");
     return;
@@ -5709,6 +5824,45 @@ async function saveCustomOrderPatch(operationId, patch, successMessage) {
   }
 }
 
+function currentItemIdentityKey(item) {
+  const identity = orderItemIdentity(item);
+  return `${identity.ordNo}::${identity.sellpiaOrderItemNo || identity.itemNo}`;
+}
+
+async function saveInboundExpectedDate(rowElement, value) {
+  if (!allowWrites) {
+    toast("읽기전용입니다. 입고예정일 변경은 write=1에서만 저장됩니다.");
+    return null;
+  }
+  const operationId = rowElement?.dataset.operationId || "";
+  if (operationId) {
+    return saveCustomOrderPatch(operationId, {
+      inbound_expected_date: value,
+      inbound_expected_source: "manual",
+    }, value ? "입고예정일을 수동 저장했습니다." : "입고예정일을 명시적으로 삭제했습니다.");
+  }
+  const rowKey = rowElement?.dataset.inboundRowKey || "";
+  const currentItem = state.customOrders.currentItems.find((item) => currentItemIdentityKey(item) === rowKey);
+  if (!currentItem) throw new Error("입고예정일을 저장할 현재 주문상품을 찾지 못했습니다.");
+  const savingKey = `inbound:${rowKey}`;
+  if (state.saving.has(savingKey)) return null;
+  state.saving.add(savingKey);
+  renderCustomOrdersPanel();
+  try {
+    const saved = await orderItemOperations.upsertOperationForCurrentOrderItem(currentItem, {
+      inbound_expected_date: value,
+      inbound_expected_source: "manual",
+    });
+    mergeOperationState(saved);
+    toast(value ? "입고예정일을 수동 저장했습니다." : "입고예정일을 명시적으로 삭제했습니다.");
+    return saved;
+  } finally {
+    state.saving.delete(savingKey);
+    renderCustomOrdersPanel();
+    renderPickingSurfaces();
+  }
+}
+
 async function onCustomOrderListClick(event) {
   const button = event.target.closest("[data-custom-order-action]");
   if (!button) return;
@@ -5729,6 +5883,14 @@ async function onCustomOrderListClick(event) {
 }
 
 async function onCustomOrderListChange(event) {
+  const inboundInput = event.target.closest("[data-inbound-expected-field]");
+  if (inboundInput) {
+    const row = inboundInput.closest("[data-inbound-row-key]");
+    if (!row) return;
+    const value = String(inboundInput.value || "").trim() || null;
+    await saveInboundExpectedDate(row, value);
+    return;
+  }
   const input = event.target.closest("[data-custom-order-field]");
   if (!input) return;
   const row = input.closest("[data-operation-id]");
@@ -9928,6 +10090,12 @@ function bindEvents() {
   document.querySelectorAll("[data-app-tab]").forEach((button) => {
     button.addEventListener("click", () => setActiveTab(button.dataset.appTab));
   });
+  document.querySelectorAll("[data-custom-orders-view]").forEach((button) => {
+    button.addEventListener("click", () => {
+      state.customOrders.view = button.dataset.customOrdersView || "workflow";
+      renderCustomOrdersPanel();
+    });
+  });
   els.customOrdersRefresh?.addEventListener("click", () => loadCustomOrdersData({ force: true }).catch(showCustomOrdersError));
   els.customOrdersStatus?.addEventListener("change", () => {
     state.customOrders.status = els.customOrdersStatus.value || "active";
@@ -9951,6 +10119,26 @@ function bindEvents() {
   });
   els.customOrdersSearch?.addEventListener("input", () => {
     state.customOrders.search = els.customOrdersSearch.value || "";
+    renderCustomOrdersPanel();
+  });
+  els.customOrdersInboundSource?.addEventListener("change", () => {
+    state.customOrders.inboundSource = els.customOrdersInboundSource.value || "all";
+    renderCustomOrdersPanel();
+  });
+  els.customOrdersInboundSupplier?.addEventListener("change", () => {
+    state.customOrders.inboundSupplier = els.customOrdersInboundSupplier.value || "";
+    renderCustomOrdersPanel();
+  });
+  els.customOrdersInboundDateFrom?.addEventListener("change", () => {
+    state.customOrders.inboundDateFrom = els.customOrdersInboundDateFrom.value || "";
+    renderCustomOrdersPanel();
+  });
+  els.customOrdersInboundDateTo?.addEventListener("change", () => {
+    state.customOrders.inboundDateTo = els.customOrdersInboundDateTo.value || "";
+    renderCustomOrdersPanel();
+  });
+  els.customOrdersInboundSearch?.addEventListener("input", () => {
+    state.customOrders.inboundSearch = els.customOrdersInboundSearch.value || "";
     renderCustomOrdersPanel();
   });
   els.customOrdersList?.addEventListener("click", (event) => onCustomOrderListClick(event).catch((error) => {

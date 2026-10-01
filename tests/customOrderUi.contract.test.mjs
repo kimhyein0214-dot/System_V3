@@ -15,6 +15,13 @@ assert.match(html, /id="custom-orders-date-criterion"/);
 assert.match(html, /id="custom-orders-date-from"/);
 assert.match(html, /id="custom-orders-date-to"/);
 assert.match(html, /id="custom-orders-search"/);
+assert.match(html, /data-custom-orders-view="workflow"/);
+assert.match(html, /data-custom-orders-view="inbound"/);
+assert.match(html, /id="custom-orders-inbound-source"/);
+assert.match(html, /id="custom-orders-inbound-supplier"/);
+assert.match(html, /id="custom-orders-inbound-date-from"/);
+assert.match(html, /id="custom-orders-inbound-date-to"/);
+assert.match(html, /id="custom-orders-inbound-search"/);
 
 const tabStart = app.indexOf("function setActiveTab");
 const tabEnd = app.indexOf("function scrollToTrayItem", tabStart);
@@ -34,9 +41,14 @@ assert.match(app, /data-custom-order-action="cancel"/);
 assert.match(app, /custom_cancelled_at: new Date\(\)\.toISOString\(\)/);
 assert.match(app, /inbound_expected_source: "manual"/);
 assert.match(app, /loadCustomOrderWorkspace/);
+assert.match(app, /buildInboundExpectedRows/);
+assert.match(app, /data-inbound-expected-field="inbound_expected_date"/);
+assert.match(app, /upsertOperationForCurrentOrderItem\(currentItem/);
 assert.doesNotMatch(app, /from\("order_item_operations"\)\.delete/, "UI must never delete operation rows");
 assert.match(css, /\.custom-orders-toolbar/);
 assert.match(css, /\.custom-order-row/);
+assert.match(css, /\.custom-orders-subtabs/);
+assert.match(css, /\.inbound-expected-row/);
 assert.match(css, /\.picking-custom-order/);
 
 console.log("customOrderUi.contract.test: OK");

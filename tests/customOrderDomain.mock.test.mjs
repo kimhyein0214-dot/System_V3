@@ -2,11 +2,13 @@ import assert from "node:assert/strict";
 import {
   CUSTOM_ORDER_STATUS,
   buildCustomOrderRows,
+  buildInboundExpectedRows,
   canClearCustomRequired,
   customOrderDate,
   customOrderStatus,
   customOrderSuppliers,
   filterCustomOrderRows,
+  filterInboundExpectedRows,
 } from "../src/domain/customOrder.mjs";
 
 const base = {
@@ -109,5 +111,26 @@ const restored = buildCustomOrderRows({
 assert.equal(restored.sourceMissing, false);
 assert.equal(restored.display.productName, "돌아온 원천 상품");
 assert.equal(restored.display.supplierCellRaw, "현재 매입처");
+
+const inboundOperations = [
+  {
+    ...base, operation_id: "inbound-auto", ord_no: "O-MISSING", sellpia_order_item_no: "R-M", item_no: "1_R-M",
+    inbound_expected_date: "2026-10-05", inbound_expected_source: "sku_schedule", internal_memo: "자동 일정 메모",
+    product_name_snapshot: "스냅 상품", supplier_cell_raw_snapshot: "0-스냅매입처 [ 9 ]",
+  },
+  {
+    ...base, operation_id: "inbound-clear", ord_no: "O-1", sellpia_order_item_no: "R-2", item_no: "2_R-2",
+    inbound_expected_date: null, inbound_expected_source: "manual",
+  },
+];
+const inboundRows = buildInboundExpectedRows({ operations: inboundOperations, currentItems });
+assert.equal(inboundRows.length, 3, "legacy, automatic, and explicit-clear rows must share the inbound workspace");
+assert.equal(inboundRows.find((row) => row.key === "O-1::R-1").inbound.source, "legacy_sellpia");
+assert.equal(inboundRows.find((row) => row.operation?.operation_id === "inbound-auto").sourceMissing, true);
+assert.equal(inboundRows.find((row) => row.operation?.operation_id === "inbound-clear").inbound.explicitlyCleared, true);
+assert.deepEqual(filterInboundExpectedRows(inboundRows, { source: "legacy_sellpia" }).map((row) => row.key), ["O-1::R-1"]);
+assert.deepEqual(filterInboundExpectedRows(inboundRows, { source: "cleared" }).map((row) => row.operation?.operation_id), ["inbound-clear"]);
+assert.deepEqual(filterInboundExpectedRows(inboundRows, { search: "O-1" }).map((row) => row.key).sort(), ["O-1::R-1", "O-1::R-2"]);
+assert.deepEqual(filterInboundExpectedRows(inboundRows, { dateFrom: "2026-10-05", dateTo: "2026-10-05" }).map((row) => row.operation?.operation_id), ["inbound-auto"]);
 
 console.log("customOrderDomain.mock.test: OK");

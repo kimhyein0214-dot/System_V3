@@ -10,7 +10,7 @@
     <link rel="apple-touch-icon" href="assets/system-v3-icon.svg">
     <link rel="preconnect" href="https://cdnjs.cloudflare.com" crossorigin>
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/pretendard/1.3.9/static/pretendard.css">
-  <link rel="stylesheet" href="src/styles/picking.css?v=20261001-custom-orders1">
+  <link rel="stylesheet" href="src/styles/picking.css?v=20261001-custom-orders2">
     <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
   </head>
   <body>
@@ -326,9 +326,15 @@
           <div class="panel-head custom-orders-head">
             <div>
               <h2>주문제작</h2>
-              <p>선택 접수일과 관계없이 진행 중인 주문제작 상품을 관리합니다.</p>
+              <p>주문제작 진행 상태와 입고예정일을 선택 접수일과 관계없이 관리합니다.</p>
             </div>
-            <div class="custom-orders-toolbar" aria-label="주문제작 필터">
+            <button id="custom-orders-refresh" class="btn" type="button">새로고침</button>
+          </div>
+          <div class="custom-orders-subtabs" role="tablist" aria-label="주문제작 내부 보기">
+            <button class="custom-orders-subtab active" data-custom-orders-view="workflow" role="tab" aria-selected="true" type="button">주문제작 관리</button>
+            <button class="custom-orders-subtab" data-custom-orders-view="inbound" role="tab" aria-selected="false" type="button">입고예정일 관리</button>
+          </div>
+          <div class="custom-orders-toolbar" data-custom-orders-toolbar="workflow" aria-label="주문제작 필터">
               <label>상태
                 <select id="custom-orders-status">
                   <option value="active">미완료</option>
@@ -343,7 +349,7 @@
               <label>매입처
                 <select id="custom-orders-supplier"><option value="">전체</option></select>
               </label>
-              <label>날짜
+              <label>날짜 기준
                 <select id="custom-orders-date-criterion">
                   <option value="required">등록일</option>
                   <option value="ordered">업체 주문일</option>
@@ -351,20 +357,40 @@
                   <option value="received">입고 완료일</option>
                 </select>
               </label>
-              <label>기간
+              <label class="custom-orders-period">기간
                 <span class="custom-orders-date-range">
-                  <input id="custom-orders-date-from" type="date" aria-label="시작일">
+                  <input id="custom-orders-date-from" type="date" aria-label="주문제작 시작일">
                   <span>~</span>
-                  <input id="custom-orders-date-to" type="date" aria-label="종료일">
+                  <input id="custom-orders-date-to" type="date" aria-label="주문제작 종료일">
                 </span>
               </label>
-              <input id="custom-orders-search" class="search" placeholder="주문번호 / 품목번호 / SKU / 상품 / 매입처 / 메모">
-              <button id="custom-orders-refresh" class="btn" type="button">새로고침</button>
-            </div>
+              <input id="custom-orders-search" class="search" aria-label="주문제작 검색" placeholder="주문번호 / SKU / 상품 / 매입처 / 메모">
+          </div>
+          <div class="custom-orders-toolbar" data-custom-orders-toolbar="inbound" aria-label="입고예정일 필터" hidden>
+              <label>출처
+                <select id="custom-orders-inbound-source">
+                  <option value="all">전체</option>
+                  <option value="manual">수동</option>
+                  <option value="sku_schedule">SKU 일정</option>
+                  <option value="legacy_sellpia">셀피아</option>
+                  <option value="cleared">명시적 삭제</option>
+                </select>
+              </label>
+              <label>매입처
+                <select id="custom-orders-inbound-supplier"><option value="">전체</option></select>
+              </label>
+              <label class="custom-orders-period">입고예정 기간
+                <span class="custom-orders-date-range">
+                  <input id="custom-orders-inbound-date-from" type="date" aria-label="입고예정 시작일">
+                  <span>~</span>
+                  <input id="custom-orders-inbound-date-to" type="date" aria-label="입고예정 종료일">
+                </span>
+              </label>
+              <input id="custom-orders-inbound-search" class="search" aria-label="입고예정일 검색" placeholder="주문번호 / SKU / 상품 / 매입처 / 메모">
           </div>
           <div class="custom-orders-summary">
             <strong id="custom-orders-count">0건</strong>
-            <span>기본 화면은 완료·취소를 제외한 미완료 건입니다.</span>
+            <span id="custom-orders-summary-text">기본 화면은 완료·취소를 제외한 미완료 건입니다.</span>
           </div>
           <div id="custom-orders-list" class="custom-orders-list">
             <div class="workflow-empty">주문제작 탭을 열면 데이터를 불러옵니다.</div>
@@ -433,7 +459,7 @@
     <div id="toast" class="toast" hidden></div>
 
     <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
-    <script type="module" src="src/app/pickingApp.mjs?v=20261001-custom-orders1"></script>
+    <script type="module" src="src/app/pickingApp.mjs?v=20261001-custom-orders2"></script>
     <script>
       if ("serviceWorker" in navigator) {
         window.addEventListener("load", () => {
