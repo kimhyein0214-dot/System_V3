@@ -17,7 +17,7 @@
 .tag-manager-head h3{margin:0;font-size:15px}.tag-manager-head p{margin:4px 0 0;color:#6b7b90;font-size:11px;line-height:1.4}
 .tag-manager-new{display:grid;grid-template-columns:minmax(0,1fr) 52px;gap:8px;padding:10px;border-bottom:1px solid #e8edf4;background:#f8fbff}
 .tag-manager-new[hidden]{display:none!important}.tag-manager-new label{display:flex;flex-direction:column;gap:4px;color:#29425f;font-size:10px;font-weight:800}.tag-manager-new input{min-width:0;height:34px;border:1px solid #cbd8e8;border-radius:7px;padding:0 8px;background:#fff}.tag-manager-new input[type="color"]{width:52px;padding:3px}.tag-manager-new .tag-manager-formula-check{grid-column:1/-1;display:flex;flex-direction:row;align-items:center;gap:6px;font-size:11px}.tag-manager-new .tag-manager-formula-check input{width:auto;height:auto}.tag-manager-new>div{grid-column:1/-1;display:flex;justify-content:flex-end;gap:6px}
-.tag-kind-tabs{display:flex;gap:5px;padding:8px 10px 0}.tag-kind-tabs button{border:1px solid #d7e1ec;border-radius:999px;background:#fff;padding:5px 9px;color:#64748b;font-size:10px;font-weight:800}.tag-kind-tabs button[aria-selected="true"]{border-color:#8fb3ed;background:#edf4ff;color:#1558c0}
+.tag-kind-tabs{display:flex;flex-wrap:wrap;gap:5px;padding:8px 10px 0}.tag-kind-tabs button{border:1px solid #d7e1ec;border-radius:999px;background:#fff;padding:5px 9px;color:#64748b;font-size:10px;font-weight:800}.tag-kind-tabs button[aria-selected="true"]{border-color:#8fb3ed;background:#edf4ff;color:#1558c0}
 .tag-manager-search{display:flex;gap:6px;padding:10px;border-bottom:1px solid #e8edf4}.tag-manager-search .btn{white-space:nowrap}
 .tag-manager-search input{width:100%;height:36px;border:1px solid #cbd8e8;border-radius:8px;padding:0 10px}
 .tag-catalog{max-height:630px;overflow:auto;padding:6px}
@@ -42,7 +42,8 @@
 .tag-stat-grid div{padding:10px;border:1px solid #e1e8f0;border-radius:9px;background:#fff}
 .tag-stat-grid span{display:block;color:#7a899a;font-size:10px}.tag-stat-grid b{display:block;margin-top:3px;font-size:17px}
 .tag-rule-summary{padding:10px;border:1px solid #dce6f2;border-radius:9px;background:#fff}
-.tag-rule-summary>span{display:block;color:#61748a;font-size:10px;font-weight:800}
+.tag-rule-summary>span{display:block;color:#315cc9;font-size:10px;font-weight:900;letter-spacing:.02em}
+.tag-rule-summary>p{margin:6px 0 0;color:#52677f;font-size:10px;line-height:1.45}
 .tag-rule-summary div{margin-top:6px;display:grid;gap:5px}
 .tag-rule-summary i{display:block;padding:6px 7px;border-radius:7px;background:#f4f7fb;color:#35516f;font-style:normal;font-size:11px}
 .tag-manager-actions{display:grid;grid-template-columns:1fr 1fr;gap:7px}.tag-manager-actions .wide{grid-column:1/-1}
@@ -54,10 +55,11 @@
 
 /* tag type badges */
 .tag-catalog button{grid-template-columns:14px minmax(0,1fr) auto}
-.tag-catalog-name{display:flex;align-items:center;gap:6px;min-width:0}
+.tag-catalog-name{display:flex;flex-direction:column;align-items:flex-start;gap:5px;min-width:0}
 .tag-catalog-name>b{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.tag-catalog-badges{display:flex;flex-wrap:wrap;gap:4px;min-width:0}
 .tag-kind{display:inline-flex;align-items:center;justify-content:center;flex:0 0 auto;padding:2px 6px;border-radius:999px;font-size:9px!important;font-weight:900!important;line-height:1.45;white-space:nowrap}
-.tag-kind.formula{background:#e9efff;color:#315cc9;border:1px solid #c9d6ff}
+.tag-kind.formula,.tag-kind.matrix{background:#e9efff;color:#315cc9;border:1px solid #c9d6ff}
 .tag-kind.plain{background:#f3f5f7;color:#748094;border:1px solid #e0e5eb}
 .tag-kind.carrier{background:#ecfdf5;color:#067647;border:1px solid #a6f4c5}
 .tag-selected-card h3{display:flex;align-items:center;gap:7px;flex-wrap:wrap}
