@@ -13,7 +13,7 @@ const projectionSource=fs.readFileSync(new URL('../mockups/operations-hub/ably-p
 const ablySource=fs.readFileSync(new URL('../mockups/operations-hub/ably-playauto-export.js',import.meta.url),'utf8');
 const plain=value=>JSON.parse(JSON.stringify(value));
 
-function harness({items,targets=[],role='playauto_option',priceMode='rules',fieldMode='option_stock',stockSource='available_stock',stockSources={},selectedSkus=null,sourcePrices={},carrierCatalog=null,carrierMappings=[]}){
+function harness({items,targets=[],role='playauto_option',priceMode='rules',fieldMode='option_stock',stockSource='available_stock',stockSources={},selectedSkus=null,sourcePrices={},carrierCatalog=null,carrierMappings=[],shadow=false}){
  const fields=new Map(['title','detail','bar','cancel'].map(key=>[key,{textContent:'',style:{},disabled:false}]));
  const progress={hidden:true,dataset:{},querySelector:selector=>fields.get(selector.match(/progress-(\w+)/)?.[1])};
  const previewNode={hidden:true};
@@ -27,6 +27,10 @@ function harness({items,targets=[],role='playauto_option',priceMode='rules',fiel
  vm.runInContext(priceSource,global);
  vm.runInContext(projectionSource,global);
  vm.runInContext(ablySource,global);
+ if(shadow){
+  global.HubMatrixShadow={request:product=>({sku:product.sellpia_sku_code}),rememberCarrierEvidence(){}};
+  global.HubBaselineIdentityShadow={crosswalk:()=>({disposition:'WARN_KEEP_ORIGINAL',row:null,reason:'baseline 없음'})};
+ }
  const n=value=>Number(value||0).toLocaleString('ko-KR'),setStatus=(text,kind)=>messages.push({text,kind});
  const createAblyJob=Function('global','state','document','n','renderExportStatuses','setStatus',`${helpers};return createAblyJob;`)(global,state,document,n,()=>{},setStatus);
  const roles={playauto_option:{label:'옵션가 + 재고',type:'option_price_stock'},playauto_product:{label:'판매가 + 옵션가',type:'product_price_option'}};
@@ -34,7 +38,7 @@ function harness({items,targets=[],role='playauto_option',priceMode='rules',fiel
  const A=()=>({readTemplate:async()=>({type:roles[role].type,items}),resolveRows:(rows,_catalog,_mappings,options)=>rows.map(item=>({...item,resolution:carrierCatalog?global.AblyPlayautoExport.resolveSellpiaSku(item,carrierCatalog,carrierMappings,options):item.resolution||{sku:item.sku,method:'direct_sku'}}))});
  const P=()=>global.AblyPriceProjection;
  const calls=[];
- const D=()=>({loadCarrierSellerMappings:async()=>({rows:carrierMappings}),loadCarrierMatrixTargets:async options=>{calls.push(options);return {rows:targets};},loadSellpiaSourcePricesForExport:async()=>new Map(Object.entries(sourcePrices)),loadSellpiaStockSourcesForExport:async()=>({snapshotId:'stock-snapshot',bySku:new Map(Object.entries(stockSources))}),loadAblyCarrierPoliciesForSkus:async()=>({rows:[],fingerprint:'[]'})});
+ const D=()=>({loadCarrierSellerMappings:async()=>({rows:carrierMappings}),loadCarrierMatrixTargets:async options=>{calls.push(options);return {rows:targets};},loadSellpiaSourcePricesForExport:async()=>new Map(Object.entries(sourcePrices)),loadSellpiaStockSourcesForExport:async()=>({snapshotId:'stock-snapshot',bySku:new Map(Object.entries(stockSources))}),loadAblyCarrierPoliciesForSkus:async()=>({rows:[],fingerprint:'[]'}),...(shadow?{loadMatrixShadowMetadata:async({rows})=>({rows:rows.map(request=>({sku:request.sku,candidates:[],declared_links:[]}))})}:{})});
  const preview=Function('state','roles','setStatus','createAblyJob','document','global','blobFile','A','D','P','catalog','scopeSkus','renderPreview','n',`${previewSource};return preview;`)(state,roles,setStatus,createAblyJob,document,global,async()=>file,A,D,P,async()=>carrierCatalog||[],async()=>selectedSkus?new Set(selectedSkus):null,()=>{rendered++;},n);
  state.carrierFiles.set(role,file);
  return {run:()=>preview(role),state,calls,timers,messages,rendered:()=>rendered};
@@ -207,4 +211,21 @@ test('Ably price-only writes option price and preserves X stock even when no sto
  assert.equal(Object.hasOwn(preview.output[0],'target_stock'),false);
  assert.deepEqual(plain(preview.output[0]._changedFields),['option']);
  assert.equal(preview.counts.warned,0);
+});
+
+test('Ably shadow reports one-SKU-to-many-carrier rows as normal multi-listing without changing generation input',async()=>{
+ const h=harness({shadow:true,items:[row('MULTI-1',6),row('MULTI-1',7)],targets:[target('MULTI-1')]});
+ const preview=await h.run();assert.ok(preview,h.messages.at(-1)?.text);
+ assert.equal(preview.counts.blocked,0);
+ assert.equal(preview.output.length,2);
+ assert.ok(preview.output.every(item=>item._status==='ready'&&item.target_stock===0));
+ assert.deepEqual(plain(preview.shadowDiagnostics),[{sku:'MULTI-1',lookup:'multi',reason:'동일 SKU가 2개 carrier row에 연결됨 · 정상 fan-out'}]);
+});
+
+test('Ably shadow keeps actual seller-identity-to-many-SKU ambiguity as conflict',async()=>{
+ const h=harness({shadow:true,items:[row('AMBIGUOUS-1',6,{seller_product_code:'ABLY-P',resolution:{sku:null,method:'seller_mapping_ambiguous',error:'기존 에이블리 판매처 연결이 여러 SKU를 가리킵니다.'}})]});
+ const preview=await h.run();assert.ok(preview,h.messages.at(-1)?.text);
+ assert.equal(preview.counts.blocked,1);
+ assert.equal(preview.output[0]._status,'ambiguous');
+ assert.deepEqual(plain(preview.shadowDiagnostics),[{sku:'ABLY-P',lookup:'conflict',reason:'기존 에이블리 판매처 연결이 여러 SKU를 가리킵니다.'}]);
 });

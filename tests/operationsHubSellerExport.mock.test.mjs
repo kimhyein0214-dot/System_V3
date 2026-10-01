@@ -47,7 +47,7 @@ assert.ok(localAssets.every(asset => /\?v=[^&\"]+$/.test(asset)), 'all local exp
 assert.match(html,/discount-price-math\.js\?v=20260914-matrix-visible-export-v2/,'shared matrix display math keeps its deployed version');
 assert.match(html,/seller-export-adapter\.js\?v=20260922-makeshop-batch-row-patch-v2/,'MakeShop workbook batch row serializer uses the latest version');
 assert.match(html,/app\.js\?v=[^"']+/,'carrier guard remains cache-versioned');
-assert.match(html,/current-price-export\.js\?v=20261001-makeshop-preview-status-v1/,'source-price preview classifier uses a fresh release version');
+assert.match(html,/current-price-export\.js\?v=20261001-seller-fanout-v1/,'source-price preview and fan-out classifier uses a fresh release version');
 assert.match(html,/ably-price-projection\.js\?v=20260929-ably-carrier-policy-v1[\s\S]*?ably-playauto-export\.js\?v=20260929-ably-carrier-policy-v1/,'Ably projection loads before its PlayAuto adapter with a fresh version');
 assert.match(html,/seller-file-workflow-v2\.js\?v=[^"']+/,'seller file workflow remains cache-versioned');
 assert.match(html,/data-service\.js\?v=[^"']+/,'targeted carrier lookup data service remains cache-versioned');

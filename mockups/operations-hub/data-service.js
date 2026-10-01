@@ -272,6 +272,53 @@
     }));
   }
 
+  async function loadMatrixSellerListingsBySkus(inputSkus = [], {signal = null} = {}) {
+    const skus = [...new Set((inputSkus || []).map(cleanText).filter(Boolean))].slice(0, 100);
+    if (!skus.length) return new Map();
+    if (!global.HubMatrixMultilisting?.combine) throw new Error('Matrix 다중연결 표시 모듈을 불러오지 못했습니다.');
+    throwIfAborted(signal);
+    const projectionRows = [];
+    for (let offset = 0; offset < skus.length; offset += 50) {
+      const skuChunk = skus.slice(offset, offset + 50);
+      for (let from = 0;; from += 1000) {
+        const result = await withAbortSignal(db
+          .from('operations_hub_listing_component_projection')
+          .select('mapping_source,listing_id,component_id,source_channel,product_code,option_code,product_name,option_name,sellpia_sku_code,component_qty,component_role')
+          .in('sellpia_sku_code', skuChunk)
+          .order('source_channel', {ascending:true})
+          .order('product_code', {ascending:true})
+          .order('option_code', {ascending:true})
+          .range(from, from + 999), signal);
+        if (result.error) throw result.error;
+        projectionRows.push(...(result.data || []));
+        if (!result.data || result.data.length < 1000) break;
+      }
+    }
+    const inventoryRows = [];
+    for (const source of ['smartstore', 'makeshop', 'ably']) {
+      const productCodes = [...new Set(projectionRows
+        .filter(row => cleanText(row.source_channel) === source)
+        .map(row => cleanText(row.product_code)).filter(Boolean))];
+      for (let offset = 0; offset < productCodes.length; offset += 100) {
+        const codeChunk = productCodes.slice(offset, offset + 100);
+        for (let from = 0;; from += 1000) {
+          const result = await withAbortSignal(db
+            .from('seller_inventory_latest')
+            .select('source_channel,product_code,option_code,product_name,option_name,stock,price,sale_status,snapshot_completed_at')
+            .eq('source_channel', source)
+            .in('product_code', codeChunk)
+            .order('product_code', {ascending:true})
+            .order('option_code', {ascending:true})
+            .range(from, from + 999), signal);
+          if (result.error) throw result.error;
+          inventoryRows.push(...(result.data || []));
+          if (!result.data || result.data.length < 1000) break;
+        }
+      }
+    }
+    return global.HubMatrixMultilisting.combine(projectionRows, inventoryRows);
+  }
+
   async function attachLinkSuppressions(rows, signal, prefetched = null) {
     const products = Array.isArray(rows) ? rows : [];
     const skus = [...new Set(products.map(row => cleanText(row?.sellpia_sku_code)).filter(Boolean))];
@@ -621,6 +668,28 @@
       page:Number(data?.page || page || 1),
       pageSize:Number(data?.pageSize || pageSize || 50)
     };
+  }
+
+  async function searchMatrixSellerListingSkus(search, {source = 'all', signal = null, maxRows = 2000} = {}) {
+    const term = cleanText(search);
+    if (!term) return [];
+    const skus = new Set();
+    let page = 1;
+    let loaded = 0;
+    for (;;) {
+      throwIfAborted(signal);
+      const result = await loadListingGraph({source, relationType:'all', search:term, page, pageSize:100});
+      for (const row of result.rows || []) {
+        for (const component of row.components || []) {
+          const sku = cleanText(component?.sku || component?.sellpia_sku_code);
+          if (sku) skus.add(sku);
+        }
+      }
+      loaded += (result.rows || []).length;
+      if (!(result.rows || []).length || loaded >= result.count || loaded >= maxRows) break;
+      page += 1;
+    }
+    return [...skus];
   }
 
   async function saveListingComponent({source, productCode, optionCode = '', sku, qty = 1, role = 'additional'} = {}) {
@@ -4802,12 +4871,14 @@
     loadProducts,
     loadMatrixGridDataset,
     loadMatrixGridRowsBySkus,
+    loadMatrixSellerListingsBySkus,
     loadPendingPurchasePriceRecalculations,
     loadFullMatrixDataset,
     loadProductsBySkus,
     loadProductThumbnailsBySkus,
     loadMatrixExportChunk,
     loadListingGraph,
+    searchMatrixSellerListingSkus,
     loadRelationFolders,
     saveRelationFolder,
     archiveRelationFolder,

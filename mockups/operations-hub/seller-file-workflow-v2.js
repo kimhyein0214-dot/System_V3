@@ -699,11 +699,12 @@
    if(global.HubMatrixShadow&&D().loadMatrixShadowMetadata&&global.HubMatrixShadowEnabled!==false){
     try{
      const groups=new Map();for(const item of sourceRows.filter(item=>item.resolution?.sku)){const group=groups.get(item.resolution.sku)||[];group.push(item);groups.set(item.resolution.sku,group);}
-     const duplicateDiagnostics=[...groups].filter(([,rows])=>rows.length!==1).map(([sku])=>({sku,lookup:'conflict',reason:'동일 SKU carrier 증거 복수 · shadow BLOCK'}));
+     const ambiguityDiagnostics=sourceRows.filter(item=>item.resolution?.method==='seller_mapping_ambiguous').map(item=>({sku:item.seller_product_code||item.seller_management_code||'미확정 identity',lookup:'conflict',reason:item.resolution?.error||'판매처 identity가 여러 SKU를 가리킵니다.'}));
+     const multiListingDiagnostics=[...groups].filter(([,rows])=>rows.length>1).map(([sku,rows])=>({sku,lookup:'multi',reason:`동일 SKU가 ${rows.length}개 carrier row에 연결됨 · 정상 fan-out`}));
      const unique=[...groups.values()].filter(rows=>rows.length===1).map(rows=>rows[0]);
      // Read evidence after production guards/targets are fixed. Never mutate prepared rows.
      const shadow=await D().loadMatrixShadowMetadata({source:'ably',rows:unique.map(item=>global.HubMatrixShadow.request({sellpia_sku_code:item.resolution.sku},'ably',item))});
-     shadowDiagnostics=[...duplicateDiagnostics,...unique.map(item=>{const r=shadow.rows.find(row=>row.sku===item.resolution.sku);if(!r)throw Error('shadow SKU 누락');const b=global.HubBaselineIdentityShadow.crosswalk({carrier:item,resolvedSku:item.resolution.sku,baselineRows:r.candidates,declaredLinks:r.declared_links});return {sku:item.resolution.sku,lookup:b.disposition==='BLOCK'?'conflict':b.row?(r.declared_links.length?'matched':'crosswalk'):'unavailable',reason:b.reason};})];
+     shadowDiagnostics=[...ambiguityDiagnostics,...multiListingDiagnostics,...unique.map(item=>{const r=shadow.rows.find(row=>row.sku===item.resolution.sku);if(!r)throw Error('shadow SKU 누락');const b=global.HubBaselineIdentityShadow.crosswalk({carrier:item,resolvedSku:item.resolution.sku,baselineRows:r.candidates,declaredLinks:r.declared_links});return {sku:item.resolution.sku,lookup:b.disposition==='BLOCK'?'conflict':b.row?(r.declared_links.length?'matched':'crosswalk'):'unavailable',reason:b.reason};})];
      global.HubMatrixShadow.rememberCarrierEvidence(unique);
     }catch(error){shadowDiagnostics=[{sku:'진단',lookup:'unavailable',reason:error?.message||String(error)}];}
     job.check();

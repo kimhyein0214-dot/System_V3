@@ -212,11 +212,14 @@
   if(!g.SystemV3DiscountPriceMath?.grossBaseForTarget)throw Error('가격 역산 모듈이 없습니다.');
   const selected=new Set(selectedSkus||[]),identity=row=>JSON.stringify([String(row.product_code||'').trim(),String(row.option_code||'').trim()]);
   if(!selected.size)throw Error('셀피아 판매가 기준은 태그 또는 SKU로 대상 범위를 선택해야 합니다.');
-  const originals=new Map(),mappings=new Map(),skuIdentities=new Map(),duplicateProducts=new Set();
+  const originals=new Map(),mappings=new Map(),duplicateProducts=new Set();
   for(const row of carrierRows||[]){const key=identity(row);if(originals.has(key))duplicateProducts.add(String(row.product_code||''));else originals.set(key,row);}
-  for(const row of mappingRows||[]){const key=identity(row);if(!mappings.has(key))mappings.set(key,new Set());mappings.get(key).add(String(row.sku||''));if(selected.has(String(row.sku||''))){if(!skuIdentities.has(row.sku))skuIdentities.set(row.sku,new Set());skuIdentities.get(row.sku).add(key);}}
   const blockedProducts=new Map(externalBlockedProducts),selectedProducts=new Set();
-  for(const [sku,keys] of skuIdentities){for(const key of keys){const row=originals.get(key);if(row)selectedProducts.add(String(row.product_code||''));}if(keys.size!==1)for(const key of keys){const row=originals.get(key);if(row)blockedProducts.set(String(row.product_code||''),`${sku}: 판매처 옵션 identity가 여러 개입니다.`);}}
+  for(const row of mappingRows||[]){
+   const key=identity(row),sku=String(row.sku||'');
+   if(!mappings.has(key))mappings.set(key,new Set());mappings.get(key).add(sku);
+   if(selected.has(sku)){const original=originals.get(key);if(original)selectedProducts.add(String(original.product_code||''));}
+  }
   const products=new Map();
   for(const row of carrierRows||[]){const key=identity(row),product=String(row.product_code||'');if(!selectedProducts.has(product))continue;const mapped=mappings.get(key)||new Set(),selectedMapped=[...mapped].filter(sku=>selected.has(sku));if(mapped.size>1)blockedProducts.set(product,`${product}/${row.option_code}: 판매처 옵션이 여러 SKU에 연결되어 있습니다.`);if(!products.has(product))products.set(product,[]);products.get(product).push({row,sku:selectedMapped[0]||null});}
   const operations=[],preview=[],excludedItems=[];let exportId=-1;

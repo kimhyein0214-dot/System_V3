@@ -974,7 +974,7 @@ function matchState(tier) {
   return {key:'connected', label:'연결 완료'};
 }
 
-function mappingCodeButton(product, prefix, label, kind, value, state) {
+function mappingCodeButton(product, prefix, label, kind, value, state, identity = null) {
   const pendingDraft = product.__sellerProductLinkDrafts?.[prefix];
   const pendingOption = Boolean(pendingDraft && kind === 'option' && !value);
   const display = escapeHtml(pendingOption ? '+ 옵션 추가' : (value || '-'));
@@ -986,7 +986,10 @@ function mappingCodeButton(product, prefix, label, kind, value, state) {
       ? `${label} 판매처 상품 새로 연결`
       : `${label} 조합 연결 확인·관리`;
   const visualState = pendingDraft ? (pendingOption ? 'option-pending' : 'product-pending') : state.key;
-  return `<button class="mapping-code-button ${visualState}" data-link-source="${prefix}" data-code-kind="${kind}" title="${prompt}">${display}</button>`;
+  const identityAttrs = identity
+    ? ` data-link-product-code="${escapeHtml(identity.product_code || '')}" data-link-option-code="${escapeHtml(identity.option_code || '')}"`
+    : '';
+  return `<button class="mapping-code-button ${visualState}" data-link-source="${prefix}" data-code-kind="${kind}"${identityAttrs} title="${prompt}">${display}</button>`;
 }
 
 function sellerIdentityCells(product, prefix, label, state, productMerge = null, relationBadge = '') {
@@ -1009,6 +1012,43 @@ function sellerIdentityCells(product, prefix, label, state, productMerge = null,
     <td class="seller-identity-cell seller-option-identity${!optionCode && !optionName ? ' data-gap' : ''}${pendingDraft ? ' option-selection-pending' : ''}" data-channel="${prefix}" title="${escapeHtml(pendingDraft ? '상품코드 복제 완료 · 옵션 선택 대기' : (optionTitle || '판매처 옵션 정보 없음'))}">
       ${mappingCodeButton(product, prefix, label, 'option', optionCode, state)}<em class="${optionName ? '' : 'seller-name-missing'}">${escapeHtml(pendingDraft ? '옵션 선택 대기' : (optionName || '옵션명 없음'))}</em>${relationBadge}
     </td>`;
+}
+
+function matrixMultiListingCells(product, prefix, label, listings) {
+  const linkBadge = product.__linkBadges?.[prefix];
+  const shadowConflict = product.__hubShadow?.[prefix]?.lookup === 'conflict';
+  const count = listings.length;
+  const relationType = String(linkBadge?.relation_type || 'multi');
+  const relationLabel = relationType === 'bundle'
+    ? `조합 ${Number(linkBadge?.max_component_count || 0)}SKU`
+    : relationType === 'multi_bundle'
+      ? `1:N+조합 · ${count}개`
+      : `1:N · ${count}개`;
+  const stack = (items, className = '') => `<div class="matrix-listing-stack ${className}">${items.map((item, index) => `<div class="matrix-listing-subrow${index === items.length - 1 ? ' last' : ''}">${item}</div>`).join('')}</div>`;
+  const cells = [[], [], [], [], [], [], [], [], []];
+  listings.forEach((listing, index) => {
+    const state = shadowConflict ? {key:'unmatched', label:'충돌'} : {key:'connected', label:'정상'};
+    const statusDetail = index === 0
+      ? `<button class="matrix-relation-badge ${escapeHtml(relationType)}" data-open-multi-link="${prefix}" data-link-sku="${escapeHtml(product.sellpia_sku_code)}" title="표시는 Matrix에서 확인하고 연결 편집은 다중·조합 관리에서 진행합니다.">${escapeHtml(relationLabel)}</button>`
+      : '';
+    const productName = escapeHtml(listing.product_name || '상품명 없음');
+    const optionName = escapeHtml(listing.option_name || '옵션명 없음');
+    const saleStatus = escapeHtml(listing.sale_status || '판매상태 없음');
+    const productCode = escapeHtml(listing.product_code);
+    const optionCode = escapeHtml(listing.option_code || '-');
+    const identity = {product_code:listing.product_code, option_code:listing.option_code};
+    cells[0].push(`<span class="matrix-status ${state.key}" title="${shadowConflict ? '판매처 identity가 여러 SKU를 가리켜 export가 차단됩니다.' : '정상 다중 판매처 연결'}">${state.label}</span>${statusDetail}`);
+    cells[1].push(mappingCodeButton(product, prefix, label, 'product', listing.product_code, state, identity));
+    cells[2].push(`<em class="${listing.product_name ? '' : 'seller-name-missing'}" title="${productName}">${productName}</em>`);
+    cells[3].push(`${mappingCodeButton(product, prefix, label, 'option', listing.option_code, state, identity)}<em class="${listing.option_name ? '' : 'seller-name-missing'}" title="${optionName}">${optionName}</em>`);
+    cells[4].push(listing.stock === null || listing.stock === undefined ? '<span class="data-gap">-</span>' : `<b>${formatNullableNumber(listing.stock)}</b>`);
+    cells[5].push(listing.price === null || listing.price === undefined ? '<span class="data-gap">-</span>' : `<b>${formatNullableNumber(listing.price)}</b>`);
+    cells[6].push(`<span class="data-gap" title="identity별 할인 상세는 판매처 원본에서 확인합니다.">-</span>`);
+    cells[7].push(`<span class="data-gap" title="identity별 옵션가 상세는 판매처 원본에서 확인합니다.">-</span>`);
+    cells[8].push(listing.price === null || listing.price === undefined ? `<span class="data-gap" title="${saleStatus}">-</span>` : `<b title="${saleStatus}">${formatNullableNumber(listing.price)}</b>`);
+  });
+  const classes = ['matrix-multi-status','seller-product-code-cell','seller-product-name-cell','seller-option-identity','number-cell','number-cell','seller-discount-cell','price-component-cell','number-cell'];
+  return cells.map((items, index) => `<td class="matrix-multi-listing-cell ${classes[index]}" data-channel="${prefix}" data-listing-count="${count}">${stack(items, index === 3 ? 'matrix-listing-options' : '')}</td>`).join('');
 }
 
 function internalBasePriceText(product) {
@@ -1059,6 +1099,8 @@ function systemOperationalCell(product, fieldKey, label, sourceValue) {
 }
 
 function channelInventoryCells(product, prefix, label, baseMerge = null, identityMerge = null) {
+  const sellerListings = product?.__sellerListings?.[prefix];
+  if (Array.isArray(sellerListings) && sellerListings.length > 1) return matrixMultiListingCells(product, prefix, label, sellerListings);
   const tier = product[`${prefix}_match_tier`];
   const state = matchState(tier);
   const productCode = product[`${prefix}_product_code`] || '';
@@ -1294,7 +1336,9 @@ function renderCodeListPlaceholderRow(product) {
   </tr>`;
 }
 
-let matrixDataset=null,matrixFullLoad=null,matrixVirtualPainting=false,matrixVirtualFrame=0,matrixRowHeight=72,matrixVirtualStart=-1;
+let matrixDataset=null,matrixFullLoad=null,matrixVirtualPainting=false,matrixVirtualFrame=0,matrixRowHeight=72,matrixVirtualStart=-1,matrixVirtualEnd=-1,matrixVirtualLayout=null;
+const matrixSellerListingsCache=new Map(),matrixSellerListingsPending=new Set();
+let matrixSellerListingsVersion=0,matrixSellerSearchKey='',matrixSellerSearchSkus=[];
 const matrixDirtySkus=new Set();
 const matrixDirtyVersions=new Map();let matrixDirtyVersion=0;
 function markMatrixAffected(skus){for(const sku of skus||[]){matrixDirtySkus.add(sku);matrixDirtyVersions.set(sku,++matrixDirtyVersion);}}
@@ -1312,10 +1356,32 @@ function mountMatrixClientFilters(){
 }
 let matrixTagFilterDataset=null,matrixTagFilterVersion=0;
 function refreshMatrixTagFilter(){const select=document.getElementById('matrix-client-tag');if(!select||matrixTagFilterDataset===matrixDataset&&matrixTagFilterVersion===matrixDataset.version)return;const selected=select.value,tagMap=new Map();for(const r of matrixDataset.rows)for(const t of window.HubMatrixDataset.tags(r))tagMap.set(String(t.tag_id),t.tag_name);select.innerHTML='<option value="">전체 태그</option>';for(const [id,name] of tagMap){const option=document.createElement('option');option.value=id;option.textContent=name;select.append(option);}if(tagMap.has(selected))select.value=selected;matrixTagFilterDataset=matrixDataset;matrixTagFilterVersion=matrixDataset.version;}
+function matrixExpectedListingCount(product,source){return window.HubMatrixMultilisting?.listingCount(product,source)||Math.max(Number(product?.[`${source}_listing_count`]||0),product?.[`${source}_product_code`]?1:0);}
+function attachCachedMatrixSellerListings(products){for(const product of products||[]){const sku=String(product?.sellpia_sku_code||'').trim();if(sku&&matrixSellerListingsCache.has(sku))product.__sellerListings=matrixSellerListingsCache.get(sku);}return products;}
+async function ensureMatrixSellerListings(products){
+ if(!liveData?.loadMatrixSellerListingsBySkus)return;
+ const requested=[...new Set((products||[]).filter(product=>['smartstore','makeshop','ably'].some(source=>matrixExpectedListingCount(product,source)>1)).map(product=>String(product.sellpia_sku_code||'').trim()).filter(sku=>sku&&!matrixSellerListingsCache.has(sku)&&!matrixSellerListingsPending.has(sku)))].slice(0,100);
+ if(!requested.length)return;
+ requested.forEach(sku=>matrixSellerListingsPending.add(sku));
+ try{
+  const loaded=await liveData.loadMatrixSellerListingsBySkus(requested);
+  for(const sku of requested){const listings=loaded.get(sku)||{smartstore:[],makeshop:[],ably:[]};matrixSellerListingsCache.set(sku,listings);const row=matrixDataset?.bySku.get(sku);if(row)row.__sellerListings=listings;}
+ }catch(error){console.warn('Matrix 다중 판매처 연결 표시 조회 실패',error);for(const sku of requested)matrixSellerListingsCache.set(sku,{smartstore:[],makeshop:[],ably:[]});}
+ finally{requested.forEach(sku=>matrixSellerListingsPending.delete(sku));matrixSellerListingsVersion+=1;matrixVirtualStart=-1;matrixVirtualEnd=-1;matrixVirtualLayout=null;paintVirtualMatrix();}
+}
+async function resolveMatrixSellerIdentitySearch(){
+ const term=String(matrixState.search||'').trim(),type=document.getElementById('matrix-search-type')?.value||'all';
+ if(!term||!['all','name'].includes(type)||!liveData?.searchMatrixSellerListingSkus){matrixSellerSearchKey='';matrixSellerSearchSkus=[];return [];}
+ const selected=(matrixState.searchSources||[]).filter(source=>['smartstore','makeshop','ably'].includes(source));
+ const source=selected.length===1?selected[0]:'all',key=`${source}|${term.toLocaleLowerCase()}`;
+ if(key===matrixSellerSearchKey)return matrixSellerSearchSkus;
+ try{matrixSellerSearchSkus=await liveData.searchMatrixSellerListingSkus(term,{source});matrixSellerSearchKey=key;return matrixSellerSearchSkus;}
+ catch(error){console.warn('Matrix 판매처 identity 검색 보강 실패',error);matrixSellerSearchKey=key;matrixSellerSearchSkus=[];return [];}
+}
 function paintVirtualMatrix(){
- if(!matrixDataset||matrixVirtualPainting)return;const rows=matrixState.rows,visible=Math.ceil((matrixShell.clientHeight||700)/matrixRowHeight),start=Math.max(0,Math.floor(matrixShell.scrollTop/matrixRowHeight)-6),end=Math.min(rows.length,start+visible+12);
- if(start===matrixVirtualStart&&matrixBody.querySelector('[data-sku]'))return;matrixVirtualStart=start;const at=performance.now();matrixVirtualPainting=true;
- try{renderLiveMatrixRows(rows.slice(start,end));if(rows.length){const spacer=h=>{const tr=document.createElement('tr');tr.className='matrix-virtual-spacer';tr.setAttribute('aria-hidden','true');tr.innerHTML=`<td colspan="${MATRIX_COLUMN_COUNT}" style="height:${h}px;padding:0;border:0"></td>`;return tr;};matrixBody.prepend(spacer(start*matrixRowHeight));matrixBody.append(spacer((rows.length-end)*matrixRowHeight));const heights=[...matrixBody.querySelectorAll('tr[data-sku]')].slice(0,5).map(r=>r.getBoundingClientRect().height).filter(h=>h>0);if(heights.length&&start===0){matrixRowHeight=heights.reduce((a,b)=>a+b,0)/heights.length;matrixBody.lastElementChild.firstElementChild.style.height=((rows.length-end)*matrixRowHeight)+'px';}}
+ if(!matrixDataset||matrixVirtualPainting)return;const rows=attachCachedMatrixSellerListings(matrixState.rows);if(!matrixVirtualLayout||matrixVirtualLayout.rows!==rows||matrixVirtualLayout.version!==matrixDataset.version||matrixVirtualLayout.listingVersion!==matrixSellerListingsVersion){matrixVirtualLayout=window.HubMatrixMultilisting.virtualLayout(rows,matrixRowHeight);matrixVirtualLayout.version=matrixDataset.version;matrixVirtualLayout.listingVersion=matrixSellerListingsVersion;}const range=window.HubMatrixMultilisting.virtualRange(matrixVirtualLayout,matrixShell.scrollTop,matrixShell.clientHeight||700,6),{start,end,top,bottom}=range;
+ if(start===matrixVirtualStart&&end===matrixVirtualEnd&&matrixBody.querySelector('[data-sku]'))return;matrixVirtualStart=start;matrixVirtualEnd=end;const at=performance.now();matrixVirtualPainting=true;
+ try{const visibleRows=rows.slice(start,end);renderLiveMatrixRows(visibleRows);if(rows.length){const spacer=h=>{const tr=document.createElement('tr');tr.className='matrix-virtual-spacer';tr.setAttribute('aria-hidden','true');tr.innerHTML=`<td colspan="${MATRIX_COLUMN_COUNT}" style="height:${h}px;padding:0;border:0"></td>`;return tr;};matrixBody.prepend(spacer(top));matrixBody.append(spacer(bottom));const heights=[...matrixBody.querySelectorAll('tr[data-sku]')].filter(row=>Number(row.dataset.listingRows||1)===1).slice(0,5).map(r=>r.getBoundingClientRect().height).filter(h=>h>0);if(heights.length&&start===0){const measured=heights.reduce((a,b)=>a+b,0)/heights.length;if(Math.abs(measured-matrixRowHeight)>1){matrixRowHeight=measured;matrixVirtualLayout=null;matrixVirtualStart=-1;matrixVirtualEnd=-1;requestAnimationFrame(paintVirtualMatrix);}}}void ensureMatrixSellerListings(visibleRows);
   rebindVirtualMatrixSelection();
   matrixPerformance.renderMs=performance.now()-at;
  }finally{matrixVirtualPainting=false;}
@@ -1390,10 +1456,12 @@ function renderLiveMatrixRows(products) {
     previousProductGroup = productGroup;
     previousResultGroup = resultGroup;
     const rowClasses = [groupStart ? 'product-group-start' : 'product-group-continuation'];
+    const listingRows = window.HubMatrixMultilisting?.groupHeight(product) || 1;
+    if (listingRows > 1) rowClasses.push('matrix-multi-listing-row');
     if (isRelatedContext) rowClasses.push('matrix-related-context-row');
     if (isPriceBasis) rowClasses.push('price-basis-row');
-    return `<tr class="${rowClasses.join(' ')}" data-sku="${sku}" data-product-group="${escapeHtml(productGroup)}" data-own-code="${ownCode}" data-image="${imageUrl}" data-status="${overallState}" data-matrix-context="${escapeHtml(relationContext.kind)}" data-relationship-family="${escapeHtml(relationContext.relationshipFamily)}" data-root-sku="${escapeHtml(relationContext.rootSku)}"${inputRow ? ` data-input-row="${inputRow}"` : ''}>
-      <td class="sticky-col select-col" aria-hidden="true"></td>
+    return `<tr class="${rowClasses.join(' ')}" data-sku="${sku}" data-listing-rows="${listingRows}" style="--matrix-listing-rows:${listingRows}" data-product-group="${escapeHtml(productGroup)}" data-own-code="${ownCode}" data-image="${imageUrl}" data-status="${overallState}" data-matrix-context="${escapeHtml(relationContext.kind)}" data-relationship-family="${escapeHtml(relationContext.relationshipFamily)}" data-root-sku="${escapeHtml(relationContext.rootSku)}"${inputRow ? ` data-input-row="${inputRow}"` : ''}>
+      <td class="sticky-col select-col"><input class="row-check" type="checkbox" aria-label="${sku} SKU 선택"></td>
       <td class="sticky-col image-col image-drop-cell" data-image-drop="${sku}" title="이미지를 이 셀에 놓으면 ${sku}.jpg로 저장됩니다.">${matrixImage(product)}<span class="image-drop-hint">DROP</span></td>
       <td class="sticky-col sellpia-sku-col sellpia-code-cell${isPriceBasis ? ' price-basis-cell' : ''}"><button type="button" class="sellpia-sku-link" data-open-sku-links title="이 SKU의 판매처 연결정보 열기">${skuMarkup}</button></td>
       <td class="sticky-col sellpia-name-col sellpia-text-cell"><span title="${displayName}">${displayName}</span></td>
@@ -1599,9 +1667,9 @@ async function loadCanonicalMatrix({resetScroll=false,fullReload=false}={}){
     if(Object.prototype.hasOwnProperty.call(liveData,'loadMatrixGridDataset'))return liveData.loadMatrixGridDataset({onProgress:progress,chunkSize:2000});
     if(liveData.loadFullMatrixDataset){const result=await liveData.loadFullMatrixDataset({onProgress:progress});result.metrics={...result.metrics,mode:'legacy-capability'};return result;}
     throw new Error('Matrix Grid feed를 사용할 수 없습니다. 기존 전체 조회는 자동 실행하지 않습니다.');
-  })().then(result=>{const assembledAt=performance.now();const replacement=new window.HubMatrixDataset.Dataset(result.rows,result.count);matrixDataset=replacement;matrixPerformance.assemblyMs=performance.now()-assembledAt;matrixPerformance.initialMs=result.elapsed;matrixPerformance.count=result.count;Object.assign(matrixPerformance,result.metrics);matrixPerformance.heapBytes=performance.memory?.usedJSHeapSize||null;matrixSourceReloadNeeded=false;}).finally(()=>{matrixFullLoad=null;matrixState.loading=false;});}await matrixFullLoad;}
+  })().then(result=>{const assembledAt=performance.now();const replacement=new window.HubMatrixDataset.Dataset(result.rows,result.count);matrixDataset=replacement;matrixSellerListingsCache.clear();matrixSellerListingsPending.clear();matrixSellerListingsVersion+=1;matrixVirtualLayout=null;matrixPerformance.assemblyMs=performance.now()-assembledAt;matrixPerformance.initialMs=result.elapsed;matrixPerformance.count=result.count;Object.assign(matrixPerformance,result.metrics);matrixPerformance.heapBytes=performance.memory?.usedJSHeapSize||null;matrixSourceReloadNeeded=false;}).finally(()=>{matrixFullLoad=null;matrixState.loading=false;});}await matrixFullLoad;}
   if(matrixDirtySkus.size){const targets=[...matrixDirtySkus].filter(s=>matrixDataset.bySku.has(s)),versions=new Map(targets.map(s=>[s,matrixDirtyVersions.get(s)]));if(targets.length)await refreshMatrixSkus(targets);targets.forEach(s=>{if(matrixDirtyVersions.get(s)===versions.get(s))matrixDirtySkus.delete(s);});}
-  mountMatrixClientFilters();const at=performance.now();matrixState.rows=matrixDataset.select({...matrixState,skus:matrixState.codeListSkus,searchType:document.getElementById('matrix-search-type')?.value||'all',seller:document.getElementById('matrix-client-seller')?.value,tagId:document.getElementById('matrix-client-tag')?.value,state:document.getElementById('matrix-client-state')?.value});matrixPerformance.filterMs=performance.now()-at;matrixState.total=matrixState.rows.length;matrixState.directCount=matrixState.total;matrixState.relatedCount=0;
+  mountMatrixClientFilters();const sellerIdentitySkus=await resolveMatrixSellerIdentitySearch(),at=performance.now();matrixState.rows=matrixDataset.select({...matrixState,skus:matrixState.codeListSkus,sellerIdentitySkus,searchType:document.getElementById('matrix-search-type')?.value||'all',seller:document.getElementById('matrix-client-seller')?.value,tagId:document.getElementById('matrix-client-tag')?.value,state:document.getElementById('matrix-client-state')?.value});matrixVirtualLayout=null;matrixPerformance.filterMs=performance.now()-at;matrixState.total=matrixState.rows.length;matrixState.directCount=matrixState.total;matrixState.relatedCount=0;
   clearMatrixCellSelection();if(resetScroll)matrixShell.scrollTop=0;renderLiveMatrixRows(matrixState.rows);
   document.getElementById('matrix-total-count').textContent=formatNumber(matrixState.total);document.getElementById('matrix-range').textContent=`${formatNumber(matrixState.total)} 결과 / 전체 ${formatNumber(matrixDataset.rows.length)} SKU · 메모리 유지`;document.getElementById('matrix-related-count').hidden=true;
   document.querySelector('.matrix-pagination').hidden=true;document.querySelector('.matrix-page-size').hidden=true;setMatrixConnection('connected',`전체 ${formatNumber(matrixDataset.rows.length)} · 검색/필터 로컬`);setSystemHealthComponent('matrix',true);matrixState.lastLoadedAt=new Date().toISOString();showMatrixPerformance();return true;
@@ -1885,15 +1953,18 @@ async function refreshLiveData(options = {}) {
 
 async function refreshMatrixSkus(skus = []) {
   const targets = [...new Set(skus.map(sku => String(sku || '').trim()).filter(Boolean))];
-  if (!targets.length || !(liveData?.loadMatrixGridRowsBySkus||liveData?.loadProductsBySkus)) return [];
-  const patchAt=performance.now(),rows=matrixDataset&&liveData?.loadMatrixGridRowsBySkus
+  const hasTargetedGrid=Boolean(matrixDataset&&Object.prototype.hasOwnProperty.call(liveData||{},'loadMatrixGridRowsBySkus'));
+  if (!targets.length || !(hasTargetedGrid||liveData?.loadProductsBySkus)) return [];
+  const patchAt=performance.now(),rows=hasTargetedGrid
     ?await liveData.loadMatrixGridRowsBySkus(targets)
     :await (async()=>{const values=[];for(let i=0;i<targets.length;i+=200)values.push(...await liveData.loadProductsBySkus(targets.slice(i,i+200)));return values;})();
   if(matrixDataset){
     if(rows.length!==targets.length)throw Error('Matrix 대상 SKU 일부가 누락되어 부분 갱신하지 않았습니다.');
+    targets.forEach(sku=>matrixSellerListingsCache.delete(sku));matrixSellerListingsVersion+=1;matrixVirtualLayout=null;
     matrixDataset.patch(rows);matrixPerformance.patchMs=performance.now()-patchAt;
     const selectedAt=performance.now();
     matrixState.rows=matrixDataset.select({...matrixState,skus:matrixState.codeListSkus,
+      sellerIdentitySkus:matrixSellerSearchSkus,
       searchType:document.getElementById('matrix-search-type')?.value||'all',
       seller:document.getElementById('matrix-client-seller')?.value,
       tagId:document.getElementById('matrix-client-tag')?.value,
@@ -2934,12 +3005,12 @@ async function loadListingLinkManager({allowMatrixFallback = false} = {}) {
   }
 }
 
-function openListingLinkManager({source, sku, anchor}) {
+function openListingLinkManager({source, sku, anchor, productCode = '', optionCode = ''}) {
   const product = matrixRowsBySku.get(sku) || {};
   listingLinkState.source = source;
   listingLinkState.sku = sku;
-  listingLinkState.productCode = String(product[`${source}_product_code`] || '').trim();
-  listingLinkState.optionCode = String(product[`${source}_option_code`] || '').trim();
+  listingLinkState.productCode = String(productCode || product[`${source}_product_code`] || '').trim();
+  listingLinkState.optionCode = String(optionCode || product[`${source}_option_code`] || '').trim();
   listingLinkState.anchor = anchor;
   listingLinkState.matrixProduct = product;
   listingLinkState.row = null;
@@ -3695,6 +3766,8 @@ function paintMatrixCellSelection() {
     cell.classList.add('matrix-cell-selected');
     cell.setAttribute('aria-selected', 'true');
   });
+  const selectedSkus=new Set([...matrixCellSelection.selected].map(cell=>cell?.closest('tr[data-sku]')?.dataset.sku).filter(Boolean));
+  matrixBody.querySelectorAll('tr[data-sku]').forEach(row=>{const check=row.querySelector('.row-check');if(check)check.checked=selectedSkus.has(row.dataset.sku);});
   if (matrixCellSelection.anchor?.isConnected && matrixCellSelection.selected.has(matrixCellSelection.anchor)) {
     matrixCellSelection.anchor.classList.add('matrix-cell-anchor');
   }
@@ -5329,6 +5402,13 @@ document.getElementById('advanced-filter-chips').addEventListener('click', event
 document.getElementById('advanced-filter-clear').addEventListener('click', () => setAdvancedFilter({logic:'and', conditions:[]}));
 
 matrixBody.addEventListener('click', event => {
+  const rowCheck=event.target.closest('.row-check');
+  if(rowCheck){
+    const row=rowCheck.closest('tr[data-sku]'),cells=[...(row?.children||[])].filter(cell=>cell.matches?.('td')&&!cell.hidden);
+    const next=new Set(matrixCellSelection.selected);
+    cells.forEach(cell=>rowCheck.checked?next.add(cell):next.delete(cell));
+    matrixCellSelection.selected=next;matrixCellSelection.anchor=rowCheck.checked?(cells[0]||null):null;matrixCellSelection.focus=rowCheck.checked?(cells.at(-1)||null):null;paintMatrixCellSelection();return;
+  }
   if ((event.ctrlKey || event.metaKey) && event.target.closest('td')) return;
   const priceEditButton = event.target.closest('[data-price-edit]');
   if (priceEditButton) {
@@ -5391,7 +5471,9 @@ matrixBody.addEventListener('click', event => {
     openListingLinkManager({
       source,
       sku:row.dataset.sku,
-      anchor:mappingButton
+      anchor:mappingButton,
+      productCode:mappingButton.dataset.linkProductCode || '',
+      optionCode:mappingButton.dataset.linkOptionCode || ''
     });
     return;
   }
@@ -8402,7 +8484,7 @@ async function prepareChangedOnlyExport(source,skus=null,{download=false,onProgr
   const filesBySource=await liveData.downloadLatestSellerOriginals([source]);
   timings.download_ms=Math.round(clock()-mark);
   const files=filesBySource.get(source)||[];if(!files.length)throw Error(`${CHANNEL_LABELS[source]||source} 최신 보관 원본이 없습니다.`);
-  const outputs=[],skipped=[],plans=[],sourcePriceProofs=new Map(),matchedSelectedSkus=new Set(),selectedIdentityBySku=new Map(),crossFileBlockedProducts=new Map(),fileContexts=[];let carrierRows=0,matchedSkuCount=0,exportAudit=null;
+  const outputs=[],skipped=[],plans=[],sourcePriceProofs=new Map(),matchedSelectedSkus=new Set(),crossFileMappingsByIdentity=new Map(),crossFileBlockedProducts=new Map(),fileContexts=[];let carrierRows=0,matchedSkuCount=0,exportAudit=null;
   const onQuery=query=>{queries.push(query);onProgress?.(`${source} · ${query.query} · 대상 ${formatNumber(query.scope_count)} · ${formatNumber(query.latency_ms)}ms`);};
   for(const file of files){
     mark=clock();
@@ -8414,11 +8496,14 @@ async function prepareChangedOnlyExport(source,skus=null,{download=false,onProgr
     timings.mapping_ms+=Math.round(clock()-mark);
     fileContexts.push({file,parsed,mapped});
     if(priceMode==='sellpia_source')for(const row of mapped.rows||[]){
-      if(!requested.has(String(row.sku||'').trim()))continue;
-      const identity=`${file.name}:${identityKey(row)}`,previous=selectedIdentityBySku.get(row.sku);
-      if(previous&&previous.identity!==identity){const reason=`${row.sku}: 여러 판매처 원본 옵션에 연결되어 상품 가격을 원본 유지합니다.`;crossFileBlockedProducts.set(previous.product,reason);crossFileBlockedProducts.set(String(row.product_code||''),reason);}
-      else selectedIdentityBySku.set(row.sku,{identity,product:String(row.product_code||'')});
+      const identity=identityKey(row),sku=String(row.sku||'').trim(),product=String(row.product_code||'').trim(),option=String(row.option_code||'').trim();
+      if(!product||!sku)continue;
+      if(!crossFileMappingsByIdentity.has(identity))crossFileMappingsByIdentity.set(identity,{product,option,skus:new Set()});
+      crossFileMappingsByIdentity.get(identity).skus.add(sku);
     }
+  }
+  if(priceMode==='sellpia_source')for(const {product,option,skus} of crossFileMappingsByIdentity.values())if(skus.size>1){
+    crossFileBlockedProducts.set(product,`${product}/${option}: 판매처 옵션이 여러 SKU에 연결되어 있습니다.`);
   }
   for(const {file,parsed,mapped} of fileContexts){
     let mappingRows=mapped.rows||[];
