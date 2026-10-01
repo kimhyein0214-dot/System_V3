@@ -45,6 +45,8 @@ assert.match(app, /canClearCustomRequired\(existing\)/);
 assert.match(app, /주문제작 탭에서 취소 처리/);
 assert.match(app, /internal_memo: memo \|\| null/);
 assert.match(app, /data-custom-order-action="ordered-today"/);
+assert.match(app, /엑셀 열:[\s\S]*셀피아 SKU \| 입고예정일\(YYYY-MM-DD\) \| 자사코드\(선택\)/);
+assert.match(app, /1000-1 \| 2026-10-08 \| GPA-14-19_5/);
 assert.match(app, /data-custom-order-action="received-today"/);
 assert.match(app, /data-custom-order-action="cancel"/);
 assert.match(app, /custom_cancelled_at: new Date\(\)\.toISOString\(\)/);

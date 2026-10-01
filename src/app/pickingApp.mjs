@@ -5648,7 +5648,11 @@ function renderSkuInboundScheduleManager() {
   }
   els.customOrdersSkuList.innerHTML = schedules.length
     ? schedules.map(renderSkuInboundScheduleRow).join("")
-    : '<div class="sku-inbound-schedule-empty">등록된 SKU 입고예정일이 없습니다. 위 입력란 또는 엑셀 업로드로 추가하세요.</div>';
+    : `<div class="sku-inbound-schedule-empty">
+        등록된 SKU 입고예정일이 없습니다. 위 입력란 또는 엑셀 업로드로 추가하세요.<br>
+        엑셀 열: <strong>셀피아 SKU | 입고예정일(YYYY-MM-DD) | 자사코드(선택)</strong><br>
+        예: <code>1000-1 | 2026-10-08 | GPA-14-19_5</code>
+      </div>`;
 }
 
 function renderCustomOrderRow(row) {
